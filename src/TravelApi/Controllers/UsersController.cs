@@ -32,7 +32,7 @@ public class UsersController : ControllerBase
         foreach (var user in users)
         {
             var roles = await _userManager.GetRolesAsync(user);
-            response.Add(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles));
+            response.Add(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles.ToList()));
         }
 
         return Ok(response);
@@ -75,7 +75,7 @@ public class UsersController : ControllerBase
         }
 
         var roles = await _userManager.GetRolesAsync(user);
-        return Ok(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles));
+        return Ok(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles.ToList()));
     }
 
     [HttpPut("{id}")]
@@ -121,7 +121,7 @@ public class UsersController : ControllerBase
         }
 
         var roles = await _userManager.GetRolesAsync(user);
-        return Ok(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles));
+        return Ok(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles.ToList()));
     }
 
     [HttpDelete("{id}")]
