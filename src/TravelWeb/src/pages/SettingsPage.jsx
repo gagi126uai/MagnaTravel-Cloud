@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api";
 import { showError, showInfo, showSuccess } from "../alerts";
+import { isAdmin } from "../auth";
 
 const tabs = [
   { id: "users", label: "Usuarios" },
@@ -17,6 +18,7 @@ export default function SettingsPage() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const adminUser = isAdmin();
   const [createForm, setCreateForm] = useState({
     fullName: "",
     email: "",
@@ -54,10 +56,10 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    if (activeTab === "users") {
+    if (activeTab === "users" && adminUser) {
       loadUsers();
     }
-  }, [activeTab]);
+  }, [activeTab, adminUser]);
 
   const handleCreateChange = (field, value) => {
     setCreateForm((prev) => ({ ...prev, [field]: value }));
@@ -169,6 +171,12 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-4 overflow-x-auto">
+              {!adminUser ? (
+                <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 text-sm text-slate-300">
+                  Solo los administradores pueden gestionar usuarios. Si creaste tu cuenta antes de
+                  activar roles, vuelve a iniciar sesión para refrescar permisos.
+                </div>
+              ) : null}
               <table className="min-w-full text-left text-sm text-slate-200">
                 <thead className="text-xs uppercase text-slate-400">
                   <tr>
@@ -179,7 +187,13 @@ export default function SettingsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {loading ? (
+                  {!adminUser ? (
+                    <tr>
+                      <td className="px-3 py-4 text-slate-400" colSpan="4">
+                        Acceso restringido.
+                      </td>
+                    </tr>
+                  ) : loading ? (
                     <tr>
                       <td className="px-3 py-4 text-slate-400" colSpan="4">
                         Cargando usuarios...
@@ -240,6 +254,7 @@ export default function SettingsPage() {
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
                   placeholder="Nombre completo"
                   required
+                  disabled={!adminUser}
                 />
                 <input
                   type="email"
@@ -248,6 +263,7 @@ export default function SettingsPage() {
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
                   placeholder="Email"
                   required
+                  disabled={!adminUser}
                 />
                 <input
                   type="password"
@@ -256,11 +272,13 @@ export default function SettingsPage() {
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
                   placeholder="Contraseña"
                   required
+                  disabled={!adminUser}
                 />
                 <select
                   value={createForm.role}
                   onChange={(event) => handleCreateChange("role", event.target.value)}
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  disabled={!adminUser}
                 >
                   {roleOptions.map((role) => (
                     <option key={role} value={role}>
@@ -271,7 +289,8 @@ export default function SettingsPage() {
               </div>
               <button
                 type="submit"
-                className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400"
+                disabled={!adminUser}
+                className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Crear usuario
               </button>

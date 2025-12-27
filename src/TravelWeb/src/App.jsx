@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { clearAuthToken, isAuthenticated } from "./auth";
+import { clearAuthToken, isAdmin, isAuthenticated } from "./auth";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
@@ -18,6 +18,7 @@ function PrivateRoute({ children }) {
 
 export default function App() {
   const navigate = useNavigate();
+  const adminUser = isAdmin();
 
   const handleLogout = () => {
     clearAuthToken();
@@ -31,7 +32,7 @@ export default function App() {
         path="/*"
         element={
           <PrivateRoute>
-            <Layout onLogout={handleLogout}>
+            <Layout onLogout={handleLogout} isAdmin={adminUser}>
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
@@ -39,7 +40,10 @@ export default function App() {
                 <Route path="/reservations" element={<ReservationsPage />} />
                 <Route path="/payments" element={<PaymentsPage />} />
                 <Route path="/reports" element={<ReportsPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
+                <Route
+                  path="/settings"
+                  element={adminUser ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
+                />
               </Routes>
             </Layout>
           </PrivateRoute>

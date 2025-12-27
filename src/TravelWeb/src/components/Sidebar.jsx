@@ -6,10 +6,10 @@ const links = [
   { to: "/reservations", label: "Reservas" },
   { to: "/payments", label: "Pagos" },
   { to: "/reports", label: "Reportes" },
-  { to: "/settings", label: "Configuración" },
 ];
 
-export default function Sidebar({ onLogout }) {
+export default function Sidebar({ onLogout, isAdmin }) {
+  const menuLinks = isAdmin ? [...links, { to: "/settings", label: "Configuración" }] : links;
   return (
     <aside className="flex h-screen w-64 flex-col border-r border-slate-800 bg-slate-950/80 backdrop-blur">
       <div className="flex items-center gap-3 px-6 py-5 text-xl font-semibold text-white">
@@ -22,7 +22,7 @@ export default function Sidebar({ onLogout }) {
         </div>
       </div>
       <nav className="flex-1 space-y-1 px-3">
-        {links.map((link) => (
+        {menuLinks.map((link) => (
           <NavLink
             key={link.to}
             to={link.to}

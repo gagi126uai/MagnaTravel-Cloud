@@ -155,12 +155,23 @@ using (var scope = app.Services.CreateScope())
     dbContext.Database.EnsureCreated();
 
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
     string[] roles = ["Admin", "Colaborador"];
     foreach (var role in roles)
     {
         if (!await roleManager.RoleExistsAsync(role))
         {
             await roleManager.CreateAsync(new IdentityRole(role));
+        }
+    }
+
+    var admins = await userManager.GetUsersInRoleAsync("Admin");
+    if (admins.Count == 0)
+    {
+        var firstUser = await userManager.Users.OrderBy(user => user.Id).FirstOrDefaultAsync();
+        if (firstUser is not null)
+        {
+            await userManager.AddToRoleAsync(firstUser, "Admin");
         }
     }
 }
