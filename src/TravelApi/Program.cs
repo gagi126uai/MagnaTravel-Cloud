@@ -121,9 +121,30 @@ builder.Services.AddCors(options =>
             return;
         }
 
+        var allowedHosts = origins
+            .Select(originValue =>
+            {
+                if (Uri.TryCreate(originValue, UriKind.Absolute, out var uri))
+                {
+                    return uri;
+                }
+
+                return null;
+            })
+            .Where(uri => uri is not null)
+            .ToList();
+
         policy.SetIsOriginAllowed(origin =>
-            origins.Any(allowed =>
-                origin.StartsWith(allowed.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)))
+        {
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri))
+            {
+                return false;
+            }
+
+            return allowedHosts.Any(allowed =>
+                string.Equals(originUri.Host, allowed!.Host, StringComparison.OrdinalIgnoreCase) &&
+                (allowed.Port <= 0 || originUri.Port == allowed.Port));
+        })
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
