@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { showError, showSuccess } from "../alerts";
 
 const initialForm = {
   referenceCode: "",
@@ -18,7 +19,6 @@ export default function ReservationsPage() {
   const [reservations, setReservations] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [form, setForm] = useState(initialForm);
-  const [error, setError] = useState("");
 
   const loadData = async () => {
     try {
@@ -29,7 +29,7 @@ export default function ReservationsPage() {
       setReservations(reservationsData);
       setCustomers(customersData);
     } catch {
-      setError("No se pudieron cargar las reservas.");
+      showError("No se pudieron cargar las reservas.");
     }
   };
 
@@ -43,7 +43,6 @@ export default function ReservationsPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    setError("");
     try {
       await apiRequest("/api/reservations", {
         method: "POST",
@@ -59,8 +58,9 @@ export default function ReservationsPage() {
       });
       setForm(initialForm);
       loadData();
+      await showSuccess("Reserva guardada correctamente.");
     } catch {
-      setError("No se pudo guardar la reserva.");
+      await showError("No se pudo guardar la reserva.");
     }
   };
 
@@ -161,7 +161,6 @@ export default function ReservationsPage() {
             </option>
           ))}
         </select>
-        {error && <p className="text-sm text-rose-400 md:col-span-3">{error}</p>}
         <button
           type="submit"
           className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-600 md:col-span-3"

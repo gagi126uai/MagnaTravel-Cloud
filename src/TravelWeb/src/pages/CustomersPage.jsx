@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { showError, showSuccess } from "../alerts";
 
 const initialForm = {
   fullName: "",
@@ -13,12 +14,13 @@ const initialForm = {
 export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
   const [form, setForm] = useState(initialForm);
-  const [error, setError] = useState("");
 
   const loadCustomers = () => {
     apiRequest("/api/customers")
       .then(setCustomers)
-      .catch(() => setError("No se pudieron cargar los clientes."));
+      .catch(() => {
+        showError("No se pudieron cargar los clientes.");
+      });
   };
 
   useEffect(() => {
@@ -31,7 +33,6 @@ export default function CustomersPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    setError("");
     try {
       await apiRequest("/api/customers", {
         method: "POST",
@@ -39,8 +40,9 @@ export default function CustomersPage() {
       });
       setForm(initialForm);
       loadCustomers();
+      await showSuccess("Cliente guardado correctamente.");
     } catch {
-      setError("No se pudo guardar el cliente.");
+      await showError("No se pudo guardar el cliente.");
     }
   };
 
@@ -95,7 +97,6 @@ export default function CustomersPage() {
           onChange={handleChange}
           className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2"
         />
-        {error && <p className="text-sm text-rose-400 md:col-span-2">{error}</p>}
         <button
           type="submit"
           className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-600 md:col-span-2"

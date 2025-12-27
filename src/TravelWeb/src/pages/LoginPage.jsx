@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api";
 import { setAuthToken } from "../auth";
+import { showError, showSuccess } from "../alerts";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -9,12 +10,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [isRegister, setIsRegister] = useState(false);
-  const [error, setError] = useState("");
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    setError("");
-
     try {
       const path = isRegister ? "/api/auth/register" : "/api/auth/login";
       const payload = isRegister
@@ -26,9 +24,10 @@ export default function LoginPage() {
       });
 
       setAuthToken(response.token);
+      await showSuccess(isRegister ? "Cuenta creada correctamente." : "Bienvenido.");
       navigate("/dashboard");
     } catch (err) {
-      setError(err.message || "No pudimos iniciar sesión. Revisa los datos.");
+      await showError(err.message || "No pudimos iniciar sesión. Revisa los datos.");
     }
   };
 
@@ -72,7 +71,6 @@ export default function LoginPage() {
               required
             />
           </div>
-          {error && <p className="text-sm text-rose-400">{error}</p>}
           <button
             type="submit"
             className="w-full rounded-lg bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-600"

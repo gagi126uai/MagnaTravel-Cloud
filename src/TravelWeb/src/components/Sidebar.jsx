@@ -10,9 +10,15 @@ const links = [
 
 export default function Sidebar({ onLogout }) {
   return (
-    <aside className="flex h-screen w-64 flex-col border-r border-slate-800 bg-slate-900">
-      <div className="px-6 py-5 text-xl font-semibold text-white">
-        MagnaTravel
+    <aside className="flex h-screen w-64 flex-col border-r border-slate-800 bg-slate-950/80 backdrop-blur">
+      <div className="flex items-center gap-3 px-6 py-5 text-xl font-semibold text-white">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20 text-indigo-200">
+          MT
+        </div>
+        <div>
+          <p className="text-base font-semibold">MagnaTravel</p>
+          <p className="text-xs text-slate-400">Back office</p>
+        </div>
       </div>
       <nav className="flex-1 space-y-1 px-3">
         {links.map((link) => (

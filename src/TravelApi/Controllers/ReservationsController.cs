@@ -50,9 +50,21 @@ public class ReservationsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<Reservation>> CreateReservation(Reservation reservation, CancellationToken cancellationToken)
     {
+        reservation.DepartureDate = NormalizeUtc(reservation.DepartureDate);
+        reservation.ReturnDate = reservation.ReturnDate.HasValue
+            ? NormalizeUtc(reservation.ReturnDate.Value)
+            : null;
+
         _dbContext.Reservations.Add(reservation);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return CreatedAtAction(nameof(GetReservation), new { id = reservation.Id }, reservation);
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind == DateTimeKind.Utc
+            ? value
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
     }
 }

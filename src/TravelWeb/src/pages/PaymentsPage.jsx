@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../api";
+import { showError, showSuccess } from "../alerts";
 
 const initialForm = {
   reservationId: "",
@@ -12,14 +13,13 @@ export default function PaymentsPage() {
   const [reservations, setReservations] = useState([]);
   const [payments, setPayments] = useState([]);
   const [form, setForm] = useState(initialForm);
-  const [error, setError] = useState("");
 
   const loadReservations = async () => {
     try {
       const data = await apiRequest("/api/reservations");
       setReservations(data);
     } catch {
-      setError("No se pudieron cargar las reservas.");
+      showError("No se pudieron cargar las reservas.");
     }
   };
 
@@ -37,13 +37,12 @@ export default function PaymentsPage() {
       const data = await apiRequest(`/api/payments/reservation/${reservationId}`);
       setPayments(data);
     } catch {
-      setError("No se pudieron cargar los pagos.");
+      showError("No se pudieron cargar los pagos.");
     }
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    setError("");
     try {
       await apiRequest("/api/payments", {
         method: "POST",
@@ -56,8 +55,9 @@ export default function PaymentsPage() {
       });
       setForm(initialForm);
       loadPayments(form.reservationId);
+      await showSuccess("Pago registrado correctamente.");
     } catch {
-      setError("No se pudo registrar el pago.");
+      await showError("No se pudo registrar el pago.");
     }
   };
 
@@ -114,7 +114,6 @@ export default function PaymentsPage() {
           <option value="Partial">Parcial</option>
           <option value="Paid">Pagado</option>
         </select>
-        {error && <p className="text-sm text-rose-400 md:col-span-2">{error}</p>}
         <button
           type="button"
           onClick={handleSubmit}
