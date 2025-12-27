@@ -28,7 +28,7 @@ export default function LoginPage() {
       setAuthToken(response.token);
       navigate("/dashboard");
     } catch (err) {
-      setError("No pudimos iniciar sesión. Revisa los datos.");
+      setError(err.message || "No pudimos iniciar sesión. Revisa los datos.");
     }
   };
 

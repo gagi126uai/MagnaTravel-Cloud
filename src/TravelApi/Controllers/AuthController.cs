@@ -17,11 +17,16 @@ public class AuthController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly JwtOptions _jwtOptions;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(UserManager<ApplicationUser> userManager, IOptions<JwtOptions> jwtOptions)
+    public AuthController(
+        UserManager<ApplicationUser> userManager,
+        IOptions<JwtOptions> jwtOptions,
+        ILogger<AuthController> logger)
     {
         _userManager = userManager;
         _jwtOptions = jwtOptions.Value;
+        _logger = logger;
     }
 
     [HttpPost("register")]
@@ -37,6 +42,8 @@ public class AuthController : ControllerBase
         var result = await _userManager.CreateAsync(user, request.Password);
         if (!result.Succeeded)
         {
+            var errors = result.Errors.Select(error => error.Description).ToList();
+            _logger.LogWarning("Failed registration for {Email}: {Errors}", request.Email, errors);
             return BadRequest(result.Errors.Select(error => error.Description));
         }
 
@@ -49,12 +56,14 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null)
         {
+            _logger.LogWarning("Login failed: user not found for {Email}", request.Email);
             return Unauthorized();
         }
 
         var isValid = await _userManager.CheckPasswordAsync(user, request.Password);
         if (!isValid)
         {
+            _logger.LogWarning("Login failed: invalid password for {Email}", request.Email);
             return Unauthorized();
         }
 
