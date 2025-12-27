@@ -102,6 +102,17 @@ builder.Services.AddCors(options =>
     options.AddPolicy("web", policy =>
     {
         var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>();
+        var originsCsv = builder.Configuration["Cors:Origins"];
+        if (!string.IsNullOrWhiteSpace(originsCsv))
+        {
+            origins = originsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        var webOrigin = builder.Configuration["WEB_ORIGIN"];
+        if ((origins is null || origins.Length == 0) && !string.IsNullOrWhiteSpace(webOrigin))
+        {
+            origins = webOrigin.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
         if (origins is null || origins.Length == 0)
         {
             policy.AllowAnyOrigin()

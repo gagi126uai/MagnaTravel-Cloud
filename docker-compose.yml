@@ -27,6 +27,7 @@ services:
       Jwt__Key: ${JWT_KEY:-CHANGE_THIS_SECRET_IN_PRODUCTION}
       Jwt__Issuer: ${JWT_ISSUER:-MagnaTravel}
       Jwt__Audience: ${JWT_AUDIENCE:-MagnaTravelUsers}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       Cors__Origins__0: ${WEB_ORIGIN:-http://localhost:3000}
     ports:
       - "5000:8080"
