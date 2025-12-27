@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16
+    container_name: travel_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-travel}
+      POSTGRES_USER: ${POSTGRES_USER:-traveluser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travelpass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build:
+      context: ./src/TravelApi
+      dockerfile: Dockerfile
+    container_name: travel_api
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:-travelpass}
+    ports:
+      - "5000:8080"
+
+volumes:
+  pgdata:
