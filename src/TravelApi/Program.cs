@@ -145,6 +145,7 @@ app.Use(async (context, next) =>
     }
 });
 
+app.UseRouting();
 app.UseCors("web");
 app.UseAuthentication();
 app.UseAuthorization();
