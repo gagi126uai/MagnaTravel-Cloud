@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16
+    container_name: travel_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-travel}
+      POSTGRES_USER: ${POSTGRES_USER:-traveluser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travelpass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build:
+      context: ./src/TravelApi
+      dockerfile: Dockerfile
+    container_name: travel_api
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:-travelpass}
+      Jwt__Key: ${JWT_KEY:-CHANGE_THIS_SECRET_IN_PRODUCTION}
+      Jwt__Issuer: ${JWT_ISSUER:-MagnaTravel}
+      Jwt__Audience: ${JWT_AUDIENCE:-MagnaTravelUsers}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      Cors__Origins__0: ${WEB_ORIGIN:-http://localhost:3000}
+    ports:
+      - "5000:8080"
+
+  web:
+    build:
+      context: ./src/TravelWeb
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:5000}
+    container_name: travel_web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+volumes:
+  pgdata:
