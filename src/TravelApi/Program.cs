@@ -121,7 +121,9 @@ builder.Services.AddCors(options =>
             return;
         }
 
-        policy.WithOrigins(origins)
+        policy.SetIsOriginAllowed(origin =>
+            origins.Any(allowed =>
+                origin.StartsWith(allowed.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)))
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
