@@ -7,6 +7,7 @@ import CustomersPage from "./pages/CustomersPage";
 import ReservationsPage from "./pages/ReservationsPage";
 import PaymentsPage from "./pages/PaymentsPage";
 import ReportsPage from "./pages/ReportsPage";
+import SettingsPage from "./pages/SettingsPage";
 
 function PrivateRoute({ children }) {
   if (!isAuthenticated()) {
@@ -38,6 +39,7 @@ export default function App() {
                 <Route path="/reservations" element={<ReservationsPage />} />
                 <Route path="/payments" element={<PaymentsPage />} />
                 <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
               </Routes>
             </Layout>
           </PrivateRoute>

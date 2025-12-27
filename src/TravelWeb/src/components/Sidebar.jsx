@@ -6,6 +6,7 @@ const links = [
   { to: "/reservations", label: "Reservas" },
   { to: "/payments", label: "Pagos" },
   { to: "/reports", label: "Reportes" },
+  { to: "/settings", label: "Configuración" },
 ];
 
 export default function Sidebar({ onLogout }) {

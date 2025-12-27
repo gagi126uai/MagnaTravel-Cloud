@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -32,6 +33,7 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request)
     {
+        var isFirstUser = !await _userManager.Users.AnyAsync();
         var user = new ApplicationUser
         {
             UserName = request.Email,
@@ -47,7 +49,15 @@ public class AuthController : ControllerBase
             return BadRequest(result.Errors.Select(error => error.Description));
         }
 
-        return Ok(CreateToken(user));
+        var defaultRole = isFirstUser ? "Admin" : "Colaborador";
+        var roleResult = await _userManager.AddToRoleAsync(user, defaultRole);
+        if (!roleResult.Succeeded)
+        {
+            var errors = roleResult.Errors.Select(error => error.Description).ToList();
+            _logger.LogWarning("Failed role assignment for {Email}: {Errors}", request.Email, errors);
+        }
+
+        return Ok(await CreateTokenAsync(user));
     }
 
     [HttpPost("login")]
@@ -67,10 +77,10 @@ public class AuthController : ControllerBase
             return Unauthorized();
         }
 
-        return Ok(CreateToken(user));
+        return Ok(await CreateTokenAsync(user));
     }
 
-    private AuthResponse CreateToken(ApplicationUser user)
+    private async Task<AuthResponse> CreateTokenAsync(ApplicationUser user)
     {
         var claims = new List<Claim>
         {
@@ -78,6 +88,9 @@ public class AuthController : ControllerBase
             new(ClaimTypes.Email, user.Email ?? string.Empty),
             new(ClaimTypes.Name, user.FullName)
         };
+
+        var roles = await _userManager.GetRolesAsync(user);
+        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.Key));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
