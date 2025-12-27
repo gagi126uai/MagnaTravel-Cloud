@@ -15,16 +15,18 @@ export async function apiRequest(path, options = {}) {
 
   if (!response.ok) {
     let message = "Request failed";
-    try {
-      const data = await response.json();
-      if (Array.isArray(data) && data.length > 0) {
-        message = data.join(", ");
-      } else if (data?.message) {
-        message = data.message;
-      }
-    } catch {
-      const errorText = await response.text();
-      if (errorText) {
+    const errorText = await response.text();
+    if (errorText) {
+      try {
+        const data = JSON.parse(errorText);
+        if (Array.isArray(data) && data.length > 0) {
+          message = data.join(", ");
+        } else if (data?.message) {
+          message = data.message;
+        } else {
+          message = errorText;
+        }
+      } catch {
         message = errorText;
       }
     }

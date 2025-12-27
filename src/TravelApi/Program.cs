@@ -77,6 +77,12 @@ builder.Services.AddAuthentication(options =>
             return;
         }
 
+        if (Encoding.UTF8.GetByteCount(jwtOptions.Key) < 32)
+        {
+            throw new InvalidOperationException(
+                "JWT key must be at least 32 characters (256 bits). Update Jwt__Key in environment variables.");
+        }
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
