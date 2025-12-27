@@ -1,9 +1,10 @@
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Models;
 
 namespace TravelApi.Data;
 
-public class AppDbContext : DbContext
+public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
     public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
@@ -24,6 +25,12 @@ public class AppDbContext : DbContext
 
             entity.Property(customer => customer.Email)
                 .HasMaxLength(200);
+
+            entity.Property(customer => customer.DocumentNumber)
+                .HasMaxLength(50);
+
+            entity.Property(customer => customer.Address)
+                .HasMaxLength(300);
         });
 
         modelBuilder.Entity<Reservation>(entity =>
@@ -36,8 +43,21 @@ public class AppDbContext : DbContext
                 .HasMaxLength(50)
                 .IsRequired();
 
+            entity.Property(reservation => reservation.ProductType)
+                .HasMaxLength(50)
+                .IsRequired();
+
             entity.Property(reservation => reservation.TotalAmount)
                 .HasPrecision(12, 2);
+
+            entity.Property(reservation => reservation.BasePrice)
+                .HasPrecision(12, 2);
+
+            entity.Property(reservation => reservation.Commission)
+                .HasPrecision(12, 2);
+
+            entity.Property(reservation => reservation.SupplierName)
+                .HasMaxLength(200);
 
             entity.HasOne(reservation => reservation.Customer)
                 .WithMany(customer => customer.Reservations)
@@ -51,6 +71,10 @@ public class AppDbContext : DbContext
                 .HasPrecision(12, 2);
 
             entity.Property(payment => payment.Method)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(payment => payment.Status)
                 .HasMaxLength(50)
                 .IsRequired();
 

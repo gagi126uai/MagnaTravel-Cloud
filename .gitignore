@@ -20,4 +20,6 @@
 secrets.json
 appsettings.*.json
 !appsettings.json
+node_modules/
+dist/
 !.gitignore

@@ -6,6 +6,7 @@ public class Payment
     public decimal Amount { get; set; }
     public DateTime PaidAt { get; set; } = DateTime.UtcNow;
     public string Method { get; set; } = "Card";
+    public string Status { get; set; } = "Pending";
 
     public int ReservationId { get; set; }
     public Reservation? Reservation { get; set; }

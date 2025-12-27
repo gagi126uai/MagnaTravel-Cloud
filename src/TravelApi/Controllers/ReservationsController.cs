@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
@@ -7,6 +8,7 @@ namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/reservations")]
+[Authorize]
 public class ReservationsController : ControllerBase
 {
     private readonly AppDbContext _dbContext;
