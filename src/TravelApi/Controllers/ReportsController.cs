@@ -19,6 +19,7 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("summary")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ReportsSummaryResponse>> GetSummary(CancellationToken cancellationToken)
     {
         var totalCustomers = await _dbContext.Customers.CountAsync(cancellationToken);
@@ -34,6 +35,18 @@ public class ReportsController : ControllerBase
             totalPayments,
             totalRevenue,
             outstandingBalance);
+
+        return Ok(response);
+    }
+
+    [HttpGet("operations")]
+    public async Task<ActionResult<OperationsSummaryResponse>> GetOperationsSummary(CancellationToken cancellationToken)
+    {
+        var totalCustomers = await _dbContext.Customers.CountAsync(cancellationToken);
+        var totalReservations = await _dbContext.Reservations.CountAsync(cancellationToken);
+        var totalPayments = await _dbContext.Payments.CountAsync(cancellationToken);
+
+        var response = new OperationsSummaryResponse(totalCustomers, totalReservations, totalPayments);
 
         return Ok(response);
     }

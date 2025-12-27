@@ -14,6 +14,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Reservation> Reservations => Set<Reservation>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<Supplier> Suppliers => Set<Supplier>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -84,6 +85,19 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .WithMany(reservation => reservation.Payments)
                 .HasForeignKey(payment => payment.ReservationId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Supplier>(entity =>
+        {
+            entity.Property(supplier => supplier.Name)
+                .HasMaxLength(200)
+                .IsRequired();
+
+            entity.Property(supplier => supplier.Email)
+                .HasMaxLength(200);
+
+            entity.Property(supplier => supplier.Phone)
+                .HasMaxLength(50);
         });
     }
 }

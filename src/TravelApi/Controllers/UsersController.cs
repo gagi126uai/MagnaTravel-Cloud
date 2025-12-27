@@ -32,7 +32,12 @@ public class UsersController : ControllerBase
         foreach (var user in users)
         {
             var roles = await _userManager.GetRolesAsync(user);
-            response.Add(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles.ToList()));
+            response.Add(new UserSummaryResponse(
+                user.Id,
+                user.FullName,
+                user.Email ?? string.Empty,
+                roles.ToList(),
+                user.IsActive));
         }
 
         return Ok(response);
@@ -75,7 +80,12 @@ public class UsersController : ControllerBase
         }
 
         var roles = await _userManager.GetRolesAsync(user);
-        return Ok(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles.ToList()));
+        return Ok(new UserSummaryResponse(
+            user.Id,
+            user.FullName,
+            user.Email ?? string.Empty,
+            roles.ToList(),
+            user.IsActive));
     }
 
     [HttpPut("{id}")]
@@ -90,6 +100,7 @@ public class UsersController : ControllerBase
         user.FullName = request.FullName;
         user.Email = request.Email;
         user.UserName = request.Email;
+        user.IsActive = request.IsActive;
 
         var updateResult = await _userManager.UpdateAsync(user);
         if (!updateResult.Succeeded)
@@ -121,7 +132,36 @@ public class UsersController : ControllerBase
         }
 
         var roles = await _userManager.GetRolesAsync(user);
-        return Ok(new UserSummaryResponse(user.Id, user.FullName, user.Email ?? string.Empty, roles.ToList()));
+        return Ok(new UserSummaryResponse(
+            user.Id,
+            user.FullName,
+            user.Email ?? string.Empty,
+            roles.ToList(),
+            user.IsActive));
+    }
+
+    [HttpPut("{id}/password")]
+    public async Task<IActionResult> ChangePassword(string id, ChangePasswordRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return BadRequest(new[] { "La contraseña no puede estar vacía." });
+        }
+
+        var user = await _userManager.FindByIdAsync(id);
+        if (user is null)
+        {
+            return NotFound();
+        }
+
+        var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var result = await _userManager.ResetPasswordAsync(user, resetToken, request.NewPassword);
+        if (!result.Succeeded)
+        {
+            return BadRequest(result.Errors.Select(error => error.Description));
+        }
+
+        return NoContent();
     }
 
     [HttpDelete("{id}")]

@@ -38,7 +38,8 @@ public class AuthController : ControllerBase
         {
             UserName = request.Email,
             Email = request.Email,
-            FullName = request.FullName
+            FullName = request.FullName,
+            IsActive = true
         };
 
         var result = await _userManager.CreateAsync(user, request.Password);
@@ -68,6 +69,12 @@ public class AuthController : ControllerBase
         {
             _logger.LogWarning("Login failed: user not found for {Email}", request.Email);
             return Unauthorized();
+        }
+
+        if (!user.IsActive)
+        {
+            _logger.LogWarning("Login blocked: inactive user {Email}", request.Email);
+            return Unauthorized("Usuario desactivado. Contacta al administrador.");
         }
 
         var isValid = await _userManager.CheckPasswordAsync(user, request.Password);

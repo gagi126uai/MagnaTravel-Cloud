@@ -30,6 +30,11 @@ export default function SettingsPage() {
     fullName: "",
     email: "",
     role: "Colaborador",
+    isActive: true,
+  });
+  const [passwordForm, setPasswordForm] = useState({
+    id: "",
+    newPassword: "",
   });
 
   const roleOptions = useMemo(() => {
@@ -69,6 +74,10 @@ export default function SettingsPage() {
     setEditForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handlePasswordChange = (field, value) => {
+    setPasswordForm((prev) => ({ ...prev, [field]: value }));
+  };
+
   const handleCreateUser = async (event) => {
     event.preventDefault();
     try {
@@ -97,13 +106,15 @@ export default function SettingsPage() {
         fullName: editForm.fullName.trim(),
         email: editForm.email.trim(),
         role: editForm.role,
+        isActive: editForm.isActive,
       };
       await apiRequest(`/api/users/${editForm.id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
       showSuccess("Usuario actualizado.");
-      setEditForm({ id: "", fullName: "", email: "", role: "Colaborador" });
+      setEditForm({ id: "", fullName: "", email: "", role: "Colaborador", isActive: true });
+      setPasswordForm({ id: "", newPassword: "" });
       await loadUsers();
     } catch (error) {
       showError(error.message || "No pudimos actualizar el usuario.");
@@ -120,13 +131,33 @@ export default function SettingsPage() {
     }
   };
 
+  const handlePasswordReset = async (event) => {
+    event.preventDefault();
+    if (!passwordForm.id) {
+      return;
+    }
+
+    try {
+      await apiRequest(`/api/users/${passwordForm.id}/password`, {
+        method: "PUT",
+        body: JSON.stringify({ newPassword: passwordForm.newPassword }),
+      });
+      showSuccess("Contraseña actualizada.");
+      setPasswordForm((prev) => ({ ...prev, newPassword: "" }));
+    } catch (error) {
+      showError(error.message || "No pudimos actualizar la contraseña.");
+    }
+  };
+
   const startEdit = (user) => {
     setEditForm({
       id: user.id,
       fullName: user.fullName,
       email: user.email,
       role: user.roles?.[0] || "Colaborador",
+      isActive: user.isActive,
     });
+    setPasswordForm({ id: user.id, newPassword: "" });
   };
 
   return (
@@ -183,25 +214,26 @@ export default function SettingsPage() {
                     <th className="px-3 py-2">Nombre</th>
                     <th className="px-3 py-2">Email</th>
                     <th className="px-3 py-2">Rol</th>
+                    <th className="px-3 py-2">Estado</th>
                     <th className="px-3 py-2 text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {!adminUser ? (
                     <tr>
-                      <td className="px-3 py-4 text-slate-400" colSpan="4">
+                      <td className="px-3 py-4 text-slate-400" colSpan="5">
                         Acceso restringido.
                       </td>
                     </tr>
                   ) : loading ? (
                     <tr>
-                      <td className="px-3 py-4 text-slate-400" colSpan="4">
+                      <td className="px-3 py-4 text-slate-400" colSpan="5">
                         Cargando usuarios...
                       </td>
                     </tr>
                   ) : users.length === 0 ? (
                     <tr>
-                      <td className="px-3 py-4 text-slate-400" colSpan="4">
+                      <td className="px-3 py-4 text-slate-400" colSpan="5">
                         No hay usuarios registrados.
                       </td>
                     </tr>
@@ -212,6 +244,17 @@ export default function SettingsPage() {
                         <td className="px-3 py-3">{user.email}</td>
                         <td className="px-3 py-3">
                           {roleLabels[user.roles?.[0]] || user.roles?.[0] || "Sin rol"}
+                        </td>
+                        <td className="px-3 py-3">
+                          <span
+                            className={`rounded-full px-2 py-1 text-xs ${
+                              user.isActive
+                                ? "bg-emerald-500/10 text-emerald-200"
+                                : "bg-rose-500/10 text-rose-200"
+                            }`}
+                          >
+                            {user.isActive ? "Activo" : "Inactivo"}
+                          </span>
                         </td>
                         <td className="px-3 py-3 text-right">
                           <div className="flex justify-end gap-2">
@@ -311,7 +354,7 @@ export default function SettingsPage() {
                   onChange={(event) => handleEditChange("fullName", event.target.value)}
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
                   placeholder="Nombre completo"
-                  disabled={!editForm.id}
+                  disabled={!editForm.id || !adminUser}
                   required
                 />
                 <input
@@ -320,14 +363,14 @@ export default function SettingsPage() {
                   onChange={(event) => handleEditChange("email", event.target.value)}
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
                   placeholder="Email"
-                  disabled={!editForm.id}
+                  disabled={!editForm.id || !adminUser}
                   required
                 />
                 <select
                   value={editForm.role}
                   onChange={(event) => handleEditChange("role", event.target.value)}
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
-                  disabled={!editForm.id}
+                  disabled={!editForm.id || !adminUser}
                 >
                   {roleOptions.map((role) => (
                     <option key={role} value={role}>
@@ -335,13 +378,51 @@ export default function SettingsPage() {
                     </option>
                   ))}
                 </select>
+                <label className="flex items-center gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={editForm.isActive}
+                    onChange={(event) => handleEditChange("isActive", event.target.checked)}
+                    disabled={!editForm.id || !adminUser}
+                    className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-indigo-500"
+                  />
+                  Usuario activo
+                </label>
               </div>
               <button
                 type="submit"
-                disabled={!editForm.id}
+                disabled={!editForm.id || !adminUser}
                 className="mt-4 w-full rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Guardar cambios
+              </button>
+            </form>
+
+            <form
+              onSubmit={handlePasswordReset}
+              className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6"
+            >
+              <h3 className="text-lg font-semibold text-white">Cambiar contraseña</h3>
+              <p className="text-sm text-slate-400">
+                Define una nueva contraseña para el usuario seleccionado.
+              </p>
+              <div className="mt-4 space-y-3">
+                <input
+                  type="password"
+                  value={passwordForm.newPassword}
+                  onChange={(event) => handlePasswordChange("newPassword", event.target.value)}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  placeholder="Nueva contraseña"
+                  disabled={!passwordForm.id || !adminUser}
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!passwordForm.id || !adminUser}
+                className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Actualizar contraseña
               </button>
             </form>
           </section>

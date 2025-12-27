@@ -8,6 +8,7 @@ import ReservationsPage from "./pages/ReservationsPage";
 import PaymentsPage from "./pages/PaymentsPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
+import SuppliersPage from "./pages/SuppliersPage";
 
 function PrivateRoute({ children }) {
   if (!isAuthenticated()) {
@@ -39,7 +40,11 @@ export default function App() {
                 <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/reservations" element={<ReservationsPage />} />
                 <Route path="/payments" element={<PaymentsPage />} />
-                <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/suppliers" element={<SuppliersPage />} />
+                <Route
+                  path="/reports"
+                  element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
+                />
                 <Route
                   path="/settings"
                   element={adminUser ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
