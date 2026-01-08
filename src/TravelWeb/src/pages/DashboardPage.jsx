@@ -34,45 +34,52 @@ export default function DashboardPage() {
   };
 
   return (
-    <div>
-      <h2 className="text-2xl font-semibold">Dashboard</h2>
-      <p className="mt-1 text-sm text-slate-400">
-        Resumen rápido de tu operación.
-      </p>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold">Dashboard</h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Resumen ejecutivo de la operación diaria.
+          </p>
+        </div>
+        <div className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          Actualizado en tiempo real
+        </div>
+      </div>
 
       {summary && (
-        <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-slate-950/30">
-            <p className="text-xs text-slate-400">Clientes</p>
-            <p className="text-2xl font-semibold">{summary.totalCustomers}</p>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Clientes</p>
+            <p className="mt-2 text-2xl font-semibold">{summary.totalCustomers}</p>
           </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-slate-950/30">
-            <p className="text-xs text-slate-400">Reservas</p>
-            <p className="text-2xl font-semibold">{summary.totalReservations}</p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Reservas</p>
+            <p className="mt-2 text-2xl font-semibold">{summary.totalReservations}</p>
           </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-slate-950/30">
-            <p className="text-xs text-slate-400">Pagos</p>
-            <p className="text-2xl font-semibold">{summary.totalPayments}</p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Pagos</p>
+            <p className="mt-2 text-2xl font-semibold">{summary.totalPayments}</p>
           </div>
           {adminUser ? (
-            <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-slate-950/30">
-              <p className="text-xs text-slate-400">Ingresos</p>
-              <p className="text-2xl font-semibold">${summary.totalRevenue.toFixed(2)}</p>
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm dark:border-indigo-500/30 dark:bg-indigo-500/10">
+              <p className="text-xs uppercase tracking-[0.2em] text-indigo-500">Ingresos</p>
+              <p className="mt-2 text-2xl font-semibold">${summary.totalRevenue.toFixed(2)}</p>
             </div>
           ) : (
-            <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-slate-950/30">
-              <p className="text-xs text-slate-400">Operación</p>
-              <p className="text-2xl font-semibold">En curso</p>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Operación</p>
+              <p className="mt-2 text-2xl font-semibold">En curso</p>
             </div>
           )}
         </div>
       )}
 
-      <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-950/70 p-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-white">Búsqueda rápida</h3>
-            <p className="text-sm text-slate-400">
+            <h3 className="text-lg font-semibold">Búsqueda rápida</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               Encuentra vouchers, clientes o pagos sin salir del dashboard.
             </p>
           </div>
@@ -81,12 +88,12 @@ export default function DashboardPage() {
               type="text"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
               placeholder="Buscar por nombre, voucher o método de pago"
             />
             <button
               type="submit"
-              className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400"
+              className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-500"
             >
               Buscar
             </button>
@@ -95,32 +102,32 @@ export default function DashboardPage() {
 
         {searchResults && (
           <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-              <h4 className="text-sm font-semibold text-white">Clientes</h4>
-              <ul className="mt-3 space-y-2 text-sm text-slate-300">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
+              <h4 className="text-sm font-semibold">Clientes</h4>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
                 {searchResults.customers.length === 0 ? (
                   <li className="text-slate-500">Sin resultados.</li>
                 ) : (
                   searchResults.customers.map((customer) => (
-                    <li key={customer.id} className="rounded-lg bg-slate-950/60 p-2">
-                      <p className="font-medium text-white">{customer.fullName}</p>
-                      <p className="text-xs text-slate-400">{customer.email || "Sin email"}</p>
+                    <li key={customer.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-slate-900/70">
+                      <p className="font-medium">{customer.fullName}</p>
+                      <p className="text-xs text-slate-500">{customer.email || "Sin email"}</p>
                     </li>
                   ))
                 )}
               </ul>
             </div>
 
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-              <h4 className="text-sm font-semibold text-white">Vouchers</h4>
-              <ul className="mt-3 space-y-2 text-sm text-slate-300">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
+              <h4 className="text-sm font-semibold">Vouchers</h4>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
                 {searchResults.vouchers.length === 0 ? (
                   <li className="text-slate-500">Sin resultados.</li>
                 ) : (
                   searchResults.vouchers.map((voucher) => (
-                    <li key={voucher.id} className="rounded-lg bg-slate-950/60 p-2">
-                      <p className="font-medium text-white">{voucher.referenceCode}</p>
-                      <p className="text-xs text-slate-400">
+                    <li key={voucher.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-slate-900/70">
+                      <p className="font-medium">{voucher.referenceCode}</p>
+                      <p className="text-xs text-slate-500">
                         {voucher.customerName} · {voucher.status}
                       </p>
                     </li>
@@ -129,18 +136,18 @@ export default function DashboardPage() {
               </ul>
             </div>
 
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-              <h4 className="text-sm font-semibold text-white">Pagos</h4>
-              <ul className="mt-3 space-y-2 text-sm text-slate-300">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
+              <h4 className="text-sm font-semibold">Pagos</h4>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
                 {searchResults.payments.length === 0 ? (
                   <li className="text-slate-500">Sin resultados.</li>
                 ) : (
                   searchResults.payments.map((payment) => (
-                    <li key={payment.id} className="rounded-lg bg-slate-950/60 p-2">
-                      <p className="font-medium text-white">
+                    <li key={payment.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-slate-900/70">
+                      <p className="font-medium">
                         ${Number(payment.amount).toFixed(2)}
                       </p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-slate-500">
                         {payment.reservationCode} · {payment.method}
                       </p>
                     </li>

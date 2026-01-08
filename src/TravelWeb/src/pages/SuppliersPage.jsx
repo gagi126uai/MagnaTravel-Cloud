@@ -85,21 +85,23 @@ export default function SuppliersPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold text-white">Proveedores</h1>
-        <p className="text-sm text-slate-400">Carga y gestiona proveedores turísticos.</p>
+        <h1 className="text-2xl font-semibold">Proveedores</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Carga y gestiona proveedores turísticos.
+        </p>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
-        <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Listado</h2>
-            <span className="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-300">
+            <h2 className="text-lg font-semibold">Listado</h2>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-300">
               {suppliers.length} proveedores
             </span>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-sm text-slate-200">
-              <thead className="text-xs uppercase text-slate-400">
+              <thead className="text-xs uppercase text-slate-500 dark:text-slate-400">
                 <tr>
                   <th className="px-3 py-2">Nombre</th>
                   <th className="px-3 py-2">Email</th>
@@ -107,7 +109,7 @@ export default function SuppliersPage() {
                   <th className="px-3 py-2 text-right">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-slate-200 text-slate-700 dark:divide-slate-800 dark:text-slate-200">
                 {suppliers.length === 0 ? (
                   <tr>
                     <td className="px-3 py-4 text-slate-400" colSpan="4">
@@ -125,7 +127,7 @@ export default function SuppliersPage() {
                           <button
                             type="button"
                             onClick={() => handleEdit(supplier)}
-                            className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                            className="rounded-lg border border-slate-200 px-3 py-1 text-xs text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                           >
                             Editar
                           </button>
@@ -146,17 +148,19 @@ export default function SuppliersPage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6">
-          <h2 className="text-lg font-semibold text-white">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+          <h2 className="text-lg font-semibold">
             {editingId ? "Editar proveedor" : "Nuevo proveedor"}
           </h2>
-          <p className="text-sm text-slate-400">Gestiona contactos clave para reservas.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Gestiona contactos clave para reservas.
+          </p>
           <form onSubmit={handleSubmit} className="mt-4 space-y-3">
             <input
               type="text"
               value={formData.name}
               onChange={(event) => handleChange("name", event.target.value)}
-              className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
               placeholder="Nombre del proveedor"
               required
             />
@@ -164,26 +168,26 @@ export default function SuppliersPage() {
               type="email"
               value={formData.email}
               onChange={(event) => handleChange("email", event.target.value)}
-              className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
               placeholder="Email"
             />
             <input
               type="text"
               value={formData.phone}
               onChange={(event) => handleChange("phone", event.target.value)}
-              className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
               placeholder="Teléfono"
             />
             <textarea
               value={formData.notes}
               onChange={(event) => handleChange("notes", event.target.value)}
-              className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
               placeholder="Notas"
               rows="3"
             />
             <button
               type="submit"
-              className="w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400"
+              className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-500"
             >
               {editingId ? "Guardar cambios" : "Crear proveedor"}
             </button>

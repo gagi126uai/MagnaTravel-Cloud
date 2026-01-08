@@ -163,13 +163,13 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold text-white">Configuración</h1>
-        <p className="text-sm text-slate-400">
+        <h1 className="text-2xl font-semibold">Configuración</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           Gestiona usuarios, roles y la planificación operativa de la plataforma.
         </p>
       </header>
 
-      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
         <div className="flex flex-wrap gap-2">
           {tabs.map((tab) => (
             <button
@@ -178,8 +178,8 @@ export default function SettingsPage() {
               onClick={() => setActiveTab(tab.id)}
               className={`rounded-full px-4 py-2 text-sm font-medium ${
                 activeTab === tab.id
-                  ? "bg-indigo-500/20 text-indigo-200"
-                  : "text-slate-300 hover:bg-slate-900"
+                  ? "bg-indigo-600 text-white shadow-sm shadow-indigo-500/30"
+                  : "text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
               }`}
             >
               {tab.label}
@@ -190,13 +190,13 @@ export default function SettingsPage() {
 
       {activeTab === "users" ? (
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6">
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-white">Usuarios del sistema</h2>
-                <p className="text-sm text-slate-400">Administra accesos y roles.</p>
+                <h2 className="text-lg font-semibold">Usuarios del sistema</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Administra accesos y roles.</p>
               </div>
-              <span className="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-300">
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-300">
                 {users.length} usuarios
               </span>
             </div>
@@ -208,8 +208,8 @@ export default function SettingsPage() {
                   activar roles, vuelve a iniciar sesión para refrescar permisos.
                 </div>
               ) : null}
-              <table className="min-w-full text-left text-sm text-slate-200">
-                <thead className="text-xs uppercase text-slate-400">
+              <table className="min-w-full text-left text-sm text-slate-700 dark:text-slate-200">
+                <thead className="text-xs uppercase text-slate-500 dark:text-slate-400">
                   <tr>
                     <th className="px-3 py-2">Nombre</th>
                     <th className="px-3 py-2">Email</th>
@@ -285,16 +285,18 @@ export default function SettingsPage() {
           <section className="space-y-6">
             <form
               onSubmit={handleCreateUser}
-              className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6"
+              className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
             >
-              <h3 className="text-lg font-semibold text-white">Crear usuario</h3>
-              <p className="text-sm text-slate-400">Genera un acceso nuevo con rol asignado.</p>
+              <h3 className="text-lg font-semibold">Crear usuario</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Genera un acceso nuevo con rol asignado.
+              </p>
               <div className="mt-4 space-y-3">
                 <input
                   type="text"
                   value={createForm.fullName}
                   onChange={(event) => handleCreateChange("fullName", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   placeholder="Nombre completo"
                   required
                   disabled={!adminUser}
@@ -303,7 +305,7 @@ export default function SettingsPage() {
                   type="email"
                   value={createForm.email}
                   onChange={(event) => handleCreateChange("email", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   placeholder="Email"
                   required
                   disabled={!adminUser}
@@ -312,7 +314,7 @@ export default function SettingsPage() {
                   type="password"
                   value={createForm.password}
                   onChange={(event) => handleCreateChange("password", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   placeholder="Contraseña"
                   required
                   disabled={!adminUser}
@@ -320,7 +322,7 @@ export default function SettingsPage() {
                 <select
                   value={createForm.role}
                   onChange={(event) => handleCreateChange("role", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   disabled={!adminUser}
                 >
                   {roleOptions.map((role) => (
@@ -333,7 +335,7 @@ export default function SettingsPage() {
               <button
                 type="submit"
                 disabled={!adminUser}
-                className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Crear usuario
               </button>
@@ -341,10 +343,10 @@ export default function SettingsPage() {
 
             <form
               onSubmit={handleEditUser}
-              className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6"
+              className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
             >
-              <h3 className="text-lg font-semibold text-white">Editar usuario</h3>
-              <p className="text-sm text-slate-400">
+              <h3 className="text-lg font-semibold">Editar usuario</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
                 Selecciona un usuario desde la tabla para modificarlo.
               </p>
               <div className="mt-4 space-y-3">
@@ -352,7 +354,7 @@ export default function SettingsPage() {
                   type="text"
                   value={editForm.fullName}
                   onChange={(event) => handleEditChange("fullName", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   placeholder="Nombre completo"
                   disabled={!editForm.id || !adminUser}
                   required
@@ -361,7 +363,7 @@ export default function SettingsPage() {
                   type="email"
                   value={editForm.email}
                   onChange={(event) => handleEditChange("email", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   placeholder="Email"
                   disabled={!editForm.id || !adminUser}
                   required
@@ -369,7 +371,7 @@ export default function SettingsPage() {
                 <select
                   value={editForm.role}
                   onChange={(event) => handleEditChange("role", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   disabled={!editForm.id || !adminUser}
                 >
                   {roleOptions.map((role) => (
@@ -392,7 +394,7 @@ export default function SettingsPage() {
               <button
                 type="submit"
                 disabled={!editForm.id || !adminUser}
-                className="mt-4 w-full rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-4 w-full rounded-xl bg-slate-700 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Guardar cambios
               </button>
@@ -400,10 +402,10 @@ export default function SettingsPage() {
 
             <form
               onSubmit={handlePasswordReset}
-              className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6"
+              className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
             >
-              <h3 className="text-lg font-semibold text-white">Cambiar contraseña</h3>
-              <p className="text-sm text-slate-400">
+              <h3 className="text-lg font-semibold">Cambiar contraseña</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
                 Define una nueva contraseña para el usuario seleccionado.
               </p>
               <div className="mt-4 space-y-3">
@@ -411,7 +413,7 @@ export default function SettingsPage() {
                   type="password"
                   value={passwordForm.newPassword}
                   onChange={(event) => handlePasswordChange("newPassword", event.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   placeholder="Nueva contraseña"
                   disabled={!passwordForm.id || !adminUser}
                   required
@@ -420,7 +422,7 @@ export default function SettingsPage() {
               <button
                 type="submit"
                 disabled={!passwordForm.id || !adminUser}
-                className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Actualizar contraseña
               </button>
@@ -429,9 +431,9 @@ export default function SettingsPage() {
         </div>
       ) : (
         <section className="space-y-6">
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6">
-            <h2 className="text-lg font-semibold text-white">Programación del sistema</h2>
-            <p className="text-sm text-slate-400">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+            <h2 className="text-lg font-semibold">Programación del sistema</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               Emisión de vouchers y control administrativo en una plataforma integral para mejorar la
               eficiencia y automatizar tareas.
             </p>
@@ -462,10 +464,12 @@ export default function SettingsPage() {
             ].map((item) => (
               <div
                 key={item.title}
-                className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5"
+                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
               >
-                <h3 className="text-base font-semibold text-white">{item.title}</h3>
-                <p className="mt-2 text-sm text-slate-400">{item.description}</p>
+                <h3 className="text-base font-semibold">{item.title}</h3>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                  {item.description}
+                </p>
               </div>
             ))}
           </div>
