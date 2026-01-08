@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Contracts.Accounting;
 using TravelApi.Contracts.Reports;
 using TravelApi.Data;
 
@@ -68,6 +69,53 @@ public class ReportsController : ControllerBase
             totalOverbookingLimit,
             totalAvailable,
             totalOverbooked);
+
+        return Ok(response);
+    }
+
+    [HttpGet("bsp-dashboard")]
+    public async Task<ActionResult<BspDashboardResponse>> GetBspDashboard(CancellationToken cancellationToken)
+    {
+        var totalBatches = await _dbContext.BspImportBatches.CountAsync(cancellationToken);
+        var openBatches = await _dbContext.BspImportBatches.CountAsync(
+            batch => batch.Status == "Open",
+            cancellationToken);
+        var closedBatches = totalBatches - openBatches;
+
+        var totalRecords = await _dbContext.BspNormalizedRecords.CountAsync(cancellationToken);
+        var totalImportedAmount = await _dbContext.BspNormalizedRecords
+            .SumAsync(record => (decimal?)record.TotalAmount, cancellationToken) ?? 0m;
+        var totalMatchedAmount = await _dbContext.BspReconciliationEntries
+            .Where(entry => entry.Status == "Matched")
+            .Select(entry => entry.BspNormalizedRecord!.TotalAmount)
+            .SumAsync(amount => (decimal?)amount, cancellationToken) ?? 0m;
+
+        var response = new BspDashboardResponse(
+            totalBatches,
+            openBatches,
+            closedBatches,
+            totalRecords,
+            totalImportedAmount,
+            totalMatchedAmount);
+
+        return Ok(response);
+    }
+
+    [HttpGet("accounting-dashboard")]
+    public async Task<ActionResult<AccountingDashboardResponse>> GetAccountingDashboard(CancellationToken cancellationToken)
+    {
+        var totalEntries = await _dbContext.AccountingEntries.CountAsync(cancellationToken);
+        var totalLines = await _dbContext.AccountingLines.CountAsync(cancellationToken);
+        var totalDebits = await _dbContext.AccountingLines
+            .SumAsync(line => (decimal?)line.Debit, cancellationToken) ?? 0m;
+        var totalCredits = await _dbContext.AccountingLines
+            .SumAsync(line => (decimal?)line.Credit, cancellationToken) ?? 0m;
+
+        var response = new AccountingDashboardResponse(
+            totalEntries,
+            totalLines,
+            totalDebits,
+            totalCredits);
 
         return Ok(response);
     }
