@@ -5,7 +5,8 @@ namespace TravelApi.Contracts.Tariffs;
 public record TariffSummaryDto(
     int Id,
     string Name,
-    Currency Currency,
+    string ProductType,
+    Currency? Currency,
     decimal DefaultPrice,
     bool IsActive,
     DateTime CreatedAt

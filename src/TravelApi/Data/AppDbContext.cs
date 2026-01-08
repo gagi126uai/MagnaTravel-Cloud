@@ -17,6 +17,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     public DbSet<Tariff> Tariffs => Set<Tariff>();
     public DbSet<TariffValidity> TariffValidities => Set<TariffValidity>();
+    public DbSet<Quote> Quotes => Set<Quote>();
+    public DbSet<QuoteVersion> QuoteVersions => Set<QuoteVersion>();
+    public DbSet<TreasuryReceipt> TreasuryReceipts => Set<TreasuryReceipt>();
+    public DbSet<TreasuryApplication> TreasuryApplications => Set<TreasuryApplication>();
     public DbSet<Cupo> Cupos => Set<Cupo>();
     public DbSet<CupoAssignment> CupoAssignments => Set<CupoAssignment>();
     public DbSet<BspImportBatch> BspImportBatches => Set<BspImportBatch>();
@@ -119,6 +123,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(tariff => tariff.Description)
                 .HasMaxLength(500);
 
+            entity.Property(tariff => tariff.ProductType)
+                .HasMaxLength(50)
+                .IsRequired();
+
             entity.Property(tariff => tariff.Currency)
                 .HasConversion<string>()
                 .HasMaxLength(10);
@@ -130,6 +138,81 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .WithOne(validity => validity.Tariff)
                 .HasForeignKey(validity => validity.TariffId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Quote>(entity =>
+        {
+            entity.Property(quote => quote.ReferenceCode)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(quote => quote.Status)
+                .HasMaxLength(30)
+                .IsRequired();
+
+            entity.HasOne(quote => quote.Customer)
+                .WithMany()
+                .HasForeignKey(quote => quote.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(quote => quote.Versions)
+                .WithOne(version => version.Quote)
+                .HasForeignKey(version => version.QuoteId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<QuoteVersion>(entity =>
+        {
+            entity.Property(version => version.ProductType)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(version => version.Currency)
+                .HasConversion<string>()
+                .HasMaxLength(10);
+
+            entity.Property(version => version.TotalAmount)
+                .HasPrecision(12, 2);
+
+            entity.Property(version => version.Notes)
+                .HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<TreasuryReceipt>(entity =>
+        {
+            entity.Property(receipt => receipt.Reference)
+                .HasMaxLength(100)
+                .IsRequired();
+
+            entity.Property(receipt => receipt.Method)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(receipt => receipt.Currency)
+                .HasConversion<string>()
+                .HasMaxLength(10);
+
+            entity.Property(receipt => receipt.Amount)
+                .HasPrecision(12, 2);
+
+            entity.Property(receipt => receipt.Notes)
+                .HasMaxLength(500);
+
+            entity.HasMany(receipt => receipt.Applications)
+                .WithOne(application => application.TreasuryReceipt)
+                .HasForeignKey(application => application.TreasuryReceiptId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TreasuryApplication>(entity =>
+        {
+            entity.Property(application => application.AmountApplied)
+                .HasPrecision(12, 2);
+
+            entity.HasOne(application => application.Reservation)
+                .WithMany()
+                .HasForeignKey(application => application.ReservationId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<TariffValidity>(entity =>

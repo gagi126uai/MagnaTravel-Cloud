@@ -4,7 +4,6 @@ import { showError, showSuccess } from "../alerts";
 
 const initialForm = {
   referenceCode: "",
-  status: "Draft",
   productType: "Flight",
   departureDate: "",
   returnDate: "",
@@ -15,10 +14,16 @@ const initialForm = {
   customerId: "",
 };
 
+const initialStatusForm = {
+  reservationId: "",
+  status: "",
+};
+
 export default function ReservationsPage() {
   const [reservations, setReservations] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [form, setForm] = useState(initialForm);
+  const [statusForm, setStatusForm] = useState(initialStatusForm);
 
   const loadData = async () => {
     try {
@@ -39,6 +44,10 @@ export default function ReservationsPage() {
 
   const handleChange = (event) => {
     setForm((prev) => ({ ...prev, [event.target.name]: event.target.value }));
+  };
+
+  const handleStatusChange = (event) => {
+    setStatusForm((prev) => ({ ...prev, [event.target.name]: event.target.value }));
   };
 
   const handleSubmit = async (event) => {
@@ -64,6 +73,38 @@ export default function ReservationsPage() {
     }
   };
 
+  const handleStatusSubmit = async (event) => {
+    event.preventDefault();
+    try {
+      await apiRequest(`/api/reservations/${statusForm.reservationId}/status`, {
+        method: "PUT",
+        body: JSON.stringify({
+          status: statusForm.status,
+        }),
+      });
+      setStatusForm(initialStatusForm);
+      loadData();
+      await showSuccess("Estado actualizado correctamente.");
+    } catch {
+      await showError("No se pudo actualizar el estado.");
+    }
+  };
+
+  const currentReservation = reservations.find(
+    (reservation) => String(reservation.id) === statusForm.reservationId
+  );
+
+  const statusOptions = () => {
+    if (!currentReservation) return [];
+    if (currentReservation.status === "Draft") {
+      return ["Draft", "Confirmed"];
+    }
+    if (currentReservation.status === "Confirmed") {
+      return ["Confirmed", "Cancelled"];
+    }
+    return ["Cancelled"];
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -85,16 +126,6 @@ export default function ReservationsPage() {
           className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
           required
         />
-        <select
-          name="status"
-          value={form.status}
-          onChange={handleChange}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-        >
-          <option value="Draft">Borrador</option>
-          <option value="Confirmed">Confirmada</option>
-          <option value="Cancelled">Cancelada</option>
-        </select>
         <select
           name="productType"
           value={form.productType}
@@ -168,6 +199,51 @@ export default function ReservationsPage() {
           className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-500 md:col-span-3"
         >
           Guardar reserva
+        </button>
+      </form>
+
+      <form
+        className="grid gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60 md:grid-cols-3"
+        onSubmit={handleStatusSubmit}
+      >
+        <select
+          name="reservationId"
+          value={statusForm.reservationId}
+          onChange={(event) => {
+            handleStatusChange(event);
+            setStatusForm((prev) => ({ ...prev, status: "" }));
+          }}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
+          required
+        >
+          <option value="">Selecciona reserva</option>
+          {reservations.map((reservation) => (
+            <option key={reservation.id} value={reservation.id}>
+              {reservation.referenceCode} - {reservation.customer?.fullName}
+            </option>
+          ))}
+        </select>
+        <select
+          name="status"
+          value={statusForm.status}
+          onChange={handleStatusChange}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
+          required
+        >
+          <option value="" disabled>
+            Selecciona estado
+          </option>
+          {statusOptions().map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-500"
+        >
+          Actualizar estado
         </button>
       </form>
 
