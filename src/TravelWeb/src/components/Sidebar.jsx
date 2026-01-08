@@ -5,6 +5,7 @@ const baseLinks = [
   { to: "/customers", label: "Clientes" },
   { to: "/reservations", label: "Reservas" },
   { to: "/payments", label: "Pagos" },
+  { to: "/tariffs", label: "Tarifarios" },
   { to: "/suppliers", label: "Proveedores" },
 ];
 
