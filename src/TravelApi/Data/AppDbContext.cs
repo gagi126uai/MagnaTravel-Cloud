@@ -17,6 +17,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     public DbSet<Tariff> Tariffs => Set<Tariff>();
     public DbSet<TariffValidity> TariffValidities => Set<TariffValidity>();
+    public DbSet<Cupo> Cupos => Set<Cupo>();
+    public DbSet<CupoAssignment> CupoAssignments => Set<CupoAssignment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -131,6 +133,33 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
             entity.Property(validity => validity.Notes)
                 .HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<Cupo>(entity =>
+        {
+            entity.Property(cupo => cupo.Name)
+                .HasMaxLength(200)
+                .IsRequired();
+
+            entity.Property(cupo => cupo.ProductType)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(cupo => cupo.RowVersion)
+                .IsConcurrencyToken();
+
+            entity.HasMany(cupo => cupo.Assignments)
+                .WithOne(assignment => assignment.Cupo)
+                .HasForeignKey(assignment => assignment.CupoId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CupoAssignment>(entity =>
+        {
+            entity.HasOne(assignment => assignment.Reservation)
+                .WithMany()
+                .HasForeignKey(assignment => assignment.ReservationId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }
