@@ -28,6 +28,7 @@ public class TariffsController : ControllerBase
             .Select(tariff => new TariffSummaryDto(
                 tariff.Id,
                 tariff.Name,
+                tariff.ProductType,
                 tariff.Currency,
                 tariff.DefaultPrice,
                 tariff.IsActive,
@@ -54,6 +55,7 @@ public class TariffsController : ControllerBase
             tariff.Id,
             tariff.Name,
             tariff.Description,
+            tariff.ProductType,
             tariff.Currency,
             tariff.DefaultPrice,
             tariff.IsActive,
@@ -77,10 +79,16 @@ public class TariffsController : ControllerBase
         CreateTariffRequest request,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.ProductType))
+        {
+            return BadRequest("El producto del tarifario es obligatorio.");
+        }
+
         var tariff = new Tariff
         {
             Name = request.Name,
             Description = request.Description,
+            ProductType = request.ProductType,
             Currency = request.Currency,
             DefaultPrice = request.DefaultPrice,
             IsActive = request.IsActive
@@ -92,6 +100,7 @@ public class TariffsController : ControllerBase
         var dto = new TariffSummaryDto(
             tariff.Id,
             tariff.Name,
+            tariff.ProductType,
             tariff.Currency,
             tariff.DefaultPrice,
             tariff.IsActive,
@@ -106,6 +115,11 @@ public class TariffsController : ControllerBase
         UpdateTariffRequest request,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.ProductType))
+        {
+            return BadRequest("El producto del tarifario es obligatorio.");
+        }
+
         var tariff = await _dbContext.Tariffs.FindAsync(new object[] { id }, cancellationToken);
 
         if (tariff is null)
@@ -115,6 +129,7 @@ public class TariffsController : ControllerBase
 
         tariff.Name = request.Name;
         tariff.Description = request.Description;
+        tariff.ProductType = request.ProductType;
         tariff.Currency = request.Currency;
         tariff.DefaultPrice = request.DefaultPrice;
         tariff.IsActive = request.IsActive;
@@ -124,6 +139,7 @@ public class TariffsController : ControllerBase
         var dto = new TariffSummaryDto(
             tariff.Id,
             tariff.Name,
+            tariff.ProductType,
             tariff.Currency,
             tariff.DefaultPrice,
             tariff.IsActive,

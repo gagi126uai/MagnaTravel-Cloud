@@ -4,7 +4,7 @@ public class Reservation
 {
     public int Id { get; set; }
     public string ReferenceCode { get; set; } = string.Empty;
-    public string Status { get; set; } = "Draft";
+    public string Status { get; set; } = ReservationStatuses.Draft;
     public string ProductType { get; set; } = "Flight";
     public DateTime DepartureDate { get; set; }
     public DateTime? ReturnDate { get; set; }

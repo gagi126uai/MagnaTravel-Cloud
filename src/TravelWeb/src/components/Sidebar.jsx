@@ -3,9 +3,11 @@ import { NavLink } from "react-router-dom";
 const baseLinks = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/customers", label: "Clientes" },
+  { to: "/quotes", label: "Cotizaciones" },
   { to: "/reservations", label: "Reservas" },
   { to: "/cupos", label: "Cupos" },
   { to: "/payments", label: "Pagos" },
+  { to: "/treasury", label: "Tesorería" },
   { to: "/tariffs", label: "Tarifarios" },
   { to: "/suppliers", label: "Proveedores" },
 ];

@@ -28,4 +28,55 @@ public class TariffValidityTests
 
         Assert.True(validity.HasValidRange());
     }
+
+    [Fact]
+    public void HasValidRange_AllowsSameDayRange()
+    {
+        var validity = new TariffValidity
+        {
+            StartDate = new DateTime(2024, 8, 10),
+            EndDate = new DateTime(2024, 8, 10)
+        };
+
+        Assert.True(validity.HasValidRange());
+    }
+
+    [Fact]
+    public void IsActiveOn_ReturnsTrueWhenDateWithinRangeAndActive()
+    {
+        var validity = new TariffValidity
+        {
+            StartDate = new DateTime(2024, 8, 1),
+            EndDate = new DateTime(2024, 8, 10),
+            IsActive = true
+        };
+
+        Assert.True(validity.IsActiveOn(new DateTime(2024, 8, 5)));
+    }
+
+    [Fact]
+    public void IsActiveOn_ReturnsFalseWhenDateOutsideRange()
+    {
+        var validity = new TariffValidity
+        {
+            StartDate = new DateTime(2024, 8, 1),
+            EndDate = new DateTime(2024, 8, 10),
+            IsActive = true
+        };
+
+        Assert.False(validity.IsActiveOn(new DateTime(2024, 8, 20)));
+    }
+
+    [Fact]
+    public void IsActiveOn_ReturnsFalseWhenInactive()
+    {
+        var validity = new TariffValidity
+        {
+            StartDate = new DateTime(2024, 8, 1),
+            EndDate = new DateTime(2024, 8, 10),
+            IsActive = false
+        };
+
+        Assert.False(validity.IsActiveOn(new DateTime(2024, 8, 5)));
+    }
 }

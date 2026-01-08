@@ -5,7 +5,8 @@ public class Tariff
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
-    public Currency Currency { get; set; } = Currency.USD;
+    public string ProductType { get; set; } = "General";
+    public Currency? Currency { get; set; } = Currency.USD;
     public decimal DefaultPrice { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

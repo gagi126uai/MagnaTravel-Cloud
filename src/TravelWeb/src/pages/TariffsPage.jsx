@@ -5,6 +5,7 @@ import { showError, showSuccess } from "../alerts";
 const initialTariffForm = {
   name: "",
   description: "",
+  productType: "General",
   currency: "USD",
   defaultPrice: "",
   isActive: true,
@@ -27,6 +28,7 @@ export default function TariffsPage() {
   const [selectedTariffId, setSelectedTariffId] = useState("");
 
   const currencyOptions = useMemo(() => ["ARS", "USD", "EUR"], []);
+  const productOptions = useMemo(() => ["General", "Flight", "Hotel", "Package", "Insurance"], []);
 
   const loadTariffs = () => {
     apiRequest("/api/tariffs")
@@ -82,6 +84,7 @@ export default function TariffsPage() {
         method: "POST",
         body: JSON.stringify({
           ...tariffForm,
+          currency: tariffForm.currency || null,
           defaultPrice: Number(tariffForm.defaultPrice),
         }),
       });
@@ -148,6 +151,18 @@ export default function TariffsPage() {
             onChange={handleTariffChange}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
           />
+          <select
+            name="productType"
+            value={tariffForm.productType}
+            onChange={handleTariffChange}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
+          >
+            {productOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
           <div className="grid gap-4 md:grid-cols-2">
             <select
               name="currency"
@@ -155,6 +170,7 @@ export default function TariffsPage() {
               onChange={handleTariffChange}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
             >
+              <option value="">Sin moneda</option>
               {currencyOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
@@ -215,14 +231,15 @@ export default function TariffsPage() {
               >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold">{tariff.name}</span>
-                  <span className="text-xs uppercase tracking-widest">{tariff.currency}</span>
+                  <span className="text-xs uppercase tracking-widest">{tariff.currency || "Sin moneda"}</span>
                 </div>
                 <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                   Base: {tariff.defaultPrice.toLocaleString("es-AR", {
                     style: "currency",
-                    currency: tariff.currency,
+                    currency: tariff.currency || "USD",
                   })}
                 </div>
+                <div className="mt-1 text-xs text-slate-400">{tariff.productType}</div>
               </button>
             ))}
             {tariffs.length === 0 && (

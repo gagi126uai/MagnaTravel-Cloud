@@ -14,4 +14,10 @@ public class TariffValidity
     public Tariff? Tariff { get; set; }
 
     public bool HasValidRange() => EndDate >= StartDate;
+
+    public bool IsActiveOn(DateTime date)
+    {
+        var checkDate = date.Date;
+        return IsActive && checkDate >= StartDate.Date && checkDate <= EndDate.Date;
+    }
 }
