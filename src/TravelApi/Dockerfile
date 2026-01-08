@@ -7,7 +7,7 @@ WORKDIR /src
 COPY TravelApi.csproj ./
 RUN dotnet restore "./TravelApi.csproj"
 COPY . ./
-RUN dotnet publish "./TravelApi.csproj" -c Release -o /app/publish
+RUN dotnet publish "./TravelApi.csproj" -c Release -o /app/publish --no-restore
 
 FROM base AS final
 WORKDIR /app
