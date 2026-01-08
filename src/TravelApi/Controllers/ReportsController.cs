@@ -50,4 +50,25 @@ public class ReportsController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("cupos")]
+    public async Task<ActionResult<CupoOperationsSummaryResponse>> GetCuposSummary(CancellationToken cancellationToken)
+    {
+        var totalCupos = await _dbContext.Cupos.CountAsync(cancellationToken);
+        var totalCapacity = await _dbContext.Cupos.SumAsync(cupo => (int?)cupo.Capacity, cancellationToken) ?? 0;
+        var totalReserved = await _dbContext.Cupos.SumAsync(cupo => (int?)cupo.Reserved, cancellationToken) ?? 0;
+        var totalOverbookingLimit = await _dbContext.Cupos.SumAsync(cupo => (int?)cupo.OverbookingLimit, cancellationToken) ?? 0;
+        var totalAvailable = totalCapacity + totalOverbookingLimit - totalReserved;
+        var totalOverbooked = Math.Max(0, totalReserved - totalCapacity);
+
+        var response = new CupoOperationsSummaryResponse(
+            totalCupos,
+            totalCapacity,
+            totalReserved,
+            totalOverbookingLimit,
+            totalAvailable,
+            totalOverbooked);
+
+        return Ok(response);
+    }
 }
