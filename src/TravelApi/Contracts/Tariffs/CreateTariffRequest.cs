@@ -5,7 +5,8 @@ namespace TravelApi.Contracts.Tariffs;
 public record CreateTariffRequest(
     string Name,
     string? Description,
-    Currency Currency,
+    string ProductType,
+    Currency? Currency,
     decimal DefaultPrice,
     bool IsActive
 );

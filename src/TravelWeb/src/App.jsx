@@ -6,11 +6,13 @@ import LoginPage from "./pages/LoginPage";
 import CustomersPage from "./pages/CustomersPage";
 import ReservationsPage from "./pages/ReservationsPage";
 import PaymentsPage from "./pages/PaymentsPage";
+import QuotesPage from "./pages/QuotesPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import TariffsPage from "./pages/TariffsPage";
 import CuposPage from "./pages/CuposPage";
+import TreasuryPage from "./pages/TreasuryPage";
 
 function PrivateRoute({ children }) {
   if (!isAuthenticated()) {
@@ -40,8 +42,10 @@ export default function App() {
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/customers" element={<CustomersPage />} />
+                <Route path="/quotes" element={<QuotesPage />} />
                 <Route path="/reservations" element={<ReservationsPage />} />
                 <Route path="/payments" element={<PaymentsPage />} />
+                <Route path="/treasury" element={<TreasuryPage />} />
                 <Route path="/suppliers" element={<SuppliersPage />} />
                 <Route path="/tariffs" element={<TariffsPage />} />
                 <Route path="/cupos" element={<CuposPage />} />
