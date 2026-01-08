@@ -19,6 +19,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<TariffValidity> TariffValidities => Set<TariffValidity>();
     public DbSet<Cupo> Cupos => Set<Cupo>();
     public DbSet<CupoAssignment> CupoAssignments => Set<CupoAssignment>();
+    public DbSet<BspImportBatch> BspImportBatches => Set<BspImportBatch>();
+    public DbSet<BspImportRawRecord> BspImportRawRecords => Set<BspImportRawRecord>();
+    public DbSet<BspNormalizedRecord> BspNormalizedRecords => Set<BspNormalizedRecord>();
+    public DbSet<BspReconciliationEntry> BspReconciliationEntries => Set<BspReconciliationEntry>();
+    public DbSet<AccountingEntry> AccountingEntries => Set<AccountingEntry>();
+    public DbSet<AccountingLine> AccountingLines => Set<AccountingLine>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -160,6 +166,111 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .WithMany()
                 .HasForeignKey(assignment => assignment.ReservationId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<BspImportBatch>(entity =>
+        {
+            entity.Property(batch => batch.FileName)
+                .HasMaxLength(200);
+
+            entity.Property(batch => batch.Format)
+                .HasMaxLength(20);
+
+            entity.Property(batch => batch.Status)
+                .HasMaxLength(20);
+
+            entity.HasMany(batch => batch.RawRecords)
+                .WithOne(record => record.BspImportBatch)
+                .HasForeignKey(record => record.BspImportBatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(batch => batch.NormalizedRecords)
+                .WithOne(record => record.BspImportBatch)
+                .HasForeignKey(record => record.BspImportBatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(batch => batch.Reconciliations)
+                .WithOne(entry => entry.BspImportBatch)
+                .HasForeignKey(entry => entry.BspImportBatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<BspImportRawRecord>(entity =>
+        {
+            entity.Property(record => record.RawContent)
+                .HasColumnType("text");
+        });
+
+        modelBuilder.Entity<BspNormalizedRecord>(entity =>
+        {
+            entity.Property(record => record.TicketNumber)
+                .HasMaxLength(50);
+
+            entity.Property(record => record.ReservationReference)
+                .HasMaxLength(50);
+
+            entity.Property(record => record.Currency)
+                .HasMaxLength(10);
+
+            entity.Property(record => record.BaseAmount)
+                .HasPrecision(12, 2);
+
+            entity.Property(record => record.TaxAmount)
+                .HasPrecision(12, 2);
+
+            entity.Property(record => record.TotalAmount)
+                .HasPrecision(12, 2);
+
+            entity.HasOne(record => record.ReconciliationEntry)
+                .WithOne(entry => entry.BspNormalizedRecord)
+                .HasForeignKey<BspReconciliationEntry>(entry => entry.BspNormalizedRecordId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<BspReconciliationEntry>(entity =>
+        {
+            entity.Property(entry => entry.Status)
+                .HasMaxLength(30);
+
+            entity.Property(entry => entry.DifferenceAmount)
+                .HasPrecision(12, 2);
+
+            entity.HasOne(entry => entry.Reservation)
+                .WithMany()
+                .HasForeignKey(entry => entry.ReservationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AccountingEntry>(entity =>
+        {
+            entity.Property(entry => entry.Description)
+                .HasMaxLength(300);
+
+            entity.Property(entry => entry.Source)
+                .HasMaxLength(50);
+
+            entity.Property(entry => entry.SourceReference)
+                .HasMaxLength(100);
+
+            entity.HasMany(entry => entry.Lines)
+                .WithOne(line => line.AccountingEntry)
+                .HasForeignKey(line => line.AccountingEntryId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AccountingLine>(entity =>
+        {
+            entity.Property(line => line.AccountCode)
+                .HasMaxLength(20);
+
+            entity.Property(line => line.Debit)
+                .HasPrecision(12, 2);
+
+            entity.Property(line => line.Credit)
+                .HasPrecision(12, 2);
+
+            entity.Property(line => line.Currency)
+                .HasMaxLength(10);
         });
     }
 }
