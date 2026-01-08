@@ -9,6 +9,7 @@ import PaymentsPage from "./pages/PaymentsPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./pages/SuppliersPage";
+import TariffsPage from "./pages/TariffsPage";
 
 function PrivateRoute({ children }) {
   if (!isAuthenticated()) {
@@ -41,6 +42,7 @@ export default function App() {
                 <Route path="/reservations" element={<ReservationsPage />} />
                 <Route path="/payments" element={<PaymentsPage />} />
                 <Route path="/suppliers" element={<SuppliersPage />} />
+                <Route path="/tariffs" element={<TariffsPage />} />
                 <Route
                   path="/reports"
                   element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}

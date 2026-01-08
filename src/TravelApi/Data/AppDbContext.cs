@@ -15,6 +15,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Reservation> Reservations => Set<Reservation>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
+    public DbSet<Tariff> Tariffs => Set<Tariff>();
+    public DbSet<TariffValidity> TariffValidities => Set<TariffValidity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -98,6 +100,37 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
             entity.Property(supplier => supplier.Phone)
                 .HasMaxLength(50);
+        });
+
+        modelBuilder.Entity<Tariff>(entity =>
+        {
+            entity.Property(tariff => tariff.Name)
+                .HasMaxLength(200)
+                .IsRequired();
+
+            entity.Property(tariff => tariff.Description)
+                .HasMaxLength(500);
+
+            entity.Property(tariff => tariff.Currency)
+                .HasConversion<string>()
+                .HasMaxLength(10);
+
+            entity.Property(tariff => tariff.DefaultPrice)
+                .HasPrecision(12, 2);
+
+            entity.HasMany(tariff => tariff.Validities)
+                .WithOne(validity => validity.Tariff)
+                .HasForeignKey(validity => validity.TariffId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TariffValidity>(entity =>
+        {
+            entity.Property(validity => validity.Price)
+                .HasPrecision(12, 2);
+
+            entity.Property(validity => validity.Notes)
+                .HasMaxLength(500);
         });
     }
 }
