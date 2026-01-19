@@ -104,6 +104,8 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
+builder.Services.AddCors(options =>
+{
     options.AddPolicy("web", policy =>
     {
         // PERMISSIVE CORS POLICY TO FIX VPS/BROWSER ISSUES
