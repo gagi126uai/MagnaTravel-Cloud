@@ -10,19 +10,24 @@ export default function ReservationsPage() {
   const [selectedReservation, setSelectedReservation] = useState(null);
   const [isSegmentModalOpen, setIsSegmentModalOpen] = useState(false);
 
-  // Segment Form
-  const [segmentForm, setSegmentForm] = useState({
-    airlineCode: "",
-    flightNumber: "",
-    origin: "",
-    destination: "",
-    departureTime: "",
-    arrivalTime: "",
-    status: "HK"
+  // Create Reservation Form
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [customers, setCustomers] = useState([]);
+  const [createForm, setCreateForm] = useState({
+    customerId: "",
+    referenceCode: "",
+    productType: "Flight",
+    supplierName: "",
+    departureDate: "",
+    returnDate: "",
+    basePrice: 0,
+    commission: 0,
+    totalAmount: 0
   });
 
   useEffect(() => {
     loadReservations();
+    loadCustomers();
   }, []);
 
   const loadReservations = async () => {
@@ -34,12 +39,57 @@ export default function ReservationsPage() {
     }
   };
 
+  const loadCustomers = async () => {
+    try {
+      const data = await api.get("/customers");
+      setCustomers(data);
+    } catch {
+      console.error("Failed to load customers");
+    }
+  };
+
   const loadReservationDetail = async (id) => {
     try {
       const data = await api.get(`/reservations/${id}`);
       setSelectedReservation(data);
     } catch {
       showError("No se pudo cargar el detalle de la reserva.");
+    }
+  };
+
+  const handleCreateSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        ...createForm,
+        customerId: parseInt(createForm.customerId),
+        basePrice: parseFloat(createForm.basePrice),
+        commission: parseFloat(createForm.commission),
+        totalAmount: parseFloat(createForm.totalAmount),
+        departureDate: new Date(createForm.departureDate).toISOString(),
+        returnDate: createForm.returnDate ? new Date(createForm.returnDate).toISOString() : null
+      };
+
+      await api.post("/reservations", payload);
+      showSuccess("Reserva creada exitosamente");
+      setIsCreateModalOpen(false);
+      loadReservations(); // Refresh list
+
+      // Reset form
+      setCreateForm({
+        customerId: "",
+        referenceCode: "",
+        productType: "Flight",
+        supplierName: "",
+        departureDate: "",
+        returnDate: "",
+        basePrice: 0,
+        commission: 0,
+        totalAmount: 0
+      });
+    } catch (error) {
+      console.error(error);
+      showError("Error al crear la reserva. Verifique los datos.");
     }
   };
 
@@ -71,9 +121,14 @@ export default function ReservationsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold">Reservas</h2>
-        <p className="text-sm text-muted-foreground">Gestión de expedientes y servicios.</p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-2xl font-semibold">Reservas</h2>
+          <p className="text-sm text-muted-foreground">Gestión de expedientes y servicios.</p>
+        </div>
+        <Button onClick={() => setIsCreateModalOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" /> Nueva Reserva
+        </Button>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.5fr]">
@@ -86,8 +141,8 @@ export default function ReservationsPage() {
                 key={res.id}
                 onClick={() => loadReservationDetail(res.id)}
                 className={`p-4 rounded-lg border cursor-pointer transition-colors ${selectedReservation?.id === res.id
-                    ? "bg-primary/10 border-primary"
-                    : "hover:bg-muted"
+                  ? "bg-primary/10 border-primary"
+                  : "hover:bg-muted"
                   }`}
               >
                 <div className="flex justify-between items-start mb-1">
@@ -209,6 +264,128 @@ export default function ReservationsPage() {
           )}
         </div>
       </div>
+
+      {/* Create Reservation Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="bg-card border shadow-lg rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold mb-4">Nueva Reserva Manual</h3>
+            <form onSubmit={handleCreateSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="text-sm font-medium">Cliente</label>
+                  <select
+                    className="w-full p-2 rounded border bg-background"
+                    value={createForm.customerId}
+                    onChange={e => setCreateForm({ ...createForm, customerId: e.target.value })}
+                    required
+                  >
+                    <option value="">Seleccione un cliente...</option>
+                    {customers.map(c => (
+                      <option key={c.id} value={c.id}>{c.fullName}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Código Referencia</label>
+                  <input
+                    className="w-full p-2 rounded border bg-background"
+                    placeholder="REF-001"
+                    value={createForm.referenceCode}
+                    onChange={e => setCreateForm({ ...createForm, referenceCode: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Tipo</label>
+                  <select
+                    className="w-full p-2 rounded border bg-background"
+                    value={createForm.productType}
+                    onChange={e => setCreateForm({ ...createForm, productType: e.target.value })}
+                  >
+                    <option value="Flight">Aéreo</option>
+                    <option value="Hotel">Hotel</option>
+                    <option value="Package">Paquete</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Fecha Salida</label>
+                  <input
+                    type="date"
+                    className="w-full p-2 rounded border bg-background"
+                    value={createForm.departureDate}
+                    onChange={e => setCreateForm({ ...createForm, departureDate: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Fecha Regreso (Opcional)</label>
+                  <input
+                    type="date"
+                    className="w-full p-2 rounded border bg-background"
+                    value={createForm.returnDate}
+                    onChange={e => setCreateForm({ ...createForm, returnDate: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Precio Base</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full p-2 rounded border bg-background"
+                    value={createForm.basePrice}
+                    onChange={e => setCreateForm({ ...createForm, basePrice: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Comisión</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full p-2 rounded border bg-background"
+                    value={createForm.commission}
+                    onChange={e => setCreateForm({ ...createForm, commission: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Total</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full p-2 rounded border bg-background"
+                    value={createForm.totalAmount}
+                    onChange={e => setCreateForm({ ...createForm, totalAmount: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Proveedor (Aerolínea/Operador)</label>
+                <input
+                  className="w-full p-2 rounded border bg-background"
+                  placeholder="Ej. Aerolineas Argentinas"
+                  value={createForm.supplierName}
+                  onChange={e => setCreateForm({ ...createForm, supplierName: e.target.value })}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 mt-6">
+                <Button type="button" variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
+                <Button type="submit">Crear Reserva</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Add Segment Modal */}
       {isSegmentModalOpen && (
