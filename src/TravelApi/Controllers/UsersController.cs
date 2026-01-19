@@ -54,6 +54,51 @@ public class UsersController : ControllerBase
         return Ok(roles);
     }
 
+    [HttpPost("roles")]
+    public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RoleName))
+        {
+            return BadRequest(new[] { "El nombre del rol es requerido." });
+        }
+
+        if (await _roleManager.RoleExistsAsync(request.RoleName))
+        {
+            return BadRequest(new[] { "El rol ya existe." });
+        }
+
+        var result = await _roleManager.CreateAsync(new IdentityRole(request.RoleName));
+        if (!result.Succeeded)
+        {
+            return BadRequest(result.Errors.Select(error => error.Description));
+        }
+
+        return Ok(new { Message = "Rol creado correctamente." });
+    }
+
+    [HttpDelete("roles/{roleName}")]
+    public async Task<IActionResult> DeleteRole(string roleName)
+    {
+        var role = await _roleManager.FindByNameAsync(roleName);
+        if (role is null)
+        {
+            return NotFound("Rol no encontrado.");
+        }
+
+        if (role.Name == "Admin" || role.Name == "Colaborador")
+        {
+            return BadRequest("No se pueden eliminar los roles del sistema.");
+        }
+
+        var result = await _roleManager.DeleteAsync(role);
+        if (!result.Succeeded)
+        {
+            return BadRequest(result.Errors.Select(error => error.Description));
+        }
+
+        return NoContent();
+    }
+
     [HttpPost]
     public async Task<ActionResult<UserSummaryResponse>> CreateUser(CreateUserRequest request)
     {
