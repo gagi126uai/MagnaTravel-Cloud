@@ -75,6 +75,7 @@ public class CustomersController : ControllerBase
         existing.Notes = customer.Notes;
         
         // Retail Pivot: Update Financials
+        existing.TaxId = customer.TaxId;
         existing.CreditLimit = customer.CreditLimit;
         existing.CurrentBalance = customer.CurrentBalance;
 

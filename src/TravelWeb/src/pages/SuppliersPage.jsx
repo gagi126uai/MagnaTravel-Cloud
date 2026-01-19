@@ -13,6 +13,7 @@ export default function SuppliersPage() {
   const [formData, setFormData] = useState({
     name: "",
     contactName: "",
+    taxId: "",
     email: "",
     phone: "",
     isActive: true,
@@ -40,6 +41,7 @@ export default function SuppliersPage() {
       setCurrentSupplier(supplier);
       setFormData({
         name: supplier.name,
+        taxId: supplier.taxId || "",
         contactName: supplier.contactName || "",
         email: supplier.email || "",
         phone: supplier.phone || "",
@@ -50,6 +52,7 @@ export default function SuppliersPage() {
       setCurrentSupplier(null);
       setFormData({
         name: "",
+        taxId: "",
         contactName: "",
         email: "",
         phone: "",
@@ -127,10 +130,15 @@ export default function SuppliersPage() {
                   <td className="p-4 align-middle font-medium text-white">
                     <div className="flex flex-col">
                       <span>{supplier.name}</span>
+                      <span className="text-xs text-muted-foreground">{supplier.taxId || "Sin CUIT"}</span>
+                    </div>
+                  </td>
+                  <td className="p-4 align-middle">
+                    <div className="flex flex-col">
+                      <span>{supplier.contactName || "-"}</span>
                       <span className="text-xs text-muted-foreground">{supplier.email}</span>
                     </div>
                   </td>
-                  <td className="p-4 align-middle">{supplier.contactName || "-"}</td>
                   <td className={`p-4 align-middle text-right font-medium ${supplier.currentBalance > 0 ? "text-red-400" : "text-green-400"}`}>
                     {formatCurrency(supplier.currentBalance)}
                   </td>
@@ -176,6 +184,17 @@ export default function SuppliersPage() {
                   />
                 </div>
                 <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">CUIT</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="20-12345678-9"
+                    value={formData.taxId}
+                    onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-2">
                   <label className="text-sm font-medium text-muted-foreground">Contacto</label>
                   <input
                     type="text"
@@ -203,7 +222,7 @@ export default function SuppliersPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">Current Balance (Debt)</label>
+                  <label className="text-sm font-medium text-muted-foreground">Current Balance (Deuda)</label>
                   <input
                     type="number"
                     step="0.01"

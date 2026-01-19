@@ -12,6 +12,7 @@ export default function CustomersPage() {
   const [currentCustomer, setCurrentCustomer] = useState(null);
   const [formData, setFormData] = useState({
     fullName: "",
+    taxId: "",
     email: "",
     phone: "",
     documentNumber: "",
@@ -42,6 +43,7 @@ export default function CustomersPage() {
       setCurrentCustomer(customer);
       setFormData({
         fullName: customer.fullName,
+        taxId: customer.taxId || "",
         email: customer.email || "",
         phone: customer.phone || "",
         documentNumber: customer.documentNumber || "",
@@ -54,6 +56,7 @@ export default function CustomersPage() {
       setCurrentCustomer(null);
       setFormData({
         fullName: "",
+        taxId: "",
         email: "",
         phone: "",
         documentNumber: "",
@@ -134,7 +137,7 @@ export default function CustomersPage() {
                   <td className="p-4 align-middle font-medium text-white">
                     <div className="flex flex-col">
                       <span>{customer.fullName}</span>
-                      <span className="text-xs text-muted-foreground">{customer.documentNumber}</span>
+                      <span className="text-xs text-muted-foreground">{customer.taxId || customer.documentNumber}</span>
                     </div>
                   </td>
                   <td className="p-4 align-middle text-muted-foreground">
@@ -183,7 +186,17 @@ export default function CustomersPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">Documento</label>
+                  <label className="text-sm font-medium text-muted-foreground">CUIT / CUIL</label>
+                  <input
+                    type="text"
+                    value={formData.taxId}
+                    placeholder="20-12345678-9"
+                    onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">Documento (DNI/Pasaporte)</label>
                   <input
                     type="text"
                     value={formData.documentNumber}

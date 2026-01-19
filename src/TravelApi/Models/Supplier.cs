@@ -19,6 +19,9 @@ public class Supplier
     [MaxLength(50)]
     public string? Phone { get; set; }
     
+    [MaxLength(20)]
+    public string TaxId { get; set; } = string.Empty; // CUIT/CUIL
+
     public bool IsActive { get; set; } = true;
 
     // Financials (what we owe them)

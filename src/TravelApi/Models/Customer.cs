@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace TravelApi.Models;
 
 public class Customer
@@ -12,6 +14,8 @@ public class Customer
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Retail Pivot: Financials
+    [MaxLength(20)]
+    public string? TaxId { get; set; } // CUIT/CUIL
     public decimal CreditLimit { get; set; } = 0;
     public decimal CurrentBalance { get; set; } = 0; // Positive = they owe us
 

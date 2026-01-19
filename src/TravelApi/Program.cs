@@ -546,6 +546,20 @@ using (var scope = app.Services.CreateScope())
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Customers' AND column_name='CurrentBalance') THEN
                     ALTER TABLE ""Customers"" ADD COLUMN ""CurrentBalance"" numeric(12,2) NOT NULL DEFAULT 0;
                 END IF;
+                -- Localization Phase
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Customers' AND column_name='TaxId') THEN
+                    ALTER TABLE ""Customers"" ADD COLUMN ""TaxId"" character varying(20);
+                END IF;
+            END $$;
+        ");
+
+        // Ensure TaxId exists if table already existed without it
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='Suppliers' AND column_name='TaxId') THEN
+                    ALTER TABLE ""Suppliers"" ADD COLUMN ""TaxId"" character varying(20) DEFAULT '';
+                END IF;
             END $$;
         ");
 
