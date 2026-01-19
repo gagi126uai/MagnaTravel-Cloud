@@ -31,10 +31,25 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AccountingLine> AccountingLines => Set<AccountingLine>();
     public DbSet<Agency> Agencies => Set<Agency>();
     public DbSet<TravelFile> TravelFiles => Set<TravelFile>();
+    public DbSet<FlightSegment> FlightSegments => Set<FlightSegment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<FlightSegment>(entity =>
+        {
+            entity.Property(s => s.AirlineCode).HasMaxLength(3).IsRequired();
+            entity.Property(s => s.FlightNumber).HasMaxLength(10).IsRequired();
+            entity.Property(s => s.Origin).HasMaxLength(3).IsRequired();
+            entity.Property(s => s.Destination).HasMaxLength(3).IsRequired();
+            entity.Property(s => s.Status).HasMaxLength(2);
+
+            entity.HasOne(s => s.Reservation)
+                .WithMany(r => r.Segments)
+                .HasForeignKey(s => s.ReservationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<Customer>(entity =>
         {

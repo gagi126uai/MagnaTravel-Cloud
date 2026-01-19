@@ -21,4 +21,6 @@ public class Reservation
 
     public int? TravelFileId { get; set; }
     public TravelFile? TravelFile { get; set; }
+
+    public ICollection<FlightSegment> Segments { get; set; } = new List<FlightSegment>();
 }
