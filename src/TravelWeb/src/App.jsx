@@ -52,15 +52,15 @@ export default function App() {
                 <Route path="/suppliers" element={<SuppliersPage />} />
                 <Route
                   path="/agencies"
-                  element={adminUser ? <AgenciesPage /> : <Navigate to="/dashboard" replace />}
+                  element={<AgenciesPage />}
                 />
                 <Route
                   path="/reports"
-                  element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
+                  element={<ReportsPage />}
                 />
                 <Route
                   path="/settings"
-                  element={adminUser ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
+                  element={<SettingsPage />}
                 />
               </Routes>
             </Layout>
