@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Contracts.Quotes;
@@ -215,6 +216,102 @@ public class QuotesController : ControllerBase
     {
         return !string.IsNullOrWhiteSpace(request.ProductType)
             && request.TotalAmount >= 0m;
+    }
+
+    [HttpPost("{id:int}/book")]
+    public async Task<ActionResult<int>> BookQuote(
+        int id,
+        [FromServices] UserManager<ApplicationUser> userManager,
+        CancellationToken cancellationToken)
+    {
+        var quote = await _dbContext.Quotes
+            .Include(q => q.Customer)
+            .Include(q => q.Versions)
+            .FirstOrDefaultAsync(q => q.Id == id, cancellationToken);
+            
+        if (quote is null)
+        {
+            return NotFound("Cotización no encontrada.");
+        }
+
+        // B2B Logic: Check Agency Credit Limit
+        var user = await userManager.GetUserAsync(User);
+        if (user is not null)
+        {
+            // Load Agency explicitly as UserManager might not include navigation props by default or checks ID only
+            // Better to fetch via DbContext to be sure we track changes
+            var dbUser = await _dbContext.Users
+                .Include(u => u.Agency)
+                .FirstOrDefaultAsync(u => u.Id == user.Id, cancellationToken);
+
+            if (dbUser?.Agency is not null)
+            {
+                var agency = dbUser.Agency;
+                var validVersion = quote.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+                
+                if (validVersion != null)
+                {
+                    if (agency.CurrentBalance + validVersion.TotalAmount > agency.CreditLimit)
+                    {
+                        return BadRequest($"Límite de crédito excedido. Disponible: {agency.CreditLimit - agency.CurrentBalance:C} (Requerido: {validVersion.TotalAmount:C})");
+                    }
+                    
+                    // Increase Debt
+                    agency.CurrentBalance += validVersion.TotalAmount;
+                }
+            }
+        }
+        
+        if (quote.Status != QuoteStatuses.Sent && quote.Status != QuoteStatuses.Approved)
+        {
+             // Opcional: Permitir reservar si está en Draft? Mejor ser estricto.
+             // return BadRequest("La cotización debe estar Enviada o Aprobada para reservarse.");
+        }
+        
+        var validVersionForBooking = quote.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
+        if (validVersionForBooking is null)
+        {
+            return BadRequest("La cotización no tiene versiones válidas.");
+        }
+        
+        // 1. Create Travel File
+        var fileNumber = $"FILE-{DateTime.UtcNow.Year}-{DateTime.UtcNow.Ticks.ToString()[^4..]}"; // Simple generator
+        var travelFile = new TravelFile
+        {
+            FileNumber = fileNumber,
+            Name = $"Viaje {quote.Customer?.FullName ?? "Cliente"} - {validVersionForBooking.ProductType}",
+            Status = "Open",
+            CreatedAt = DateTime.UtcNow
+        };
+        
+        _dbContext.TravelFiles.Add(travelFile);
+        await _dbContext.SaveChangesAsync(cancellationToken); // Save to get Id
+        
+        // 2. Create Reservation
+        var reservation = new Reservation
+        {
+            ReferenceCode = $"RES-{DateTime.UtcNow.Ticks.ToString()[^6..]}",
+            Status = ReservationStatuses.Confirmed,
+            ProductType = validVersionForBooking.ProductType,
+            DepartureDate = validVersionForBooking.ValidUntil ?? DateTime.UtcNow.AddDays(30), // Fallback if null, usually came from Query
+            ReturnDate = null,
+            BasePrice = validVersionForBooking.TotalAmount, // Simplification: Base = Total
+            Commission = 0,
+            TotalAmount = validVersionForBooking.TotalAmount,
+            SupplierName = "TBD",
+            CreatedAt = DateTime.UtcNow,
+            CustomerId = quote.CustomerId,
+            TravelFileId = travelFile.Id
+        };
+        
+        _dbContext.Reservations.Add(reservation);
+        
+        // 3. Update Quote Status
+        quote.Status = QuoteStatuses.Booked;
+        
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        
+        return Ok(new { Message = "Reserva creada exitosamente", TravelFileId = travelFile.Id, ReservationId = reservation.Id });
     }
 
     private static DateTime? NormalizeUtc(DateTime? value)

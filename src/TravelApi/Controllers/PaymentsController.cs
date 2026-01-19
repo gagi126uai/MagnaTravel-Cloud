@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
@@ -33,7 +34,10 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<Payment>> CreatePayment(Payment payment, CancellationToken cancellationToken)
+    public async Task<ActionResult<Payment>> CreatePayment(
+        Payment payment,
+        [FromServices] UserManager<ApplicationUser> userManager,
+        CancellationToken cancellationToken)
     {
         var reservationExists = await _dbContext.Reservations
             .AnyAsync(reservation => reservation.Id == payment.ReservationId, cancellationToken);
@@ -44,6 +48,22 @@ public class PaymentsController : ControllerBase
         }
 
         _dbContext.Payments.Add(payment);
+
+        // B2B Logic: Decrease Agency Debt
+        var user = await userManager.GetUserAsync(User);
+        if (user is not null)
+        {
+            var dbUser = await _dbContext.Users
+                .Include(u => u.Agency)
+                .FirstOrDefaultAsync(u => u.Id == user.Id, cancellationToken);
+
+            if (dbUser?.Agency is not null)
+            {
+                // Decrease Debt (CurrentBalance)
+                dbUser.Agency.CurrentBalance -= payment.Amount;
+            }
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return CreatedAtAction(nameof(GetPaymentsForReservation), new { reservationId = payment.ReservationId }, payment);
