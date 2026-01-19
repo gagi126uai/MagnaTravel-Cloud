@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api";
 import { showError, showSuccess } from "../alerts";
+import Swal from "sweetalert2";
 
 const initialQuoteForm = {
   referenceCode: "",
@@ -256,11 +257,10 @@ export default function QuotesPage() {
                   setVersionForm((prev) => ({ ...prev, quoteId: String(quote.id) }));
                   loadQuoteDetail(quote.id);
                 }}
-                className={`w-full rounded-2xl border px-4 py-3 text-left text-sm shadow-sm transition ${
-                  String(quote.id) === String(versionForm.quoteId)
-                    ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-indigo-400 dark:bg-indigo-500/10 dark:text-indigo-200"
-                    : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
-                }`}
+                className={`w-full rounded-2xl border px-4 py-3 text-left text-sm shadow-sm transition ${String(quote.id) === String(versionForm.quoteId)
+                  ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-indigo-400 dark:bg-indigo-500/10 dark:text-indigo-200"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold">{quote.referenceCode}</span>
@@ -376,6 +376,41 @@ export default function QuotesPage() {
         </form>
 
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+          <div className="flex items-center justify-between bg-slate-50 px-4 py-3 dark:bg-slate-950">
+            <h3 className="font-semibold text-slate-700 dark:text-slate-200">Versiones (Expediente)</h3>
+            {selectedQuote && (selectedQuote.status === "Sent" || selectedQuote.status === "Approved") && (
+              <button
+                onClick={async () => {
+                  const result = await Swal.fire({
+                    title: '¿Confirmar Reserva?',
+                    text: `Esto creará un nuevo Expediente y una Reserva. Se validará el límite de crédito de su Agencia.`,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, Reservar',
+                    cancelButtonText: 'Cancelar'
+                  });
+
+                  if (result.isConfirmed) {
+                    try {
+                      Swal.fire({ title: 'Procesando...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+                      const response = await apiRequest(`/api/quotes/${selectedQuote.id}/book`, { method: 'POST' });
+                      Swal.close();
+                      await Swal.fire('¡Reserva Exitosa!', `Se ha creado el Expediente #${response.travelFileId}`, 'success');
+                      loadQuotes();
+                      setSelectedQuote(null);
+                    } catch (error) {
+                      Swal.close();
+                      // Error message usually comes from backend (e.g. Credit Limit exceeded)
+                      Swal.fire('Error', error.message || "No se pudo completar la reserva.", 'error');
+                    }
+                  }
+                }}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-500"
+              >
+                Confirmar Reserva
+              </button>
+            )}
+          </div>
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-500 dark:bg-slate-950 dark:text-slate-300">
               <tr>

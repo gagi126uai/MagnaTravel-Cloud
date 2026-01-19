@@ -13,6 +13,7 @@ import SuppliersPage from "./pages/SuppliersPage";
 import TariffsPage from "./pages/TariffsPage";
 import CuposPage from "./pages/CuposPage";
 import TreasuryPage from "./pages/TreasuryPage";
+import AgenciesPage from "./pages/AgenciesPage";
 
 function PrivateRoute({ children }) {
   if (!isAuthenticated()) {
@@ -49,6 +50,10 @@ export default function App() {
                 <Route path="/suppliers" element={<SuppliersPage />} />
                 <Route path="/tariffs" element={<TariffsPage />} />
                 <Route path="/cupos" element={<CuposPage />} />
+                <Route
+                  path="/agencies"
+                  element={adminUser ? <AgenciesPage /> : <Navigate to="/dashboard" replace />}
+                />
                 <Route
                   path="/reports"
                   element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}

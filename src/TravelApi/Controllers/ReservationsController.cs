@@ -38,6 +38,7 @@ public class ReservationsController : ControllerBase
             .AsNoTracking()
             .Include(found => found.Customer)
             .Include(found => found.Payments)
+            .Include(found => found.Segments)
             .FirstOrDefaultAsync(found => found.Id == id, cancellationToken);
 
         if (reservation is null)

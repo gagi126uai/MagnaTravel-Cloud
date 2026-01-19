@@ -29,7 +29,7 @@ const baseLinks = [
 
 export default function Sidebar({ onLogout, isAdmin, className }) {
     const menuLinks = isAdmin
-        ? [...baseLinks, { to: "/reports", label: "Reportes", icon: BarChart3 }, { to: "/settings", label: "Configuración", icon: Settings }]
+        ? [...baseLinks, { to: "/agencies", label: "Agencias", icon: Building2 }, { to: "/reports", label: "Reportes", icon: BarChart3 }, { to: "/settings", label: "Configuración", icon: Settings }]
         : baseLinks;
 
     return (
