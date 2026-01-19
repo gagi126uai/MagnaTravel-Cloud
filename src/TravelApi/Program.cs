@@ -174,9 +174,14 @@ using (var scope = app.Services.CreateScope())
     // 3. Now run MigrateAsync (Safely skips InitialRetailPivot if we just inserted it)
     await dbContext.Database.MigrateAsync();
 
-    // 4. HOTFIX: Ensure TaxId exists on Suppliers ( Legacy schema might have missed it)
+    // 4. HOTFIX: Ensure TaxId, ContactName, IsActive exists on Suppliers/Customers
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"ContactName\" character varying(100) DEFAULT '';"); // Missing column fix
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"IsActive\" boolean DEFAULT TRUE;"); // Missing column fix
+
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
 
