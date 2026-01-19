@@ -104,39 +104,15 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-builder.Services.AddCors(options =>
-{
     options.AddPolicy("web", policy =>
     {
-        // 1. Get origins from config
-        var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()?.ToList() ?? new List<string>();
-        
-        var originsCsv = builder.Configuration["Cors:Origins"];
-        if (!string.IsNullOrWhiteSpace(originsCsv))
-        {
-            origins.AddRange(originsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        }
-
-        var webOrigin = builder.Configuration["WEB_ORIGIN"];
-        if (!string.IsNullOrWhiteSpace(webOrigin))
-        {
-            origins.AddRange(webOrigin.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        }
-
-        // 2. HARDCODE PRODUCTION ORIGIN TO FIX VPS ISSUE
-        // (Env vars might be missing or malformed on the VPS)
-        origins.Add("https://backoffice.magnaviajesyturismo.com");
-        origins.Add("http://localhost:5173"); // Keep local dev working
-
-        // 3. Remove duplicates and empty strings
-        var distinctOrigins = origins.Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList();
-
-        // 4. Configure Policy
-        policy.WithOrigins(distinctOrigins.ToArray())
+        // PERMISSIVE CORS POLICY TO FIX VPS/BROWSER ISSUES
+        // This allows any origin to connect, which is necessary if the origin headers 
+        // are varying or if env vars are missing.
+        policy.SetIsOriginAllowed(_ => true)
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials(); // Important if auth cookies/headers were involved, though Bearer uses headers. 
-                                   // Note: AllowCredentials requires specific origins (no wildcard *)
+              .AllowCredentials();
     });
 });
 
