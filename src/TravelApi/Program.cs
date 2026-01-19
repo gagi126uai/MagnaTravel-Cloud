@@ -105,55 +105,37 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 
 builder.Services.AddCors(options =>
-{
     options.AddPolicy("web", policy =>
     {
-        var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>();
+        // 1. Get origins from config
+        var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()?.ToList() ?? new List<string>();
+        
         var originsCsv = builder.Configuration["Cors:Origins"];
         if (!string.IsNullOrWhiteSpace(originsCsv))
         {
-            origins = originsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            origins.AddRange(originsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         }
 
         var webOrigin = builder.Configuration["WEB_ORIGIN"];
-        if ((origins is null || origins.Length == 0) && !string.IsNullOrWhiteSpace(webOrigin))
+        if (!string.IsNullOrWhiteSpace(webOrigin))
         {
-            origins = webOrigin.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        }
-        if (origins is null || origins.Length == 0)
-        {
-            policy.AllowAnyOrigin()
-                .AllowAnyHeader()
-                .AllowAnyMethod();
-            return;
+            origins.AddRange(webOrigin.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         }
 
-        var allowedHosts = origins
-            .Select(originValue =>
-            {
-                if (Uri.TryCreate(originValue, UriKind.Absolute, out var uri))
-                {
-                    return uri;
-                }
+        // 2. HARDCODE PRODUCTION ORIGIN TO FIX VPS ISSUE
+        // (Env vars might be missing or malformed on the VPS)
+        origins.Add("https://backoffice.magnaviajesyturismo.com");
+        origins.Add("http://localhost:5173"); // Keep local dev working
 
-                return null;
-            })
-            .Where(uri => uri is not null)
-            .ToList();
+        // 3. Remove duplicates and empty strings
+        var distinctOrigins = origins.Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList();
 
-        policy.SetIsOriginAllowed(origin =>
-        {
-            if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri))
-            {
-                return false;
-            }
-
-            return allowedHosts.Any(allowed =>
-                string.Equals(originUri.Host, allowed!.Host, StringComparison.OrdinalIgnoreCase) &&
-                (allowed.Port <= 0 || originUri.Port == allowed.Port));
-        })
-            .AllowAnyHeader()
-            .AllowAnyMethod();
+        // 4. Configure Policy
+        policy.WithOrigins(distinctOrigins.ToArray())
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // Important if auth cookies/headers were involved, though Bearer uses headers. 
+                                   // Note: AllowCredentials requires specific origins (no wildcard *)
     });
 });
 
