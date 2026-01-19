@@ -190,7 +190,7 @@ using (var scope = app.Services.CreateScope())
 
     // Seed initial data if needed (e.g. Roles, Admin User)
     // [Seeding logic remains if present, otherwise empty]
-    }
+    // [Seeding logic remains if present, otherwise empty]
 
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
