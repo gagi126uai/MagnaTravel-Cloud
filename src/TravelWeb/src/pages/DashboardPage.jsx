@@ -2,162 +2,207 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "../api";
 import { showError } from "../alerts";
 import { isAdmin } from "../auth";
+import {
+    Users,
+    CalendarRange,
+    CreditCard,
+    BadgeDollarSign,
+    Search,
+    Activity
+} from "lucide-react";
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle
+} from "../components/ui/card";
+import { Input } from "../components/ui/input";
+import { Button } from "../components/ui/button";
 
 export default function DashboardPage() {
-  const [summary, setSummary] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState(null);
-  const adminUser = isAdmin();
+    const [summary, setSummary] = useState(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchResults, setSearchResults] = useState(null);
+    const adminUser = isAdmin();
 
-  useEffect(() => {
-    const endpoint = adminUser ? "/api/reports/summary" : "/api/reports/operations";
-    apiRequest(endpoint)
-      .then(setSummary)
-      .catch(() => {
-        showError("No se pudieron cargar los indicadores.");
-      });
-  }, [adminUser]);
+    useEffect(() => {
+        const endpoint = adminUser ? "/api/reports/summary" : "/api/reports/operations";
+        apiRequest(endpoint)
+            .then(setSummary)
+            .catch(() => {
+                showError("No se pudieron cargar los indicadores.");
+            });
+    }, [adminUser]);
 
-  const handleSearch = async (event) => {
-    event.preventDefault();
-    if (!searchQuery.trim()) {
-      setSearchResults(null);
-      return;
-    }
+    const handleSearch = async (event) => {
+        event.preventDefault();
+        if (!searchQuery.trim()) {
+            setSearchResults(null);
+            return;
+        }
 
-    try {
-      const data = await apiRequest(`/api/search?query=${encodeURIComponent(searchQuery)}`);
-      setSearchResults(data);
-    } catch (error) {
-      showError(error.message || "No se pudo completar la búsqueda.");
-    }
-  };
+        try {
+            const data = await apiRequest(`/api/search?query=${encodeURIComponent(searchQuery)}`);
+            setSearchResults(data);
+        } catch (error) {
+            showError(error.message || "No se pudo completar la búsqueda.");
+        }
+    };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold">Dashboard</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Resumen ejecutivo de la operación diaria.
-          </p>
+    return (
+        <div className="space-y-6">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+                    <p className="text-muted-foreground">
+                        Resumen ejecutivo de la operación diaria.
+                    </p>
+                </div>
+                <div className="flex items-center gap-2 rounded-full border bg-card px-4 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-sm">
+                    <Activity className="h-3 w-3 text-green-500 animate-pulse" />
+                    Actualizado en tiempo real
+                </div>
+            </div>
+
+            {summary && (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <Card>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">Clientes</CardTitle>
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">{summary.totalCustomers}</div>
+                            <p className="text-xs text-muted-foreground">Activos en plataforma</p>
+                        </CardContent>
+                    </Card>
+                    <Card>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">Reservas</CardTitle>
+                            <CalendarRange className="h-4 w-4 text-muted-foreground" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">{summary.totalReservations}</div>
+                            <p className="text-xs text-muted-foreground">Confirmadas este mes</p>
+                        </CardContent>
+                    </Card>
+                    <Card>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">Pagos</CardTitle>
+                            <CreditCard className="h-4 w-4 text-muted-foreground" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">{summary.totalPayments}</div>
+                            <p className="text-xs text-muted-foreground">Transacciones procesadas</p>
+                        </CardContent>
+                    </Card>
+                    {adminUser ? (
+                        <Card className="border-primary/20 bg-primary/5">
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium text-primary">Ingresos</CardTitle>
+                                <BadgeDollarSign className="h-4 w-4 text-primary" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold text-primary">${summary.totalRevenue.toFixed(2)}</div>
+                                <p className="text-xs text-primary/70">Total acumulado</p>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                        <Card>
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium">Estado Operativo</CardTitle>
+                                <Activity className="h-4 w-4 text-muted-foreground" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold text-green-600">En curso</div>
+                                <p className="text-xs text-muted-foreground">Sistemas online</p>
+                            </CardContent>
+                        </Card>
+                    )}
+                </div>
+            )}
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Búsqueda Rápida</CardTitle>
+                    <CardDescription>
+                        Encuentra vouchers, clientes o pagos sin salir del dashboard.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <form onSubmit={handleSearch} className="flex gap-4">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                type="search"
+                                placeholder="Buscar por nombre, voucher o método de pago..."
+                                className="pl-9"
+                                value={searchQuery}
+                                onChange={(event) => setSearchQuery(event.target.value)}
+                            />
+                        </div>
+                        <Button type="submit">Buscar</Button>
+                    </form>
+
+                    {searchResults && (
+                        <div className="mt-6 grid gap-6 lg:grid-cols-3">
+                            <div className="space-y-4">
+                                <h4 className="text-sm font-medium text-muted-foreground">Clientes</h4>
+                                {searchResults.customers.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">Sin resultados.</p>
+                                ) : (
+                                    searchResults.customers.map((customer) => (
+                                        <Card key={customer.id} className="p-4">
+                                            <p className="font-semibold">{customer.fullName}</p>
+                                            <p className="text-xs text-muted-foreground">{customer.email || "Sin email"}</p>
+                                        </Card>
+                                    ))
+                                )}
+                            </div>
+
+                            <div className="space-y-4">
+                                <h4 className="text-sm font-medium text-muted-foreground">Vouchers</h4>
+                                {searchResults.vouchers.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">Sin resultados.</p>
+                                ) : (
+                                    searchResults.vouchers.map((voucher) => (
+                                        <Card key={voucher.id} className="p-4">
+                                            <div className="flex items-center justify-between">
+                                                <p className="font-semibold">{voucher.referenceCode}</p>
+                                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground border px-1.5 py-0.5 rounded">
+                                                    {voucher.status}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                {voucher.customerName}
+                                            </p>
+                                        </Card>
+                                    ))
+                                )}
+                            </div>
+
+                            <div className="space-y-4">
+                                <h4 className="text-sm font-medium text-muted-foreground">Pagos</h4>
+                                {searchResults.payments.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">Sin resultados.</p>
+                                ) : (
+                                    searchResults.payments.map((payment) => (
+                                        <Card key={payment.id} className="p-4">
+                                            <p className="font-semibold text-green-600">
+                                                ${Number(payment.amount).toFixed(2)}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {payment.reservationCode} · {payment.method}
+                                            </p>
+                                        </Card>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
         </div>
-        <div className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          Actualizado en tiempo real
-        </div>
-      </div>
-
-      {summary && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Clientes</p>
-            <p className="mt-2 text-2xl font-semibold">{summary.totalCustomers}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Reservas</p>
-            <p className="mt-2 text-2xl font-semibold">{summary.totalReservations}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Pagos</p>
-            <p className="mt-2 text-2xl font-semibold">{summary.totalPayments}</p>
-          </div>
-          {adminUser ? (
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm dark:border-indigo-500/30 dark:bg-indigo-500/10">
-              <p className="text-xs uppercase tracking-[0.2em] text-indigo-500">Ingresos</p>
-              <p className="mt-2 text-2xl font-semibold">${summary.totalRevenue.toFixed(2)}</p>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Operación</p>
-              <p className="mt-2 text-2xl font-semibold">En curso</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="text-lg font-semibold">Búsqueda rápida</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Encuentra vouchers, clientes o pagos sin salir del dashboard.
-            </p>
-          </div>
-          <form onSubmit={handleSearch} className="flex w-full max-w-md gap-2">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-              placeholder="Buscar por nombre, voucher o método de pago"
-            />
-            <button
-              type="submit"
-              className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-500"
-            >
-              Buscar
-            </button>
-          </form>
-        </div>
-
-        {searchResults && (
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-              <h4 className="text-sm font-semibold">Clientes</h4>
-              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                {searchResults.customers.length === 0 ? (
-                  <li className="text-slate-500">Sin resultados.</li>
-                ) : (
-                  searchResults.customers.map((customer) => (
-                    <li key={customer.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-slate-900/70">
-                      <p className="font-medium">{customer.fullName}</p>
-                      <p className="text-xs text-slate-500">{customer.email || "Sin email"}</p>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-              <h4 className="text-sm font-semibold">Vouchers</h4>
-              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                {searchResults.vouchers.length === 0 ? (
-                  <li className="text-slate-500">Sin resultados.</li>
-                ) : (
-                  searchResults.vouchers.map((voucher) => (
-                    <li key={voucher.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-slate-900/70">
-                      <p className="font-medium">{voucher.referenceCode}</p>
-                      <p className="text-xs text-slate-500">
-                        {voucher.customerName} · {voucher.status}
-                      </p>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-              <h4 className="text-sm font-semibold">Pagos</h4>
-              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                {searchResults.payments.length === 0 ? (
-                  <li className="text-slate-500">Sin resultados.</li>
-                ) : (
-                  searchResults.payments.map((payment) => (
-                    <li key={payment.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-slate-900/70">
-                      <p className="font-medium">
-                        ${Number(payment.amount).toFixed(2)}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {payment.reservationCode} · {payment.method}
-                      </p>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    );
 }

@@ -1,55 +1,48 @@
-import { useEffect, useState } from "react";
+import { Moon, Sun } from "lucide-react";
+import { useTheme } from "../context/ThemeContext";
 import Sidebar from "./Sidebar";
-
-const THEME_KEY = "magna-theme";
+import { Button } from "./ui/button";
 
 export default function Layout({ children, onLogout, isAdmin }) {
-  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || "dark");
+    const { theme, setTheme } = useTheme();
 
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
-    localStorage.setItem(THEME_KEY, theme);
-  }, [theme]);
+    const toggleTheme = () => {
+        setTheme(theme === "dark" ? "light" : "dark");
+    };
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  };
+    return (
+        <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
+            <Sidebar onLogout={onLogout} isAdmin={isAdmin} className="hidden w-64 md:flex fixed h-full z-30" />
 
-  return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <Sidebar onLogout={onLogout} isAdmin={isAdmin} />
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-slate-200 bg-white/80 px-8 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">MagnaTravel</p>
-            <h1 className="text-xl font-semibold">Backoffice de agencias</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              {theme === "dark" ? "Modo claro" : "Modo oscuro"}
-            </button>
-            <button
-              type="button"
-              onClick={onLogout}
-              className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
-            >
-              Cerrar sesión
-            </button>
-          </div>
-        </header>
-        <main className="flex-1 px-8 py-8">
-          <div className="mx-auto max-w-6xl">{children}</div>
-        </main>
-      </div>
-    </div>
-  );
+            {/* Mobile Header placeholder (could add mobile menu toggle here later) */}
+
+            <div className="flex-1 flex flex-col md:pl-64 transition-all duration-300">
+                <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-background/95 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                    <div>
+                        <h1 className="text-lg font-semibold">Dashboard</h1>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={toggleTheme}
+                            className="rounded-full"
+                        >
+                            <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                            <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                            <span className="sr-only">Toggle theme</span>
+                        </Button>
+                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-sm font-medium text-primary border border-primary/20">
+                            AD
+                        </div>
+                    </div>
+                </header>
+                <main className="flex-1 p-6 lg:p-10">
+                    <div className="mx-auto max-w-7xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {children}
+                    </div>
+                </main>
+            </div>
+        </div>
+    );
 }
