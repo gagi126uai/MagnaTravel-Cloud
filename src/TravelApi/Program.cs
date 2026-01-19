@@ -181,6 +181,14 @@ using (var scope = app.Services.CreateScope())
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"ContactName\" character varying(100) DEFAULT '';"); // Missing column fix
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"IsActive\" boolean DEFAULT TRUE;"); // Missing column fix
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"CurrentBalance\" numeric DEFAULT 0;"); // Missing column fix
+    
+    // Proactive checks for potentially missing legacy columns to avoid further crashes
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"Email\" character varying(100);"); 
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"Phone\" character varying(50);");
 
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
