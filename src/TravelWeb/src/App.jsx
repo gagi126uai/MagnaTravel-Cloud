@@ -14,7 +14,6 @@ import TariffsPage from "./pages/TariffsPage";
 import CuposPage from "./pages/CuposPage";
 import TreasuryPage from "./pages/TreasuryPage";
 import AgenciesPage from "./pages/AgenciesPage";
-import SuppliersPage from "./pages/SuppliersPage";
 
 function PrivateRoute({ children }) {
   if (!isAuthenticated()) {
