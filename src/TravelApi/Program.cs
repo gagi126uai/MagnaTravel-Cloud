@@ -145,9 +145,40 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     
-    // Auto-apply EF Core Migrations on startup
-    // This ensures consistency without manual commands
+    // HYBRID MIGRATION STRATEGY (Legacy -> EF Core)
+    // 1. Ensure Migration History Table exists
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+            "MigrationId" character varying(150) NOT NULL,
+            "ProductVersion" character varying(32) NOT NULL,
+            CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")
+        );
+        """);
+
+    // 2. Check if legacy tables exist (e.g. AccountingEntries)
+    // If they exist, we mark 'InitialRetailPivot' as ALREADY APPLIED to prevent "Table already exists" error.
+    var result = await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'AccountingEntries') THEN
+                INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+                VALUES ('20260119202735_InitialRetailPivot', '8.0.0')
+                ON CONFLICT DO NOTHING;
+            END IF;
+        END
+        $$;
+        """);
+
+    // 3. Now run MigrateAsync (Safely skips InitialRetailPivot if we just inserted it)
     await dbContext.Database.MigrateAsync();
+
+    // 4. HOTFIX: Ensure TaxId exists on Suppliers ( Legacy schema might have missed it)
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
 
     // Seed initial data if needed (e.g. Roles, Admin User)
     // [Seeding logic remains if present, otherwise empty]
