@@ -29,6 +29,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<BspReconciliationEntry> BspReconciliationEntries => Set<BspReconciliationEntry>();
     public DbSet<AccountingEntry> AccountingEntries => Set<AccountingEntry>();
     public DbSet<AccountingLine> AccountingLines => Set<AccountingLine>();
+    public DbSet<Agency> Agencies => Set<Agency>();
+    public DbSet<TravelFile> TravelFiles => Set<TravelFile>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -354,6 +356,56 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
             entity.Property(line => line.Currency)
                 .HasMaxLength(10);
+        });
+
+        modelBuilder.Entity<Agency>(entity =>
+        {
+            entity.Property(agency => agency.Name)
+                .HasMaxLength(200)
+                .IsRequired();
+
+            entity.Property(agency => agency.TaxId)
+                .HasMaxLength(50);
+
+            entity.Property(agency => agency.Email)
+                .HasMaxLength(200);
+
+            entity.Property(agency => agency.Phone)
+                .HasMaxLength(50);
+
+            entity.Property(agency => agency.Address)
+                .HasMaxLength(300);
+
+            entity.Property(agency => agency.CreditLimit)
+                .HasPrecision(12, 2);
+
+            entity.Property(agency => agency.CurrentBalance)
+                .HasPrecision(12, 2);
+
+            entity.HasMany(agency => agency.Users)
+                .WithOne(user => user.Agency)
+                .HasForeignKey(user => user.AgencyId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TravelFile>(entity =>
+        {
+            entity.Property(file => file.FileNumber)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(file => file.Name)
+                .HasMaxLength(200)
+                .IsRequired();
+
+            entity.Property(file => file.Status)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.HasMany(file => file.Reservations)
+                .WithOne(reservation => reservation.TravelFile)
+                .HasForeignKey(reservation => reservation.TravelFileId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

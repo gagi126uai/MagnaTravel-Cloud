@@ -18,4 +18,7 @@ public class Reservation
     public Customer? Customer { get; set; }
 
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+
+    public int? TravelFileId { get; set; }
+    public TravelFile? TravelFile { get; set; }
 }
