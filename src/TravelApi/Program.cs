@@ -105,6 +105,7 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 
 builder.Services.AddCors(options =>
+{
     options.AddPolicy("web", policy =>
     {
         // 1. Get origins from config
