@@ -52,4 +52,34 @@ public class CustomersController : ControllerBase
 
         return CreatedAtAction(nameof(GetCustomer), new { id = customer.Id }, customer);
     }
+
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<Customer>> UpdateCustomer(int id, Customer customer, CancellationToken cancellationToken)
+    {
+        if (id != customer.Id)
+        {
+            return BadRequest("ID mismatch");
+        }
+
+        var existing = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
+        if (existing is null)
+        {
+            return NotFound();
+        }
+
+        existing.FullName = customer.FullName;
+        existing.Email = customer.Email;
+        existing.Phone = customer.Phone;
+        existing.DocumentNumber = customer.DocumentNumber;
+        existing.Address = customer.Address;
+        existing.Notes = customer.Notes;
+        
+        // Retail Pivot: Update Financials
+        existing.CreditLimit = customer.CreditLimit;
+        existing.CurrentBalance = customer.CurrentBalance;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(existing);
+    }
 }

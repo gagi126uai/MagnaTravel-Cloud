@@ -22,14 +22,15 @@ const baseLinks = [
     { to: "/reservations", label: "Reservas", icon: CalendarRange },
     { to: "/cupos", label: "Cupos", icon: Ticket },
     { to: "/payments", label: "Pagos", icon: CreditCard },
+    { to: "/suppliers", label: "Proveedores", icon: Building2 },
     { to: "/treasury", label: "Tesorería", icon: Landmark },
     { to: "/tariffs", label: "Tarifarios", icon: BadgePercent },
-    { to: "/suppliers", label: "Proveedores", icon: Building2 },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className }) {
     const menuLinks = isAdmin
-        ? [...baseLinks, { to: "/agencies", label: "Agencias", icon: Building2 }, { to: "/reports", label: "Reportes", icon: BarChart3 }, { to: "/settings", label: "Configuración", icon: Settings }]
+        // Retail Pivot: Agencies is now settings, but keeping hidden or for SuperAdmin
+        ? [...baseLinks, { to: "/reports", label: "Reportes", icon: BarChart3 }, { to: "/settings", label: "Configuración", icon: Settings }, { to: "/agencies", label: "Mi Empresa", icon: Building2 }]
         : baseLinks;
 
     return (

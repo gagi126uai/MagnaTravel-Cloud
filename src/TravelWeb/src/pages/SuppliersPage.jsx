@@ -1,199 +1,249 @@
-import { useEffect, useState } from "react";
-import { apiRequest } from "../api";
-import { showError, showSuccess } from "../alerts";
-
-const emptySupplier = {
-  name: "",
-  email: "",
-  phone: "",
-  notes: "",
-};
+import { useState, useEffect } from "react";
+import { Plus, Search, Pencil, Building2, Mail, Phone, Power, CheckCircle2, XCircle } from "lucide-react";
+import { api } from "../api";
+import { formatCurrency } from "../lib/utils";
+import Swal from "sweetalert2";
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
-  const [formData, setFormData] = useState(emptySupplier);
-  const [editingId, setEditingId] = useState(null);
-
-  const loadSuppliers = async () => {
-    try {
-      const data = await apiRequest("/api/suppliers");
-      setSuppliers(data);
-    } catch (error) {
-      showError(error.message || "No se pudieron cargar los proveedores.");
-    }
-  };
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [currentSupplier, setCurrentSupplier] = useState(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    contactName: "",
+    email: "",
+    phone: "",
+    isActive: true,
+    currentBalance: 0
+  });
 
   useEffect(() => {
-    loadSuppliers();
+    fetchSuppliers();
   }, []);
 
-  const handleChange = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+  const fetchSuppliers = async () => {
+    try {
+      const data = await api.get("/suppliers");
+      setSuppliers(data);
+    } catch (error) {
+      console.error("Error fetching suppliers:", error);
+      Swal.fire("Error", "No se pudieron cargar los proveedores", "error");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    const payload = {
-      name: formData.name.trim(),
-      email: formData.email.trim() || null,
-      phone: formData.phone.trim() || null,
-      notes: formData.notes.trim() || null,
-    };
+  const handleOpenModal = (supplier = null) => {
+    if (supplier) {
+      setCurrentSupplier(supplier);
+      setFormData({
+        name: supplier.name,
+        contactName: supplier.contactName || "",
+        email: supplier.email || "",
+        phone: supplier.phone || "",
+        isActive: supplier.isActive,
+        currentBalance: supplier.currentBalance
+      });
+    } else {
+      setCurrentSupplier(null);
+      setFormData({
+        name: "",
+        contactName: "",
+        email: "",
+        phone: "",
+        isActive: true,
+        currentBalance: 0
+      });
+    }
+    setIsModalOpen(true);
+  };
 
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     try {
-      if (editingId) {
-        await apiRequest(`/api/suppliers/${editingId}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-        showSuccess("Proveedor actualizado.");
+      if (currentSupplier) {
+        await api.put(`/suppliers/${currentSupplier.id}`, { ...formData, id: currentSupplier.id });
+        Swal.fire("Éxito", "Proveedor actualizado", "success");
       } else {
-        await apiRequest("/api/suppliers", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        showSuccess("Proveedor creado.");
+        await api.post("/suppliers", formData);
+        Swal.fire("Éxito", "Proveedor creado", "success");
       }
-      setFormData(emptySupplier);
-      setEditingId(null);
-      await loadSuppliers();
+      setIsModalOpen(false);
+      fetchSuppliers();
     } catch (error) {
-      showError(error.message || "No se pudo guardar el proveedor.");
+      console.error("Error saving supplier:", error);
+      Swal.fire("Error", "No se pudo guardar el proveedor", "error");
     }
   };
 
-  const handleEdit = (supplier) => {
-    setEditingId(supplier.id);
-    setFormData({
-      name: supplier.name ?? "",
-      email: supplier.email ?? "",
-      phone: supplier.phone ?? "",
-      notes: supplier.notes ?? "",
-    });
-  };
-
-  const handleDelete = async (id) => {
-    try {
-      await apiRequest(`/api/suppliers/${id}`, { method: "DELETE" });
-      showSuccess("Proveedor eliminado.");
-      await loadSuppliers();
-    } catch (error) {
-      showError(error.message || "No se pudo eliminar el proveedor.");
-    }
-  };
+  const filteredSuppliers = suppliers.filter(supplier =>
+    supplier.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Proveedores</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          Carga y gestiona proveedores turísticos.
-        </p>
-      </header>
-
-      <div className="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Listado</h2>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-              {suppliers.length} proveedores
-            </span>
-          </div>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-left text-sm text-slate-200">
-              <thead className="text-xs uppercase text-slate-500 dark:text-slate-400">
-                <tr>
-                  <th className="px-3 py-2">Nombre</th>
-                  <th className="px-3 py-2">Email</th>
-                  <th className="px-3 py-2">Teléfono</th>
-                  <th className="px-3 py-2 text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 text-slate-700 dark:divide-slate-800 dark:text-slate-200">
-                {suppliers.length === 0 ? (
-                  <tr>
-                    <td className="px-3 py-4 text-slate-400" colSpan="4">
-                      No hay proveedores cargados.
-                    </td>
-                  </tr>
-                ) : (
-                  suppliers.map((supplier) => (
-                    <tr key={supplier.id}>
-                      <td className="px-3 py-3">{supplier.name}</td>
-                      <td className="px-3 py-3">{supplier.email || "-"}</td>
-                      <td className="px-3 py-3">{supplier.phone || "-"}</td>
-                      <td className="px-3 py-3 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleEdit(supplier)}
-                            className="rounded-lg border border-slate-200 px-3 py-1 text-xs text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                          >
-                            Editar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(supplier.id)}
-                            className="rounded-lg border border-rose-500/40 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/10"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
-          <h2 className="text-lg font-semibold">
-            {editingId ? "Editar proveedor" : "Nuevo proveedor"}
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Gestiona contactos clave para reservas.
-          </p>
-          <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-            <input
-              type="text"
-              value={formData.name}
-              onChange={(event) => handleChange("name", event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-              placeholder="Nombre del proveedor"
-              required
-            />
-            <input
-              type="email"
-              value={formData.email}
-              onChange={(event) => handleChange("email", event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-              placeholder="Email"
-            />
-            <input
-              type="text"
-              value={formData.phone}
-              onChange={(event) => handleChange("phone", event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-              placeholder="Teléfono"
-            />
-            <textarea
-              value={formData.notes}
-              onChange={(event) => handleChange("notes", event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-              placeholder="Notas"
-              rows="3"
-            />
-            <button
-              type="submit"
-              className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-500"
-            >
-              {editingId ? "Guardar cambios" : "Crear proveedor"}
-            </button>
-          </form>
-        </section>
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight text-white">Proveedores</h2>
+          <p className="text-muted-foreground">Gestión de proveedores y acreedores</p>
+        </div>
+        <button
+          onClick={() => handleOpenModal()}
+          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          <Plus className="h-4 w-4" />
+          Nuevo Proveedor
+        </button>
       </div>
+
+      <div className="flex items-center gap-2 rounded-lg border bg-card/50 px-3 py-2 backdrop-blur-sm">
+        <Search className="h-4 w-4 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Buscar proveedores..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+
+      <div className="rounded-xl border bg-card/50 backdrop-blur-sm">
+        <div className="relative w-full overflow-auto">
+          <table className="w-full caption-bottom text-sm text-left">
+            <thead className="[&_tr]:border-b">
+              <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Nombre</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Contacto</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">Saldo (Deuda)</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-center">Estado</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="[&_tr:last-child]:border-0">
+              {filteredSuppliers.map((supplier) => (
+                <tr key={supplier.id} className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                  <td className="p-4 align-middle font-medium text-white">
+                    <div className="flex flex-col">
+                      <span>{supplier.name}</span>
+                      <span className="text-xs text-muted-foreground">{supplier.email}</span>
+                    </div>
+                  </td>
+                  <td className="p-4 align-middle">{supplier.contactName || "-"}</td>
+                  <td className={`p-4 align-middle text-right font-medium ${supplier.currentBalance > 0 ? "text-red-400" : "text-green-400"}`}>
+                    {formatCurrency(supplier.currentBalance)}
+                  </td>
+                  <td className="p-4 align-middle text-center">
+                    {supplier.isActive ? (
+                      <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-1 text-xs font-medium text-green-500 ring-1 ring-inset ring-green-500/20">Active</span>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500 ring-1 ring-inset ring-red-500/20">Inactive</span>
+                    )}
+                  </td>
+                  <td className="p-4 align-middle text-right">
+                    <button
+                      onClick={() => handleOpenModal(supplier)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background/50 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-xl border bg-card p-6 shadow-xl sm:p-8">
+            <h3 className="text-xl font-bold text-white mb-6">
+              {currentSupplier ? "Editar Proveedor" : "Nuevo Proveedor"}
+            </h3>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">Nombre</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">Contacto</label>
+                  <input
+                    type="text"
+                    value={formData.contactName}
+                    onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">Email</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">Teléfono</label>
+                  <input
+                    type="text"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">Current Balance (Debt)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.currentBalance}
+                    onChange={(e) => setFormData({ ...formData, currentBalance: parseFloat(e.target.value) })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="flex items-center space-x-2 pt-8">
+                  <input
+                    type="checkbox"
+                    id="isActive"
+                    checked={formData.isActive}
+                    onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
+                    className="rounded border-gray-300 text-primary focus:ring-primary"
+                  />
+                  <label htmlFor="isActive" className="text-sm font-medium text-white">
+                    Activo
+                  </label>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="flex-1 rounded-lg border bg-transparent px-4 py-2 font-medium text-muted-foreground hover:bg-accent"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Guardar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

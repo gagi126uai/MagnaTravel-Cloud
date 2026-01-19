@@ -36,6 +36,26 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        
+        // ... (existing code) ...
+
+        modelBuilder.Entity<Supplier>(entity =>
+        {
+            entity.Property(s => s.Name).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.ContactName).HasMaxLength(100);
+            entity.Property(s => s.Email).HasMaxLength(100);
+            entity.Property(s => s.Phone).HasMaxLength(50);
+        });
+
+        modelBuilder.Entity<TravelFile>(entity =>
+        {
+            entity.HasOne(f => f.Payer)
+                  .WithMany()
+                  .HasForeignKey(f => f.PayerId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+        
+        // Previous configs...
 
         modelBuilder.Entity<FlightSegment>(entity =>
         {

@@ -11,5 +11,9 @@ public class Customer
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    // Retail Pivot: Financials
+    public decimal CreditLimit { get; set; } = 0;
+    public decimal CurrentBalance { get; set; } = 0; // Positive = they owe us
+
     public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
 }

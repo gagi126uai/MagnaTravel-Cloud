@@ -21,6 +21,10 @@ public class TravelFile
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ClosedAt { get; set; }
 
+    // Retail Pivot: Payer/Main Client
+    public int? PayerId { get; set; }
+    public Customer? Payer { get; set; }
+
     public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
     
     // Calculated properties can be added later (e.g., TotalMargin)
