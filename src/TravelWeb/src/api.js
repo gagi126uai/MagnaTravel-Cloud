@@ -8,7 +8,14 @@ export async function apiRequest(path, options = {}) {
     ...(options.headers || {}),
   };
 
-  const response = await fetch(`${baseUrl}${path}`, {
+  // Ensure proper URL construction
+  const cleanBaseUrl = baseUrl.replace(/\/$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+
+  // Auto-prepend /api if missing (Common issue with VITE_API_URL configuration)
+  const finalPath = cleanPath.startsWith("/api") ? cleanPath : `/api${cleanPath}`;
+
+  const response = await fetch(`${cleanBaseUrl}${finalPath}`, {
     ...options,
     headers,
   });
