@@ -18,9 +18,7 @@ export default function SettingsPage() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(false);
-  /* EMERGENCY OVERRIDE: Allow access to everyone */
-  // const adminUser = isAdmin(); 
-  const adminUser = true; // FORCE ADMIN FOR ALL
+  const adminUser = isAdmin();
   const [createForm, setCreateForm] = useState({
     fullName: "",
     email: "",

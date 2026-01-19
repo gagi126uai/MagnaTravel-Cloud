@@ -28,7 +28,7 @@ const baseLinks = [
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className }) {
-    const menuLinks = true // EMERGENCY OVERRIDE: isAdmin forced to true
+    const menuLinks = isAdmin
         // Retail Pivot: Agencies is now settings, but keeping hidden or for SuperAdmin
         ? [...baseLinks, { to: "/reports", label: "Reportes", icon: BarChart3 }, { to: "/settings", label: "Configuración", icon: Settings }, { to: "/agencies", label: "Mi Empresa", icon: Building2 }]
         : baseLinks;

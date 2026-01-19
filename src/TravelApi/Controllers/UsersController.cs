@@ -9,8 +9,7 @@ namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/users")]
-// [Authorize(Roles = "Admin")] // EMERGENCY UNLOCK for User Recovery
-[Authorize] 
+[Authorize(Roles = "Admin")]
 public class UsersController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
