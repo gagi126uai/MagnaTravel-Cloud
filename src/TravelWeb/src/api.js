@@ -39,3 +39,10 @@ export async function apiRequest(path, options = {}) {
 
   return response.json();
 }
+
+export const api = {
+  get: (url, options) => apiRequest(url, { ...options, method: 'GET' }),
+  post: (url, data, options) => apiRequest(url, { ...options, method: 'POST', body: JSON.stringify(data) }),
+  put: (url, data, options) => apiRequest(url, { ...options, method: 'PUT', body: JSON.stringify(data) }),
+  delete: (url, options) => apiRequest(url, { ...options, method: 'DELETE' })
+};
