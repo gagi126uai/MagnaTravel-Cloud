@@ -1,7 +1,17 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
-import { Plus, Search, FolderOpen, Calendar, DollarSign, User } from "lucide-react";
+import {
+    Plus,
+    Search,
+    FolderOpen,
+    Calendar,
+    User,
+    MoreVertical,
+    Briefcase,
+    Archive,
+    CheckCircle2
+} from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useNavigate } from "react-router-dom";
 
@@ -9,6 +19,7 @@ export default function FilesPage() {
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
+    const [viewFilter, setViewFilter] = useState("active"); // active, archived
     const navigate = useNavigate();
 
     // Create Modal State
@@ -17,7 +28,8 @@ export default function FilesPage() {
         name: "",
         payerId: "",
         startDate: "",
-        description: ""
+        description: "",
+        isBudget: true // Default to Budget/Presupuesto
     });
     const [customers, setCustomers] = useState([]);
 
@@ -29,16 +41,10 @@ export default function FilesPage() {
     const loadFiles = async () => {
         setLoading(true);
         try {
-            // Assuming GET /reservations/files or similar endpoint exists, 
-            // otherwise defaulting to /reservations generic for now until backend controller update
-            // Ideally we need a specific /travelfiles endpoint. 
-            // For this step I will assume /travelfiles will be created or I'll use a placeholder.
-            // Let's use /travelfiles and if it fails we know we need the controller.
             const data = await api.get("/travelfiles");
             setFiles(data);
         } catch (error) {
-            console.warn("Endpoint /travelfiles not ready yet, showing empty list or error");
-            // Fallback or empty if backend isn't deployed yet
+            // Silent fail or empty
             setFiles([]);
         } finally {
             setLoading(false);
@@ -49,9 +55,7 @@ export default function FilesPage() {
         try {
             const data = await api.get("/customers");
             setCustomers(data);
-        } catch (error) {
-            console.error("Error loading customers", error);
-        }
+        } catch { }
     };
 
     const handleCreateFile = async (e) => {
@@ -60,152 +64,200 @@ export default function FilesPage() {
             await api.post("/travelfiles", {
                 ...newFile,
                 payerId: newFile.payerId ? parseInt(newFile.payerId) : null,
-                startDate: newFile.startDate ? new Date(newFile.startDate).toISOString() : null
+                startDate: newFile.startDate ? new Date(newFile.startDate).toISOString() : null,
+                // If isBudget is true, backend creates as 'Presupuesto', else 'Reservado'
+                status: newFile.isBudget ? 'Presupuesto' : 'Reservado'
             });
             showSuccess("Expediente creado exitosamente");
             setIsCreateModalOpen(false);
             loadFiles();
-            setNewFile({ name: "", payerId: "", startDate: "", description: "" });
+            setNewFile({ name: "", payerId: "", startDate: "", description: "", isBudget: true });
         } catch (error) {
             showError("Error al crear el expediente");
         }
     };
 
-    // Status Badge Helper
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'Presupuesto': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
-            case 'Reservado': return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300';
-            case 'Operativo': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300';
-            case 'Cerrado': return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
-            case 'Cancelado': return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300';
-            default: return 'bg-slate-100 text-slate-700';
-        }
+    // Status Helpers
+    const getStatusBadge = (status) => {
+        const styles = {
+            'Presupuesto': 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
+            'Reservado': 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
+            'Operativo': 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
+            'Cerrado': 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
+            'Cancelado': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800',
+        };
+        return (
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status] || styles['Presupuesto']}`}>
+                {status}
+            </span>
+        );
     };
 
-    const filteredFiles = files.filter(f =>
-        f.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        f.fileNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        f.payer?.fullName?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    // Archive Logic (Soft delete or status change)
+    const handleArchive = async (e, id) => {
+        e.stopPropagation();
+        if (!confirm("¿Archivar este expediente?")) return;
+        // Implementation pending: PUT /travelfiles/{id} { status: 'Cerrado' }
+        // For now just console log
+        console.log("Archive", id);
+        showSuccess("Función Archivar en implementación");
+    };
+
+    const filteredFiles = files.filter(f => {
+        // Search Filter
+        const searchMatch =
+            f.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            f.fileNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            f.payer?.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
+
+        // View Filter (Active vs Archived)
+        const isActive = ['Presupuesto', 'Reservado', 'Operativo'].includes(f.status);
+        const viewMatch = viewFilter === 'active' ? isActive : !isActive;
+
+        return searchMatch && viewMatch;
+    });
 
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                    <h2 className="text-2xl font-bold tracking-tight">Expedientes</h2>
-                    <p className="text-sm text-muted-foreground">Gestión integral de viajes y servicios.</p>
+                    <h2 className="text-2xl font-bold tracking-tight">Gestión de Viajes</h2>
+                    <p className="text-sm text-muted-foreground">Administra tus expedientes, presupuestos y ventas.</p>
                 </div>
-                <Button onClick={() => setIsCreateModalOpen(true)} className="w-full sm:w-auto">
+                <Button onClick={() => setIsCreateModalOpen(true)} className="w-full sm:w-auto shadow-sm">
                     <Plus className="h-4 w-4 mr-2" /> Nuevo Expediente
                 </Button>
             </div>
 
-            {/* Filters */}
-            <div className="flex items-center space-x-2 bg-white dark:bg-slate-900 p-2 rounded-xl border">
-                <Search className="h-4 w-4 text-muted-foreground ml-2" />
-                <input
-                    className="flex-1 bg-transparent border-none text-sm focus:outline-none"
-                    placeholder="Buscar por nombre, número de file o cliente..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                />
+            {/* Toolbar */}
+            <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                {/* View Tabs */}
+                <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start sm:self-auto">
+                    <button
+                        onClick={() => setViewFilter("active")}
+                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewFilter === 'active' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                    >
+                        Activos
+                    </button>
+                    <button
+                        onClick={() => setViewFilter("archived")}
+                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewFilter === 'archived' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                    >
+                        Archivados
+                    </button>
+                </div>
+
+                {/* Search */}
+                <div className="relative w-full sm:max-w-sm">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <input
+                        className="w-full bg-transparent pl-9 pr-4 py-2 text-sm border-none focus:outline-none placeholder:text-muted-foreground/70"
+                        placeholder="Buscar por pasajero, nombre o ID..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
             </div>
 
-            {/* Grid */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredFiles.map((file) => (
-                    <div
-                        key={file.id}
-                        onClick={() => navigate(`/files/${file.id}`)}
-                        className="group relative cursor-pointer overflow-hidden rounded-xl border bg-card p-5 transition-all hover:shadow-md hover:border-primary/50"
-                    >
-                        <div className="flex justify-between items-start mb-4">
-                            <div className="flex items-center gap-2">
-                                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                                    <FolderOpen className="h-5 w-5" />
-                                </div>
-                                <div>
-                                    <h3 className="font-semibold leading-none group-hover:text-primary transition-colors">
-                                        {file.name}
-                                    </h3>
-                                    <span className="text-xs text-muted-foreground font-mono mt-1 block">
-                                        {file.fileNumber}
-                                    </span>
-                                </div>
-                            </div>
-                            <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${getStatusColor(file.status)}`}>
-                                {file.status}
-                            </span>
-                        </div>
-
-                        <div className="space-y-3 text-sm">
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                                <User className="h-4 w-4 opacity-70" />
-                                <span>{file.payer?.fullName || "Sin Cliente Asignado"}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                                <Calendar className="h-4 w-4 opacity-70" />
-                                <span>
-                                    {file.startDate ? new Date(file.startDate).toLocaleDateString() : "Fecha a definir"}
-                                </span>
-                            </div>
-                        </div>
-
-                        <div className="mt-4 pt-4 border-t flex justify-between items-center">
-                            <div className="text-xs text-muted-foreground">
-                                Total Venta
-                            </div>
-                            <div className="font-bold text-lg font-mono">
-                                ${file.totalSale?.toLocaleString() || "0"}
-                            </div>
-                        </div>
-
-                        {/* Hover Balance Indicator */}
-                        <div className="absolute bottom-0 left-0 h-1 w-full bg-slate-100">
-                            <div
-                                className={`h-full ${file.balance > 0 ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                                style={{ width: '100%' }} // Simplified for now, could be proportional
-                            />
-                        </div>
-                    </div>
-                ))}
-
-                {filteredFiles.length === 0 && !loading && (
-                    <div className="col-span-full py-12 text-center text-muted-foreground">
-                        <div className="mx-auto h-12 w-12 rounded-full bg-slate-100 flex items-center justify-center mb-4">
-                            <FolderOpen className="h-6 w-6 text-slate-400" />
-                        </div>
-                        <p>No se encontraron expedientes.</p>
-                        <Button variant="link" onClick={() => setIsCreateModalOpen(true)}>
-                            Crear el primero
-                        </Button>
-                    </div>
-                )}
+            {/* Data Table */}
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800">
+                            <tr>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Expediente</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Cliente</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Inicio Viaje</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Estado</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Saldo</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 w-[50px]"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {filteredFiles.map((file) => (
+                                <tr
+                                    key={file.id}
+                                    onClick={() => navigate(`/files/${file.id}`)}
+                                    className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
+                                >
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="h-9 w-9 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 dark:bg-indigo-900/20 dark:text-indigo-400">
+                                                <FolderOpen className="h-4 w-4" />
+                                            </div>
+                                            <div>
+                                                <div className="font-semibold text-slate-900 dark:text-slate-100">{file.name}</div>
+                                                <div className="text-xs text-slate-500 font-mono">{file.fileNumber}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                                            <User className="h-3.5 w-3.5 opacity-70" />
+                                            {file.payer?.fullName || "Sin Asignar"}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
+                                        {file.startDate ? new Date(file.startDate).toLocaleDateString() : "-"}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        {getStatusBadge(file.status)}
+                                    </td>
+                                    <td className="px-6 py-4 text-right">
+                                        <div className={`font-mono font-medium ${file.balance > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-600 dark:text-slate-400'}`}>
+                                            ${file.balance?.toLocaleString()}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-right">
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                            onClick={(e) => handleArchive(e, file.id)}
+                                            title="Archivar Expediente"
+                                        >
+                                            <Archive className="h-4 w-4 text-slate-400 hover:text-slate-600" />
+                                        </Button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {filteredFiles.length === 0 && (
+                                <tr>
+                                    <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                                        <div className="mx-auto h-12 w-12 rounded-full bg-slate-50 flex items-center justify-center mb-3 dark:bg-slate-900">
+                                            <Search className="h-6 w-6 opacity-50" />
+                                        </div>
+                                        <p>No se encontraron expedientes en esta vista.</p>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {/* Create Modal */}
             {isCreateModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-                        <h3 className="text-lg font-semibold mb-4">Nuevo Expediente</h3>
+                    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 border dark:border-slate-800">
+                        <h3 className="text-lg font-semibold mb-4">Nuevo Viaje / Presupuesto</h3>
                         <form onSubmit={handleCreateFile} className="space-y-4">
                             <div>
-                                <label className="text-sm font-medium">Nombre del Viaje</label>
+                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Nombre del Viaje</label>
                                 <input
                                     autoFocus
                                     required
                                     placeholder="Ej. Familia Perez - Caribe 2025"
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-800 dark:bg-slate-800"
+                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800"
                                     value={newFile.name}
                                     onChange={e => setNewFile({ ...newFile, name: e.target.value })}
                                 />
                             </div>
 
                             <div>
-                                <label className="text-sm font-medium">Cliente Principal (Pagador)</label>
+                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cliente</label>
                                 <select
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-800 dark:bg-slate-800"
+                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800"
                                     value={newFile.payerId}
                                     onChange={e => setNewFile({ ...newFile, payerId: e.target.value })}
                                 >
@@ -217,23 +269,27 @@ export default function FilesPage() {
                             </div>
 
                             <div>
-                                <label className="text-sm font-medium">Fecha de Inicio</label>
+                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Fecha de Inicio</label>
                                 <input
                                     type="date"
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-800 dark:bg-slate-800"
+                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800"
                                     value={newFile.startDate}
                                     onChange={e => setNewFile({ ...newFile, startDate: e.target.value })}
                                 />
                             </div>
 
-                            <div>
-                                <label className="text-sm font-medium">Descripción (Opcional)</label>
-                                <textarea
-                                    rows={3}
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-800 dark:bg-slate-800"
-                                    value={newFile.description}
-                                    onChange={e => setNewFile({ ...newFile, description: e.target.value })}
-                                />
+                            {/* Budget Toggle */}
+                            <div className="flex items-center gap-3 py-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setNewFile(prev => ({ ...prev, isBudget: !prev.isBudget }))}
+                                    className={`relative w-11 h-6 rounded-full transition-colors ${newFile.isBudget ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-700'}`}
+                                >
+                                    <span className={`absolute left-1 top-1 bg-white h-4 w-4 rounded-full transition-transform ${newFile.isBudget ? 'translate-x-5' : 'translate-x-0'}`} />
+                                </button>
+                                <span className="text-sm text-slate-700 dark:text-slate-300">
+                                    Es un Presupuesto (Borrador)
+                                </span>
                             </div>
 
                             <div className="flex justify-end gap-2 pt-2">
