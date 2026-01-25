@@ -99,6 +99,7 @@ public class TravelFilesController : ControllerBase
         {
             TravelFileId = id,
             ServiceType = request.ServiceType,
+            ProductType = request.ServiceType, // Mismo valor para ProductType y ServiceType
             SupplierId = request.SupplierId,
             CustomerId = file.PayerId,
             Description = request.Description ?? request.ServiceType,
@@ -153,6 +154,7 @@ public class TravelFilesController : ControllerBase
 
         // Update service
         service.ServiceType = request.ServiceType;
+        service.ProductType = request.ServiceType; // Mismo valor
         service.Description = request.Description ?? request.ServiceType;
         service.ConfirmationNumber = request.ConfirmationNumber ?? service.ConfirmationNumber;
         service.DepartureDate = request.DepartureDate.ToUniversalTime();

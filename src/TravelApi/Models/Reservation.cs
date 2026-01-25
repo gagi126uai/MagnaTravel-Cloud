@@ -39,6 +39,7 @@ public class Reservation
     public string? ConfirmationNumber { get; set; }
     public string Status { get; set; } = ReservationStatuses.Draft;
     public string? ServiceType { get; set; } = ServiceTypes.Flight;
+    public string ProductType { get; set; } = ServiceTypes.Flight; // DB NOT NULL
     
     public string? Description { get; set; }
 
