@@ -1,14 +1,11 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using TravelApi.Data;
 using TravelApi.Models;
 using TravelApi.Options;
-using TravelApi.Services;
-using TravelApi.Services.Bsp;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,11 +48,6 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
     options.UseNpgsql(connectionString);
 });
-
-builder.Services.AddScoped<CupoAllocationService>();
-builder.Services.AddScoped<BspImportService>();
-builder.Services.AddScoped<IBspImportParser, CsvBspImportParser>();
-builder.Services.AddScoped<IBspImportParser, JsonBspImportParser>();
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
     {
@@ -109,9 +101,6 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("web", policy =>
     {
-        // PERMISSIVE CORS POLICY TO FIX VPS/BROWSER ISSUES
-        // This allows any origin to connect, which is necessary if the origin headers 
-        // are varying or if env vars are missing.
         policy.SetIsOriginAllowed(_ => true)
               .AllowAnyHeader()
               .AllowAnyMethod()
@@ -147,7 +136,6 @@ using (var scope = app.Services.CreateScope())
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     
     // HYBRID MIGRATION STRATEGY (Legacy -> EF Core)
-    // 1. Ensure Migration History Table exists
     await dbContext.Database.ExecuteSqlRawAsync(
         """
         CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
@@ -157,13 +145,12 @@ using (var scope = app.Services.CreateScope())
         );
         """);
 
-    // 2. Check if legacy tables exist (e.g. AccountingEntries)
-    // If they exist, we mark 'InitialRetailPivot' as ALREADY APPLIED to prevent "Table already exists" error.
-    var result = await dbContext.Database.ExecuteSqlRawAsync(
+    // Mark legacy migration as applied if tables exist
+    await dbContext.Database.ExecuteSqlRawAsync(
         """
         DO $$
         BEGIN
-            IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'AccountingEntries') THEN
+            IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'Customers') THEN
                 INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
                 VALUES ('20260119202735_InitialRetailPivot', '8.0.0')
                 ON CONFLICT DO NOTHING;
@@ -172,27 +159,23 @@ using (var scope = app.Services.CreateScope())
         $$;
         """);
 
-    // 3. Now run MigrateAsync (Safely skips InitialRetailPivot if we just inserted it)
     await dbContext.Database.MigrateAsync();
 
-    // 4. HOTFIX: Ensure TaxId, ContactName, IsActive exists on Suppliers/Customers
+    // Hotfixes for existing databases
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
     await dbContext.Database.ExecuteSqlRawAsync(
-        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"ContactName\" character varying(100) DEFAULT '';"); // Missing column fix
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"ContactName\" character varying(100) DEFAULT '';");
     await dbContext.Database.ExecuteSqlRawAsync(
-        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"IsActive\" boolean DEFAULT TRUE;"); // Missing column fix
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"IsActive\" boolean DEFAULT TRUE;");
     await dbContext.Database.ExecuteSqlRawAsync(
-        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"CurrentBalance\" numeric DEFAULT 0;"); // Missing column fix
-    
-    // Proactive checks for potentially missing legacy columns to avoid further crashes
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"CurrentBalance\" numeric DEFAULT 0;");
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"Email\" character varying(100);"); 
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"Phone\" character varying(50);");
 
-    // --- PHASE 8 ERP UPDATES ---
-    // Update TravelFiles
+    // TravelFiles
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"Description\" text;");
     await dbContext.Database.ExecuteSqlRawAsync(
@@ -206,7 +189,7 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"Balance\" numeric DEFAULT 0;");
 
-    // Update Reservations (Services)
+    // Reservations
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"SupplierId\" integer;");
     await dbContext.Database.ExecuteSqlRawAsync(
@@ -223,28 +206,20 @@ using (var scope = app.Services.CreateScope())
         "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"Tax\" numeric DEFAULT 0;");
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"ServiceDetailsJson\" text;");
-    
-    // Ensure FK for SupplierId
-    // Note: Use a tailored name or check existence if doing complex constraints. 
-    // For now, column existence is the priority to avoid crashes.
 
-    await dbContext.Database.ExecuteSqlRawAsync(
-        "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
-
-    // CRITICAL HOTFIX: Relax Constraints to prevent crashes on legacy/draft data
+    // Relax constraints
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Reservations\" ALTER COLUMN \"CustomerId\" DROP NOT NULL;");
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Reservations\" ALTER COLUMN \"ServiceType\" DROP NOT NULL;");
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Reservations\" ALTER COLUMN \"ConfirmationNumber\" DROP NOT NULL;");
+
+    // Customers
     await dbContext.Database.ExecuteSqlRawAsync(
-        "ALTER TABLE \"Reservations\" ALTER COLUMN \"ReferenceCode\" DROP NOT NULL;");
+        "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
 
-    // Seed initial data if needed (e.g. Roles, Admin User)
-    // [Seeding logic remains if present, otherwise empty]
-    // [Seeding logic remains if present, otherwise empty]
-
+    // Seed roles
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
     var roles = new[] { "Admin", "Colaborador" };

@@ -13,6 +13,15 @@ public static class ServiceTypes
     public const string Other = "Otro";
 }
 
+public static class ReservationStatuses
+{
+    public const string Draft = "Borrador";
+    public const string Requested = "Solicitado";
+    public const string Confirmed = "Confirmado";
+    public const string Issued = "Emitido";
+    public const string Cancelled = "Cancelado";
+}
+
 public class Reservation
 {
     public int Id { get; set; }
@@ -21,54 +30,40 @@ public class Reservation
     public int? TravelFileId { get; set; }
     public TravelFile? TravelFile { get; set; }
 
-    // Legacy or Specific Passenger
     public int? CustomerId { get; set; } 
     public Customer? Customer { get; set; }
     
-    public int? SupplierId { get; set; } // The Provider
+    public int? SupplierId { get; set; }
     public Supplier? Supplier { get; set; }
-
-    // Erasable/Legacy fields should be deprecated or repurposed
-    // public string ReferenceCode { get; set; } -> Use ConfirmationNumber
     
-    public string? ConfirmationNumber { get; set; } // PNR / Booking ID
-    public string Status { get; set; } = ReservationStatuses.Draft; // HK, OK, RQ, XX
+    public string? ConfirmationNumber { get; set; }
+    public string Status { get; set; } = ReservationStatuses.Draft;
     public string? ServiceType { get; set; } = ServiceTypes.Flight;
     
-    public string? Description { get; set; } // Description can also be null
-
+    public string? Description { get; set; }
 
     // Dates
-    public DateTime DepartureDate { get; set; } // CheckIn / Flight Date
-    public DateTime? ReturnDate { get; set; }   // CheckOut
+    public DateTime DepartureDate { get; set; }
+    public DateTime? ReturnDate { get; set; }
 
     // Financials
     [Column(TypeName = "decimal(18,2)")]
-    public decimal NetCost { get; set; } = 0; // Costo Neto
+    public decimal NetCost { get; set; } = 0;
 
     [Column(TypeName = "decimal(18,2)")]
-    public decimal SalePrice { get; set; } = 0; // Venta Publico
+    public decimal SalePrice { get; set; } = 0;
 
     [Column(TypeName = "decimal(18,2)")]
-    public decimal Commission { get; set; } = 0; // Ganancia o %
+    public decimal Commission { get; set; } = 0;
 
     [Column(TypeName = "decimal(18,2)")]
     public decimal Tax { get; set; } = 0;
 
-    // Legacy Mappings (to avoid breaking simple builds immediately, but we should migrate)
-    public string ReferenceCode { get { return ConfirmationNumber; } set { ConfirmationNumber = value; } }
-    public decimal BasePrice { get { return NetCost; } set { NetCost = value; } }
-    public decimal TotalAmount { get { return SalePrice; } set { SalePrice = value; } }
-    public string ProductType { get { return ServiceType; } set { ServiceType = value; } }
-    public string? SupplierName { get; set; } // Legacy string, prefer SupplierId
+    public string? SupplierName { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
-
-    // Flexible Details (JSON) - Simple string storage for now
     public string? ServiceDetailsJson { get; set; } 
-    
-    // Navigation for flights
     public ICollection<FlightSegment> Segments { get; set; } = new List<FlightSegment>();
 }

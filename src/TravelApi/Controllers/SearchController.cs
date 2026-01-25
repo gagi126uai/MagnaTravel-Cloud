@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using TravelApi.Contracts.Search;
 using TravelApi.Data;
 
 namespace TravelApi.Controllers;
@@ -30,54 +29,52 @@ public class SearchController : ControllerBase
 
         var customers = await _dbContext.Customers
             .AsNoTracking()
-            .Where(customer =>
-                customer.FullName.ToLower().Contains(normalized) ||
-                (customer.Email != null && customer.Email.ToLower().Contains(normalized)) ||
-                (customer.Phone != null && customer.Phone.ToLower().Contains(normalized)))
-            .OrderBy(customer => customer.FullName)
+            .Where(c => c.FullName.ToLower().Contains(normalized) ||
+                (c.Email != null && c.Email.ToLower().Contains(normalized)) ||
+                (c.Phone != null && c.Phone.ToLower().Contains(normalized)))
+            .OrderBy(c => c.FullName)
             .Take(5)
-            .Select(customer => new CustomerSearchResult(
-                customer.Id,
-                customer.FullName,
-                customer.Email,
-                customer.Phone))
+            .Select(c => new CustomerSearchResult(c.Id, c.FullName, c.Email, c.Phone))
             .ToListAsync(cancellationToken);
 
-        var vouchers = await _dbContext.Reservations
+        var files = await _dbContext.TravelFiles
             .AsNoTracking()
-            .Include(reservation => reservation.Customer)
-            .Where(reservation =>
-                reservation.ReferenceCode.ToLower().Contains(normalized) ||
-                reservation.Customer.FullName.ToLower().Contains(normalized))
-            .OrderByDescending(reservation => reservation.CreatedAt)
+            .Include(f => f.Payer)
+            .Where(f => f.FileNumber.ToLower().Contains(normalized) ||
+                f.Name.ToLower().Contains(normalized) ||
+                (f.Payer != null && f.Payer.FullName.ToLower().Contains(normalized)))
+            .OrderByDescending(f => f.CreatedAt)
             .Take(5)
-            .Select(reservation => new ReservationSearchResult(
-                reservation.Id,
-                reservation.ReferenceCode,
-                reservation.Status,
-                reservation.TotalAmount,
-                reservation.Customer.FullName))
+            .Select(f => new FileSearchResult(f.Id, f.FileNumber, f.Name, f.Status, f.Payer != null ? f.Payer.FullName : null))
             .ToListAsync(cancellationToken);
 
         var payments = await _dbContext.Payments
             .AsNoTracking()
-            .Include(payment => payment.Reservation)
-            .Where(payment =>
-                payment.Reservation.ReferenceCode.ToLower().Contains(normalized) ||
-                payment.Method.ToLower().Contains(normalized) ||
-                payment.Status.ToLower().Contains(normalized))
-            .OrderByDescending(payment => payment.PaidAt)
+            .Include(p => p.Reservation)
+            .ThenInclude(r => r!.TravelFile)
+            .Where(p => p.Method.ToLower().Contains(normalized) ||
+                p.Status.ToLower().Contains(normalized))
+            .OrderByDescending(p => p.PaidAt)
             .Take(5)
-            .Select(payment => new PaymentSearchResult(
-                payment.Id,
-                payment.Amount,
-                payment.Status,
-                payment.Method,
-                payment.Reservation.ReferenceCode))
+            .Select(p => new PaymentSearchResult(
+                p.Id, 
+                p.Amount, 
+                p.Status, 
+                p.Method, 
+                p.Reservation != null && p.Reservation.TravelFile != null ? p.Reservation.TravelFile.FileNumber : null))
             .ToListAsync(cancellationToken);
 
-        var response = new SearchResultsResponse(query, customers, vouchers, payments);
-
-        return Ok(response);
+        return Ok(new SearchResultsResponse(query, customers, files, payments));
     }
 }
+
+// DTOs
+public record SearchResultsResponse(
+    string Query,
+    List<CustomerSearchResult> Customers,
+    List<FileSearchResult> Files,
+    List<PaymentSearchResult> Payments);
+
+public record CustomerSearchResult(int Id, string FullName, string? Email, string? Phone);
+public record FileSearchResult(int Id, string FileNumber, string Name, string Status, string? PayerName);
+public record PaymentSearchResult(int Id, decimal Amount, string Status, string Method, string? FileNumber);

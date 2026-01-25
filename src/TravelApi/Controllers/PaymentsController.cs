@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
@@ -19,6 +18,21 @@ public class PaymentsController : ControllerBase
         _dbContext = dbContext;
     }
 
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<Payment>>> GetAllPayments(CancellationToken cancellationToken)
+    {
+        var payments = await _dbContext.Payments
+            .AsNoTracking()
+            .Include(p => p.Reservation)
+                .ThenInclude(r => r!.Customer)
+            .Include(p => p.Reservation)
+                .ThenInclude(r => r!.TravelFile)
+            .OrderByDescending(p => p.PaidAt)
+            .ToListAsync(cancellationToken);
+
+        return Ok(payments);
+    }
+
     [HttpGet("reservation/{reservationId:int}")]
     public async Task<ActionResult<IEnumerable<Payment>>> GetPaymentsForReservation(
         int reservationId,
@@ -26,8 +40,8 @@ public class PaymentsController : ControllerBase
     {
         var payments = await _dbContext.Payments
             .AsNoTracking()
-            .Where(payment => payment.ReservationId == reservationId)
-            .OrderByDescending(payment => payment.PaidAt)
+            .Where(p => p.ReservationId == reservationId)
+            .OrderByDescending(p => p.PaidAt)
             .ToListAsync(cancellationToken);
 
         return Ok(payments);
@@ -36,32 +50,25 @@ public class PaymentsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<Payment>> CreatePayment(
         Payment payment,
-        [FromServices] UserManager<ApplicationUser> userManager,
         CancellationToken cancellationToken)
     {
-        var reservationExists = await _dbContext.Reservations
-            .AnyAsync(reservation => reservation.Id == payment.ReservationId, cancellationToken);
+        // Validate reservation exists
+        var reservation = await _dbContext.Reservations
+            .Include(r => r.TravelFile)
+            .FirstOrDefaultAsync(r => r.Id == payment.ReservationId, cancellationToken);
 
-        if (!reservationExists)
+        if (reservation is null)
         {
-            return BadRequest("Reservation does not exist.");
+            return BadRequest("Reserva no encontrada.");
         }
 
+        payment.PaidAt = DateTime.UtcNow;
         _dbContext.Payments.Add(payment);
 
-        // B2B Logic: Decrease Agency Debt
-        var user = await userManager.GetUserAsync(User);
-        if (user is not null)
+        // Update TravelFile balance if linked
+        if (reservation.TravelFile is not null)
         {
-            var dbUser = await _dbContext.Users
-                .Include(u => u.Agency)
-                .FirstOrDefaultAsync(u => u.Id == user.Id, cancellationToken);
-
-            if (dbUser?.Agency is not null)
-            {
-                // Decrease Debt (CurrentBalance)
-                dbUser.Agency.CurrentBalance -= payment.Amount;
-            }
+            reservation.TravelFile.Balance -= payment.Amount;
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
