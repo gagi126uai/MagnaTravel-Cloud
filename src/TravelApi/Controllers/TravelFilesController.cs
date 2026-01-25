@@ -123,6 +123,57 @@ public class TravelFilesController : ControllerBase
         return Ok(reservation);
     }
 
+    [HttpPut("services/{serviceId}")]
+    public async Task<IActionResult> UpdateService(int serviceId, AddServiceRequest request)
+    {
+        var service = await _context.Reservations
+            .Include(r => r.TravelFile)
+            .FirstOrDefaultAsync(r => r.Id == serviceId);
+
+        if (service == null) return NotFound("Servicio no encontrado");
+
+        // Validations
+        if (string.IsNullOrWhiteSpace(request.ServiceType))
+        {
+            return BadRequest("Debe seleccionar un tipo de servicio");
+        }
+
+        if (request.SalePrice <= 0)
+        {
+            return BadRequest("El precio de venta debe ser mayor a 0");
+        }
+
+        // Revert old amounts
+        if (service.TravelFile != null)
+        {
+            service.TravelFile.TotalSale -= service.SalePrice;
+            service.TravelFile.TotalCost -= service.NetCost;
+            service.TravelFile.Balance -= service.SalePrice;
+        }
+
+        // Update service
+        service.ServiceType = request.ServiceType;
+        service.Description = request.Description ?? request.ServiceType;
+        service.ConfirmationNumber = request.ConfirmationNumber ?? service.ConfirmationNumber;
+        service.DepartureDate = request.DepartureDate.ToUniversalTime();
+        service.ReturnDate = request.ReturnDate?.ToUniversalTime();
+        service.SupplierId = request.SupplierId;
+        service.SalePrice = request.SalePrice;
+        service.NetCost = request.NetCost;
+        service.Commission = request.SalePrice - request.NetCost;
+
+        // Apply new amounts
+        if (service.TravelFile != null)
+        {
+            service.TravelFile.TotalSale += service.SalePrice;
+            service.TravelFile.TotalCost += service.NetCost;
+            service.TravelFile.Balance += service.SalePrice;
+        }
+
+        await _context.SaveChangesAsync();
+        return Ok(service);
+    }
+
     [HttpDelete("services/{serviceId}")]
     public async Task<IActionResult> RemoveService(int serviceId)
     {
@@ -137,7 +188,7 @@ public class TravelFilesController : ControllerBase
         {
             service.TravelFile.TotalSale -= service.SalePrice;
             service.TravelFile.TotalCost -= service.NetCost;
-            service.TravelFile.Balance -= service.SalePrice; // Revert balance impact
+            service.TravelFile.Balance -= service.SalePrice;
         }
 
         _context.Reservations.Remove(service);
@@ -180,6 +231,38 @@ public class TravelFilesController : ControllerBase
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetFile), new { id = file.Id }, passenger);
+    }
+
+    [HttpPut("passengers/{passengerId}")]
+    public async Task<IActionResult> UpdatePassenger(int passengerId, Passenger updated)
+    {
+        var passenger = await _context.Passengers.FindAsync(passengerId);
+        if (passenger == null) return NotFound("Pasajero no encontrado");
+
+        // Validations
+        if (string.IsNullOrWhiteSpace(updated.FullName))
+        {
+            return BadRequest("El nombre del pasajero es obligatorio");
+        }
+
+        if (updated.FullName.Length < 3)
+        {
+            return BadRequest("El nombre debe tener al menos 3 caracteres");
+        }
+
+        // Update fields
+        passenger.FullName = updated.FullName;
+        passenger.DocumentType = updated.DocumentType;
+        passenger.DocumentNumber = updated.DocumentNumber;
+        passenger.BirthDate = updated.BirthDate;
+        passenger.Nationality = updated.Nationality;
+        passenger.Phone = updated.Phone;
+        passenger.Email = updated.Email;
+        passenger.Gender = updated.Gender;
+        passenger.Notes = updated.Notes;
+
+        await _context.SaveChangesAsync();
+        return Ok(passenger);
     }
 
     [HttpDelete("passengers/{passengerId}")]
