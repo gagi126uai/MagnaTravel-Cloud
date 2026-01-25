@@ -61,4 +61,59 @@ public class TravelFilesController : ControllerBase
         
         return CreatedAtAction(nameof(GetFile), new { id = file.Id }, file);
     }
+    [HttpPost("{id}/services")]
+    public async Task<IActionResult> AddService(int id, AddServiceRequest request)
+    {
+        var file = await _context.TravelFiles.FindAsync(id);
+        if (file == null) return NotFound("Expediente no encontrado");
+
+        var reservation = new Reservation
+        {
+            TravelFileId = id,
+            ServiceType = request.ServiceType,
+            SupplierId = request.SupplierId,
+            Description = request.Description ?? request.ServiceType,
+            ConfirmationNumber = request.ConfirmationNumber ?? "PENDIENTE",
+            Status = "Solicitado",
+            DepartureDate = request.DepartureDate.ToUniversalTime(),
+            ReturnDate = request.ReturnDate?.ToUniversalTime(),
+            SalePrice = request.SalePrice,
+            NetCost = request.NetCost,
+            // Calculate financial impacts immediately (simple logic for now)
+            Commission = request.SalePrice - request.NetCost,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Update File Totals
+        file.TotalSale += reservation.SalePrice;
+        file.TotalCost += reservation.NetCost;
+        file.Balance = file.TotalSale; // Assuming no payments yet
+
+        _context.Reservations.Add(reservation);
+        await _context.SaveChangesAsync();
+
+        return Ok(reservation);
+    }
+
+    [HttpDelete("services/{serviceId}")]
+    public async Task<IActionResult> RemoveService(int serviceId)
+    {
+        var service = await _context.Reservations
+            .Include(r => r.TravelFile)
+            .FirstOrDefaultAsync(r => r.Id == serviceId);
+            
+        if (service == null) return NotFound();
+
+        // Revert Totals based on what was saved
+        if (service.TravelFile != null)
+        {
+            service.TravelFile.TotalSale -= service.SalePrice;
+            service.TravelFile.TotalCost -= service.NetCost;
+            service.TravelFile.Balance -= service.SalePrice; // Revert balance impact
+        }
+
+        _context.Reservations.Remove(service);
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
 }

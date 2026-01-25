@@ -10,27 +10,46 @@ import {
     Plane,
     Hotel,
     Bus,
-    MoreHorizontal,
     CreditCard,
     FileText,
     Trash2,
-    Edit2
+    Edit2,
+    X
 } from "lucide-react";
 import { Button } from "../components/ui/button";
+
+// SERVICE TYPES CONSTANTS
+const SERVICE_ICONS = {
+    Aereo: <Plane className="h-5 w-5" />,
+    Hotel: <Hotel className="h-5 w-5" />,
+    Traslado: <Bus className="h-5 w-5" />,
+    Otro: <CreditCard className="h-5 w-5" />
+};
 
 export default function FileDetailPage() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState("services"); // services, payments, docs
+    const [activeTab, setActiveTab] = useState("services");
+    const [suppliers, setSuppliers] = useState([]);
 
-    // Generic Service Modal
+    // Generic Service Modal State
     const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
-    const [serviceType, setServiceType] = useState("Aereo"); // Default
+    const [serviceType, setServiceType] = useState("Aereo");
+    const [serviceForm, setServiceForm] = useState({
+        supplierId: "",
+        description: "",
+        confirmationNumber: "",
+        departureDate: "",
+        returnDate: "",
+        salePrice: 0,
+        netCost: 0
+    });
 
     useEffect(() => {
         loadFile();
+        loadSuppliers();
     }, [id]);
 
     const loadFile = async () => {
@@ -44,6 +63,62 @@ export default function FileDetailPage() {
             setLoading(false);
         }
     };
+
+    const loadSuppliers = async () => {
+        try {
+            const data = await api.get("/suppliers");
+            setSuppliers(data);
+        } catch {
+            console.log("Error loading suppliers");
+        }
+    };
+
+    const handleAddService = async (e) => {
+        e.preventDefault();
+        try {
+            await api.post(`/travelfiles/${id}/services`, {
+                ...serviceForm,
+                serviceType: serviceType,
+                supplierId: serviceForm.supplierId ? parseInt(serviceForm.supplierId) : null,
+                departureDate: new Date(serviceForm.departureDate).toISOString(),
+                returnDate: serviceForm.returnDate ? new Date(serviceForm.returnDate).toISOString() : null,
+                salePrice: parseFloat(serviceForm.salePrice),
+                netCost: parseFloat(serviceForm.netCost)
+            });
+            showSuccess("Servicio agregado correctamente");
+            setIsServiceModalOpen(false);
+            loadFile(); // Refresh file to see new service and updated totals
+            // Reset form
+            setServiceForm({
+                supplierId: "",
+                description: "",
+                confirmationNumber: "",
+                departureDate: "",
+                returnDate: "",
+                salePrice: 0,
+                netCost: 0
+            });
+        } catch (error) {
+            showError(error.response?.data || "Error al agregar servicio");
+        }
+    };
+
+    const handleDeleteService = async (serviceId) => {
+        if (!confirm("¿Eliminar este servicio del expediente?")) return;
+        try {
+            await api.delete(`/travelfiles/services/${serviceId}`);
+            showSuccess("Servicio eliminado");
+            loadFile();
+        } catch (error) {
+            showError("Error al eliminar servicio");
+        }
+    };
+
+    const openServiceModal = (type) => {
+        setServiceType(type);
+        setServiceForm(prev => ({ ...prev, description: type })); // Default generic desc
+        setIsServiceModalOpen(true);
+    }
 
     const EmptyState = () => (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center dark:border-slate-700 dark:bg-slate-900/50">
@@ -61,62 +136,71 @@ export default function FileDetailPage() {
                 <Button variant="outline" onClick={() => openServiceModal("Hotel")}>
                     <Hotel className="h-4 w-4 mr-2" /> Hotel
                 </Button>
-                <Button variant="outline" onClick={() => openServiceModal("Traslado")}>
-                    <Bus className="h-4 w-4 mr-2" /> Traslado
-                </Button>
             </div>
         </div>
     );
-
-    const openServiceModal = (type) => {
-        setServiceType(type);
-        setIsServiceModalOpen(true);
-        // Implementation of dynamic modal logic pending in next step
-        // For now we just show a placeholder log
-        console.log("Open modal for", type);
-    }
 
     if (loading) return <div>Cargando expediente...</div>;
     if (!file) return <div>No encontrado</div>;
 
     return (
         <div className="space-y-6">
-            {/* Header / Breadcrumb */}
-            <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={() => navigate("/files")}>
-                    <ArrowLeft className="h-5 w-5" />
-                </Button>
-                <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
-                        {file.name}
-                        <span className="text-sm font-normal text-muted-foreground bg-slate-100 px-2 py-1 rounded dark:bg-slate-800">
-                            {file.fileNumber}
-                        </span>
-                    </h1>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
-                        <span className="flex items-center gap-1">
-                            <User className="h-3 w-3" /> {file.payer?.fullName || "Sin cliente"}
-                        </span>
-                        <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" /> {file.startDate ? new Date(file.startDate).toLocaleDateString() : "Fecha abierta"}
-                        </span>
-                        <span className={`px-2 rounded-full text-xs font-medium bg-blue-100 text-blue-700`}>
-                            {file.status}
-                        </span>
+            {/* Header */}
+            <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
+                <div className="flex items-center gap-4">
+                    <Button variant="ghost" size="icon" onClick={() => navigate("/files")}>
+                        <ArrowLeft className="h-5 w-5" />
+                    </Button>
+                    <div>
+                        <h1 className="text-2xl font-bold flex items-center gap-2">
+                            {file.name}
+                            <span className="text-sm font-normal text-muted-foreground bg-slate-100 px-2 py-1 rounded dark:bg-slate-800">
+                                {file.fileNumber}
+                            </span>
+                        </h1>
+                        <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mt-1">
+                            <span className="flex items-center gap-1">
+                                <User className="h-3 w-3" /> {file.payer?.fullName || "Sin cliente"}
+                            </span>
+                            <span className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                {file.startDate ? new Date(file.startDate).toLocaleDateString() : "Fecha abierta"}
+                            </span>
+                            <span className={`px-2 rounded-full text-xs font-medium bg-blue-100 text-blue-700`}>
+                                {file.status}
+                            </span>
+                        </div>
                     </div>
                 </div>
-                <div className="ml-auto flex gap-2">
+                <div className="flex gap-2">
                     <Button variant="outline">
                         <FileText className="h-4 w-4 mr-2" /> Voucher
                     </Button>
-                    <Button>
-                        <Plus className="h-4 w-4 mr-2" /> Agregar Servicio
-                    </Button>
+                    <div className="dropdown relative group">
+                        <Button>
+                            <Plus className="h-4 w-4 mr-2" /> Agregar Servicio
+                        </Button>
+                        {/* Simple dropdown via CSS group-hover */}
+                        <div className="absolute right-0 top-full mt-2 w-48 rounded-md border bg-white shadow-lg hidden group-hover:block z-20 dark:bg-slate-800">
+                            <button onClick={() => openServiceModal("Aereo")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
+                                <Plane className="h-4 w-4" /> Aéreo
+                            </button>
+                            <button onClick={() => openServiceModal("Hotel")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
+                                <Hotel className="h-4 w-4" /> Hotel
+                            </button>
+                            <button onClick={() => openServiceModal("Traslado")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
+                                <Bus className="h-4 w-4" /> Traslado
+                            </button>
+                            <button onClick={() => openServiceModal("Otro")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
+                                <CreditCard className="h-4 w-4" /> Otro
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             {/* Financial Summary */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="rounded-xl border bg-card p-4">
                     <div className="text-xs text-muted-foreground uppercase font-bold">Total Venta</div>
                     <div className="text-2xl font-bold mt-1">${file.totalSale?.toLocaleString()}</div>
@@ -127,11 +211,11 @@ export default function FileDetailPage() {
                 </div>
                 <div className="rounded-xl border bg-card p-4">
                     <div className="text-xs text-muted-foreground uppercase font-bold">Rentabilidad</div>
-                    <div className="text-2xl font-bold mt-1 text-emerald-600">
+                    <div className={`text-2xl font-bold mt-1 ${(file.totalSale - file.totalCost) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                         ${(file.totalSale - file.totalCost).toLocaleString()}
                     </div>
                 </div>
-                <div className="rounded-xl border bg-card p-4 border-l-4 border-l-indigo-500">
+                <div className="rounded-xl border bg-card p-4 border-l-4 border-l-indigo-500 bg-indigo-50/20">
                     <div className="text-xs text-muted-foreground uppercase font-bold">Saldo Pendiente</div>
                     <div className="text-2xl font-bold mt-1 text-indigo-600">
                         ${file.balance?.toLocaleString()}
@@ -139,56 +223,59 @@ export default function FileDetailPage() {
                 </div>
             </div>
 
-            {/* Tabs / Content */}
-            <div className="flex gap-6 border-b border-slate-200 dark:border-slate-800">
+            {/* Tabs */}
+            <div className="flex gap-6 border-b border-slate-200 dark:border-slate-800 overflow-x-auto">
                 {['services', 'payments', 'documents', 'notes'].map(tab => (
                     <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
-                        className={`pb-3 text-sm font-medium border-b-2 transition-colors capitalize ${activeTab === tab
+                        className={`pb-3 text-sm font-medium border-b-2 transition-colors capitalize whitespace-nowrap ${activeTab === tab
                                 ? 'border-primary text-primary'
                                 : 'border-transparent text-muted-foreground hover:text-foreground'
                             }`}
                     >
-                        {tab === 'services' ? 'Itinerario' : tab === 'payments' ? 'Pagos' : tab === 'documents' ? 'Documentos' : 'Notas'}
+                        {tab === 'services' ? 'Itinerario' : tab === 'payments' ? 'Pagos / Cobros' : tab === 'documents' ? 'Documentos' : 'Notas'}
                     </button>
                 ))}
             </div>
 
+            {/* Services Tab */}
             {activeTab === 'services' && (
                 <div className="space-y-4">
                     {file.reservations && file.reservations.length > 0 ? (
                         <div className="space-y-3">
-                            {/* Render each reservation as a generic service card */}
                             {file.reservations.map(res => (
-                                <div key={res.id} className="flex items-center gap-4 rounded-xl border bg-card p-4 hover:shadow-sm transition-shadow">
-                                    <div className={`h-10 w-10 flex items-center justify-center rounded-lg bg-slate-100 text-slate-600`}>
-                                        {res.serviceType === 'Aereo' ? <Plane className="h-5 w-5" /> :
-                                            res.serviceType === 'Hotel' ? <Hotel className="h-5 w-5" /> :
-                                                <CreditCard className="h-5 w-5" />}
+                                <div key={res.id} className="flex flex-col sm:flex-row sm:items-center gap-4 rounded-xl border bg-card p-4 hover:shadow-sm transition-shadow">
+                                    <div className={`h-10 w-10 flex items-center justify-center rounded-lg bg-slate-100 text-slate-600 shrink-0`}>
+                                        {SERVICE_ICONS[res.serviceType] || <CreditCard className="h-5 w-5" />}
                                     </div>
                                     <div className="flex-1">
                                         <div className="flex items-center gap-2">
                                             <h4 className="font-semibold">{res.description || res.serviceType}</h4>
-                                            <span className="text-xs bg-slate-100 px-2 py-0.5 rounded text-slate-600">
+                                            <span className="text-xs bg-slate-100 px-2 py-0.5 rounded text-slate-600 uppercase">
                                                 {res.status}
                                             </span>
                                         </div>
-                                        <div className="text-sm text-muted-foreground">
-                                            {res.supplier?.name} • Confirmación: {res.confirmationNumber || "Pendiente"}
+                                        <div className="text-sm text-muted-foreground mt-1">
+                                            {res.supplier?.name} • Conf: {res.confirmationNumber || "Pendiente"}
                                         </div>
                                     </div>
-                                    <div className="text-right">
-                                        <div className="font-bold">${res.salePrice?.toLocaleString()}</div>
-                                        <div className="text-xs text-muted-foreground">
-                                            {new Date(res.departureDate).toLocaleDateString()}
+                                    <div className="flex justify-between sm:block sm:text-right gap-4 mt-2 sm:mt-0">
+                                        <div>
+                                            <div className="font-bold text-lg">${res.salePrice?.toLocaleString()}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                                {new Date(res.departureDate).toLocaleDateString()}
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-1 sm:hidden">
+                                            {/* Mobile Actions */}
+                                            <Button variant="ghost" size="icon" className="text-rose-500" onClick={() => handleDeleteService(res.id)}>
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
                                         </div>
                                     </div>
-                                    <div className="flex gap-1">
-                                        <Button variant="ghost" size="icon">
-                                            <Edit2 className="h-4 w-4" />
-                                        </Button>
-                                        <Button variant="ghost" size="icon" className="text-rose-500 hover:text-rose-600">
+                                    <div className="hidden sm:flex gap-1">
+                                        <Button variant="ghost" size="icon" onClick={() => handleDeleteService(res.id)} className="text-rose-500 hover:text-rose-600 hover:bg-rose-50">
                                             <Trash2 className="h-4 w-4" />
                                         </Button>
                                     </div>
@@ -201,20 +288,117 @@ export default function FileDetailPage() {
                 </div>
             )}
 
-            {/* Other tabs implementation placeholders */}
-            {activeTab === 'payments' && (
-                <div className="py-8 text-center text-muted-foreground">
-                    Módulo de Cobranzas integrado próximamente.
-                </div>
-            )}
-
-            {/* Service Modal Placeholder */}
+            {/* Service Modal */}
             {isServiceModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                    <div className="bg-white p-8 rounded-xl">
-                        <h2>Cargar {serviceType}</h2>
-                        <p>Funcionalidad en construcción en el siguiente paso.</p>
-                        <Button onClick={() => setIsServiceModalOpen(false)} className="mt-4">Cerrar</Button>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+                    <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-slate-900 border dark:border-slate-800">
+                        <div className="flex items-center justify-between border-b p-4 dark:border-slate-800">
+                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                                {SERVICE_ICONS[serviceType]}
+                                Cargar {serviceType}
+                            </h3>
+                            <button onClick={() => setIsServiceModalOpen(false)} className="text-slate-500 hover:text-slate-700">
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <form onSubmit={handleAddService} className="p-6 space-y-4">
+                            {/* Provider & Desc */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="col-span-2 sm:col-span-1">
+                                    <label className="block text-sm font-medium mb-1">Proveedor</label>
+                                    <select
+                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        value={serviceForm.supplierId}
+                                        onChange={e => setServiceForm({ ...serviceForm, supplierId: e.target.value })}
+                                        required
+                                    >
+                                        <option value="">Seleccionar...</option>
+                                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="col-span-2 sm:col-span-1">
+                                    <label className="block text-sm font-medium mb-1">Código Confirmación</label>
+                                    <input
+                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        placeholder="PNR / Voucher"
+                                        value={serviceForm.confirmationNumber}
+                                        onChange={e => setServiceForm({ ...serviceForm, confirmationNumber: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Descripción corta</label>
+                                <input
+                                    className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                    placeholder={serviceType === 'Aereo' ? 'Vuelo AA900 MIA-EZE' : serviceType === 'Hotel' ? 'Hotel Riu Palace - Standard Room' : 'Traslado Privado'}
+                                    value={serviceForm.description}
+                                    onChange={e => setServiceForm({ ...serviceForm, description: e.target.value })}
+                                    required
+                                />
+                            </div>
+
+                            {/* Dates */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Fecha {serviceType === 'Hotel' ? 'Check-In' : 'Salida'}</label>
+                                    <input
+                                        type="datetime-local"
+                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        value={serviceForm.departureDate}
+                                        onChange={e => setServiceForm({ ...serviceForm, departureDate: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Fecha {serviceType === 'Hotel' ? 'Check-Out' : serviceType === 'Aereo' ? 'Regreso (Opc)' : 'Fin'}</label>
+                                    <input
+                                        type="datetime-local"
+                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        value={serviceForm.returnDate}
+                                        onChange={e => setServiceForm({ ...serviceForm, returnDate: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Financials */}
+                            <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700">
+                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Valores Económicos</h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Costo Neto</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-2 text-slate-500">$</span>
+                                            <input
+                                                type="number" step="0.01"
+                                                className="w-full rounded-lg border bg-white pl-6 p-2 text-sm"
+                                                value={serviceForm.netCost}
+                                                onChange={e => setServiceForm({ ...serviceForm, netCost: e.target.value })}
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Precio Venta</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-2 text-slate-500">$</span>
+                                            <input
+                                                type="number" step="0.01"
+                                                className="w-full rounded-lg border bg-white pl-6 p-2 text-sm"
+                                                value={serviceForm.salePrice}
+                                                onChange={e => setServiceForm({ ...serviceForm, salePrice: e.target.value })}
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button type="button" variant="ghost" onClick={() => setIsServiceModalOpen(false)}>Cancelar</Button>
+                                <Button type="submit">Guardar Servicio</Button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
