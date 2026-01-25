@@ -15,6 +15,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     public DbSet<TravelFile> TravelFiles => Set<TravelFile>();
+    public DbSet<Passenger> Passengers => Set<Passenger>();
     public DbSet<Reservation> Reservations => Set<Reservation>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<FlightSegment> FlightSegments => Set<FlightSegment>();
@@ -57,6 +58,28 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithOne(r => r.TravelFile)
                   .HasForeignKey(r => r.TravelFileId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(f => f.Passengers)
+                  .WithOne(p => p.TravelFile)
+                  .HasForeignKey(p => p.TravelFileId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(f => f.Payments)
+                  .WithOne(p => p.TravelFile)
+                  .HasForeignKey(p => p.TravelFileId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Passenger
+        modelBuilder.Entity<Passenger>(entity =>
+        {
+            entity.Property(p => p.FullName).HasMaxLength(200).IsRequired();
+            entity.Property(p => p.DocumentType).HasMaxLength(20);
+            entity.Property(p => p.DocumentNumber).HasMaxLength(50);
+            entity.Property(p => p.Nationality).HasMaxLength(50);
+            entity.Property(p => p.Phone).HasMaxLength(50);
+            entity.Property(p => p.Email).HasMaxLength(200);
+            entity.Property(p => p.Gender).HasMaxLength(10);
         });
 
         // Reservation (Service)

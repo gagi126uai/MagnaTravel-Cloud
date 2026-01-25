@@ -219,6 +219,33 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
 
+    // Passengers Table
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "Passengers" (
+            "Id" SERIAL PRIMARY KEY,
+            "TravelFileId" integer NOT NULL REFERENCES "TravelFiles"("Id") ON DELETE CASCADE,
+            "FullName" character varying(200) NOT NULL,
+            "DocumentType" character varying(20),
+            "DocumentNumber" character varying(50),
+            "BirthDate" timestamp with time zone,
+            "Nationality" character varying(50),
+            "Phone" character varying(50),
+            "Email" character varying(200),
+            "Gender" character varying(10),
+            "Notes" text,
+            "CreatedAt" timestamp with time zone DEFAULT NOW()
+        );
+        """);
+
+    // Payments - Add TravelFileId and Notes
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Payments\" ADD COLUMN IF NOT EXISTS \"TravelFileId\" integer REFERENCES \"TravelFiles\"(\"Id\");");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Payments\" ADD COLUMN IF NOT EXISTS \"Notes\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Payments\" ALTER COLUMN \"ReservationId\" DROP NOT NULL;");
+
     // Seed roles
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();

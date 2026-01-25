@@ -34,6 +34,8 @@ public class TravelFilesController : ControllerBase
     {
         var file = await _context.TravelFiles
             .Include(f => f.Payer)
+            .Include(f => f.Passengers)
+            .Include(f => f.Payments.OrderByDescending(p => p.PaidAt))
             .Include(f => f.Reservations)
                 .ThenInclude(r => r.Supplier)
             .FirstOrDefaultAsync(f => f.Id == id);
@@ -117,4 +119,97 @@ public class TravelFilesController : ControllerBase
         await _context.SaveChangesAsync();
         return NoContent();
     }
+
+    // ==================== PASSENGERS ====================
+    [HttpGet("{id}/passengers")]
+    public async Task<IActionResult> GetPassengers(int id)
+    {
+        var passengers = await _context.Passengers
+            .Where(p => p.TravelFileId == id)
+            .OrderBy(p => p.FullName)
+            .ToListAsync();
+        return Ok(passengers);
+    }
+
+    [HttpPost("{id}/passengers")]
+    public async Task<IActionResult> AddPassenger(int id, Passenger passenger)
+    {
+        var file = await _context.TravelFiles.FindAsync(id);
+        if (file == null) return NotFound("Expediente no encontrado");
+
+        passenger.TravelFileId = id;
+        passenger.CreatedAt = DateTime.UtcNow;
+
+        _context.Passengers.Add(passenger);
+        await _context.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetFile), new { id = file.Id }, passenger);
+    }
+
+    [HttpDelete("passengers/{passengerId}")]
+    public async Task<IActionResult> RemovePassenger(int passengerId)
+    {
+        var passenger = await _context.Passengers.FindAsync(passengerId);
+        if (passenger == null) return NotFound();
+
+        _context.Passengers.Remove(passenger);
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    // ==================== PAYMENTS ====================
+    [HttpGet("{id}/payments")]
+    public async Task<IActionResult> GetFilePayments(int id)
+    {
+        var payments = await _context.Payments
+            .Where(p => p.TravelFileId == id)
+            .OrderByDescending(p => p.PaidAt)
+            .ToListAsync();
+        return Ok(payments);
+    }
+
+    [HttpPost("{id}/payments")]
+    public async Task<IActionResult> AddPayment(int id, Payment payment)
+    {
+        var file = await _context.TravelFiles.FindAsync(id);
+        if (file == null) return NotFound("Expediente no encontrado");
+
+        payment.TravelFileId = id;
+        payment.PaidAt = DateTime.UtcNow;
+        payment.Status = "Paid";
+
+        // Update file balance
+        file.Balance -= payment.Amount;
+
+        _context.Payments.Add(payment);
+        await _context.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetFile), new { id = file.Id }, payment);
+    }
+
+    // ==================== STATUS ====================
+    [HttpPut("{id}/status")]
+    public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateStatusRequest request)
+    {
+        var file = await _context.TravelFiles.FindAsync(id);
+        if (file == null) return NotFound("Expediente no encontrado");
+
+        var validStatuses = new[] { FileStatus.Budget, FileStatus.Reserved, FileStatus.Operational, FileStatus.Closed, FileStatus.Cancelled };
+        if (!validStatuses.Contains(request.Status))
+        {
+            return BadRequest("Estado no válido");
+        }
+
+        file.Status = request.Status;
+        
+        if (request.Status == FileStatus.Closed)
+        {
+            file.ClosedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+        return Ok(file);
+    }
 }
+
+public record UpdateStatusRequest(string Status);

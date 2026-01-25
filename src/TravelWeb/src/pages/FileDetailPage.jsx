@@ -60,6 +60,16 @@ export default function FileDetailPage() {
         notes: ""
     });
 
+    // Passenger Form State
+    const [passengerForm, setPassengerForm] = useState({
+        fullName: "",
+        documentType: "DNI",
+        documentNumber: "",
+        birthDate: "",
+        phone: "",
+        email: ""
+    });
+
     useEffect(() => {
         loadFile();
         loadSuppliers();
@@ -98,13 +108,8 @@ export default function FileDetailPage() {
 
     const loadPayments = async () => {
         try {
-            // Assuming we need to get payments related to this file's reservations
-            // For now, let's just try to fetch all payments and filter on frontend
-            const allPayments = await api.get("/payments");
-            // Filter payments that belong to reservations of this file
-            const fileReservationIds = file?.reservations?.map(r => r.id) || [];
-            const filteredPayments = allPayments.filter(p => fileReservationIds.includes(p.reservationId));
-            setPayments(filteredPayments);
+            const filePayments = await api.get(`/travelfiles/${id}/payments`);
+            setPayments(filePayments);
         } catch {
             console.log("Error loading payments");
         }
@@ -112,20 +117,15 @@ export default function FileDetailPage() {
 
     const handleAddPayment = async (e) => {
         e.preventDefault();
-        if (!file?.reservations?.length) {
-            showError("Debe tener al menos un servicio cargado para registrar un pago.");
+        if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
+            showError("El monto debe ser mayor a 0");
             return;
         }
 
         try {
-            // Associate payment with the first reservation (or we could let user choose)
-            const firstReservation = file.reservations[0];
-            await api.post("/payments", {
-                reservationId: firstReservation.id,
+            await api.post(`/travelfiles/${id}/payments`, {
                 amount: parseFloat(paymentForm.amount),
                 method: paymentForm.method,
-                status: "Paid",
-                paidAt: new Date().toISOString(),
                 notes: paymentForm.notes
             });
 
@@ -135,6 +135,42 @@ export default function FileDetailPage() {
             loadFile(); // Reload to update balance
         } catch (error) {
             showError("Error al registrar el pago");
+        }
+    };
+
+    const handleAddPassenger = async (e) => {
+        e.preventDefault();
+        if (!passengerForm.fullName.trim()) {
+            showError("El nombre es obligatorio");
+            return;
+        }
+
+        try {
+            await api.post(`/travelfiles/${id}/passengers`, {
+                fullName: passengerForm.fullName,
+                documentType: passengerForm.documentType,
+                documentNumber: passengerForm.documentNumber,
+                birthDate: passengerForm.birthDate ? new Date(passengerForm.birthDate).toISOString() : null,
+                phone: passengerForm.phone,
+                email: passengerForm.email
+            });
+
+            showSuccess("Pasajero agregado correctamente");
+            setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", phone: "", email: "" });
+            loadFile(); // Reload to get updated passengers list
+        } catch (error) {
+            showError("Error al agregar pasajero");
+        }
+    };
+
+    const handleDeletePassenger = async (passengerId) => {
+        if (!confirm("¿Eliminar este pasajero?")) return;
+        try {
+            await api.delete(`/travelfiles/passengers/${passengerId}`);
+            showSuccess("Pasajero eliminado");
+            loadFile();
+        } catch (error) {
+            showError("Error al eliminar pasajero");
         }
     };
 
@@ -303,7 +339,7 @@ export default function FileDetailPage() {
 
             {/* Tabs */}
             <div className="flex gap-6 border-b border-slate-200 dark:border-slate-800 overflow-x-auto">
-                {['services', 'payments', 'documents', 'notes'].map(tab => (
+                {['services', 'passengers', 'payments', 'notes'].map(tab => (
                     <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
@@ -312,7 +348,9 @@ export default function FileDetailPage() {
                             : 'border-transparent text-muted-foreground hover:text-foreground'
                             }`}
                     >
-                        {tab === 'services' ? 'Itinerario' : tab === 'payments' ? 'Pagos / Cobros' : tab === 'documents' ? 'Documentos' : 'Notas'}
+                        {tab === 'services' ? 'Itinerario' :
+                            tab === 'passengers' ? 'Pasajeros' :
+                                tab === 'payments' ? 'Pagos / Cobros' : 'Notas'}
                     </button>
                 ))}
             </div>
@@ -362,6 +400,112 @@ export default function FileDetailPage() {
                     ) : (
                         <EmptyState />
                     )}
+                </div>
+            )}
+
+            {/* Passengers Tab */}
+            {activeTab === 'passengers' && (
+                <div className="space-y-6">
+                    {/* Passenger Form */}
+                    <div className="rounded-xl border bg-card p-6">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <User className="h-5 w-5 text-primary" />
+                            Agregar Pasajero
+                        </h3>
+                        <form onSubmit={handleAddPassenger} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nombre Completo *</label>
+                                <input
+                                    type="text"
+                                    required
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    placeholder="Juan Pérez"
+                                    value={passengerForm.fullName}
+                                    onChange={(e) => setPassengerForm({ ...passengerForm, fullName: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Tipo Doc.</label>
+                                <select
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    value={passengerForm.documentType}
+                                    onChange={(e) => setPassengerForm({ ...passengerForm, documentType: e.target.value })}
+                                >
+                                    <option value="DNI">DNI</option>
+                                    <option value="Pasaporte">Pasaporte</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nro. Documento</label>
+                                <input
+                                    type="text"
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    placeholder="12345678"
+                                    value={passengerForm.documentNumber}
+                                    onChange={(e) => setPassengerForm({ ...passengerForm, documentNumber: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Fecha Nacimiento</label>
+                                <input
+                                    type="date"
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    value={passengerForm.birthDate}
+                                    onChange={(e) => setPassengerForm({ ...passengerForm, birthDate: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Teléfono</label>
+                                <input
+                                    type="text"
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    placeholder="+54 11 1234-5678"
+                                    value={passengerForm.phone}
+                                    onChange={(e) => setPassengerForm({ ...passengerForm, phone: e.target.value })}
+                                />
+                            </div>
+                            <div className="flex items-end">
+                                <Button type="submit" className="w-full">
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Agregar
+                                </Button>
+                            </div>
+                        </form>
+                    </div>
+
+                    {/* Passengers List */}
+                    <div className="rounded-xl border overflow-hidden">
+                        <div className="bg-muted/50 px-6 py-3 border-b">
+                            <h4 className="font-medium text-sm">Lista de Pasajeros ({file.passengers?.length || 0})</h4>
+                        </div>
+                        {file.passengers && file.passengers.length > 0 ? (
+                            <div className="divide-y">
+                                {file.passengers.map((pax) => (
+                                    <div key={pax.id} className="flex items-center justify-between px-6 py-4 hover:bg-muted/30 transition-colors">
+                                        <div className="flex items-center gap-4">
+                                            <div className="h-10 w-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
+                                                {pax.fullName?.charAt(0)?.toUpperCase() || "?"}
+                                            </div>
+                                            <div>
+                                                <div className="font-medium">{pax.fullName}</div>
+                                                <div className="text-sm text-muted-foreground">
+                                                    {pax.documentType} {pax.documentNumber}
+                                                    {pax.birthDate && ` • ${new Date(pax.birthDate).toLocaleDateString()}`}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <Button variant="ghost" size="icon" onClick={() => handleDeletePassenger(pax.id)} className="text-rose-500 hover:text-rose-600 hover:bg-rose-50">
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="px-6 py-12 text-center text-muted-foreground text-sm">
+                                No hay pasajeros cargados aún.
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 

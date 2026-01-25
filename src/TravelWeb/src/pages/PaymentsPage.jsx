@@ -103,8 +103,13 @@ export default function PaymentsPage() {
                     <div className="text-xs text-slate-400">{new Date(payment.paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="font-medium">{payment.reservation?.customer?.fullName || "Cliente Desconocido"}</div>
-                    <div className="text-xs text-slate-500">Reserva #{payment.reservation?.referenceCode || payment.reservationId}</div>
+                    <div className="font-medium">
+                      {payment.travelFile?.name || payment.reservation?.customer?.fullName || "Sin expediente"}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {payment.travelFile ? `File ${payment.travelFile.fileNumber}` : `Reserva #${payment.reservationId || "-"}`}
+                      {payment.notes && ` • ${payment.notes}`}
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
@@ -119,8 +124,8 @@ export default function PaymentsPage() {
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${payment.status === 'Paid' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                        payment.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
-                          'bg-slate-100 text-slate-600'
+                      payment.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                        'bg-slate-100 text-slate-600'
                       }`}>
                       {payment.status === 'Paid' ? 'Completado' : payment.status === 'Pending' ? 'Pendiente' : payment.status}
                     </span>
