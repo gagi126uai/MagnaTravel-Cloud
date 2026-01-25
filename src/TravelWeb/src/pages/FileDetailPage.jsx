@@ -39,6 +39,7 @@ export default function FileDetailPage() {
     // UI States
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+    const [payments, setPayments] = useState([]);
 
     // Form State
     const [serviceType, setServiceType] = useState("Aereo");
@@ -52,9 +53,17 @@ export default function FileDetailPage() {
         netCost: 0
     });
 
+    // Payment Form State
+    const [paymentForm, setPaymentForm] = useState({
+        amount: "",
+        method: "Transfer",
+        notes: ""
+    });
+
     useEffect(() => {
         loadFile();
         loadSuppliers();
+        loadPayments();
 
         // Click outside to close dropdown
         function handleClickOutside(event) {
@@ -84,6 +93,48 @@ export default function FileDetailPage() {
             setSuppliers(data);
         } catch {
             console.log("Error loading suppliers");
+        }
+    };
+
+    const loadPayments = async () => {
+        try {
+            // Assuming we need to get payments related to this file's reservations
+            // For now, let's just try to fetch all payments and filter on frontend
+            const allPayments = await api.get("/payments");
+            // Filter payments that belong to reservations of this file
+            const fileReservationIds = file?.reservations?.map(r => r.id) || [];
+            const filteredPayments = allPayments.filter(p => fileReservationIds.includes(p.reservationId));
+            setPayments(filteredPayments);
+        } catch {
+            console.log("Error loading payments");
+        }
+    };
+
+    const handleAddPayment = async (e) => {
+        e.preventDefault();
+        if (!file?.reservations?.length) {
+            showError("Debe tener al menos un servicio cargado para registrar un pago.");
+            return;
+        }
+
+        try {
+            // Associate payment with the first reservation (or we could let user choose)
+            const firstReservation = file.reservations[0];
+            await api.post("/payments", {
+                reservationId: firstReservation.id,
+                amount: parseFloat(paymentForm.amount),
+                method: paymentForm.method,
+                status: "Paid",
+                paidAt: new Date().toISOString(),
+                notes: paymentForm.notes
+            });
+
+            showSuccess("Pago registrado correctamente");
+            setPaymentForm({ amount: "", method: "Transfer", notes: "" });
+            loadPayments();
+            loadFile(); // Reload to update balance
+        } catch (error) {
+            showError("Error al registrar el pago");
         }
     };
 
@@ -257,8 +308,8 @@ export default function FileDetailPage() {
                         key={tab}
                         onClick={() => setActiveTab(tab)}
                         className={`pb-3 text-sm font-medium border-b-2 transition-colors capitalize whitespace-nowrap ${activeTab === tab
-                                ? 'border-primary text-primary'
-                                : 'border-transparent text-muted-foreground hover:text-foreground'
+                            ? 'border-primary text-primary'
+                            : 'border-transparent text-muted-foreground hover:text-foreground'
                             }`}
                     >
                         {tab === 'services' ? 'Itinerario' : tab === 'payments' ? 'Pagos / Cobros' : tab === 'documents' ? 'Documentos' : 'Notas'}
@@ -311,6 +362,88 @@ export default function FileDetailPage() {
                     ) : (
                         <EmptyState />
                     )}
+                </div>
+            )}
+
+            {/* Payments Tab */}
+            {activeTab === 'payments' && (
+                <div className="space-y-6">
+                    {/* Payment Form */}
+                    <div className="rounded-xl border bg-card p-6">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <CreditCard className="h-5 w-5 text-primary" />
+                            Registrar Cobro
+                        </h3>
+                        <form onSubmit={handleAddPayment} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Monto</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    required
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    placeholder="0.00"
+                                    value={paymentForm.amount}
+                                    onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Método</label>
+                                <select
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    value={paymentForm.method}
+                                    onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}
+                                >
+                                    <option value="Cash">Efectivo</option>
+                                    <option value="Transfer">Transferencia</option>
+                                    <option value="Card">Tarjeta</option>
+                                </select>
+                            </div>
+                            <div className="md:col-span-1 flex items-end">
+                                <Button type="submit" className="w-full">
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Registrar
+                                </Button>
+                            </div>
+                            <div className="md:col-span-3">
+                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Notas (opcional)</label>
+                                <input
+                                    type="text"
+                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                    placeholder="Ej: Transferencia Banco Nación"
+                                    value={paymentForm.notes}
+                                    onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
+                                />
+                            </div>
+                        </form>
+                    </div>
+
+                    {/* Payments List */}
+                    <div className="rounded-xl border overflow-hidden">
+                        <div className="bg-muted/50 px-6 py-3 border-b">
+                            <h4 className="font-medium text-sm">Historial de Cobros</h4>
+                        </div>
+                        {payments.length > 0 ? (
+                            <div className="divide-y">
+                                {payments.map((payment) => (
+                                    <div key={payment.id} className="flex items-center justify-between px-6 py-4 hover:bg-muted/30 transition-colors">
+                                        <div>
+                                            <div className="font-medium">${payment.amount?.toLocaleString()}</div>
+                                            <div className="text-sm text-muted-foreground">{new Date(payment.paidAt).toLocaleDateString()} · {payment.method}</div>
+                                            {payment.notes && <div className="text-xs text-muted-foreground mt-1">{payment.notes}</div>}
+                                        </div>
+                                        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                            Cobrado
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="px-6 py-12 text-center text-muted-foreground text-sm">
+                                No hay pagos registrados aún.
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
