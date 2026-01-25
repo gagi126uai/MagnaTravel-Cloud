@@ -248,11 +248,10 @@ export default function CuposPage() {
                 <td className="px-4 py-3">{cupo.overbookingLimit}</td>
                 <td className="px-4 py-3">
                   <span
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                      cupo.available > 0
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${cupo.available > 0
                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200"
                         : "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-200"
-                    }`}
+                      }`}
                   >
                     {cupo.available}
                   </span>

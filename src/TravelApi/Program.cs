@@ -191,6 +191,43 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"Phone\" character varying(50);");
 
+    // --- PHASE 8 ERP UPDATES ---
+    // Update TravelFiles
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"Description\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"StartDate\" timestamp with time zone;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"EndDate\" timestamp with time zone;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"TotalCost\" numeric DEFAULT 0;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"TotalSale\" numeric DEFAULT 0;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"Balance\" numeric DEFAULT 0;");
+
+    // Update Reservations (Services)
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"SupplierId\" integer;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"ConfirmationNumber\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"ServiceType\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"Description\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"NetCost\" numeric DEFAULT 0;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"SalePrice\" numeric DEFAULT 0;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"Tax\" numeric DEFAULT 0;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"ServiceDetailsJson\" text;");
+    
+    // Ensure FK for SupplierId
+    // Note: Use a tailored name or check existence if doing complex constraints. 
+    // For now, column existence is the priority to avoid crashes.
+
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
 
