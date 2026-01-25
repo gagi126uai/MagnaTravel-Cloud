@@ -19,7 +19,7 @@ export default function FilesPage() {
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
-    const [viewFilter, setViewFilter] = useState("active"); // active, archived
+    const [viewFilter, setViewFilter] = useState("all"); // all, Presupuesto, Reservado, Operativo, archived
     const navigate = useNavigate();
 
     // Create Modal State
@@ -73,7 +73,7 @@ export default function FilesPage() {
             loadFiles();
             setNewFile({ name: "", payerId: "", startDate: "", description: "", isBudget: true });
         } catch (error) {
-            showError("Error al crear el expediente");
+            showError(error.message || "Error al crear el expediente");
         }
     };
 
@@ -110,9 +110,15 @@ export default function FilesPage() {
             f.fileNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             f.payer?.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
 
-        // View Filter (Active vs Archived)
-        const isActive = ['Presupuesto', 'Reservado', 'Operativo'].includes(f.status);
-        const viewMatch = viewFilter === 'active' ? isActive : !isActive;
+        // View Filter
+        let viewMatch = true;
+        if (viewFilter === 'all') {
+            viewMatch = !['Cerrado', 'Cancelado'].includes(f.status);
+        } else if (viewFilter === 'archived') {
+            viewMatch = ['Cerrado', 'Cancelado'].includes(f.status);
+        } else {
+            viewMatch = f.status === viewFilter;
+        }
 
         return searchMatch && viewMatch;
     });
@@ -131,19 +137,37 @@ export default function FilesPage() {
 
             {/* Toolbar */}
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                {/* View Tabs */}
-                <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start sm:self-auto">
+                {/* Status Filter Tabs */}
+                <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start sm:self-auto overflow-x-auto">
                     <button
-                        onClick={() => setViewFilter("active")}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewFilter === 'active' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                        onClick={() => setViewFilter("all")}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'all' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                     >
-                        Activos
+                        Todos
+                    </button>
+                    <button
+                        onClick={() => setViewFilter("Presupuesto")}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'Presupuesto' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                    >
+                        Presupuestos
+                    </button>
+                    <button
+                        onClick={() => setViewFilter("Reservado")}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'Reservado' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                    >
+                        Reservados
+                    </button>
+                    <button
+                        onClick={() => setViewFilter("Operativo")}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'Operativo' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                    >
+                        Operativos
                     </button>
                     <button
                         onClick={() => setViewFilter("archived")}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewFilter === 'archived' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'archived' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                     >
-                        Archivados
+                        Cerrados
                     </button>
                 </div>
 

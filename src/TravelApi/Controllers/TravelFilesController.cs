@@ -69,12 +69,38 @@ public class TravelFilesController : ControllerBase
         var file = await _context.TravelFiles.FindAsync(id);
         if (file == null) return NotFound("Expediente no encontrado");
 
+        // Validations with specific error messages
+        if (string.IsNullOrWhiteSpace(request.ServiceType))
+        {
+            return BadRequest("Debe seleccionar un tipo de servicio");
+        }
+
+        if (request.DepartureDate == default)
+        {
+            return BadRequest("La fecha de salida es obligatoria");
+        }
+
+        if (request.SalePrice <= 0)
+        {
+            return BadRequest("El precio de venta debe ser mayor a 0");
+        }
+
+        if (request.NetCost < 0)
+        {
+            return BadRequest("El costo neto no puede ser negativo");
+        }
+
+        if (request.NetCost > request.SalePrice)
+        {
+            return BadRequest("El costo neto no puede ser mayor al precio de venta");
+        }
+
         var reservation = new Reservation
         {
             TravelFileId = id,
             ServiceType = request.ServiceType,
             SupplierId = request.SupplierId,
-            CustomerId = file.PayerId, // Inherit Payer as Customer (Crucial Fix)
+            CustomerId = file.PayerId,
             Description = request.Description ?? request.ServiceType,
             ConfirmationNumber = request.ConfirmationNumber ?? "PENDIENTE",
             Status = "Solicitado",
@@ -82,7 +108,6 @@ public class TravelFilesController : ControllerBase
             ReturnDate = request.ReturnDate?.ToUniversalTime(),
             SalePrice = request.SalePrice,
             NetCost = request.NetCost,
-            // Calculate financial impacts immediately (simple logic for now)
             Commission = request.SalePrice - request.NetCost,
             CreatedAt = DateTime.UtcNow
         };
@@ -90,7 +115,7 @@ public class TravelFilesController : ControllerBase
         // Update File Totals
         file.TotalSale += reservation.SalePrice;
         file.TotalCost += reservation.NetCost;
-        file.Balance = file.TotalSale; // Assuming no payments yet
+        file.Balance += reservation.SalePrice; // Add to balance (will be reduced by payments)
 
         _context.Reservations.Add(reservation);
         await _context.SaveChangesAsync();
@@ -137,6 +162,17 @@ public class TravelFilesController : ControllerBase
         var file = await _context.TravelFiles.FindAsync(id);
         if (file == null) return NotFound("Expediente no encontrado");
 
+        // Validations with specific error messages
+        if (string.IsNullOrWhiteSpace(passenger.FullName))
+        {
+            return BadRequest("El nombre del pasajero es obligatorio");
+        }
+
+        if (passenger.FullName.Length < 3)
+        {
+            return BadRequest("El nombre debe tener al menos 3 caracteres");
+        }
+
         passenger.TravelFileId = id;
         passenger.CreatedAt = DateTime.UtcNow;
 
@@ -173,6 +209,23 @@ public class TravelFilesController : ControllerBase
     {
         var file = await _context.TravelFiles.FindAsync(id);
         if (file == null) return NotFound("Expediente no encontrado");
+
+        // Validations with specific error messages
+        if (payment.Amount <= 0)
+        {
+            return BadRequest("El monto debe ser mayor a 0");
+        }
+
+        if (string.IsNullOrWhiteSpace(payment.Method))
+        {
+            return BadRequest("Debe seleccionar un método de pago");
+        }
+
+        // Prevent negative balance
+        if (payment.Amount > file.Balance)
+        {
+            return BadRequest($"El monto (${payment.Amount:N2}) supera el saldo pendiente (${file.Balance:N2}). No se puede generar saldo negativo.");
+        }
 
         payment.TravelFileId = id;
         payment.PaidAt = DateTime.UtcNow;

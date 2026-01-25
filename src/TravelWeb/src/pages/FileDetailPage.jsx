@@ -134,7 +134,7 @@ export default function FileDetailPage() {
             loadPayments();
             loadFile(); // Reload to update balance
         } catch (error) {
-            showError("Error al registrar el pago");
+            showError(error.message || "Error al registrar el pago");
         }
     };
 
@@ -159,7 +159,7 @@ export default function FileDetailPage() {
             setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", phone: "", email: "" });
             loadFile(); // Reload to get updated passengers list
         } catch (error) {
-            showError("Error al agregar pasajero");
+            showError(error.message || "Error al agregar pasajero");
         }
     };
 
@@ -170,7 +170,7 @@ export default function FileDetailPage() {
             showSuccess("Pasajero eliminado");
             loadFile();
         } catch (error) {
-            showError("Error al eliminar pasajero");
+            showError(error.message || "Error al eliminar pasajero");
         }
     };
 
@@ -199,7 +199,7 @@ export default function FileDetailPage() {
                 netCost: 0
             });
         } catch (error) {
-            showError(error.response?.data || "Error al agregar servicio");
+            showError(error.message || "Error al agregar servicio");
         }
     };
 
@@ -210,7 +210,7 @@ export default function FileDetailPage() {
             showSuccess("Servicio eliminado");
             loadFile();
         } catch (error) {
-            showError("Error al eliminar servicio");
+            showError(error.message || "Error al eliminar servicio");
         }
     };
 
@@ -222,6 +222,16 @@ export default function FileDetailPage() {
     }
 
     const toggleDropdown = () => setIsDropdownOpen(!isDropdownOpen);
+
+    const handleStatusChange = async (newStatus) => {
+        try {
+            await api.put(`/travelfiles/${id}/status`, { status: newStatus });
+            showSuccess(`Estado cambiado a "${newStatus}"`);
+            loadFile();
+        } catch (error) {
+            showError(error.message || "Error al cambiar estado");
+        }
+    };
 
     const EmptyState = () => (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center dark:border-slate-700 dark:bg-slate-900/50">
@@ -278,7 +288,49 @@ export default function FileDetailPage() {
                         </div>
                     </div>
                 </div>
-                <div className="flex gap-2 relative">
+                <div className="flex gap-2 relative flex-wrap">
+                    {/* Status Action Buttons */}
+                    {file.status === "Presupuesto" && (
+                        <Button
+                            variant="default"
+                            className="bg-emerald-600 hover:bg-emerald-700"
+                            onClick={() => handleStatusChange("Reservado")}
+                        >
+                            ✓ Confirmar Venta
+                        </Button>
+                    )}
+                    {file.status === "Reservado" && file.balance > 0 && (
+                        <Button
+                            variant="default"
+                            className="bg-blue-600 hover:bg-blue-700"
+                            onClick={() => handleStatusChange("Operativo")}
+                        >
+                            Pasar a Operativo
+                        </Button>
+                    )}
+                    {(file.status === "Operativo" || file.status === "Reservado") && file.balance <= 0 && (
+                        <Button
+                            variant="default"
+                            className="bg-slate-600 hover:bg-slate-700"
+                            onClick={() => handleStatusChange("Cerrado")}
+                        >
+                            Cerrar Expediente
+                        </Button>
+                    )}
+                    {file.status !== "Cancelado" && file.status !== "Cerrado" && (
+                        <Button
+                            variant="ghost"
+                            className="text-rose-500 hover:text-rose-600 hover:bg-rose-50"
+                            onClick={() => {
+                                if (confirm("¿Cancelar este expediente? Esta acción no se puede deshacer.")) {
+                                    handleStatusChange("Cancelado");
+                                }
+                            }}
+                        >
+                            Cancelar
+                        </Button>
+                    )}
+
                     <Button variant="outline">
                         <FileText className="h-4 w-4 mr-2" /> Voucher
                     </Button>
