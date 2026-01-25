@@ -11,7 +11,8 @@ import {
     Building2,
     BarChart3,
     Settings,
-    LogOut
+    LogOut,
+    FolderOpen
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -19,7 +20,7 @@ const baseLinks = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/customers", label: "Clientes", icon: Users },
     { to: "/quotes", label: "Cotizaciones", icon: FileText },
-    { to: "/reservations", label: "Reservas", icon: CalendarRange },
+    { to: "/files", label: "Expedientes", icon: FolderOpen },
     { to: "/cupos", label: "Cupos", icon: Ticket },
     { to: "/payments", label: "Pagos", icon: CreditCard },
     { to: "/suppliers", label: "Proveedores", icon: Building2 },
