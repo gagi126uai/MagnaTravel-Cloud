@@ -1,22 +1,11 @@
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { clearAuthToken, isAdmin, isAuthenticated } from "./auth";
+import Layout from "./components/Layout";
+import DashboardPage from "./pages/DashboardPage";
+import LoginPage from "./pages/LoginPage";
+import CustomersPage from "./pages/CustomersPage";
 import FilesPage from "./pages/FilesPage";
 import FileDetailPage from "./pages/FileDetailPage";
-// import ReservationsPage from "./pages/ReservationsPage"; // Deprecated for now
-
-// ... (existing imports)
-
-// ...
-
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/customers" element={<CustomersPage />} />
-                <Route path="/quotes" element={<QuotesPage />} />
-
-{/* New ERP Routes */ }
-                <Route path="/files" element={<FilesPage />} />
-                <Route path="/files/:id" element={<FileDetailPage />} />
-
-{/* <Route path="/reservations" element={<ReservationsPage />} /> Deprecated */ }
-
-<Route path="/payments" element={<PaymentsPage />} />
 import PaymentsPage from "./pages/PaymentsPage";
 import QuotesPage from "./pages/QuotesPage";
 import ReportsPage from "./pages/ReportsPage";
@@ -56,12 +45,17 @@ export default function App() {
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/quotes" element={<QuotesPage />} />
-                <Route path="/reservations" element={<ReservationsPage />} />
+
+                {/* New ERP Routes */}
+                <Route path="/files" element={<FilesPage />} />
+                <Route path="/files/:id" element={<FileDetailPage />} />
+
                 <Route path="/payments" element={<PaymentsPage />} />
                 <Route path="/treasury" element={<TreasuryPage />} />
                 <Route path="/tariffs" element={<TariffsPage />} />
                 <Route path="/cupos" element={<CuposPage />} />
                 <Route path="/suppliers" element={<SuppliersPage />} />
+
                 <Route
                   path="/agencies"
                   element={adminUser ? <AgenciesPage /> : <Navigate to="/dashboard" replace />}
