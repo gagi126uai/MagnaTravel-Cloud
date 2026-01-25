@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
@@ -14,7 +14,8 @@ import {
     FileText,
     Trash2,
     Edit2,
-    X
+    X,
+    ChevronDown
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 
@@ -33,9 +34,13 @@ export default function FileDetailPage() {
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState("services");
     const [suppliers, setSuppliers] = useState([]);
+    const dropdownRef = useRef(null);
 
-    // Generic Service Modal State
+    // UI States
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+
+    // Form State
     const [serviceType, setServiceType] = useState("Aereo");
     const [serviceForm, setServiceForm] = useState({
         supplierId: "",
@@ -50,6 +55,15 @@ export default function FileDetailPage() {
     useEffect(() => {
         loadFile();
         loadSuppliers();
+
+        // Click outside to close dropdown
+        function handleClickOutside(event) {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsDropdownOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [id]);
 
     const loadFile = async () => {
@@ -87,8 +101,7 @@ export default function FileDetailPage() {
             });
             showSuccess("Servicio agregado correctamente");
             setIsServiceModalOpen(false);
-            loadFile(); // Refresh file to see new service and updated totals
-            // Reset form
+            loadFile();
             setServiceForm({
                 supplierId: "",
                 description: "",
@@ -116,9 +129,12 @@ export default function FileDetailPage() {
 
     const openServiceModal = (type) => {
         setServiceType(type);
-        setServiceForm(prev => ({ ...prev, description: type })); // Default generic desc
+        setServiceForm(prev => ({ ...prev, description: type }));
+        setIsDropdownOpen(false); // Close dropdown if open
         setIsServiceModalOpen(true);
     }
+
+    const toggleDropdown = () => setIsDropdownOpen(!isDropdownOpen);
 
     const EmptyState = () => (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center dark:border-slate-700 dark:bg-slate-900/50">
@@ -135,6 +151,9 @@ export default function FileDetailPage() {
                 </Button>
                 <Button variant="outline" onClick={() => openServiceModal("Hotel")}>
                     <Hotel className="h-4 w-4 mr-2" /> Hotel
+                </Button>
+                <Button variant="outline" onClick={() => openServiceModal("Traslado")}>
+                    <Bus className="h-4 w-4 mr-2" /> Traslado
                 </Button>
             </div>
         </div>
@@ -172,29 +191,37 @@ export default function FileDetailPage() {
                         </div>
                     </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 relative">
                     <Button variant="outline">
                         <FileText className="h-4 w-4 mr-2" /> Voucher
                     </Button>
-                    <div className="dropdown relative group">
-                        <Button>
-                            <Plus className="h-4 w-4 mr-2" /> Agregar Servicio
+
+                    <div className="relative" ref={dropdownRef}>
+                        <Button onClick={toggleDropdown} className={isDropdownOpen ? "ring-2 ring-indigo-500 ring-offset-2" : ""}>
+                            <Plus className="h-4 w-4 mr-2" /> Agregar Servicio <ChevronDown className="h-4 w-4 ml-1 opacity-70" />
                         </Button>
-                        {/* Simple dropdown via CSS group-hover */}
-                        <div className="absolute right-0 top-full mt-2 w-48 rounded-md border bg-white shadow-lg hidden group-hover:block z-20 dark:bg-slate-800">
-                            <button onClick={() => openServiceModal("Aereo")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
-                                <Plane className="h-4 w-4" /> Aéreo
-                            </button>
-                            <button onClick={() => openServiceModal("Hotel")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
-                                <Hotel className="h-4 w-4" /> Hotel
-                            </button>
-                            <button onClick={() => openServiceModal("Traslado")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
-                                <Bus className="h-4 w-4" /> Traslado
-                            </button>
-                            <button onClick={() => openServiceModal("Otro")} className="flex w-full items-center px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 gap-2 text-left">
-                                <CreditCard className="h-4 w-4" /> Otro
-                            </button>
-                        </div>
+
+                        {isDropdownOpen && (
+                            <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-30 dark:border-slate-700 dark:bg-slate-800 animate-in fade-in zoom-in-95 duration-100">
+                                <button onClick={() => openServiceModal("Aereo")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
+                                    <div className="rounded-md bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"><Plane className="h-4 w-4" /></div>
+                                    <span className="font-medium">Aéreo</span>
+                                </button>
+                                <button onClick={() => openServiceModal("Hotel")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
+                                    <div className="rounded-md bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400"><Hotel className="h-4 w-4" /></div>
+                                    <span className="font-medium">Hotel</span>
+                                </button>
+                                <button onClick={() => openServiceModal("Traslado")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
+                                    <div className="rounded-md bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"><Bus className="h-4 w-4" /></div>
+                                    <span className="font-medium">Traslado</span>
+                                </button>
+                                <div className="my-1 h-px bg-slate-100 dark:bg-slate-700"></div>
+                                <button onClick={() => openServiceModal("Otro")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
+                                    <div className="rounded-md bg-slate-50 p-1.5 text-slate-600 dark:bg-slate-700 dark:text-slate-400"><CreditCard className="h-4 w-4" /></div>
+                                    <span className="font-medium">Otro Servicio</span>
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -268,7 +295,6 @@ export default function FileDetailPage() {
                                             </div>
                                         </div>
                                         <div className="flex gap-1 sm:hidden">
-                                            {/* Mobile Actions */}
                                             <Button variant="ghost" size="icon" className="text-rose-500" onClick={() => handleDeleteService(res.id)}>
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
@@ -293,11 +319,11 @@ export default function FileDetailPage() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
                     <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-slate-900 border dark:border-slate-800">
                         <div className="flex items-center justify-between border-b p-4 dark:border-slate-800">
-                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                            <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
                                 {SERVICE_ICONS[serviceType]}
                                 Cargar {serviceType}
                             </h3>
-                            <button onClick={() => setIsServiceModalOpen(false)} className="text-slate-500 hover:text-slate-700">
+                            <button onClick={() => setIsServiceModalOpen(false)} className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>
@@ -305,9 +331,9 @@ export default function FileDetailPage() {
                             {/* Provider & Desc */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-2 sm:col-span-1">
-                                    <label className="block text-sm font-medium mb-1">Proveedor</label>
+                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Proveedor</label>
                                     <select
-                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                         value={serviceForm.supplierId}
                                         onChange={e => setServiceForm({ ...serviceForm, supplierId: e.target.value })}
                                         required
@@ -317,9 +343,9 @@ export default function FileDetailPage() {
                                     </select>
                                 </div>
                                 <div className="col-span-2 sm:col-span-1">
-                                    <label className="block text-sm font-medium mb-1">Código Confirmación</label>
+                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Código Confirmación</label>
                                     <input
-                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                         placeholder="PNR / Voucher"
                                         value={serviceForm.confirmationNumber}
                                         onChange={e => setServiceForm({ ...serviceForm, confirmationNumber: e.target.value })}
@@ -328,9 +354,9 @@ export default function FileDetailPage() {
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium mb-1">Descripción corta</label>
+                                <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Descripción corta</label>
                                 <input
-                                    className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                     placeholder={serviceType === 'Aereo' ? 'Vuelo AA900 MIA-EZE' : serviceType === 'Hotel' ? 'Hotel Riu Palace - Standard Room' : 'Traslado Privado'}
                                     value={serviceForm.description}
                                     onChange={e => setServiceForm({ ...serviceForm, description: e.target.value })}
@@ -341,20 +367,20 @@ export default function FileDetailPage() {
                             {/* Dates */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium mb-1">Fecha {serviceType === 'Hotel' ? 'Check-In' : 'Salida'}</label>
+                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Fecha {serviceType === 'Hotel' ? 'Check-In' : 'Salida'}</label>
                                     <input
                                         type="datetime-local"
-                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                         value={serviceForm.departureDate}
                                         onChange={e => setServiceForm({ ...serviceForm, departureDate: e.target.value })}
                                         required
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium mb-1">Fecha {serviceType === 'Hotel' ? 'Check-Out' : serviceType === 'Aereo' ? 'Regreso (Opc)' : 'Fin'}</label>
+                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Fecha {serviceType === 'Hotel' ? 'Check-Out' : serviceType === 'Aereo' ? 'Regreso (Opc)' : 'Fin'}</label>
                                     <input
                                         type="datetime-local"
-                                        className="w-full rounded-lg border bg-slate-50 p-2 text-sm"
+                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                         value={serviceForm.returnDate}
                                         onChange={e => setServiceForm({ ...serviceForm, returnDate: e.target.value })}
                                     />
@@ -366,12 +392,12 @@ export default function FileDetailPage() {
                                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Valores Económicos</h4>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm font-medium mb-1">Costo Neto</label>
+                                        <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Costo Neto</label>
                                         <div className="relative">
                                             <span className="absolute left-3 top-2 text-slate-500">$</span>
                                             <input
                                                 type="number" step="0.01"
-                                                className="w-full rounded-lg border bg-white pl-6 p-2 text-sm"
+                                                className="w-full rounded-lg border border-slate-300 bg-white pl-6 p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                                 value={serviceForm.netCost}
                                                 onChange={e => setServiceForm({ ...serviceForm, netCost: e.target.value })}
                                                 required
@@ -379,12 +405,12 @@ export default function FileDetailPage() {
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium mb-1">Precio Venta</label>
+                                        <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Precio Venta</label>
                                         <div className="relative">
                                             <span className="absolute left-3 top-2 text-slate-500">$</span>
                                             <input
                                                 type="number" step="0.01"
-                                                className="w-full rounded-lg border bg-white pl-6 p-2 text-sm"
+                                                className="w-full rounded-lg border border-slate-300 bg-white pl-6 p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                                 value={serviceForm.salePrice}
                                                 onChange={e => setServiceForm({ ...serviceForm, salePrice: e.target.value })}
                                                 required
