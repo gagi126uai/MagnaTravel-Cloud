@@ -21,7 +21,8 @@ public class Reservation
     public int? TravelFileId { get; set; }
     public TravelFile? TravelFile { get; set; }
 
-    public int? CustomerId { get; set; } // Legacy or Specific Passenger
+    // Legacy or Specific Passenger
+    public int? CustomerId { get; set; } 
     public Customer? Customer { get; set; }
     
     public int? SupplierId { get; set; } // The Provider
@@ -30,11 +31,12 @@ public class Reservation
     // Erasable/Legacy fields should be deprecated or repurposed
     // public string ReferenceCode { get; set; } -> Use ConfirmationNumber
     
-    public string ConfirmationNumber { get; set; } = string.Empty; // PNR / Booking ID
+    public string? ConfirmationNumber { get; set; } // PNR / Booking ID
     public string Status { get; set; } = ReservationStatuses.Draft; // HK, OK, RQ, XX
     public string ServiceType { get; set; } = ServiceTypes.Flight;
     
-    public string Description { get; set; } = string.Empty; // "Hotel Miami 3 Nights"
+    public string? Description { get; set; } // Description can also be null
+
 
     // Dates
     public DateTime DepartureDate { get; set; } // CheckIn / Flight Date
