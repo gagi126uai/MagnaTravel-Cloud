@@ -72,6 +72,7 @@ public class TravelFilesController : ControllerBase
             TravelFileId = id,
             ServiceType = request.ServiceType,
             SupplierId = request.SupplierId,
+            CustomerId = file.PayerId, // Inherit Payer as Customer (Crucial Fix)
             Description = request.Description ?? request.ServiceType,
             ConfirmationNumber = request.ConfirmationNumber ?? "PENDIENTE",
             Status = "Solicitado",

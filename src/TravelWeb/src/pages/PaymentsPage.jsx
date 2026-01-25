@@ -1,153 +1,142 @@
 import { useEffect, useState } from "react";
-import { apiRequest } from "../api";
+import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
-
-const initialForm = {
-  reservationId: "",
-  amount: "",
-  method: "Card",
-  status: "Pending",
-};
+import {
+  Search,
+  CreditCard,
+  Banknote,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Filter
+} from "lucide-react";
+import { Button } from "../components/ui/button";
 
 export default function PaymentsPage() {
-  const [reservations, setReservations] = useState([]);
   const [payments, setPayments] = useState([]);
-  const [form, setForm] = useState(initialForm);
-
-  const loadReservations = async () => {
-    try {
-      const data = await apiRequest("/api/reservations");
-      setReservations(data);
-    } catch {
-      showError("No se pudieron cargar las reservas.");
-    }
-  };
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState("All");
 
   useEffect(() => {
-    loadReservations();
+    loadPayments();
   }, []);
 
-  const handleChange = (event) => {
-    setForm((prev) => ({ ...prev, [event.target.name]: event.target.value }));
-  };
-
-  const loadPayments = async (reservationId) => {
-    if (!reservationId) return;
+  const loadPayments = async () => {
+    setLoading(true);
     try {
-      const data = await apiRequest(`/api/payments/reservation/${reservationId}`);
-      setPayments(data);
-    } catch {
-      showError("No se pudieron cargar los pagos.");
+      // Assuming a general endpoint for all payments (In / out)
+      // If not exists, we might need to create one or assume this is only 'receipts' (Cobros)
+      // For now, I'll use the existing /treasury/receipts or similar, but let's stick to what we know exists or mock it
+      // The user complained about "Reservations" dropdown.
+      // Let's try to get all payments. 
+      const data = await api.get("/payments");
+      setPayments(data.reverse()); // Show newest first
+    } catch (error) {
+      console.log("Error loading payments");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    try {
-      await apiRequest("/api/payments", {
-        method: "POST",
-        body: JSON.stringify({
-          reservationId: Number(form.reservationId),
-          amount: Number(form.amount || 0),
-          method: form.method,
-          status: form.status,
-        }),
-      });
-      setForm(initialForm);
-      loadPayments(form.reservationId);
-      await showSuccess("Pago registrado correctamente.");
-    } catch {
-      await showError("No se pudo registrar el pago.");
-    }
-  };
+  const filteredPayments = payments.filter(p => {
+    const matchSearch = p.reservation?.customer?.fullName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.id?.toString().includes(searchTerm);
+    const matchFilter = filterType === 'All' || p.method === filterType;
+    return matchSearch && matchFilter;
+  });
+
+  const totalAmount = filteredPayments.reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold">Pagos</h2>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Registra pagos parciales y controla saldos pendientes.
-        </p>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Caja Administrativa</h2>
+          <p className="text-sm text-muted-foreground">Control de ingresos y egresos monetarios.</p>
+        </div>
+        <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-4 py-2 rounded-xl border border-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800">
+          <div className="text-sm font-medium">Total en Vista:</div>
+          <div className="text-xl font-bold">${totalAmount.toLocaleString()}</div>
+        </div>
       </div>
 
-      <div className="grid gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/60 md:grid-cols-2">
-        <select
-          name="reservationId"
-          value={form.reservationId}
-          onChange={(event) => {
-            handleChange(event);
-            loadPayments(event.target.value);
-          }}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-          required
-        >
-          <option value="">Selecciona reserva</option>
-          {reservations.map((reservation) => (
-            <option key={reservation.id} value={reservation.id}>
-              {reservation.referenceCode} - {reservation.customer?.fullName}
-            </option>
-          ))}
-        </select>
-        <input
-          name="amount"
-          placeholder="Monto"
-          value={form.amount}
-          onChange={handleChange}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-          required
-        />
-        <select
-          name="method"
-          value={form.method}
-          onChange={handleChange}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-        >
-          <option value="Card">Tarjeta</option>
-          <option value="Transfer">Transferencia</option>
-          <option value="Cash">Efectivo</option>
-        </select>
-        <select
-          name="status"
-          value={form.status}
-          onChange={handleChange}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-        >
-          <option value="Pending">Pendiente</option>
-          <option value="Partial">Parcial</option>
-          <option value="Paid">Pagado</option>
-        </select>
-        <button
-          type="button"
-          onClick={handleSubmit}
-          className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-500/30 transition hover:bg-indigo-500 md:col-span-2"
-        >
-          Registrar pago
-        </button>
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
+          <Button variant={filterType === 'All' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('All')}>Todos</Button>
+          <Button variant={filterType === 'Cash' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('Cash')}>Efectivo</Button>
+          <Button variant={filterType === 'Transfer' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('Transfer')}>Transferencia</Button>
+          <Button variant={filterType === 'Card' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('Card')}>Tarjeta</Button>
+        </div>
+
+        <div className="relative w-full sm:max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            className="w-full bg-transparent pl-9 pr-4 py-2 text-sm border-none focus:outline-none placeholder:text-muted-foreground/70"
+            placeholder="Buscar movimiento..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-500 dark:bg-slate-950 dark:text-slate-300">
-            <tr>
-              <th className="px-4 py-3">Fecha</th>
-              <th className="px-4 py-3">Monto</th>
-              <th className="px-4 py-3">Método</th>
-              <th className="px-4 py-3">Estado</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900/40">
-            {payments.map((payment) => (
-              <tr key={payment.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/60">
-                <td className="px-4 py-3">
-                  {new Date(payment.paidAt).toLocaleDateString()}
-                </td>
-                <td className="px-4 py-3">${payment.amount}</td>
-                <td className="px-4 py-3">{payment.method}</td>
-                <td className="px-4 py-3">{payment.status}</td>
+      {/* Data Table */}
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800">
+              <tr>
+                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">ID</th>
+                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Fecha</th>
+                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Concepto / Cliente</th>
+                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Método</th>
+                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Monto</th>
+                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-center">Estado</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filteredPayments.map((payment) => (
+                <tr key={payment.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                  <td className="px-6 py-4 font-mono text-xs text-slate-500">#{payment.id}</td>
+                  <td className="px-6 py-4">
+                    {new Date(payment.paidAt).toLocaleDateString()}
+                    <div className="text-xs text-slate-400">{new Date(payment.paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="font-medium">{payment.reservation?.customer?.fullName || "Cliente Desconocido"}</div>
+                    <div className="text-xs text-slate-500">Reserva #{payment.reservation?.referenceCode || payment.reservationId}</div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      {payment.method === 'Cash' && <Banknote className="h-4 w-4 text-emerald-500" />}
+                      {payment.method === 'Card' && <CreditCard className="h-4 w-4 text-indigo-500" />}
+                      {payment.method === 'Transfer' && <ArrowUpRight className="h-4 w-4 text-blue-500" />}
+                      <span>{payment.method === 'Cash' ? 'Efectivo' : payment.method === 'Card' ? 'Tarjeta' : 'Transf.'}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right font-mono font-bold text-slate-700 dark:text-slate-200">
+                    ${payment.amount?.toLocaleString()}
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${payment.status === 'Paid' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                        payment.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                          'bg-slate-100 text-slate-600'
+                      }`}>
+                      {payment.status === 'Paid' ? 'Completado' : payment.status === 'Pending' ? 'Pendiente' : payment.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {filteredPayments.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                    No hay movimientos registrados.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

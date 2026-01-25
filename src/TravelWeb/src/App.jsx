@@ -7,14 +7,11 @@ import CustomersPage from "./pages/CustomersPage";
 import FilesPage from "./pages/FilesPage";
 import FileDetailPage from "./pages/FileDetailPage";
 import PaymentsPage from "./pages/PaymentsPage";
-import QuotesPage from "./pages/QuotesPage";
-import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./pages/SuppliersPage";
-import TariffsPage from "./pages/TariffsPage";
-import CuposPage from "./pages/CuposPage";
-import TreasuryPage from "./pages/TreasuryPage";
-import AgenciesPage from "./pages/AgenciesPage";
+import ReportsPage from "./pages/ReportsPage";
+
+// LEGACY REMOVED: Cupos, Quotes, Tariffs, Agencies
 
 function PrivateRoute({ children }) {
   if (!isAuthenticated()) {
@@ -43,23 +40,18 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/customers" element={<CustomersPage />} />
-                <Route path="/quotes" element={<QuotesPage />} />
 
-                {/* New ERP Routes */}
+                {/* Core ERP Modules */}
                 <Route path="/files" element={<FilesPage />} />
                 <Route path="/files/:id" element={<FileDetailPage />} />
 
-                <Route path="/payments" element={<PaymentsPage />} />
-                <Route path="/treasury" element={<TreasuryPage />} />
-                <Route path="/tariffs" element={<TariffsPage />} />
-                <Route path="/cupos" element={<CuposPage />} />
+                <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/suppliers" element={<SuppliersPage />} />
 
-                <Route
-                  path="/agencies"
-                  element={adminUser ? <AgenciesPage /> : <Navigate to="/dashboard" replace />}
-                />
+                {/* Treasury */}
+                <Route path="/payments" element={<PaymentsPage />} />
+
+                {/* Admin */}
                 <Route
                   path="/reports"
                   element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}

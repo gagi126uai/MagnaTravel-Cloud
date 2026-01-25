@@ -33,7 +33,7 @@ public class Reservation
     
     public string? ConfirmationNumber { get; set; } // PNR / Booking ID
     public string Status { get; set; } = ReservationStatuses.Draft; // HK, OK, RQ, XX
-    public string ServiceType { get; set; } = ServiceTypes.Flight;
+    public string? ServiceType { get; set; } = ServiceTypes.Flight;
     
     public string? Description { get; set; } // Description can also be null
 
