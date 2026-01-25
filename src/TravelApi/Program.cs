@@ -231,6 +231,16 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Customers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
 
+    // CRITICAL HOTFIX: Relax Constraints to prevent crashes on legacy/draft data
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ALTER COLUMN \"CustomerId\" DROP NOT NULL;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ALTER COLUMN \"ServiceType\" DROP NOT NULL;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ALTER COLUMN \"ConfirmationNumber\" DROP NOT NULL;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ALTER COLUMN \"ReferenceCode\" DROP NOT NULL;");
+
     // Seed initial data if needed (e.g. Roles, Admin User)
     // [Seeding logic remains if present, otherwise empty]
     // [Seeding logic remains if present, otherwise empty]
