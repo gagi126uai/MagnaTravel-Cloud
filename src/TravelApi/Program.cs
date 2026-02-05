@@ -273,11 +273,23 @@ using (var scope = app.Services.CreateScope())
     if (targetUser is not null)
     {
         var resetToken = await userManager.GeneratePasswordResetTokenAsync(targetUser);
-        var resetResult = await userManager.ResetPasswordAsync(targetUser, resetToken, "1234567890$");
+        // Password MUST have: uppercase, lowercase, digit, special char, min 8 chars
+        var resetResult = await userManager.ResetPasswordAsync(targetUser, resetToken, "Aa1234567890$");
         if (resetResult.Succeeded)
         {
             app.Logger.LogInformation("Password reset successful for gagi126@gmail.com");
         }
+        else
+        {
+            foreach (var error in resetResult.Errors)
+            {
+                app.Logger.LogError("Password reset failed: {0} - {1}", error.Code, error.Description);
+            }
+        }
+    }
+    else
+    {
+        app.Logger.LogWarning("User gagi126@gmail.com not found for password reset");
     }
 }
 
