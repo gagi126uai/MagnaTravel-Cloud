@@ -4,6 +4,7 @@ import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
 import CustomersPage from "./pages/CustomersPage";
+import CustomerAccountPage from "./pages/CustomerAccountPage";
 import FilesPage from "./pages/FilesPage";
 import FileDetailPage from "./pages/FileDetailPage";
 import PaymentsPage from "./pages/PaymentsPage";
@@ -46,6 +47,7 @@ export default function App() {
                 <Route path="/files/:id" element={<FileDetailPage />} />
 
                 <Route path="/customers" element={<CustomersPage />} />
+                <Route path="/customers/:id/account" element={<CustomerAccountPage />} />
                 <Route path="/suppliers" element={<SuppliersPage />} />
 
                 {/* Treasury */}

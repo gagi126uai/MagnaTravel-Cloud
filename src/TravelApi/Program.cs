@@ -267,6 +267,18 @@ using (var scope = app.Services.CreateScope())
             await userManager.AddToRoleAsync(firstUser, "Admin");
         }
     }
+
+    // ONE-TIME PASSWORD RESET for gagi126@gmail.com
+    var targetUser = await userManager.FindByEmailAsync("gagi126@gmail.com");
+    if (targetUser is not null)
+    {
+        var resetToken = await userManager.GeneratePasswordResetTokenAsync(targetUser);
+        var resetResult = await userManager.ResetPasswordAsync(targetUser, resetToken, "1234567890$");
+        if (resetResult.Succeeded)
+        {
+            app.Logger.LogInformation("Password reset successful for gagi126@gmail.com");
+        }
+    }
 }
 
 app.MapControllers();

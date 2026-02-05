@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Plus, Search, Pencil, User, Mail, Phone, FileText, CheckCircle2, XCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, Pencil, Wallet, User, Mail, Phone, FileText, CheckCircle2, XCircle } from "lucide-react";
 import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
 import Swal from "sweetalert2";
@@ -8,6 +9,7 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentCustomer, setCurrentCustomer] = useState(null);
   const [formData, setFormData] = useState({
@@ -153,12 +155,22 @@ export default function CustomersPage() {
                     {formatCurrency(customer.currentBalance)}
                   </td>
                   <td className="p-4 align-middle text-right">
-                    <button
-                      onClick={() => handleOpenModal(customer)}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background/50 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => navigate(`/customers/${customer.id}/account`)}
+                        title="Ver Cuenta Corriente"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-sm font-medium shadow-sm hover:bg-emerald-500/20"
+                      >
+                        <Wallet className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleOpenModal(customer)}
+                        title="Editar Cliente"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background/50 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

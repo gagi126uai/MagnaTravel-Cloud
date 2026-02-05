@@ -83,4 +83,86 @@ public class CustomersController : ControllerBase
 
         return Ok(existing);
     }
+
+    /// <summary>
+    /// Cuenta corriente del cliente: expedientes, pagos y saldo
+    /// </summary>
+    [HttpGet("{id:int}/account")]
+    public async Task<ActionResult> GetCustomerAccount(int id, CancellationToken cancellationToken)
+    {
+        var customer = await _dbContext.Customers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+
+        if (customer is null)
+        {
+            return NotFound("Cliente no encontrado");
+        }
+
+        // Get all travel files for this customer
+        var files = await _dbContext.TravelFiles
+            .AsNoTracking()
+            .Where(f => f.PayerId == id)
+            .OrderByDescending(f => f.CreatedAt)
+            .Select(f => new
+            {
+                f.Id,
+                f.FileNumber,
+                f.Name,
+                f.Status,
+                f.TotalSale,
+                f.Balance,
+                f.CreatedAt,
+                f.StartDate,
+                Paid = f.TotalSale - f.Balance
+            })
+            .ToListAsync(cancellationToken);
+
+        // Get all payments for this customer's files
+        var fileIds = files.Select(f => f.Id).ToList();
+        var payments = await _dbContext.Payments
+            .AsNoTracking()
+            .Where(p => p.TravelFileId != null && fileIds.Contains(p.TravelFileId.Value))
+            .OrderByDescending(p => p.PaymentDate)
+            .Select(p => new
+            {
+                p.Id,
+                p.Amount,
+                p.Method,
+                p.PaymentDate,
+                p.Notes,
+                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null,
+                FileName = p.TravelFile != null ? p.TravelFile.Name : null
+            })
+            .ToListAsync(cancellationToken);
+
+        // Calculate totals
+        var totalSales = files.Sum(f => f.TotalSale);
+        var totalPaid = files.Sum(f => f.Paid);
+        var totalBalance = files.Sum(f => f.Balance);
+
+        return Ok(new
+        {
+            Customer = new
+            {
+                customer.Id,
+                customer.FullName,
+                customer.Email,
+                customer.Phone,
+                customer.TaxId,
+                customer.CreditLimit,
+                customer.CurrentBalance
+            },
+            Files = files,
+            Payments = payments,
+            Summary = new
+            {
+                TotalSales = totalSales,
+                TotalPaid = totalPaid,
+                TotalBalance = totalBalance,
+                FileCount = files.Count,
+                PaymentCount = payments.Count
+            }
+        });
+    }
 }
