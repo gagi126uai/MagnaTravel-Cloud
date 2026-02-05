@@ -123,13 +123,13 @@ public class CustomersController : ControllerBase
         var payments = await _dbContext.Payments
             .AsNoTracking()
             .Where(p => p.TravelFileId != null && fileIds.Contains(p.TravelFileId.Value))
-            .OrderByDescending(p => p.PaymentDate)
+            .OrderByDescending(p => p.PaidAt)
             .Select(p => new
             {
                 p.Id,
                 p.Amount,
                 p.Method,
-                p.PaymentDate,
+                PaymentDate = p.PaidAt,
                 p.Notes,
                 FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null,
                 FileName = p.TravelFile != null ? p.TravelFile.Name : null
@@ -160,8 +160,8 @@ public class CustomersController : ControllerBase
                 TotalSales = totalSales,
                 TotalPaid = totalPaid,
                 TotalBalance = totalBalance,
-                FileCount = files.Count,
-                PaymentCount = payments.Count
+                FileCount = files.Count(),
+                PaymentCount = payments.Count()
             }
         });
     }
