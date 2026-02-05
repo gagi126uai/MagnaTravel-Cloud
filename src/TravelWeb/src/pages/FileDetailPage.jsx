@@ -70,6 +70,10 @@ export default function FileDetailPage() {
         email: ""
     });
 
+    // Edit States
+    const [editingPassengerId, setEditingPassengerId] = useState(null);
+    const [editingServiceId, setEditingServiceId] = useState(null);
+
     useEffect(() => {
         loadFile();
         loadSuppliers();
@@ -145,22 +149,49 @@ export default function FileDetailPage() {
             return;
         }
 
-        try {
-            await api.post(`/travelfiles/${id}/passengers`, {
-                fullName: passengerForm.fullName,
-                documentType: passengerForm.documentType,
-                documentNumber: passengerForm.documentNumber,
-                birthDate: passengerForm.birthDate ? new Date(passengerForm.birthDate).toISOString() : null,
-                phone: passengerForm.phone,
-                email: passengerForm.email
-            });
+        const payload = {
+            fullName: passengerForm.fullName,
+            documentType: passengerForm.documentType,
+            documentNumber: passengerForm.documentNumber,
+            birthDate: passengerForm.birthDate ? new Date(passengerForm.birthDate).toISOString() : null,
+            phone: passengerForm.phone,
+            email: passengerForm.email
+        };
 
-            showSuccess("Pasajero agregado correctamente");
+        try {
+            if (editingPassengerId) {
+                await api.put(`/travelfiles/passengers/${editingPassengerId}`, payload);
+                showSuccess("Pasajero actualizado correctamente");
+            } else {
+                await api.post(`/travelfiles/${id}/passengers`, payload);
+                showSuccess("Pasajero agregado correctamente");
+            }
+
             setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", phone: "", email: "" });
-            loadFile(); // Reload to get updated passengers list
+            setEditingPassengerId(null);
+            loadFile();
         } catch (error) {
-            showError(error.message || "Error al agregar pasajero");
+            showError(error.message || "Error al guardar pasajero");
         }
+    };
+
+    const handleEditPassenger = (pax) => {
+        setPassengerForm({
+            fullName: pax.fullName,
+            documentType: pax.documentType || "DNI",
+            documentNumber: pax.documentNumber || "",
+            birthDate: pax.birthDate ? pax.birthDate.split('T')[0] : "",
+            phone: pax.phone || "",
+            email: pax.email || ""
+        });
+        setEditingPassengerId(pax.id);
+        // Scroll to form if needed, or simply focus
+        document.getElementById('passenger-form-title')?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    const cancelEditPassenger = () => {
+        setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", phone: "", email: "" });
+        setEditingPassengerId(null);
     };
 
     const handleDeletePassenger = async (passengerId) => {
@@ -177,7 +208,7 @@ export default function FileDetailPage() {
     const handleAddService = async (e) => {
         e.preventDefault();
         try {
-            await api.post(`/travelfiles/${id}/services`, {
+            const payload = {
                 ...serviceForm,
                 serviceType: serviceType,
                 supplierId: serviceForm.supplierId ? parseInt(serviceForm.supplierId) : null,
@@ -185,9 +216,18 @@ export default function FileDetailPage() {
                 returnDate: serviceForm.returnDate ? new Date(serviceForm.returnDate).toISOString() : null,
                 salePrice: parseFloat(serviceForm.salePrice),
                 netCost: parseFloat(serviceForm.netCost)
-            });
-            showSuccess("Servicio agregado correctamente");
+            };
+
+            if (editingServiceId) {
+                await api.put(`/travelfiles/services/${editingServiceId}`, payload);
+                showSuccess("Servicio actualizado correctamente");
+            } else {
+                await api.post(`/travelfiles/${id}/services`, payload);
+                showSuccess("Servicio agregado correctamente");
+            }
+
             setIsServiceModalOpen(false);
+            setEditingServiceId(null);
             loadFile();
             setServiceForm({
                 supplierId: "",
@@ -199,8 +239,33 @@ export default function FileDetailPage() {
                 netCost: 0
             });
         } catch (error) {
-            showError(error.message || "Error al agregar servicio");
+            showError(error.message || "Error al guardar servicio");
         }
+    };
+
+    const handleEditService = (service) => {
+        setServiceType(service.serviceType);
+
+        // Format dates for datetime-local input (YYYY-MM-DDTHH:mm)
+        const formatDate = (dateString) => {
+            if (!dateString) return "";
+            const date = new Date(dateString);
+            // Adjust to local ISO string somewhat or just slice if it's already ISO from backend but we need to respect timezone or just take it as is.
+            // Simplified approach:
+            return date.toISOString().slice(0, 16);
+        };
+
+        setServiceForm({
+            supplierId: service.supplierId || "",
+            description: service.description || "",
+            confirmationNumber: service.confirmationNumber || "",
+            departureDate: formatDate(service.departureDate),
+            returnDate: formatDate(service.returnDate),
+            salePrice: service.salePrice,
+            netCost: service.netCost
+        });
+        setEditingServiceId(service.id);
+        setIsServiceModalOpen(true);
     };
 
     const handleDeleteService = async (serviceId) => {
@@ -436,12 +501,18 @@ export default function FileDetailPage() {
                                             </div>
                                         </div>
                                         <div className="flex gap-1 sm:hidden">
+                                            <Button variant="ghost" size="icon" className="text-blue-500" onClick={() => handleEditService(res)}>
+                                                <Edit2 className="h-4 w-4" />
+                                            </Button>
                                             <Button variant="ghost" size="icon" className="text-rose-500" onClick={() => handleDeleteService(res.id)}>
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
                                         </div>
                                     </div>
                                     <div className="hidden sm:flex gap-1">
+                                        <Button variant="ghost" size="icon" className="text-blue-500 hover:bg-blue-50" onClick={() => handleEditService(res)}>
+                                            <Edit2 className="h-4 w-4" />
+                                        </Button>
                                         <Button variant="ghost" size="icon" onClick={() => handleDeleteService(res.id)} className="text-rose-500 hover:text-rose-600 hover:bg-rose-50">
                                             <Trash2 className="h-4 w-4" />
                                         </Button>
@@ -459,11 +530,18 @@ export default function FileDetailPage() {
             {activeTab === 'passengers' && (
                 <div className="space-y-6">
                     {/* Passenger Form */}
-                    <div className="rounded-xl border bg-card p-6">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                            <User className="h-5 w-5 text-primary" />
-                            Agregar Pasajero
-                        </h3>
+                    <div className="rounded-xl border bg-card p-6" id="passenger-form-title">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                                <User className="h-5 w-5 text-primary" />
+                                {editingPassengerId ? "Editar Pasajero" : "Agregar Pasajero"}
+                            </h3>
+                            {editingPassengerId && (
+                                <Button variant="ghost" size="sm" onClick={cancelEditPassenger} className="text-rose-500">
+                                    Cancelar Edición
+                                </Button>
+                            )}
+                        </div>
                         <form onSubmit={handleAddPassenger} className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nombre Completo *</label>
@@ -519,7 +597,7 @@ export default function FileDetailPage() {
                             <div className="flex items-end">
                                 <Button type="submit" className="w-full">
                                     <Plus className="h-4 w-4 mr-2" />
-                                    Agregar
+                                    {editingPassengerId ? "Guardar Cambios" : "Agregar"}
                                 </Button>
                             </div>
                         </form>
@@ -546,9 +624,14 @@ export default function FileDetailPage() {
                                                 </div>
                                             </div>
                                         </div>
-                                        <Button variant="ghost" size="icon" onClick={() => handleDeletePassenger(pax.id)} className="text-rose-500 hover:text-rose-600 hover:bg-rose-50">
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
+                                        <div className="flex gap-1">
+                                            <Button variant="ghost" size="icon" onClick={() => handleEditPassenger(pax)} className="text-blue-500 hover:text-blue-600 hover:bg-blue-50">
+                                                <Edit2 className="h-4 w-4" />
+                                            </Button>
+                                            <Button variant="ghost" size="icon" onClick={() => handleDeletePassenger(pax.id)} className="text-rose-500 hover:text-rose-600 hover:bg-rose-50">
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -650,9 +733,9 @@ export default function FileDetailPage() {
                         <div className="flex items-center justify-between border-b p-4 dark:border-slate-800">
                             <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
                                 {SERVICE_ICONS[serviceType]}
-                                Cargar {serviceType}
+                                {editingServiceId ? `Editar ${serviceType}` : `Cargar ${serviceType}`}
                             </h3>
-                            <button onClick={() => setIsServiceModalOpen(false)} className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+                            <button onClick={() => { setIsServiceModalOpen(false); setEditingServiceId(null); }} className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>
