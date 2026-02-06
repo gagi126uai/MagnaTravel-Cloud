@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
-import { Plus, Pencil, Trash2, Search, X, DollarSign } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator } from "lucide-react";
 import Swal from "sweetalert2";
 
 const serviceTypes = [
@@ -52,6 +52,10 @@ export default function RatesPage() {
         validTo: ""
     });
 
+    // Commission integration state
+    const [commissionPercent, setCommissionPercent] = useState(10);
+    const [isCalculating, setIsCalculating] = useState(false);
+
     useEffect(() => {
         loadRates();
         loadSuppliers();
@@ -75,6 +79,62 @@ export default function RatesPage() {
             const data = await api.get("/suppliers");
             setSuppliers(data || []);
         } catch { }
+    };
+
+    // Fetch commission for current supplier/service combination
+    const fetchCommission = useCallback(async (supplierId, serviceType) => {
+        try {
+            setIsCalculating(true);
+            const params = new URLSearchParams();
+            if (supplierId) params.append("supplierId", supplierId);
+            if (serviceType) params.append("serviceType", serviceType);
+            const result = await api.get(`/commissions/calculate?${params}`);
+            setCommissionPercent(result.commissionPercent || 10);
+            return result.commissionPercent || 10;
+        } catch {
+            return 10;
+        } finally {
+            setIsCalculating(false);
+        }
+    }, []);
+
+    // Calculate suggested sale price based on cost + commission
+    const calculateSalePrice = (netCost, commission) => {
+        const cost = parseFloat(netCost) || 0;
+        const commissionAmount = cost * (commission / 100);
+        return Math.round((cost + commissionAmount) * 100) / 100;
+    };
+
+    // Handle supplier change - recalculate commission
+    const handleSupplierChange = async (e) => {
+        const supplierId = e.target.value;
+        setForm(prev => ({ ...prev, supplierId }));
+        const newCommission = await fetchCommission(supplierId, form.serviceType);
+        if (form.netCost > 0) {
+            setForm(prev => ({ ...prev, supplierId, salePrice: calculateSalePrice(prev.netCost, newCommission) }));
+        }
+    };
+
+    // Handle service type change - recalculate commission
+    const handleServiceTypeChange = async (e) => {
+        const serviceType = e.target.value;
+        setForm(prev => ({ ...prev, serviceType }));
+        const newCommission = await fetchCommission(form.supplierId, serviceType);
+        if (form.netCost > 0) {
+            setForm(prev => ({ ...prev, serviceType, salePrice: calculateSalePrice(prev.netCost, newCommission) }));
+        }
+    };
+
+    // Handle net cost change - recalculate sale price
+    const handleNetCostChange = (e) => {
+        const netCost = e.target.value;
+        const suggestedSale = calculateSalePrice(netCost, commissionPercent);
+        setForm(prev => ({ ...prev, netCost, salePrice: suggestedSale }));
+    };
+
+    // Apply commission button
+    const applyCommission = () => {
+        setForm(prev => ({ ...prev, salePrice: calculateSalePrice(prev.netCost, commissionPercent) }));
     };
 
     const saveRate = async (e) => {
@@ -146,9 +206,10 @@ export default function RatesPage() {
         setForm({ id: null, supplierId: "", serviceType: "Aereo", productName: "", description: "", netCost: 0, salePrice: 0, currency: "USD", validFrom: "", validTo: "" });
     };
 
-    const openNewModal = () => {
+    const openNewModal = async () => {
         resetForm();
         setShowModal(true);
+        await fetchCommission("", "Aereo"); // Load default commission
     };
 
     // Filtrado
@@ -256,9 +317,9 @@ export default function RatesPage() {
                                 </td>
                                 <td className="px-4 py-3">
                                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700" :
-                                            rate.serviceType === "Hotel" ? "bg-amber-100 text-amber-700" :
-                                                rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700" :
-                                                    "bg-slate-100 text-slate-700"
+                                        rate.serviceType === "Hotel" ? "bg-amber-100 text-amber-700" :
+                                            rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700" :
+                                                "bg-slate-100 text-slate-700"
                                         }`}>
                                         {rate.serviceType}
                                     </span>
@@ -296,18 +357,29 @@ export default function RatesPage() {
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo Servicio *</label>
                             <select className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                                value={form.serviceType} onChange={e => setForm({ ...form, serviceType: e.target.value })}>
+                                value={form.serviceType} onChange={handleServiceTypeChange}>
                                 {serviceTypes.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                             </select>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor</label>
                             <select className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                                value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })}>
+                                value={form.supplierId} onChange={handleSupplierChange}>
                                 <option value="">Sin proveedor específico</option>
                                 {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
                         </div>
+                    </div>
+                    {/* Commission Badge */}
+                    <div className="flex items-center gap-2 p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800">
+                        <Calculator className="h-4 w-4 text-indigo-600" />
+                        <span className="text-sm text-indigo-700 dark:text-indigo-300">
+                            Comisión aplicable: <strong>{commissionPercent}%</strong>
+                            {isCalculating && <span className="ml-2 text-xs opacity-70">(calculando...)</span>}
+                        </span>
+                        <button type="button" onClick={applyCommission} className="ml-auto text-xs px-2 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">
+                            Aplicar
+                        </button>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Descripción</label>
@@ -320,8 +392,9 @@ export default function RatesPage() {
                             <div className="relative mt-1">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
                                 <input type="number" step="0.01" required className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-7 pr-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                                    value={form.netCost} onChange={e => setForm({ ...form, netCost: e.target.value })} />
+                                    value={form.netCost} onChange={handleNetCostChange} />
                             </div>
+                            <p className="text-xs text-slate-500 mt-1">Al ingresar costo, se calcula venta automáticamente</p>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Precio Venta *</label>
