@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest } from "../api";
+import { apiRequest, api } from "../api";
 import { showError, showInfo, showSuccess } from "../alerts";
 import { isAdmin } from "../auth";
 import {
@@ -13,6 +13,7 @@ import {
   User,
   MoreHorizontal
 } from "lucide-react";
+import Swal from "sweetalert2";
 
 // --- Components ---
 
@@ -69,12 +70,13 @@ const Avatar = ({ name }) => {
 // --- Page ---
 
 const tabs = [
+  { id: "agency", label: "Datos de la Agencia" },
   { id: "users", label: "Usuarios" },
-  { id: "programming", label: "Programación (Vouchers/Reservas)" },
+  { id: "programming", label: "Programación" },
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState("users");
+  const [activeTab, setActiveTab] = useState("agency");
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -89,6 +91,19 @@ export default function SettingsPage() {
   const [editForm, setEditForm] = useState({ id: "", fullName: "", email: "", role: "Colaborador", isActive: true });
   const [passwordForm, setPasswordForm] = useState({ id: "", newPassword: "" });
   const [newRoleName, setNewRoleName] = useState("");
+
+  // Agency Settings State
+  const [agencySettings, setAgencySettings] = useState(null);
+  const [agencyForm, setAgencyForm] = useState({
+    agencyName: "",
+    taxId: "",
+    address: "",
+    phone: "",
+    email: "",
+    defaultCommissionPercent: 10,
+    currency: "ARS"
+  });
+  const [savingAgency, setSavingAgency] = useState(false);
 
   const closeModal = () => {
     setModalType(null);
@@ -116,8 +131,43 @@ export default function SettingsPage() {
     }
   };
 
+  const loadAgencySettings = async () => {
+    try {
+      const data = await api.get("/reports/settings");
+      if (data) {
+        setAgencySettings(data);
+        setAgencyForm({
+          agencyName: data.agencyName || "",
+          taxId: data.taxId || "",
+          address: data.address || "",
+          phone: data.phone || "",
+          email: data.email || "",
+          defaultCommissionPercent: data.defaultCommissionPercent || 10,
+          currency: data.currency || "ARS"
+        });
+      }
+    } catch (error) {
+      console.log("No agency settings found, using defaults");
+    }
+  };
+
+  const saveAgencySettings = async (e) => {
+    e.preventDefault();
+    setSavingAgency(true);
+    try {
+      await api.put("/reports/settings", agencyForm);
+      Swal.fire("Guardado", "Configuración de agencia actualizada", "success");
+      loadAgencySettings();
+    } catch (error) {
+      Swal.fire("Error", "No se pudo guardar la configuración", "error");
+    } finally {
+      setSavingAgency(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "users") loadUsers();
+    if (activeTab === "agency") loadAgencySettings();
   }, [activeTab, adminUser]);
 
   // Handlers
@@ -247,7 +297,112 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {activeTab === "users" ? (
+      {activeTab === "agency" && (
+        <section className="max-w-2xl">
+          <form onSubmit={saveAgencySettings} className="space-y-6">
+            {/* Datos Básicos */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Datos de la Agencia</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre de la Agencia</label>
+                  <input
+                    type="text"
+                    required
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.agencyName}
+                    onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">CUIT</label>
+                  <input
+                    type="text"
+                    placeholder="XX-XXXXXXXX-X"
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.taxId}
+                    onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Teléfono</label>
+                  <input
+                    type="text"
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.phone}
+                    onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
+                  <input
+                    type="email"
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.email}
+                    onChange={e => setAgencyForm({ ...agencyForm, email: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Dirección</label>
+                  <input
+                    type="text"
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.address}
+                    onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Configuración Comercial */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Configuración Comercial</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Comisión por Defecto (%)</label>
+                  <div className="relative mt-1">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 pr-10 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                      value={agencyForm.defaultCommissionPercent}
+                      onChange={e => setAgencyForm({ ...agencyForm, defaultCommissionPercent: parseFloat(e.target.value) || 0 })}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">%</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Se aplicará automáticamente a nuevos servicios</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Moneda Principal</label>
+                  <select
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.currency}
+                    onChange={e => setAgencyForm({ ...agencyForm, currency: e.target.value })}
+                  >
+                    <option value="ARS">ARS - Peso Argentino</option>
+                    <option value="USD">USD - Dólar Estadounidense</option>
+                    <option value="EUR">EUR - Euro</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={savingAgency}
+                className="rounded-xl bg-indigo-600 px-6 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {savingAgency ? "Guardando..." : "Guardar Configuración"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {activeTab === "users" && (
         <section className="space-y-4">
           {/* Toolbar */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -335,9 +490,10 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
-      ) : (
+      )}
+
+      {activeTab === "programming" && (
         <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {/* Existing Programacion cards logic can go here or remain static for now */}
           <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center dark:border-slate-700 dark:bg-slate-900/30">
             <MoreHorizontal className="mx-auto h-12 w-12 text-slate-300" />
             <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">Próximamente</h3>
