@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Plus, Search, Pencil, Building2, Mail, Phone, Power, CheckCircle2, XCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, Pencil, Wallet, Building2, Mail, Phone, Power, CheckCircle2, XCircle } from "lucide-react";
 import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
 import Swal from "sweetalert2";
@@ -8,6 +9,7 @@ export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentSupplier, setCurrentSupplier] = useState(null);
   const [formData, setFormData] = useState({
@@ -150,12 +152,22 @@ export default function SuppliersPage() {
                     )}
                   </td>
                   <td className="p-4 align-middle text-right">
-                    <button
-                      onClick={() => handleOpenModal(supplier)}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background/50 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => navigate(`/suppliers/${supplier.id}/account`)}
+                        title="Ver Cuenta Corriente"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-500/50 bg-red-500/10 text-red-500 text-sm font-medium shadow-sm hover:bg-red-500/20"
+                      >
+                        <Wallet className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleOpenModal(supplier)}
+                        title="Editar Proveedor"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background/50 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -135,15 +135,15 @@ export default function DashboardPage() {
             </div>
 
             {/* Financial Stats */}
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <Card className="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-900/20 dark:to-slate-900 dark:border-indigo-800">
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium text-indigo-700 dark:text-indigo-300">Cobros del Mes</CardTitle>
                         <DollarSign className="h-4 w-4 text-indigo-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-4xl font-bold text-indigo-700 dark:text-indigo-300">${dashboard.cobrosDelMes?.toLocaleString()}</div>
-                        <p className="text-xs text-indigo-600/70 mt-1">Ingresado este mes</p>
+                        <div className="text-3xl font-bold text-indigo-700 dark:text-indigo-300">${dashboard.cobrosDelMes?.toLocaleString()}</div>
+                        <p className="text-xs text-indigo-600/70 mt-1">Ingresado de clientes</p>
                     </CardContent>
                 </Card>
 
@@ -153,11 +153,49 @@ export default function DashboardPage() {
                         <TrendingUp className="h-4 w-4 text-purple-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-4xl font-bold text-purple-700 dark:text-purple-300">${dashboard.ventasDelMes?.toLocaleString()}</div>
-                        <p className="text-xs text-purple-600/70 mt-1">Total vendido (expedientes nuevos)</p>
+                        <div className="text-3xl font-bold text-purple-700 dark:text-purple-300">${dashboard.ventasDelMes?.toLocaleString()}</div>
+                        <p className="text-xs text-purple-600/70 mt-1">Total vendido</p>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-orange-200 bg-gradient-to-br from-orange-50 to-white dark:from-orange-900/20 dark:to-slate-900 dark:border-orange-800">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium text-orange-700 dark:text-orange-300">Costos del Mes</CardTitle>
+                        <DollarSign className="h-4 w-4 text-orange-600" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-3xl font-bold text-orange-700 dark:text-orange-300">${dashboard.costosDelMes?.toLocaleString() || 0}</div>
+                        <p className="text-xs text-orange-600/70 mt-1">Costo de servicios</p>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/20 dark:to-slate-900 dark:border-emerald-800">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Margen Bruto</CardTitle>
+                        <TrendingUp className="h-4 w-4 text-emerald-600" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className={`text-3xl font-bold ${(dashboard.margenBruto || 0) >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600'}`}>
+                            ${dashboard.margenBruto?.toLocaleString() || 0}
+                        </div>
+                        <p className="text-xs text-emerald-600/70 mt-1">Venta - Costo</p>
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Supplier Payments Alert */}
+            {(dashboard.pagosProveedores || 0) > 0 && (
+                <Card className="border-rose-200 bg-gradient-to-br from-rose-50 to-white dark:from-rose-900/20 dark:to-slate-900 dark:border-rose-800">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium text-rose-700 dark:text-rose-300">Pagos a Proveedores (Este Mes)</CardTitle>
+                        <DollarSign className="h-4 w-4 text-rose-600" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-3xl font-bold text-rose-700 dark:text-rose-300">${dashboard.pagosProveedores?.toLocaleString()}</div>
+                        <p className="text-xs text-rose-600/70 mt-1">Egresos pagados a proveedores</p>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Lists */}
             <div className="grid gap-6 lg:grid-cols-2">

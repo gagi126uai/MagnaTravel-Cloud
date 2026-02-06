@@ -34,7 +34,7 @@ public class ReportsController : ControllerBase
         var reservados = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Reserved)?.Count ?? 0;
         var operativos = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Operational)?.Count ?? 0;
 
-        // Cobros del mes
+        // Cobros del mes (ingresos de clientes)
         var paymentsThisMonth = await _dbContext.Payments
             .Where(p => p.PaidAt >= startOfMonth)
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
@@ -48,6 +48,19 @@ public class ReportsController : ControllerBase
         var salesThisMonth = await _dbContext.TravelFiles
             .Where(f => f.CreatedAt >= startOfMonth)
             .SumAsync(f => (decimal?)f.TotalSale, cancellationToken) ?? 0m;
+
+        // Total costos del mes (NetCost de servicios)
+        var costsThisMonth = await _dbContext.TravelFiles
+            .Where(f => f.CreatedAt >= startOfMonth)
+            .SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
+
+        // Pagos a proveedores del mes
+        var supplierPaymentsThisMonth = await _dbContext.SupplierPayments
+            .Where(p => p.PaidAt >= startOfMonth)
+            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+
+        // Margen Bruto del mes (Venta - Costo)
+        var grossMarginThisMonth = salesThisMonth - costsThisMonth;
 
         // Top 5 expedientes con saldo pendiente
         var pendingFiles = await _dbContext.TravelFiles
@@ -73,6 +86,9 @@ public class ReportsController : ControllerBase
             CobrosDelMes: paymentsThisMonth,
             SaldoPendiente: outstandingBalance,
             VentasDelMes: salesThisMonth,
+            CostosDelMes: costsThisMonth,
+            MargenBruto: grossMarginThisMonth,
+            PagosProveedores: supplierPaymentsThisMonth,
             ExpedientesPendientes: pendingFiles,
             ProximosViajes: upcomingTrips
         ));
@@ -85,15 +101,73 @@ public class ReportsController : ControllerBase
         var totalCustomers = await _dbContext.Customers.CountAsync(cancellationToken);
         var totalFiles = await _dbContext.TravelFiles.CountAsync(cancellationToken);
         var totalReservations = await _dbContext.Reservations.CountAsync(cancellationToken);
+        
+        // Ingresos (cobros de clientes)
         var totalRevenue = await _dbContext.Payments.SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+        
+        // Costos totales
+        var totalCosts = await _dbContext.TravelFiles.SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
+        
+        // Pagos a proveedores
+        var totalSupplierPayments = await _dbContext.SupplierPayments.SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+        
+        // Saldo pendiente clientes
         var outstandingBalance = await _dbContext.TravelFiles.SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
+        
+        // Ventas totales
+        var totalSales = await _dbContext.TravelFiles.SumAsync(f => (decimal?)f.TotalSale, cancellationToken) ?? 0m;
+        
+        // Margen bruto (Venta - Costo)
+        var grossMargin = totalSales - totalCosts;
 
         return Ok(new ReportsSummaryResponse(
             totalCustomers,
             totalFiles,
             totalReservations,
             totalRevenue,
-            outstandingBalance));
+            outstandingBalance,
+            totalCosts,
+            totalSupplierPayments,
+            totalSales,
+            grossMargin));
+    }
+
+    /// <summary>
+    /// Obtener configuración de la agencia
+    /// </summary>
+    [HttpGet("settings")]
+    public async Task<ActionResult> GetAgencySettings(CancellationToken cancellationToken)
+    {
+        var settings = await _dbContext.AgencySettings.FirstOrDefaultAsync(cancellationToken);
+        return Ok(settings);
+    }
+
+    /// <summary>
+    /// Actualizar configuración de la agencia
+    /// </summary>
+    [HttpPut("settings")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> UpdateAgencySettings([FromBody] AgencySettings updated, CancellationToken cancellationToken)
+    {
+        var settings = await _dbContext.AgencySettings.FirstOrDefaultAsync(cancellationToken);
+        if (settings is null)
+        {
+            _dbContext.AgencySettings.Add(updated);
+        }
+        else
+        {
+            settings.AgencyName = updated.AgencyName;
+            settings.TaxId = updated.TaxId;
+            settings.Address = updated.Address;
+            settings.Phone = updated.Phone;
+            settings.Email = updated.Email;
+            settings.DefaultCommissionPercent = updated.DefaultCommissionPercent;
+            settings.Currency = updated.Currency;
+            settings.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return Ok(settings ?? updated);
     }
 }
 
@@ -105,6 +179,9 @@ public record DashboardResponse(
     decimal CobrosDelMes,
     decimal SaldoPendiente,
     decimal VentasDelMes,
+    decimal CostosDelMes,
+    decimal MargenBruto,
+    decimal PagosProveedores,
     List<PendingFileDto> ExpedientesPendientes,
     List<UpcomingTripDto> ProximosViajes);
 
@@ -116,4 +193,9 @@ public record ReportsSummaryResponse(
     int TotalFiles,
     int TotalReservations,
     decimal TotalRevenue,
-    decimal OutstandingBalance);
+    decimal OutstandingBalance,
+    decimal TotalCosts,
+    decimal TotalSupplierPayments,
+    decimal TotalSales,
+    decimal GrossMargin);
+

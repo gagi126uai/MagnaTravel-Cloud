@@ -19,6 +19,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Reservation> Reservations => Set<Reservation>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<FlightSegment> FlightSegments => Set<FlightSegment>();
+    
+    // Sprint 4: Egresos y Configuración
+    public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
+    public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

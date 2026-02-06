@@ -246,6 +246,47 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Payments\" ALTER COLUMN \"ReservationId\" DROP NOT NULL;");
 
+    // Sprint 4: SupplierPayments (Egresos)
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "SupplierPayments" (
+            "Id" SERIAL PRIMARY KEY,
+            "SupplierId" integer NOT NULL REFERENCES "Suppliers"("Id") ON DELETE RESTRICT,
+            "TravelFileId" integer REFERENCES "TravelFiles"("Id"),
+            "ReservationId" integer REFERENCES "Reservations"("Id"),
+            "Amount" numeric(18,2) NOT NULL DEFAULT 0,
+            "PaidAt" timestamp with time zone NOT NULL DEFAULT NOW(),
+            "Method" character varying(50) NOT NULL DEFAULT 'Transfer',
+            "Reference" text,
+            "Notes" text,
+            "CreatedAt" timestamp with time zone NOT NULL DEFAULT NOW()
+        );
+        """);
+
+    // Sprint 4: AgencySettings
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "AgencySettings" (
+            "Id" SERIAL PRIMARY KEY,
+            "AgencyName" character varying(200) NOT NULL DEFAULT 'Mi Agencia de Viajes',
+            "TaxId" character varying(20),
+            "Address" character varying(500),
+            "Phone" character varying(100),
+            "Email" character varying(200),
+            "DefaultCommissionPercent" numeric(5,2) NOT NULL DEFAULT 10,
+            "Currency" character varying(3) NOT NULL DEFAULT 'ARS',
+            "UpdatedAt" timestamp with time zone NOT NULL DEFAULT NOW()
+        );
+        """);
+
+    // Seed default agency settings if not exists
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        INSERT INTO "AgencySettings" ("AgencyName", "DefaultCommissionPercent")
+        SELECT 'Mi Agencia de Viajes', 10
+        WHERE NOT EXISTS (SELECT 1 FROM "AgencySettings");
+        """);
+
     // Seed roles
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();

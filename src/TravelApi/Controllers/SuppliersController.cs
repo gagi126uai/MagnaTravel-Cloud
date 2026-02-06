@@ -80,4 +80,159 @@ public class SuppliersController : ControllerBase
 
         return Ok(existing);
     }
+
+    /// <summary>
+    /// Cuenta corriente del proveedor: servicios comprados, pagos realizados, saldo
+    /// </summary>
+    [HttpGet("{id:int}/account")]
+    public async Task<ActionResult> GetSupplierAccount(int id, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+
+        if (supplier is null)
+        {
+            return NotFound("Proveedor no encontrado");
+        }
+
+        // Servicios comprados a este proveedor
+        var services = await _dbContext.Reservations
+            .AsNoTracking()
+            .Where(r => r.SupplierId == id)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new
+            {
+                r.Id,
+                r.ServiceType,
+                r.Description,
+                r.ConfirmationNumber,
+                r.NetCost,
+                r.SalePrice,
+                r.DepartureDate,
+                r.Status,
+                FileNumber = r.TravelFile != null ? r.TravelFile.FileNumber : null,
+                FileName = r.TravelFile != null ? r.TravelFile.Name : null
+            })
+            .ToListAsync(cancellationToken);
+
+        // Pagos realizados a este proveedor
+        var payments = await _dbContext.SupplierPayments
+            .AsNoTracking()
+            .Where(p => p.SupplierId == id)
+            .OrderByDescending(p => p.PaidAt)
+            .Select(p => new
+            {
+                p.Id,
+                p.Amount,
+                p.Method,
+                p.PaidAt,
+                p.Reference,
+                p.Notes,
+                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null
+            })
+            .ToListAsync(cancellationToken);
+
+        // Totales
+        var totalPurchases = services.Sum(s => s.NetCost);
+        var totalPaid = payments.Sum(p => p.Amount);
+        var balance = totalPurchases - totalPaid; // Positivo = le debemos
+
+        return Ok(new
+        {
+            Supplier = new
+            {
+                supplier.Id,
+                supplier.Name,
+                supplier.ContactName,
+                supplier.Email,
+                supplier.Phone,
+                supplier.TaxId
+            },
+            Services = services,
+            Payments = payments,
+            Summary = new
+            {
+                TotalPurchases = totalPurchases,
+                TotalPaid = totalPaid,
+                Balance = balance, // Positivo = le debemos
+                ServiceCount = services.Count,
+                PaymentCount = payments.Count
+            }
+        });
+    }
+
+    /// <summary>
+    /// Registrar un pago al proveedor (egreso)
+    /// </summary>
+    [HttpPost("{id:int}/payments")]
+    public async Task<ActionResult> AddSupplierPayment(int id, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
+        if (supplier is null)
+        {
+            return NotFound("Proveedor no encontrado");
+        }
+
+        if (request.Amount <= 0)
+        {
+            return BadRequest("El monto debe ser mayor a 0");
+        }
+
+        var payment = new SupplierPayment
+        {
+            SupplierId = id,
+            Amount = request.Amount,
+            Method = request.Method ?? "Transfer",
+            Reference = request.Reference,
+            Notes = request.Notes,
+            TravelFileId = request.TravelFileId,
+            ReservationId = request.ReservationId,
+            PaidAt = DateTime.UtcNow
+        };
+
+        _dbContext.SupplierPayments.Add(payment);
+        
+        // Actualizar saldo del proveedor (reducir deuda)
+        supplier.CurrentBalance -= request.Amount;
+        
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { Message = "Pago registrado correctamente", PaymentId = payment.Id });
+    }
+
+    /// <summary>
+    /// Historial de pagos al proveedor
+    /// </summary>
+    [HttpGet("{id:int}/payments")]
+    public async Task<ActionResult> GetSupplierPayments(int id, CancellationToken cancellationToken)
+    {
+        var payments = await _dbContext.SupplierPayments
+            .AsNoTracking()
+            .Where(p => p.SupplierId == id)
+            .OrderByDescending(p => p.PaidAt)
+            .Select(p => new
+            {
+                p.Id,
+                p.Amount,
+                p.Method,
+                p.PaidAt,
+                p.Reference,
+                p.Notes,
+                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null,
+                FileName = p.TravelFile != null ? p.TravelFile.Name : null
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(payments);
+    }
 }
+
+public record SupplierPaymentRequest(
+    decimal Amount, 
+    string? Method, 
+    string? Reference, 
+    string? Notes,
+    int? TravelFileId,
+    int? ReservationId
+);

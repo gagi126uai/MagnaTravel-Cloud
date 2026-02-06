@@ -10,6 +10,7 @@ import FileDetailPage from "./pages/FileDetailPage";
 import PaymentsPage from "./pages/PaymentsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./pages/SuppliersPage";
+import SupplierAccountPage from "./pages/SupplierAccountPage";
 import ReportsPage from "./pages/ReportsPage";
 
 // LEGACY REMOVED: Cupos, Quotes, Tariffs, Agencies
@@ -48,7 +49,9 @@ export default function App() {
 
                 <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/customers/:id/account" element={<CustomerAccountPage />} />
+
                 <Route path="/suppliers" element={<SuppliersPage />} />
+                <Route path="/suppliers/:id/account" element={<SupplierAccountPage />} />
 
                 {/* Treasury */}
                 <Route path="/payments" element={<PaymentsPage />} />
