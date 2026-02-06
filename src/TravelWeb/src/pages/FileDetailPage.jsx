@@ -40,6 +40,7 @@ export default function FileDetailPage() {
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
     const [isNewServiceModalOpen, setIsNewServiceModalOpen] = useState(false);
+    const [selectedServiceType, setSelectedServiceType] = useState("Aereo");
     const [payments, setPayments] = useState([]);
 
     // Servicios específicos
@@ -306,6 +307,7 @@ export default function FileDetailPage() {
 
     const openServiceModal = (type) => {
         setIsDropdownOpen(false); // Close dropdown if open
+        setSelectedServiceType(type || "Aereo"); // Set selected type
         setIsNewServiceModalOpen(true); // Open new professional modal
     }
 
@@ -870,6 +872,7 @@ export default function FileDetailPage() {
                 onClose={() => setIsNewServiceModalOpen(false)}
                 fileId={id}
                 suppliers={suppliers}
+                initialServiceType={selectedServiceType}
                 onSuccess={() => {
                     loadFile();
                     loadServices();

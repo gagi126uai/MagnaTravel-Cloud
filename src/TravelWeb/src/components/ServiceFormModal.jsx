@@ -477,8 +477,8 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, serviceT
     );
 }
 
-export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, onSuccess }) {
-    const [serviceType, setServiceType] = useState("Aereo");
+export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, onSuccess, initialServiceType }) {
+    const [serviceType, setServiceType] = useState(initialServiceType || "Aereo");
     const [form, setForm] = useState({ supplierId: "", netCost: 0, salePrice: 0, commission: 0 });
     const [loading, setLoading] = useState(false);
     const [commissionPercent, setCommissionPercent] = useState(10);
@@ -498,6 +498,7 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
 
     useEffect(() => {
         if (isOpen) {
+            setServiceType(initialServiceType || "Aereo"); // Set correct type when opening
             setForm({ supplierId: "", netCost: 0, salePrice: 0, commission: 0 });
             fetchCommission();
         }
