@@ -41,6 +41,11 @@ public class TravelFilesController : ControllerBase
             .FirstOrDefaultAsync(f => f.Id == id);
 
         if (file == null) return NotFound();
+
+        // Recalculate Balance on read to ensure consistency
+        var totalPaid = file.Payments.Where(p => p.Status != "Cancelled").Sum(p => p.Amount);
+        file.Balance = file.TotalSale - totalPaid;
+
         return Ok(file);
     }
 

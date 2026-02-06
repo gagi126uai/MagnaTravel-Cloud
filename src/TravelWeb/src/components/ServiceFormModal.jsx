@@ -481,14 +481,16 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate }) {
 // ================== MODAL PRINCIPAL ==================
 export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, onSuccess, initialServiceType }) {
     const [serviceType, setServiceType] = useState(initialServiceType || "Aereo");
-    const [form, setForm] = useState({ supplierId: "", netCost: 0, salePrice: 0 });
+    const [form, setForm] = useState({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1, checkIn: "", checkOut: "" });
+    const [selectedRate, setSelectedRate] = useState(null); // Validar selectedRate para recálculos
     const [loading, setLoading] = useState(false);
     const [commissionPercent, setCommissionPercent] = useState(10);
 
     // Reset form cuando cambia el tipo de servicio
     const handleTypeChange = (newType) => {
         setServiceType(newType);
-        setForm({ supplierId: form.supplierId, netCost: 0, salePrice: 0 }); // Mantener proveedor
+        setSelectedRate(null);
+        setForm({ supplierId: form.supplierId, netCost: 0, salePrice: 0, rooms: 1 }); // Mantener proveedor
     };
 
     // Obtener comisión aplicable
@@ -507,13 +509,44 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
     useEffect(() => {
         if (isOpen) {
             setServiceType(initialServiceType || "Aereo");
-            setForm({ supplierId: "", netCost: 0, salePrice: 0 });
+            setForm({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1 });
+            setSelectedRate(null);
         }
     }, [isOpen, initialServiceType]);
 
     useEffect(() => {
         if (form.supplierId) fetchCommission();
     }, [fetchCommission, form.supplierId]);
+
+    // Recalcular totales cuando cambian fechas/habitaciones y hay tarifa seleccionada
+    useEffect(() => {
+        if (serviceType === "Hotel" && selectedRate && form.checkIn && form.checkOut) {
+            const nights = calculateNights(form.checkIn, form.checkOut);
+
+            // Si la tarifa es "por noche" (asumido por defecto en hoteles si no es paquete)
+            // Multiplicamos Costo * Noches * Habitaciones
+            const rateCost = selectedRate.netCost || 0;
+            const ratePrice = selectedRate.salePrice || 0;
+            const rooms = form.rooms || 1;
+
+            if (nights > 0) {
+                setForm(prev => ({
+                    ...prev,
+                    netCost: rateCost * nights * rooms,
+                    salePrice: ratePrice * nights * rooms
+                }));
+            }
+        }
+    }, [form.checkIn, form.checkOut, form.rooms, selectedRate, serviceType]);
+
+    // Helper para fecha
+    const calculateNights = (start, end) => {
+        if (!start || !end) return 0;
+        const d1 = new Date(start);
+        const d2 = new Date(end);
+        const diff = d2.getTime() - d1.getTime();
+        return Math.max(0, Math.ceil(diff / (1000 * 3600 * 24)));
+    };
 
     // Aplicar comisión al costo
     const applyCommission = () => {
@@ -524,11 +557,20 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
 
     // Al seleccionar una tarifa del buscador
     const handleRateSelect = (rate) => {
-        console.log("Rate selected:", rate); // Debug
+        console.log("Rate selected:", rate);
+        setSelectedRate(rate); // Guardar para recálculos
+
+        let multiplier = 1;
+        if (serviceType === "Hotel") {
+            const nights = calculateNights(form.checkIn, form.checkOut);
+            const rooms = form.rooms || 1;
+            if (nights > 0) multiplier = nights * rooms;
+        }
+
         setForm(prev => ({
             ...prev,
-            netCost: rate.netCost || prev.netCost,
-            salePrice: rate.salePrice || prev.salePrice,
+            netCost: (rate.netCost || prev.netCost) * multiplier,
+            salePrice: (rate.salePrice || prev.salePrice) * multiplier,
             // Campos según tipo
             ...(serviceType === "Aereo" && {
                 origin: rate.origin || prev.origin,
