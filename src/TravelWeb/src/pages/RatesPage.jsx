@@ -73,6 +73,7 @@ export default function RatesPage() {
         airline: "", airlineCode: "", origin: "", destination: "", cabinClass: "", baggageIncluded: "",
         // Hotel
         hotelName: "", city: "", starRating: "", roomType: "", mealPlan: "",
+        hotelPriceType: "base_doble", childrenPayPercent: 0, childMaxAge: 12,
         // Traslado
         pickupLocation: "", dropoffLocation: "", vehicleType: "", maxPassengers: "", isRoundTrip: false,
         // Paquete
@@ -179,7 +180,11 @@ export default function RatesPage() {
                 maxPassengers: form.maxPassengers ? parseInt(form.maxPassengers) : null,
                 durationDays: form.durationDays ? parseInt(form.durationDays) : null,
                 validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
-                validTo: form.validTo ? new Date(form.validTo).toISOString() : null
+                validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
+                validTo: form.validTo ? new Date(form.validTo).toISOString() : null,
+                hotelPriceType: form.hotelPriceType,
+                childrenPayPercent: parseInt(form.childrenPayPercent) || 0,
+                childMaxAge: parseInt(form.childMaxAge) || 12
             };
 
             if (form.id) {
@@ -239,6 +244,9 @@ export default function RatesPage() {
             cabinClass: rate.cabinClass || "", baggageIncluded: rate.baggageIncluded || "",
             hotelName: rate.hotelName || "", city: rate.city || "",
             starRating: rate.starRating?.toString() || "", roomType: rate.roomType || "", mealPlan: rate.mealPlan || "",
+            hotelPriceType: rate.hotelPriceType || "base_doble",
+            childrenPayPercent: rate.childrenPayPercent ?? 0,
+            childMaxAge: rate.childMaxAge ?? 12,
             pickupLocation: rate.pickupLocation || "", dropoffLocation: rate.dropoffLocation || "",
             vehicleType: rate.vehicleType || "", maxPassengers: rate.maxPassengers?.toString() || "", isRoundTrip: rate.isRoundTrip || false,
             includesFlight: rate.includesFlight || false, includesHotel: rate.includesHotel || false,
@@ -512,6 +520,28 @@ export default function RatesPage() {
                                         <option value="">Seleccionar</option>
                                         {mealPlans.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                                     </select>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>Tipo de Precio</label>
+                                    <select className={inputClass} value={form.hotelPriceType || "base_doble"} onChange={e => setForm({ ...form, hotelPriceType: e.target.value })}>
+                                        <option value="base_doble">Por Habitación (Base Doble)</option>
+                                        <option value="por_persona">Por Persona</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>% Pago Niños</label>
+                                    <div className="relative">
+                                        <input type="number" min="0" max="100" className={inputClass} value={form.childrenPayPercent}
+                                            onChange={e => setForm({ ...form, childrenPayPercent: e.target.value })} placeholder="0" />
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                                            <span className="text-slate-500 sm:text-sm">%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>Edad Máx Niño</label>
+                                    <input type="number" min="0" className={inputClass} value={form.childMaxAge}
+                                        onChange={e => setForm({ ...form, childMaxAge: e.target.value })} placeholder="12" />
                                 </div>
                             </div>
                         </div>
