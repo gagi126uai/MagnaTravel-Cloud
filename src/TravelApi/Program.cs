@@ -206,6 +206,8 @@ using (var scope = app.Services.CreateScope())
         "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"Tax\" numeric DEFAULT 0;");
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"ServiceDetailsJson\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Reservations\" ADD COLUMN IF NOT EXISTS \"ProductType\" text DEFAULT 'Aereo';");
 
     // Relax constraints
     await dbContext.Database.ExecuteSqlRawAsync(
