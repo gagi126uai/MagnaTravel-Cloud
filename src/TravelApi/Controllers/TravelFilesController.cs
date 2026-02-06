@@ -108,10 +108,9 @@ public class TravelFilesController : ControllerBase
             var file = await _context.TravelFiles
                 .Include(f => f.Payer)
                 .Include(f => f.Passengers)
-                .Include(f => f.Payments.OrderByDescending(p => p.PaidAt))
+                .Include(f => f.Payments)
                 .Include(f => f.Reservations)
                     .ThenInclude(r => r.Supplier)
-                .AsSplitQuery()
                 .FirstOrDefaultAsync(f => f.Id == id);
 
             if (file == null) 
@@ -119,6 +118,9 @@ public class TravelFilesController : ControllerBase
                 Console.WriteLine($"[WARN] GetFile({id}) returned NULL");
                 return NotFound($"File with ID {id} not found locally");
             }
+
+            // Order Payments in memory since we removed it from Include
+            file.Payments = file.Payments.OrderByDescending(p => p.PaidAt).ToList();
 
             // Recalculate Balance
             if (file.Payments != null)
