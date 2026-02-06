@@ -35,6 +35,8 @@ export default function FileDetailPage() {
         amount: "", method: "Transferencia", notes: ""
     });
 
+    const [suppliers, setSuppliers] = useState([]);
+
     const fetchFile = useCallback(async () => {
         try {
             setLoading(true);
@@ -50,9 +52,19 @@ export default function FileDetailPage() {
         }
     }, [id, navigate]);
 
+    const fetchSuppliers = useCallback(async () => {
+        try {
+            const res = await api.get("/suppliers");
+            setSuppliers(res || []);
+        } catch (error) {
+            console.error("Error fetching suppliers:", error);
+        }
+    }, []);
+
     useEffect(() => {
         fetchFile();
-    }, [fetchFile]);
+        fetchSuppliers();
+    }, [fetchFile, fetchSuppliers]);
 
     // --- ACTIONS: FILE ---
     const handleArchiveFile = async () => {
@@ -665,6 +677,7 @@ export default function FileDetailPage() {
                 fileId={parseInt(id)}
                 onSuccess={fetchFile}
                 serviceToEdit={serviceToEdit}
+                suppliers={suppliers}
             />
         </div>
     );
