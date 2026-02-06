@@ -25,7 +25,7 @@ export default function SupplierAccountPage() {
     const fetchData = async () => {
         try {
             const response = await api.get(`/suppliers/${id}/account`);
-            setData(response.data);
+            setData(response);
         } catch (error) {
             console.error("Error loading supplier account:", error);
             Swal.fire("Error", "No se pudo cargar la cuenta del proveedor", "error");
@@ -200,8 +200,8 @@ export default function SupplierAccountPage() {
                                         <td className="p-3">{formatDate(service.departureDate)}</td>
                                         <td className="p-3">
                                             <span className={`px-2 py-1 rounded text-xs ${service.status === "Confirmado" ? "bg-green-500/10 text-green-600" :
-                                                    service.status === "Cancelado" ? "bg-red-500/10 text-red-600" :
-                                                        "bg-yellow-500/10 text-yellow-600"
+                                                service.status === "Cancelado" ? "bg-red-500/10 text-red-600" :
+                                                    "bg-yellow-500/10 text-yellow-600"
                                                 }`}>
                                                 {service.status}
                                             </span>
