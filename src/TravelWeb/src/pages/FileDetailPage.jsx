@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import {
     ArrowLeft, Plus, DollarSign, Calendar, Users,
-    FileText, Edit2, Trash2, CheckCircle, AlertTriangle,
+    FileText, Edit2, Trash2, CheckCircle, AlertTriangle, X,
     Plane, Hotel, Car, Package, CreditCard, Archive
 } from "lucide-react";
 import Swal from "sweetalert2";
@@ -555,34 +555,78 @@ export default function FileDetailPage() {
                             </div>
 
                             {showPaymentForm && (
-                                <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800 mb-6">
-                                    <h4 className="text-sm font-bold text-green-800 mb-3">Nuevo Pago</h4>
-                                    <form onSubmit={handlePaymentSubmit} className="flex flex-wrap gap-4 items-end">
-                                        <div className="w-40">
-                                            <label className="block text-xs font-medium text-gray-700">Monto</label>
-                                            <div className="relative mt-1 rounded-md shadow-sm">
-                                                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                                                    <span className="text-gray-500 sm:text-sm">$</span>
+                                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-200 dark:border-slate-700 mb-6 shadow-sm mx-1">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h4 className="text-lg font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                                            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg text-green-600 dark:text-green-400">
+                                                <DollarSign className="w-5 h-5" />
+                                            </div>
+                                            Registrar Nuevo Pago
+                                        </h4>
+                                        <button onClick={() => setShowPaymentForm(false)} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
+                                            <X className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                    <form onSubmit={handlePaymentSubmit}>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Monto</label>
+                                                <div className="relative">
+                                                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                                                        <span className="text-gray-500 dark:text-slate-400 sm:text-sm">$</span>
+                                                    </div>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        required
+                                                        className="block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white pl-7 focus:border-green-500 focus:ring-green-500 sm:text-sm py-2"
+                                                        placeholder="0.00"
+                                                        value={paymentForm.amount}
+                                                        onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                                                        max={file.balance}
+                                                    />
                                                 </div>
-                                                <input type="number" step="0.01" required className="block w-full rounded-md border-gray-300 pl-7 sm:text-sm"
-                                                    value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                                                    max={file.balance} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Método de Pago</label>
+                                                <select
+                                                    className="block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:border-green-500 focus:ring-green-500 sm:text-sm py-2"
+                                                    value={paymentForm.method}
+                                                    onChange={e => setPaymentForm({ ...paymentForm, method: e.target.value })}
+                                                >
+                                                    <option>Transferencia</option>
+                                                    <option>Efectivo</option>
+                                                    <option>Tarjeta Crédito</option>
+                                                    <option>Tarjeta Débito</option>
+                                                    <option>Cheque</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Notas / Referencia</label>
+                                                <input
+                                                    type="text"
+                                                    className="block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:border-green-500 focus:ring-green-500 sm:text-sm py-2"
+                                                    placeholder="Ej: Comprobante #1234"
+                                                    value={paymentForm.notes}
+                                                    onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}
+                                                />
                                             </div>
                                         </div>
-                                        <div className="w-48">
-                                            <label className="block text-xs font-medium text-gray-700">Método</label>
-                                            <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
-                                                value={paymentForm.method} onChange={e => setPaymentForm({ ...paymentForm, method: e.target.value })}>
-                                                <option>Efectivo</option><option>Transferencia</option><option>Tarjeta Crédito</option><option>Tarjeta Débito</option>
-                                            </select>
+                                        <div className="mt-6 flex justify-end gap-3">
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowPaymentForm(false)}
+                                                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-600"
+                                            >
+                                                Cancelar
+                                            </button>
+                                            <button
+                                                type="submit"
+                                                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:ring-4 focus:ring-green-300 dark:focus:ring-green-800 shadow-sm flex items-center gap-2"
+                                            >
+                                                <DollarSign className="w-4 h-4" /> Registrar Pago
+                                            </button>
                                         </div>
-                                        <div className="flex-1">
-                                            <label className="block text-xs font-medium text-gray-700">Notas</label>
-                                            <input type="text" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
-                                                value={paymentForm.notes} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })} />
-                                        </div>
-                                        <button type="submit" className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700">Registrar</button>
-                                        <button type="button" onClick={() => setShowPaymentForm(false)} className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
                                     </form>
                                 </div>
                             )}

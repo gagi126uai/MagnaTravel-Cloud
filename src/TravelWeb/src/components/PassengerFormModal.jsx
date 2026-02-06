@@ -4,6 +4,10 @@ import { X, Save, User } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 
+// Clases reutilizables
+const inputClass = "w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors";
+const labelClass = "block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1";
+
 export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess, passengerToEdit }) {
     const [formData, setFormData] = useState({
         fullName: "",
@@ -86,11 +90,11 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
 
                         {/* Name - Full Width */}
                         <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Nombre Completo *</label>
+                            <label className={labelClass}>Nombre Completo *</label>
                             <input
                                 required
                                 type="text"
-                                className="w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 placeholder="Ej: Juan Pérez"
                                 value={formData.fullName}
                                 onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
@@ -98,9 +102,9 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Tipo Documento</label>
+                            <label className={labelClass}>Tipo Documento</label>
                             <select
-                                className="w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 value={formData.documentType}
                                 onChange={(e) => setFormData({ ...formData, documentType: e.target.value })}
                             >
@@ -111,10 +115,10 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Número Documento</label>
+                            <label className={labelClass}>Número Documento</label>
                             <input
                                 type="text"
-                                className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 value={formData.documentNumber}
                                 onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
                             />
@@ -122,19 +126,19 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
 
                         {/* Personal Info */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Fecha Nacimiento</label>
+                            <label className={labelClass}>Fecha Nacimiento</label>
                             <input
                                 type="date"
-                                className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 value={formData.birthDate}
                                 onChange={(e) => setFormData({ ...formData, birthDate: e.target.value })}
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Nacionalidad</label>
+                            <label className={labelClass}>Nacionalidad</label>
                             <input
                                 type="text"
-                                className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 placeholder="Ej: Argentina"
                                 value={formData.nationality || ""}
                                 onChange={(e) => setFormData({ ...formData, nationality: e.target.value })}
@@ -142,9 +146,9 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Género</label>
+                            <label className={labelClass}>Género</label>
                             <select
-                                className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 value={formData.gender || "M"}
                                 onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
                             >
@@ -156,10 +160,10 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
 
                         {/* Contact */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                            <label className={labelClass}>Teléfono</label>
                             <input
                                 type="tel"
-                                className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 placeholder="+54 9 11..."
                                 value={formData.phone || ""}
                                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
@@ -167,10 +171,10 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
                         </div>
 
                         <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Email</label>
+                            <label className={labelClass}>Email</label>
                             <input
                                 type="email"
-                                className="w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 placeholder="correo@ejemplo.com"
                                 value={formData.email || ""}
                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -179,10 +183,10 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
 
                         {/* Notes */}
                         <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Notas Adicionales</label>
+                            <label className={labelClass}>Notas Adicionales</label>
                             <textarea
                                 rows={2}
-                                className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                className={inputClass}
                                 placeholder="Preferencias alimenticias, asistencia especial..."
                                 value={formData.notes || ""}
                                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
