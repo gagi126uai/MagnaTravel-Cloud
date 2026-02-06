@@ -18,6 +18,7 @@ import {
     ChevronDown
 } from "lucide-react";
 import { Button } from "../components/ui/button";
+import ServiceFormModal from "../components/ServiceFormModal";
 
 // SERVICE TYPES CONSTANTS
 const SERVICE_ICONS = {
@@ -36,10 +37,16 @@ export default function FileDetailPage() {
     const [suppliers, setSuppliers] = useState([]);
     const dropdownRef = useRef(null);
 
-    // UI States
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+    const [isNewServiceModalOpen, setIsNewServiceModalOpen] = useState(false);
     const [payments, setPayments] = useState([]);
+
+    // Servicios específicos
+    const [hotelBookings, setHotelBookings] = useState([]);
+    const [transferBookings, setTransferBookings] = useState([]);
+    const [packageBookings, setPackageBookings] = useState([]);
+    const [flightSegments, setFlightSegments] = useState([]);
 
     // Form State
     const [serviceType, setServiceType] = useState("Aereo");
@@ -78,6 +85,7 @@ export default function FileDetailPage() {
         loadFile();
         loadSuppliers();
         loadPayments();
+        loadServices();
 
         // Click outside to close dropdown
         function handleClickOutside(event) {
@@ -116,6 +124,23 @@ export default function FileDetailPage() {
             setPayments(filePayments);
         } catch {
             console.log("Error loading payments");
+        }
+    };
+
+    const loadServices = async () => {
+        try {
+            const [hotels, transfers, packages, flights] = await Promise.all([
+                api.get(`/files/${id}/hotels`).catch(() => []),
+                api.get(`/files/${id}/transfers`).catch(() => []),
+                api.get(`/files/${id}/packages`).catch(() => []),
+                api.get(`/files/${id}/flights`).catch(() => [])
+            ]);
+            setHotelBookings(hotels || []);
+            setTransferBookings(transfers || []);
+            setPackageBookings(packages || []);
+            setFlightSegments(flights || []);
+        } catch {
+            console.log("Error loading services");
         }
     };
 
@@ -280,10 +305,8 @@ export default function FileDetailPage() {
     };
 
     const openServiceModal = (type) => {
-        setServiceType(type);
-        setServiceForm(prev => ({ ...prev, description: type }));
         setIsDropdownOpen(false); // Close dropdown if open
-        setIsServiceModalOpen(true);
+        setIsNewServiceModalOpen(true); // Open new professional modal
     }
 
     const toggleDropdown = () => setIsDropdownOpen(!isDropdownOpen);
@@ -840,6 +863,18 @@ export default function FileDetailPage() {
                     </div>
                 </div>
             )}
+
+            {/* New Service Modal */}
+            <ServiceFormModal
+                isOpen={isNewServiceModalOpen}
+                onClose={() => setIsNewServiceModalOpen(false)}
+                fileId={id}
+                suppliers={suppliers}
+                onSuccess={() => {
+                    loadFile();
+                    loadServices();
+                }}
+            />
         </div>
     );
 }
