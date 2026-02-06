@@ -23,6 +23,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Sprint 4: Egresos y Configuración
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
+    public DbSet<CommissionRule> CommissionRules => Set<CommissionRule>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

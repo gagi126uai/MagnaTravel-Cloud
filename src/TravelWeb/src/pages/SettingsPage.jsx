@@ -15,6 +15,17 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 
+const serviceTypes = [
+  { value: "", label: "Todos los servicios" },
+  { value: "Aereo", label: "Aéreo" },
+  { value: "Hotel", label: "Hotel" },
+  { value: "Traslado", label: "Traslado" },
+  { value: "Asistencia", label: "Asistencia" },
+  { value: "Excursion", label: "Excursión" },
+  { value: "Paquete", label: "Paquete" },
+  { value: "Otro", label: "Otro" },
+];
+
 // --- Components ---
 
 const Modal = ({ isOpen, onClose, title, children }) => {
@@ -71,6 +82,7 @@ const Avatar = ({ name }) => {
 
 const tabs = [
   { id: "agency", label: "Datos de la Agencia" },
+  { id: "commissions", label: "Comisiones" },
   { id: "users", label: "Usuarios" },
   { id: "programming", label: "Programación" },
 ];
@@ -104,6 +116,17 @@ export default function SettingsPage() {
     currency: "ARS"
   });
   const [savingAgency, setSavingAgency] = useState(false);
+
+  // Commission Rules State
+  const [commissionRules, setCommissionRules] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [showCommissionModal, setShowCommissionModal] = useState(false);
+  const [commissionForm, setCommissionForm] = useState({
+    supplierId: "",
+    serviceType: "",
+    commissionPercent: 10,
+    description: ""
+  });
 
   const closeModal = () => {
     setModalType(null);
@@ -165,9 +188,66 @@ export default function SettingsPage() {
     }
   };
 
+  const loadCommissionRules = async () => {
+    try {
+      const data = await api.get("/commissions");
+      setCommissionRules(data);
+    } catch (error) {
+      console.log("Error loading commission rules");
+    }
+  };
+
+  const loadSuppliers = async () => {
+    try {
+      const data = await api.get("/suppliers");
+      setSuppliers(data);
+    } catch { }
+  };
+
+  const saveCommissionRule = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/commissions", {
+        supplierId: commissionForm.supplierId ? parseInt(commissionForm.supplierId) : null,
+        serviceType: commissionForm.serviceType || null,
+        commissionPercent: parseFloat(commissionForm.commissionPercent),
+        description: commissionForm.description || null
+      });
+      Swal.fire("Guardado", "Regla de comisión creada", "success");
+      setShowCommissionModal(false);
+      setCommissionForm({ supplierId: "", serviceType: "", commissionPercent: 10, description: "" });
+      loadCommissionRules();
+    } catch (error) {
+      Swal.fire("Error", error.response?.data || "Ya existe una regla similar", "error");
+    }
+  };
+
+  const deleteCommissionRule = async (id) => {
+    const result = await Swal.fire({
+      title: "¿Eliminar regla?",
+      text: "Esta acción no se puede deshacer",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      confirmButtonText: "Sí, eliminar"
+    });
+    if (result.isConfirmed) {
+      try {
+        await api.delete(`/commissions/${id}`);
+        loadCommissionRules();
+      } catch (error) {
+        Swal.fire("Error", "No se pudo eliminar", "error");
+      }
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "users") loadUsers();
     if (activeTab === "agency") loadAgencySettings();
+    if (activeTab === "commissions") {
+      loadCommissionRules();
+      loadSuppliers();
+    }
   }, [activeTab, adminUser]);
 
   // Handlers
@@ -399,6 +479,136 @@ export default function SettingsPage() {
               </button>
             </div>
           </form>
+        </section>
+      )}
+
+      {activeTab === "commissions" && (
+        <section className="space-y-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Reglas de Comisión</h3>
+              <p className="text-sm text-slate-500">Configura comisiones por proveedor y/o tipo de servicio</p>
+            </div>
+            <button
+              onClick={() => setShowCommissionModal(true)}
+              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500"
+            >
+              <Plus className="h-4 w-4" />
+              Nueva Regla
+            </button>
+          </div>
+
+          {/* Info Card */}
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+            <p className="text-sm text-blue-800 dark:text-blue-300">
+              <strong>Prioridad:</strong> Se aplica la regla más específica. Proveedor + Servicio {">"} Solo Proveedor / Solo Servicio {">"} Default de agencia
+            </p>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+            <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
+              <thead className="bg-slate-50 dark:bg-slate-800/50">
+                <tr>
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Proveedor</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Servicio</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Comisión</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Prioridad</th>
+                  <th className="relative px-6 py-4"><span className="sr-only">Acciones</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900">
+                {commissionRules.map((rule) => (
+                  <tr key={rule.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900 dark:text-white">
+                      {rule.supplierName || <span className="text-slate-400 italic">Todos</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                      {rule.serviceType || <span className="text-slate-400 italic">Todos</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-sm font-semibold text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                        {rule.commissionPercent}%
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-500">
+                      {rule.priority === 3 ? "Alta" : rule.priority === 2 ? "Media" : "Base"}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-right">
+                      <button
+                        onClick={() => deleteCommissionRule(rule.id)}
+                        className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/30 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {commissionRules.length === 0 && (
+              <div className="p-12 text-center text-slate-500">
+                No hay reglas de comisión. Se usará el valor por defecto de la agencia.
+              </div>
+            )}
+          </div>
+
+          {/* Modal Nueva Regla */}
+          <Modal isOpen={showCommissionModal} onClose={() => setShowCommissionModal(false)} title="Nueva Regla de Comisión">
+            <form onSubmit={saveCommissionRule} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor (opcional)</label>
+                <select
+                  className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                  value={commissionForm.supplierId}
+                  onChange={e => setCommissionForm({ ...commissionForm, supplierId: e.target.value })}
+                >
+                  <option value="">Todos los proveedores</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo de Servicio (opcional)</label>
+                <select
+                  className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                  value={commissionForm.serviceType}
+                  onChange={e => setCommissionForm({ ...commissionForm, serviceType: e.target.value })}
+                >
+                  {serviceTypes.map(st => <option key={st.value} value={st.value}>{st.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Porcentaje de Comisión</label>
+                <div className="relative mt-1">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    required
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 pr-10 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={commissionForm.commissionPercent}
+                    onChange={e => setCommissionForm({ ...commissionForm, commissionPercent: e.target.value })}
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">%</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Descripción (opcional)</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Comisión especial mayorista"
+                  className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                  value={commissionForm.description}
+                  onChange={e => setCommissionForm({ ...commissionForm, description: e.target.value })}
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <button type="button" onClick={() => setShowCommissionModal(false)} className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancelar</button>
+                <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">Crear Regla</button>
+              </div>
+            </form>
+          </Modal>
         </section>
       )}
 
