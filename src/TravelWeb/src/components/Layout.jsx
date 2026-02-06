@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Moon, Sun, Menu, ChevronLeft, ChevronRight } from "lucide-react";
+import { Moon, Sun, Menu } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import Sidebar from "./Sidebar";
 import { Button } from "./ui/button";
@@ -62,26 +62,23 @@ export default function Layout({ children, onLogout, isAdmin }) {
                 {/* Header */}
                 <header className="sticky top-0 z-20 flex h-14 md:h-16 items-center justify-between border-b bg-background/95 px-3 md:px-6 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                     <div className="flex items-center gap-2 md:gap-3">
-                        {/* Mobile menu button */}
+                        {/* Menu toggle button - always visible */}
                         <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => setSidebarOpen(true)}
-                            className="md:hidden h-9 w-9"
+                            onClick={() => {
+                                // Mobile: open drawer, Desktop: toggle collapse
+                                if (window.innerWidth < 768) {
+                                    setSidebarOpen(true);
+                                } else {
+                                    setSidebarCollapsed(!sidebarCollapsed);
+                                }
+                            }}
+                            className="h-9 w-9"
+                            title="Menú"
                         >
                             <Menu className="h-5 w-5" />
-                            <span className="sr-only">Abrir menú</span>
-                        </Button>
-
-                        {/* Desktop collapse button */}
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                            className="hidden md:flex h-9 w-9"
-                            title={sidebarCollapsed ? "Expandir menú" : "Contraer menú"}
-                        >
-                            {sidebarCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
+                            <span className="sr-only">Menú</span>
                         </Button>
 
                         {/* Logo for mobile */}
