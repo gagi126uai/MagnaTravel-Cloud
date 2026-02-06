@@ -9,6 +9,7 @@ using System.Text;
 using TravelApi.Contracts.Auth;
 using TravelApi.Models;
 using TravelApi.Options;
+using Microsoft.AspNetCore.Authorization;
 
 namespace TravelApi.Controllers;
 
