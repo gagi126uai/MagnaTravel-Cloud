@@ -82,6 +82,7 @@ export default function RatesPage() {
     };
 
     const [form, setForm] = useState(emptyForm);
+    const [roomVariations, setRoomVariations] = useState([]); // Array para carga masiva de habitaciones
     const [commissionPercent, setCommissionPercent] = useState(10);
     const [isCalculating, setIsCalculating] = useState(false);
 
@@ -167,40 +168,110 @@ export default function RatesPage() {
         setForm(prev => ({ ...prev, salePrice: calculateSalePrice(prev.netCost, prev.tax, commissionPercent) }));
     };
 
+    const addRoomVariation = () => {
+        if (!form.roomType || !form.netCost) {
+            showError("Complete tipo de habitación y costo");
+            return;
+        }
+        const variation = {
+            id: Date.now(), // Temp ID
+            roomType: form.roomType,
+            roomCategory: form.roomCategory,
+            roomFeatures: form.roomFeatures,
+            mealPlan: form.mealPlan,
+            netCost: parseFloat(form.netCost) || 0,
+            salePrice: parseFloat(form.salePrice) || 0,
+            hotelPriceType: form.hotelPriceType,
+            childrenPayPercent: parseInt(form.childrenPayPercent) || 0,
+            childMaxAge: parseInt(form.childMaxAge) || 12
+        };
+        setRoomVariations([...roomVariations, variation]);
+        // Reset solo campos de habitación/precio
+        setForm(prev => ({
+            ...prev,
+            roomType: "Doble", roomCategory: "Standard", roomFeatures: "",
+            netCost: 0, salePrice: 0,
+            // Mantener mealPlan y policies si se desea, o resetear
+        }));
+    };
+
+    const removeRoomVariation = (id) => {
+        setRoomVariations(prev => prev.filter(v => v.id !== id));
+    };
+
     const saveRate = async (e) => {
         e.preventDefault();
         try {
-            const payload = {
+            const basePayload = {
                 ...form,
                 supplierId: form.supplierId ? parseInt(form.supplierId) : null,
-                netCost: parseFloat(form.netCost) || 0,
                 tax: parseFloat(form.tax) || 0,
-                salePrice: parseFloat(form.salePrice) || 0,
-                starRating: form.starRating ? parseInt(form.starRating) : null,
-                maxPassengers: form.maxPassengers ? parseInt(form.maxPassengers) : null,
-                durationDays: form.durationDays ? parseInt(form.durationDays) : null,
-                validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
+                // Valid dates
                 validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
                 validTo: form.validTo ? new Date(form.validTo).toISOString() : null,
-                roomType: form.roomType,
-                roomCategory: form.roomCategory,
-                roomFeatures: form.roomFeatures,
-                hotelPriceType: form.hotelPriceType,
-                hotelPriceType: form.hotelPriceType,
-                childrenPayPercent: parseInt(form.childrenPayPercent) || 0,
-                childMaxAge: parseInt(form.childMaxAge) || 12
+                // Hotel common fields
+                hotelName: form.hotelName,
+                city: form.city,
+                starRating: form.starRating ? parseInt(form.starRating) : null,
             };
 
-            if (form.id) {
-                await api.put(`/rates/${form.id}`, payload);
-                showSuccess("Tarifa actualizada");
+            const requests = [];
+
+            if (form.serviceType === "Hotel" && roomVariations.length > 0) {
+                // Batch save for Hotel variations
+                for (const variation of roomVariations) {
+                    const payload = {
+                        ...basePayload,
+                        // Override with variation specific data
+                        roomType: variation.roomType,
+                        roomCategory: variation.roomCategory,
+                        roomFeatures: variation.roomFeatures,
+                        mealPlan: variation.mealPlan,
+                        netCost: variation.netCost,
+                        salePrice: variation.salePrice,
+                        hotelPriceType: variation.hotelPriceType,
+                        childrenPayPercent: variation.childrenPayPercent,
+                        childMaxAge: variation.childMaxAge,
+                        productName: `${form.hotelName} - ${variation.roomType} ${variation.roomCategory}`,
+                        serviceType: "Hotel"
+                    };
+                    if (form.id) { // Si estamos editando y agregamos variaciones, esto es raro, mejor solo crear
+                        requests.push(api.post("/rates", payload));
+                    } else {
+                        requests.push(api.post("/rates", payload));
+                    }
+                }
             } else {
-                await api.post("/rates", payload);
-                showSuccess("Tarifa creada");
+                // Single save (Aereo, Traslado, Paquete, or Hotel Edit single)
+                const payload = {
+                    ...basePayload,
+                    netCost: parseFloat(form.netCost) || 0,
+                    salePrice: parseFloat(form.salePrice) || 0,
+                    // Fields specifics are already in form
+                    starRating: form.starRating ? parseInt(form.starRating) : null,
+                    maxPassengers: form.maxPassengers ? parseInt(form.maxPassengers) : null,
+                    durationDays: form.durationDays ? parseInt(form.durationDays) : null,
+                    roomType: form.roomType,
+                    roomCategory: form.roomCategory,
+                    roomFeatures: form.roomFeatures,
+                    hotelPriceType: form.hotelPriceType,
+                    childrenPayPercent: parseInt(form.childrenPayPercent) || 0,
+                    childMaxAge: parseInt(form.childMaxAge) || 12
+                };
+
+                if (form.id) {
+                    requests.push(api.put(`/rates/${form.id}`, payload));
+                } else {
+                    requests.push(api.post("/rates", payload));
+                }
             }
+
+            await Promise.all(requests);
+            showSuccess(roomVariations.length > 0 ? "Tarifas guardadas correctamente" : form.id ? "Tarifa actualizada" : "Tarifa creada");
 
             setShowModal(false);
             setForm(emptyForm);
+            setRoomVariations([]);
             loadRates();
         } catch (error) {
             showError(error.message || "Error al guardar tarifa");
@@ -229,6 +300,7 @@ export default function RatesPage() {
     };
 
     const editRate = (rate) => {
+        setRoomVariations([]); // Al editar una individual, limpiamos variaciones
         setForm({
             id: rate.id,
             supplierId: rate.supplierId?.toString() || "",
@@ -267,6 +339,7 @@ export default function RatesPage() {
 
     const openNewModal = async () => {
         setForm(emptyForm);
+        setRoomVariations([]);
         setShowModal(true);
         await fetchCommission("", "Aereo");
     };
@@ -517,80 +590,152 @@ export default function RatesPage() {
                                         {[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{"★".repeat(n)} {n} estrellas</option>)}
                                     </select>
                                 </div>
-                                <div>
-                                    <label className={labelClass}>Capacidad</label>
-                                    <select className={inputClass} value={form.roomType} onChange={e => setForm({ ...form, roomType: e.target.value })}>
-                                        <option value="Single">Individual (Single)</option>
-                                        <option value="Doble">Doble</option>
-                                        <option value="Triple">Triple</option>
-                                        <option value="Cuadruple">Cuádruple</option>
-                                        <option value="Familiar">Familiar</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Categoría Habitación</label>
-                                    <select className={inputClass} value={form.roomCategory} onChange={e => setForm({ ...form, roomCategory: e.target.value })}>
-                                        <option value="Standard">Estándar</option>
-                                        <option value="Superior">Superior</option>
-                                        <option value="Executive">Ejecutiva</option>
-                                        <option value="Suite">Suite</option>
-                                    </select>
-                                </div>
-                                <div className="col-span-2">
-                                    <label className={labelClass}>Características Especiales</label>
-                                    <div className="grid grid-cols-3 gap-2 mt-2">
-                                        {[
-                                            { id: "SeaView", label: "Vista al Mar" },
-                                            { id: "CityView", label: "Vista Ciudad" },
-                                            { id: "Connecting", label: "Conectadas" },
-                                            { id: "Balcony", label: "Balcón" },
-                                            { id: "Jacuzzi", label: "Jacuzzi" },
-                                            { id: "Kitchen", label: "Cocina" }
-                                        ].map(feature => (
-                                            <label key={feature.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                                                <input type="checkbox"
-                                                    checked={form.roomFeatures?.split(",").includes(feature.id)}
-                                                    onChange={e => {
-                                                        const current = form.roomFeatures ? form.roomFeatures.split(",") : [];
-                                                        const updated = e.target.checked
-                                                            ? [...current, feature.id]
-                                                            : current.filter(f => f !== feature.id);
-                                                        setForm({ ...form, roomFeatures: updated.join(",") });
-                                                    }}
-                                                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                                                <span className="text-sm text-slate-700 dark:text-slate-300">{feature.label}</span>
-                                            </label>
-                                        ))}
+                            </div>
+
+                            {/* Separator */}
+                            <div className="border-t border-slate-200 dark:border-slate-700 my-4 pt-4">
+                                <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
+                                    <Plus className="h-4 w-4" /> Variaciones de Habitación
+                                </h4>
+
+                                {/* Lista de variaciones agregadas */}
+                                {roomVariations.length > 0 && (
+                                    <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                                        <table className="w-full text-xs">
+                                            <thead className="bg-slate-50 dark:bg-slate-800">
+                                                <tr>
+                                                    <th className="px-3 py-2 text-left text-slate-500">Tipo</th>
+                                                    <th className="px-3 py-2 text-left text-slate-500">Categ.</th>
+                                                    <th className="px-3 py-2 text-left text-slate-500">Régimen</th>
+                                                    <th className="px-3 py-2 text-right text-slate-500">Costo</th>
+                                                    <th className="px-3 py-2 text-right text-slate-500">Venta</th>
+                                                    <th className="w-8"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                                                {roomVariations.map(v => (
+                                                    <tr key={v.id} className="bg-slate-50/50 dark:bg-slate-800/30">
+                                                        <td className="px-3 py-2">{v.roomType}</td>
+                                                        <td className="px-3 py-2">{v.roomCategory}</td>
+                                                        <td className="px-3 py-2">{v.mealPlan}</td>
+                                                        <td className="px-3 py-2 text-right">${v.netCost}</td>
+                                                        <td className="px-3 py-2 text-right">${v.salePrice}</td>
+                                                        <td className="px-3 py-2 text-center">
+                                                            <button type="button" onClick={() => removeRoomVariation(v.id)} className="text-rose-500 hover:text-rose-700">
+                                                                <X className="h-4 w-4" />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
                                     </div>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Régimen</label>
-                                    <select className={inputClass} value={form.mealPlan} onChange={e => setForm({ ...form, mealPlan: e.target.value })}>
-                                        <option value="">Seleccionar</option>
-                                        {mealPlans.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Tipo de Precio</label>
-                                    <select className={inputClass} value={form.hotelPriceType || "base_doble"} onChange={e => setForm({ ...form, hotelPriceType: e.target.value })}>
-                                        <option value="base_doble">Por Habitación (Base Doble)</option>
-                                        <option value="por_persona">Por Persona</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>% Pago Niños</label>
-                                    <div className="relative">
-                                        <input type="number" min="0" max="100" className={inputClass} value={form.childrenPayPercent}
-                                            onChange={e => setForm({ ...form, childrenPayPercent: e.target.value })} placeholder="0" />
-                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                                            <span className="text-slate-500 sm:text-sm">%</span>
+                                )}
+
+                                {/* Formulario de Variación */}
+                                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className={labelClass}>Capacidad</label>
+                                            <select className={inputClass} value={form.roomType} onChange={e => setForm({ ...form, roomType: e.target.value })}>
+                                                <option value="Single">Individual (Single)</option>
+                                                <option value="Doble">Doble</option>
+                                                <option value="Triple">Triple</option>
+                                                <option value="Cuadruple">Cuádruple</option>
+                                                <option value="Familiar">Familiar</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className={labelClass}>Categoría Habitación</label>
+                                            <select className={inputClass} value={form.roomCategory} onChange={e => setForm({ ...form, roomCategory: e.target.value })}>
+                                                <option value="Standard">Estándar</option>
+                                                <option value="Superior">Superior</option>
+                                                <option value="Executive">Ejecutiva</option>
+                                                <option value="Suite">Suite</option>
+                                            </select>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <label className={labelClass}>Características Especiales</label>
+                                            <div className="grid grid-cols-3 gap-2 mt-2">
+                                                {[
+                                                    { id: "SeaView", label: "Vista al Mar" },
+                                                    { id: "CityView", label: "Vista Ciudad" },
+                                                    { id: "Connecting", label: "Conectadas" },
+                                                    { id: "Balcony", label: "Balcón" },
+                                                    { id: "Jacuzzi", label: "Jacuzzi" },
+                                                    { id: "Kitchen", label: "Cocina" }
+                                                ].map(feature => (
+                                                    <label key={feature.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                                                        <input type="checkbox"
+                                                            checked={form.roomFeatures?.split(",").includes(feature.id)}
+                                                            onChange={e => {
+                                                                const current = form.roomFeatures ? form.roomFeatures.split(",") : [];
+                                                                const updated = e.target.checked
+                                                                    ? [...current, feature.id]
+                                                                    : current.filter(f => f !== feature.id);
+                                                                setForm({ ...form, roomFeatures: updated.join(",") });
+                                                            }}
+                                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                                                        <span className="text-sm text-slate-700 dark:text-slate-300">{feature.label}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className={labelClass}>Régimen</label>
+                                            <select className={inputClass} value={form.mealPlan} onChange={e => setForm({ ...form, mealPlan: e.target.value })}>
+                                                <option value="">Seleccionar</option>
+                                                {mealPlans.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className={labelClass}>Tipo de Precio</label>
+                                            <select className={inputClass} value={form.hotelPriceType || "base_doble"} onChange={e => setForm({ ...form, hotelPriceType: e.target.value })}>
+                                                <option value="base_doble">Por Habitación (Base Doble)</option>
+                                                <option value="por_persona">Por Persona</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className={labelClass}>% Pago Niños</label>
+                                            <div className="relative">
+                                                <input type="number" min="0" max="100" className={inputClass} value={form.childrenPayPercent}
+                                                    onChange={e => setForm({ ...form, childrenPayPercent: e.target.value })} placeholder="0" />
+                                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                                                    <span className="text-slate-500 sm:text-sm">%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className={labelClass}>Edad Máx Niño</label>
+                                            <input type="number" min="0" className={inputClass} value={form.childMaxAge}
+                                                onChange={e => setForm({ ...form, childMaxAge: e.target.value })} placeholder="12" />
+                                        </div>
+                                        <div className="col-span-2 pt-2">
+                                            <button type="button" onClick={addRoomVariation} className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50/50 p-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400 transition-colors">
+                                                <Plus className="h-4 w-4" /> Agregar esta variante a la lista
+                                            </button>
+                                        </div>
+                                        <div className="col-span-2 border-t border-slate-200 dark:border-slate-700 pt-4 mt-2">
+                                            <div className="grid grid-cols-3 gap-4">
+                                                <div>
+                                                    <label className={labelClass}>Costo Neto</label>
+                                                    <input type="text" className={inputClass} required={roomVariations.length === 0} value={form.netCost}
+                                                        onChange={handleNetCostChange} placeholder="0.00" />
+                                                    <div className="text-xs text-slate-500 mt-1">Por habitación/noche</div>
+                                                </div>
+                                                <div>
+                                                    <label className={labelClass}>Impuestos (Tax)</label>
+                                                    <input type="text" className={inputClass} value={form.tax}
+                                                        onChange={handleTaxChange} placeholder="0.00" />
+                                                </div>
+                                                <div>
+                                                    <label className={labelClass}>Precio Venta</label>
+                                                    <input type="text" className={inputClass} required={roomVariations.length === 0} value={form.salePrice}
+                                                        onChange={e => setForm({ ...form, salePrice: e.target.value })} placeholder="0.00" />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Edad Máx Niño</label>
-                                    <input type="number" min="0" className={inputClass} value={form.childMaxAge}
-                                        onChange={e => setForm({ ...form, childMaxAge: e.target.value })} placeholder="12" />
                                 </div>
                             </div>
                         </div>
@@ -767,6 +912,6 @@ export default function RatesPage() {
                     </div>
                 </form>
             </Modal>
-        </div>
+        </div >
     );
 }
