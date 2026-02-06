@@ -1,10 +1,15 @@
 import { useState, useEffect } from "react";
-import { X, DollarSign, CreditCard, Banknote, Landmark, CheckCircle2, AlertCircle } from "lucide-react";
+import { X, DollarSign, CreditCard, Banknote, Landmark, CheckCircle, AlertCircle } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { formatCurrency } from "../lib/utils";
 
-export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, supplierId, supplierName, currentBalance, editingPayment = null }) {
+// Icon component helper (Moved outside component to avoid re-render crashes)
+const CheckIcon = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><path d="M16 13H8" /><path d="M16 17H8" /><path d="M10 9H8" /></svg>
+);
+
+export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, supplierId, supplierName = "", currentBalance = 0, editingPayment = null }) {
     if (!isOpen) return null;
 
     const [bgOpacity, setBgOpacity] = useState("opacity-0");
@@ -25,7 +30,8 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
     // Initial Load
     useEffect(() => {
         if (isOpen) {
-            setTimeout(() => {
+            // Animation
+            const timer = setTimeout(() => {
                 setBgOpacity("opacity-100");
                 setScale("scale-100 opacity-100");
             }, 10);
@@ -42,6 +48,8 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                 setFormData({ amount: "", method: "Transfer", reference: "", notes: "", travelFileId: null });
             }
             setError(null);
+
+            return () => clearTimeout(timer);
         }
     }, [isOpen, editingPayment]);
 
@@ -52,14 +60,21 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
     };
 
     // Calculate Real-Time Balance Preview
+    // Defensive coding: ensure numbers
+    const safeBalance = Number(currentBalance) || 0;
     const amountVal = parseFloat(formData.amount) || 0;
 
     // If editing, we first "restore" the original payment amount to the debt to see the true debt
-    const originalPaymentAmount = editingPayment ? editingPayment.amount : 0;
-    const effectiveDebt = currentBalance + originalPaymentAmount;
+    const originalPaymentAmount = editingPayment ? (Number(editingPayment.amount) || 0) : 0;
+    const effectiveDebt = safeBalance + originalPaymentAmount;
 
     const remainingBalance = effectiveDebt - amountVal;
-    const isOverpaying = remainingBalance < 0;
+
+    // Logic: If debt is positive (we owe money), paying shouldn't create negative debt (we overpaid)
+    // If debt is already negative (supplier owes us), paying more makes it more negative (fine?) or not allowed?
+    // Assuming Standard Supplier Account: Balance > 0 means We Owe. Balance < 0 means We Paid in Advance.
+    // Let's stick to "Don't pay more than effective debt" if effective debt > 0.
+    const isOverpaying = remainingBalance < -0.01 && effectiveDebt > 0;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -70,7 +85,7 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
         }
 
         if (isOverpaying) {
-            setError("El pago excede la deuda actual. No se permiten saldos negativos.");
+            setError("El pago excede la deuda actual.");
             return;
         }
 
@@ -83,7 +98,7 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                 method: formData.method,
                 reference: formData.reference,
                 notes: formData.notes,
-                travelFileId: formData.travelFileId
+                travelFileId: formData.travelFileId ? Number(formData.travelFileId) : null
             };
 
             if (editingPayment) {
@@ -97,7 +112,7 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
             handleClose();
         } catch (err) {
             console.error(err);
-            setError(err.response?.data?.message || err.response?.data || "Error al procesar el pago");
+            setError(err.message || "Error al procesar el pago");
         } finally {
             setLoading(false);
         }
@@ -106,14 +121,9 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
     const paymentMethods = [
         { id: 'Transfer', label: 'Transferencia', icon: Landmark, color: 'text-blue-600 bg-blue-50 border-blue-200' },
         { id: 'Cash', label: 'Efectivo', icon: Banknote, color: 'text-green-600 bg-green-50 border-green-200' },
-        { id: 'Check', label: 'Cheque', icon: FileText, color: 'text-amber-600 bg-amber-50 border-amber-200' },
+        { id: 'Check', label: 'Cheque', icon: CheckIcon, color: 'text-amber-600 bg-amber-50 border-amber-200' },
         { id: 'Card', label: 'Tarjeta', icon: CreditCard, color: 'text-purple-600 bg-purple-50 border-purple-200' },
     ];
-
-    // Icon component helper
-    const FileText = ({ className }) => (
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><path d="M16 13H8" /><path d="M16 17H8" /><path d="M10 9H8" /></svg>
-    );
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 text-slate-800 dark:text-slate-100">
@@ -216,7 +226,7 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                                         <span className={`text-sm font-medium ${isSelected ? 'text-emerald-900 dark:text-emerald-100' : 'text-slate-600 dark:text-slate-400'}`}>
                                             {m.label}
                                         </span>
-                                        {isSelected && <CheckCircle2 className="absolute top-2 right-2 h-4 w-4 text-emerald-500" />}
+                                        {isSelected && <CheckCircle className="absolute top-2 right-2 h-4 w-4 text-emerald-500" />}
                                     </button>
                                 )
                             })}
@@ -268,8 +278,8 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                             type="submit"
                             disabled={loading || isOverpaying}
                             className={`px-6 py-2.5 rounded-lg text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] ${(loading || isOverpaying)
-                                    ? 'bg-slate-400 cursor-not-allowed shadow-none'
-                                    : 'bg-emerald-600 hover:bg-emerald-700'
+                                ? 'bg-slate-400 cursor-not-allowed shadow-none'
+                                : 'bg-emerald-600 hover:bg-emerald-700'
                                 }`}
                         >
                             {loading ? "Procesando..." : (editingPayment ? "Guardar Cambios" : "Confirmar Pago")}
