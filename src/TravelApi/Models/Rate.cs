@@ -65,10 +65,16 @@ public class Rate
     public int? StarRating { get; set; } // 1-5 estrellas
     
     [MaxLength(100)]
-    public string? RoomType { get; set; } // Single, Double, Triple, Suite, etc
+    public string? RoomType { get; set; } // Capacidad: Single, Double, Triple, Quadruple, Family
+    
+    [MaxLength(100)]
+    public string? RoomCategory { get; set; } // Categoría: Standard, Superior, Executive, Suite
+    
+    [MaxLength(200)]
+    public string? RoomFeatures { get; set; } // Comma separated: SeaView, CityView, Connecting, Balcony
     
     [MaxLength(50)]
-    public string? MealPlan { get; set; } // RO (Solo alojamiento), BB (Desayuno), HB (Media pensión), FB (Pensión completa), AI (All Inclusive)
+    public string? MealPlan { get; set; } // RO, BB, HB, FB, AI
     
     /// <summary>
     /// Tipo de precio: "por_persona" o "base_doble" (precio por habitación para 2 personas)

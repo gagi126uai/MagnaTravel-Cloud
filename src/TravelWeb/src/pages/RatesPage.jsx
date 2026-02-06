@@ -72,7 +72,7 @@ export default function RatesPage() {
         // Aéreo
         airline: "", airlineCode: "", origin: "", destination: "", cabinClass: "", baggageIncluded: "",
         // Hotel
-        hotelName: "", city: "", starRating: "", roomType: "", mealPlan: "",
+        hotelName: "", city: "", starRating: "", roomType: "Doble", roomCategory: "Standard", roomFeatures: "", mealPlan: "",
         hotelPriceType: "base_doble", childrenPayPercent: 0, childMaxAge: 12,
         // Traslado
         pickupLocation: "", dropoffLocation: "", vehicleType: "", maxPassengers: "", isRoundTrip: false,
@@ -182,6 +182,10 @@ export default function RatesPage() {
                 validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
                 validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
                 validTo: form.validTo ? new Date(form.validTo).toISOString() : null,
+                roomType: form.roomType,
+                roomCategory: form.roomCategory,
+                roomFeatures: form.roomFeatures,
+                hotelPriceType: form.hotelPriceType,
                 hotelPriceType: form.hotelPriceType,
                 childrenPayPercent: parseInt(form.childrenPayPercent) || 0,
                 childMaxAge: parseInt(form.childMaxAge) || 12
@@ -243,7 +247,11 @@ export default function RatesPage() {
             origin: rate.origin || "", destination: rate.destination || "",
             cabinClass: rate.cabinClass || "", baggageIncluded: rate.baggageIncluded || "",
             hotelName: rate.hotelName || "", city: rate.city || "",
-            starRating: rate.starRating?.toString() || "", roomType: rate.roomType || "", mealPlan: rate.mealPlan || "",
+            starRating: rate.starRating?.toString() || "",
+            roomType: rate.roomType || "Doble",
+            roomCategory: rate.roomCategory || "Standard",
+            roomFeatures: rate.roomFeatures || "",
+            mealPlan: rate.mealPlan || "",
             hotelPriceType: rate.hotelPriceType || "base_doble",
             childrenPayPercent: rate.childrenPayPercent ?? 0,
             childMaxAge: rate.childMaxAge ?? 12,
@@ -510,9 +518,50 @@ export default function RatesPage() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className={labelClass}>Tipo Habitación</label>
-                                    <input type="text" className={inputClass} value={form.roomType}
-                                        onChange={e => setForm({ ...form, roomType: e.target.value })} placeholder="Doble Superior" />
+                                    <label className={labelClass}>Capacidad</label>
+                                    <select className={inputClass} value={form.roomType} onChange={e => setForm({ ...form, roomType: e.target.value })}>
+                                        <option value="Single">Individual (Single)</option>
+                                        <option value="Doble">Doble</option>
+                                        <option value="Triple">Triple</option>
+                                        <option value="Cuadruple">Cuádruple</option>
+                                        <option value="Familiar">Familiar</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>Categoría Habitación</label>
+                                    <select className={inputClass} value={form.roomCategory} onChange={e => setForm({ ...form, roomCategory: e.target.value })}>
+                                        <option value="Standard">Estándar</option>
+                                        <option value="Superior">Superior</option>
+                                        <option value="Executive">Ejecutiva</option>
+                                        <option value="Suite">Suite</option>
+                                    </select>
+                                </div>
+                                <div className="col-span-2">
+                                    <label className={labelClass}>Características Especiales</label>
+                                    <div className="grid grid-cols-3 gap-2 mt-2">
+                                        {[
+                                            { id: "SeaView", label: "Vista al Mar" },
+                                            { id: "CityView", label: "Vista Ciudad" },
+                                            { id: "Connecting", label: "Conectadas" },
+                                            { id: "Balcony", label: "Balcón" },
+                                            { id: "Jacuzzi", label: "Jacuzzi" },
+                                            { id: "Kitchen", label: "Cocina" }
+                                        ].map(feature => (
+                                            <label key={feature.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                                                <input type="checkbox"
+                                                    checked={form.roomFeatures?.split(",").includes(feature.id)}
+                                                    onChange={e => {
+                                                        const current = form.roomFeatures ? form.roomFeatures.split(",") : [];
+                                                        const updated = e.target.checked
+                                                            ? [...current, feature.id]
+                                                            : current.filter(f => f !== feature.id);
+                                                        setForm({ ...form, roomFeatures: updated.join(",") });
+                                                    }}
+                                                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                                                <span className="text-sm text-slate-700 dark:text-slate-300">{feature.label}</span>
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
                                 <div>
                                     <label className={labelClass}>Régimen</label>

@@ -46,7 +46,7 @@ public class RatesController : ControllerBase
                 r.ValidFrom, r.ValidTo, r.IsActive, r.InternalNotes,
                 // Campos dinámicos
                 r.Airline, r.AirlineCode, r.Origin, r.Destination, r.CabinClass, r.BaggageIncluded,
-                r.HotelName, r.City, r.StarRating, r.RoomType, r.MealPlan, r.HotelPriceType, r.ChildrenPayPercent, r.ChildMaxAge,
+                r.HotelName, r.City, r.StarRating, r.RoomType, r.RoomCategory, r.RoomFeatures, r.MealPlan, r.HotelPriceType, r.ChildrenPayPercent, r.ChildMaxAge,
                 r.PickupLocation, r.DropoffLocation, r.VehicleType, r.MaxPassengers, r.IsRoundTrip,
                 r.IncludesFlight, r.IncludesHotel, r.IncludesTransfer, r.IncludesExcursions, r.IncludesInsurance,
                 r.DurationDays, r.Itinerary,
@@ -158,6 +158,8 @@ public class RatesController : ControllerBase
             City = req.City,
             StarRating = req.StarRating,
             RoomType = req.RoomType,
+            RoomCategory = req.RoomCategory,
+            RoomFeatures = req.RoomFeatures,
             MealPlan = req.MealPlan,
             HotelPriceType = req.HotelPriceType ?? "base_doble",
             ChildrenPayPercent = req.ChildrenPayPercent,
@@ -214,6 +216,8 @@ public class RatesController : ControllerBase
         rate.City = req.City;
         rate.StarRating = req.StarRating;
         rate.RoomType = req.RoomType;
+        rate.RoomCategory = req.RoomCategory;
+        rate.RoomFeatures = req.RoomFeatures;
         rate.MealPlan = req.MealPlan;
         rate.HotelPriceType = req.HotelPriceType ?? "base_doble";
         rate.ChildrenPayPercent = req.ChildrenPayPercent;
@@ -277,6 +281,8 @@ public record RateDto(
     string? City = null,
     int? StarRating = null,
     string? RoomType = null,
+    string? RoomCategory = null,
+    string? RoomFeatures = null,
     string? MealPlan = null,
     string? HotelPriceType = "base_doble", // por_persona, base_doble
     int ChildrenPayPercent = 0, // 0-100%
