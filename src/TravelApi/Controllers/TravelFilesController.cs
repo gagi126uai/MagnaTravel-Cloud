@@ -90,12 +90,12 @@ public class TravelFilesController : ControllerBase
                 sb.AppendLine(ex.StackTrace);
             }
 
-            return Ok(sb.ToString());
+            return Ok(new { Report = sb.ToString() });
         }
         catch (Exception ex)
         {
             sb.AppendLine($"CRITICAL FAILURE: {ex.Message}");
-            return Ok(sb.ToString());
+            return Ok(new { Report = sb.ToString() });
         }
     }
 

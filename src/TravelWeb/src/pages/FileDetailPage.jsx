@@ -290,7 +290,7 @@ export default function FileDetailPage() {
             const res = await api.get(`/travelfiles/debug/${id}`);
             Swal.fire({
                 title: 'Reporte de Diagnóstico',
-                html: `<pre style="text-align: left; font-size: 12px; max-height: 400px; overflow: auto; background: #f0f0f0; padding: 10px;">${res}</pre>`,
+                html: `<pre style="text-align: left; font-size: 12px; max-height: 400px; overflow: auto; background: #f0f0f0; padding: 10px;">${res.report || res.Report}</pre>`,
                 width: '600px'
             });
         } catch (err) {
