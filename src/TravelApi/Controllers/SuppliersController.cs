@@ -219,7 +219,7 @@ public class SuppliersController : ControllerBase
             {
                 Id = t.Id,
                 Type = "Traslado",
-                Description = $"{t.TransferType} ({t.Origin} -> {t.Destination})",
+                Description = $"{t.VehicleType} ({t.PickupLocation} -> {t.DropoffLocation})",
                 Confirmation = t.ConfirmationNumber,
                 NetCost = t.NetCost,
                 SalePrice = t.SalePrice,
