@@ -479,7 +479,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate }) {
 }
 
 // ================== MODAL PRINCIPAL ==================
-export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, onSuccess, initialServiceType }) {
+export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, onSuccess, initialServiceType, serviceToEdit }) {
     const [serviceType, setServiceType] = useState(initialServiceType || "Aereo");
     const [form, setForm] = useState({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1, checkIn: "", checkOut: "" });
     const [selectedRate, setSelectedRate] = useState(null); // Validar selectedRate para recálculos
@@ -488,6 +488,7 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
 
     // Reset form cuando cambia el tipo de servicio
     const handleTypeChange = (newType) => {
+        if (serviceToEdit) return; // Prevent type change when editing
         setServiceType(newType);
         setSelectedRate(null);
         setForm({ supplierId: form.supplierId, netCost: 0, salePrice: 0, rooms: 1 }); // Mantener proveedor
@@ -508,11 +509,34 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
 
     useEffect(() => {
         if (isOpen) {
-            setServiceType(initialServiceType || "Aereo");
-            setForm({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1 });
+            if (serviceToEdit) {
+                // POPULATE FORM FOR EDITING
+                setServiceType(serviceToEdit._type || serviceType);
+
+                // Map fields based on type
+                const formattedForm = {
+                    ...serviceToEdit,
+                    supplierId: serviceToEdit.supplierId?.toString() || "",
+                    // Ensure dates are strings for inputs
+                    departureDate: serviceToEdit.departureTime?.split('T')[0],
+                    arrivalDate: serviceToEdit.arrivalTime?.split('T')[0],
+                    checkIn: serviceToEdit.checkIn?.split('T')[0],
+                    checkOut: serviceToEdit.checkOut?.split('T')[0],
+                    startDate: serviceToEdit.startDate?.split('T')[0],
+                    endDate: serviceToEdit.endDate?.split('T')[0],
+                    pickupDate: serviceToEdit.pickupDateTime?.split('T')[0],
+                    pickupTime: serviceToEdit.pickupDateTime ? new Date(serviceToEdit.pickupDateTime).toLocaleTimeString('en-GB').slice(0, 5) : "",
+                    returnDate: serviceToEdit.returnDateTime?.split('T')[0],
+                    returnTime: serviceToEdit.returnDateTime ? new Date(serviceToEdit.returnDateTime).toLocaleTimeString('en-GB').slice(0, 5) : "",
+                };
+                setForm(formattedForm);
+            } else {
+                setServiceType(initialServiceType || "Aereo");
+                setForm({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1 });
+            }
             setSelectedRate(null);
         }
-    }, [isOpen, initialServiceType]);
+    }, [isOpen, initialServiceType, serviceToEdit]);
 
     useEffect(() => {
         if (form.supplierId) fetchCommission();
@@ -601,12 +625,19 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
         e.preventDefault();
         setLoading(true);
         try {
-            const endpoint = {
-                "Aereo": `/files/${fileId}/flights`,
-                "Hotel": `/files/${fileId}/hotels`,
-                "Traslado": `/files/${fileId}/transfers`,
-                "Paquete": `/files/${fileId}/packages`
-            }[serviceType];
+            let endpoint = "";
+            let method = "post";
+
+            if (serviceType === "Aereo") endpoint = `/files/${fileId}/flights`;
+            else if (serviceType === "Hotel") endpoint = `/files/${fileId}/hotels`;
+            else if (serviceType === "Traslado") endpoint = `/files/${fileId}/transfers`;
+            else if (serviceType === "Paquete") endpoint = `/files/${fileId}/packages`;
+
+            // If editing, append ID and change method to PUT
+            if (serviceToEdit) {
+                endpoint += `/${serviceToEdit.id}`;
+                method = "put";
+            }
 
             const payload = { ...form, supplierId: parseInt(form.supplierId) };
 
@@ -629,8 +660,13 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
                 payload.endDate = new Date(form.endDate).toISOString();
             }
 
-            await api.post(endpoint, payload);
-            showSuccess("Servicio agregado correctamente");
+            if (method === "put") {
+                await api.put(endpoint, payload);
+                showSuccess("Servicio actualizado correctamente");
+            } else {
+                await api.post(endpoint, payload);
+                showSuccess("Servicio agregado correctamente");
+            }
             onSuccess();
             onClose();
         } catch (error) {
@@ -651,7 +687,7 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
                 <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-indigo-500 to-purple-600">
                     <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                         {currentType && <currentType.icon className="h-5 w-5" />}
-                        Agregar Servicio
+                        {serviceToEdit ? "Editar Servicio" : "Agregar Servicio"}
                     </h2>
                     <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-lg text-white/80 hover:text-white transition-colors">
                         <X className="h-5 w-5" />

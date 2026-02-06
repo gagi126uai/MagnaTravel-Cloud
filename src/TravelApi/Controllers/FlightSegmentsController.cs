@@ -82,8 +82,34 @@ public class FlightSegmentsController : ControllerBase
         var flight = await _db.FlightSegments.FindAsync(new object[] { id }, ct);
         if (flight == null || flight.TravelFileId != fileId) return NotFound();
 
+        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+        if (file == null) return NotFound("File no encontrado");
+
+        var diffCost = (req.NetCost + req.Tax) - (flight.NetCost + flight.Tax);
+        var diffSale = req.SalePrice - flight.SalePrice;
+
+        file.TotalCost += diffCost;
+        file.TotalSale += diffSale;
+        file.Balance = file.TotalSale - file.TotalCost;
+
+        flight.SupplierId = req.SupplierId;
+        flight.AirlineCode = req.AirlineCode;
+        flight.AirlineName = req.AirlineName;
+        flight.FlightNumber = req.FlightNumber;
+        flight.Origin = req.Origin;
+        flight.OriginCity = req.OriginCity;
+        flight.Destination = req.Destination;
+        flight.DestinationCity = req.DestinationCity;
+        flight.DepartureTime = req.DepartureTime;
+        flight.ArrivalTime = req.ArrivalTime;
+        flight.CabinClass = req.CabinClass;
+        flight.Baggage = req.Baggage;
         flight.TicketNumber = req.TicketNumber;
         flight.PNR = req.PNR;
+        flight.NetCost = req.NetCost;
+        flight.SalePrice = req.SalePrice;
+        flight.Commission = req.Commission;
+        flight.Tax = req.Tax;
         flight.Status = req.Status;
         flight.Notes = req.Notes;
 
@@ -119,4 +145,10 @@ public record CreateFlightRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes
 );
 
-public record UpdateFlightRequest(string? TicketNumber, string? PNR, string Status, string? Notes);
+public record UpdateFlightRequest(
+    int SupplierId, string AirlineCode, string? AirlineName, string FlightNumber,
+    string Origin, string? OriginCity, string Destination, string? DestinationCity,
+    DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, 
+    string? TicketNumber, string? PNR,
+    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes
+);

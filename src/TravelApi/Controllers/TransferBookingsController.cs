@@ -76,7 +76,29 @@ public class TransferBookingsController : ControllerBase
         var transfer = await _db.TransferBookings.FindAsync(new object[] { id }, ct);
         if (transfer == null || transfer.TravelFileId != fileId) return NotFound();
 
+        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+        if (file == null) return NotFound("File no encontrado");
+
+        var diffCost = req.NetCost - transfer.NetCost;
+        var diffSale = req.SalePrice - transfer.SalePrice;
+
+        file.TotalCost += diffCost;
+        file.TotalSale += diffSale;
+        file.Balance = file.TotalSale - file.TotalCost;
+
+        transfer.SupplierId = req.SupplierId;
+        transfer.PickupLocation = req.PickupLocation;
+        transfer.DropoffLocation = req.DropoffLocation;
+        transfer.PickupDateTime = req.PickupDateTime;
+        transfer.FlightNumber = req.FlightNumber;
+        transfer.VehicleType = req.VehicleType;
+        transfer.Passengers = req.Passengers;
+        transfer.IsRoundTrip = req.IsRoundTrip;
+        transfer.ReturnDateTime = req.ReturnDateTime;
         transfer.ConfirmationNumber = req.ConfirmationNumber;
+        transfer.NetCost = req.NetCost;
+        transfer.SalePrice = req.SalePrice;
+        transfer.Commission = req.Commission;
         transfer.Status = req.Status;
         transfer.Notes = req.Notes;
 
@@ -112,4 +134,10 @@ public record CreateTransferRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
 );
 
-public record UpdateTransferRequest(string? ConfirmationNumber, string Status, string? Notes);
+public record UpdateTransferRequest(
+    int SupplierId, string PickupLocation, string DropoffLocation,
+    DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
+    bool IsRoundTrip, DateTime? ReturnDateTime,
+    string? ConfirmationNumber,
+    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
+);

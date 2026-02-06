@@ -81,7 +81,34 @@ public class PackageBookingsController : ControllerBase
         var package = await _db.PackageBookings.FindAsync(new object[] { id }, ct);
         if (package == null || package.TravelFileId != fileId) return NotFound();
 
+        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+        if (file == null) return NotFound("File no encontrado");
+
+        var diffCost = req.NetCost - package.NetCost;
+        var diffSale = req.SalePrice - package.SalePrice;
+
+        file.TotalCost += diffCost;
+        file.TotalSale += diffSale;
+        file.Balance = file.TotalSale - file.TotalCost;
+
+        package.SupplierId = req.SupplierId;
+        package.PackageName = req.PackageName;
+        package.Destination = req.Destination;
+        package.StartDate = req.StartDate;
+        package.EndDate = req.EndDate;
+        package.Nights = (req.EndDate - req.StartDate).Days;
+        package.IncludesHotel = req.IncludesHotel;
+        package.IncludesFlight = req.IncludesFlight;
+        package.IncludesTransfer = req.IncludesTransfer;
+        package.IncludesExcursions = req.IncludesExcursions;
+        package.IncludesMeals = req.IncludesMeals;
+        package.Adults = req.Adults;
+        package.Children = req.Children;
+        package.Itinerary = req.Itinerary;
         package.ConfirmationNumber = req.ConfirmationNumber;
+        package.NetCost = req.NetCost;
+        package.SalePrice = req.SalePrice;
+        package.Commission = req.Commission;
         package.Status = req.Status;
         package.Notes = req.Notes;
 
@@ -118,4 +145,10 @@ public record CreatePackageRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
 );
 
-public record UpdatePackageRequest(string? ConfirmationNumber, string Status, string? Notes);
+public record UpdatePackageRequest(
+    int SupplierId, string PackageName, string Destination,
+    DateTime StartDate, DateTime EndDate,
+    bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
+    int Adults, int Children, string? Itinerary, string? ConfirmationNumber,
+    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
+);

@@ -90,7 +90,36 @@ public class HotelBookingsController : ControllerBase
         var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
         if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
 
+        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+        if (file == null) return NotFound("File no encontrado");
+
+        // Calculate differences for totals
+        var diffCost = req.NetCost - hotel.NetCost;
+        var diffSale = req.SalePrice - hotel.SalePrice;
+
+        // Update File Totals
+        file.TotalCost += diffCost;
+        file.TotalSale += diffSale;
+        file.Balance = file.TotalSale - file.TotalCost;
+
+        // Update Hotel Fields
+        hotel.SupplierId = req.SupplierId;
+        hotel.HotelName = req.HotelName;
+        hotel.StarRating = req.StarRating;
+        hotel.City = req.City;
+        hotel.Country = req.Country;
+        hotel.CheckIn = req.CheckIn;
+        hotel.CheckOut = req.CheckOut;
+        hotel.Nights = (req.CheckOut - req.CheckIn).Days;
+        hotel.RoomType = req.RoomType;
+        hotel.MealPlan = req.MealPlan;
+        hotel.Adults = req.Adults;
+        hotel.Children = req.Children;
+        hotel.Rooms = req.Rooms;
         hotel.ConfirmationNumber = req.ConfirmationNumber;
+        hotel.NetCost = req.NetCost;
+        hotel.SalePrice = req.SalePrice;
+        hotel.Commission = req.Commission;
         hotel.Status = req.Status;
         hotel.Notes = req.Notes;
 
@@ -126,4 +155,9 @@ public record CreateHotelRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
 );
 
-public record UpdateHotelRequest(string? ConfirmationNumber, string Status, string? Notes);
+public record UpdateHotelRequest(
+    int SupplierId, string HotelName, int? StarRating, string City, string? Country,
+    DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
+    int Adults, int Children, int Rooms, string? ConfirmationNumber,
+    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
+);

@@ -311,10 +311,10 @@ public class TravelFilesController : ControllerBase
             return BadRequest("Debe seleccionar un método de pago");
         }
 
-        // Prevent negative balance
+        // Prevent negative balance (Strict Validation)
         if (payment.Amount > file.Balance)
         {
-            return BadRequest($"El monto (${payment.Amount:N2}) supera el saldo pendiente (${file.Balance:N2}). No se puede generar saldo negativo.");
+            return BadRequest($"El pago de ${payment.Amount:N2} excede el saldo pendiente (${file.Balance:N2}). No se permite saldo negativo.");
         }
 
         payment.TravelFileId = id;
@@ -328,6 +328,26 @@ public class TravelFilesController : ControllerBase
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetFile), new { id = file.Id }, payment);
+    }
+
+    [HttpDelete("{id}/payments/{paymentId}")]
+    public async Task<IActionResult> DeletePayment(int id, int paymentId)
+    {
+        var payment = await _context.Payments.FindAsync(paymentId);
+        if (payment == null) return NotFound("Pago no encontrado");
+        
+        if (payment.TravelFileId != id) return BadRequest("El pago no corresponde al File");
+
+        var file = await _context.TravelFiles.FindAsync(id);
+        if (file == null) return NotFound("File no encontrado");
+
+        // Revert Balance
+        file.Balance += payment.Amount;
+
+        _context.Payments.Remove(payment);
+        await _context.SaveChangesAsync();
+
+        return Ok();
     }
 
     // ==================== STATUS ====================
@@ -352,6 +372,58 @@ public class TravelFilesController : ControllerBase
 
         await _context.SaveChangesAsync();
         return Ok(file);
+    }
+    [HttpPut("{id}/archive")]
+    public async Task<IActionResult> ArchiveFile(int id)
+    {
+        var file = await _context.TravelFiles.FindAsync(id);
+        if (file == null) return NotFound("File no encontrado");
+
+        // Logic to archive (using status or a specific flag implementation)
+        // For now, we will assume generic "Archived" status logic or just closed if not exists
+        // Given the prompt asked for "Archive", let's check if we can add a specific status or rely on "Closed".
+        // Requirement said: "Archivar: Para Files cancelados o antiguos". 
+        // Let's assume we toggle a property IsArchived if existed, but model doesn't have it.
+        // We will implement filtered view based on "Closed/Cancelled" usually, so "Archive" might mean hiding.
+        // Let's add an explicit "Archived" status if possible, or just use Closed logic with a note.
+        // Wait, IsArchived is not in the model. I will use a new Status "Archived" string if not enum restricted, 
+        // OR simply rely on the fact that the dashboard won't show them if we filter correctly.
+        // The user asked for "Archivar", let's assume it sets Status to "Archived" (string).
+        
+        file.Status = "Archived";
+        await _context.SaveChangesAsync();
+        return Ok(file);
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteFile(int id)
+    {
+        var file = await _context.TravelFiles
+            .Include(f => f.Payments)
+            .Include(f => f.Reservations)
+            .Include(f => f.Passengers)
+            .FirstOrDefaultAsync(f => f.Id == id);
+
+        if (file == null) return NotFound("File no encontrado");
+
+        // Only allow delete if Budget
+        if (file.Status != FileStatus.Budget)
+        {
+            return BadRequest("Solo se pueden eliminar Files en estado Presupuesto.");
+        }
+
+        // Safety check for payments
+        if (file.Payments.Any())
+        {
+            return BadRequest("No se puede eliminar un File con pagos registrados. Elimine los pagos primero.");
+        }
+
+        _context.Reservations.RemoveRange(file.Reservations);
+        _context.Passengers.RemoveRange(file.Passengers);
+        _context.TravelFiles.Remove(file);
+        
+        await _context.SaveChangesAsync();
+        return Ok();
     }
 }
 

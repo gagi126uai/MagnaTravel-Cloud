@@ -1,858 +1,647 @@
-import { useEffect, useState, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { showError, showSuccess } from "../alerts";
 import {
-    ArrowLeft,
-    Calendar,
-    User,
-    Plus,
-    Plane,
-    Hotel,
-    Bus,
-    CreditCard,
-    FileText,
-    Trash2,
-    Edit2,
-    X,
-    ChevronDown
+    ArrowLeft, Plus, DollarSign, Calendar, Users,
+    FileText, Edit2, Trash2, CheckCircle, AlertTriangle,
+    Plane, Hotel, Car, Package, CreditCard, Archive
 } from "lucide-react";
-import { Button } from "../components/ui/button";
+import Swal from "sweetalert2";
 import ServiceFormModal from "../components/ServiceFormModal";
-
-// SERVICE TYPES CONSTANTS
-const SERVICE_ICONS = {
-    Aereo: <Plane className="h-5 w-5" />,
-    Hotel: <Hotel className="h-5 w-5" />,
-    Traslado: <Bus className="h-5 w-5" />,
-    Otro: <CreditCard className="h-5 w-5" />
-};
+import { showError, showSuccess } from "../alerts";
 
 export default function FileDetailPage() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState("services");
-    const [suppliers, setSuppliers] = useState([]);
-    const dropdownRef = useRef(null);
+    const [activeTab, setActiveTab] = useState("services"); // services, passengers, payments, notes
+    const [showServiceModal, setShowServiceModal] = useState(false);
+    const [serviceToEdit, setServiceToEdit] = useState(null);
 
-    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-    const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
-    const [isNewServiceModalOpen, setIsNewServiceModalOpen] = useState(false);
-    const [selectedServiceType, setSelectedServiceType] = useState("Aereo");
-    const [payments, setPayments] = useState([]);
+    // States for CRUD forms (Passengers, Payments)
+    const [showPassengerForm, setShowPassengerForm] = useState(false);
+    const [editingPassenger, setEditingPassenger] = useState(null);
+    const [showPaymentForm, setShowPaymentForm] = useState(false);
 
-    // Servicios específicos
-    const [hotelBookings, setHotelBookings] = useState([]);
-    const [transferBookings, setTransferBookings] = useState([]);
-    const [packageBookings, setPackageBookings] = useState([]);
-    const [flightSegments, setFlightSegments] = useState([]);
-
-    // Form State
-    const [serviceType, setServiceType] = useState("Aereo");
-    const [serviceForm, setServiceForm] = useState({
-        supplierId: "",
-        description: "",
-        confirmationNumber: "",
-        departureDate: "",
-        returnDate: "",
-        salePrice: 0,
-        netCost: 0
+    // Passenger Form State
+    const [passengerForm, setPassengerForm] = useState({
+        fullName: "", documentType: "DNI", documentNumber: "",
+        birthDate: "", nationality: "", phone: "", email: "", gender: "M", notes: ""
     });
 
     // Payment Form State
     const [paymentForm, setPaymentForm] = useState({
-        amount: "",
-        method: "Transfer",
-        notes: ""
+        amount: "", method: "Transferencia", notes: ""
     });
 
-    // Passenger Form State
-    const [passengerForm, setPassengerForm] = useState({
-        fullName: "",
-        documentType: "DNI",
-        documentNumber: "",
-        birthDate: "",
-        phone: "",
-        email: ""
-    });
-
-    // Edit States
-    const [editingPassengerId, setEditingPassengerId] = useState(null);
-    const [editingServiceId, setEditingServiceId] = useState(null);
-
-    useEffect(() => {
-        loadFile();
-        loadSuppliers();
-        loadPayments();
-        loadServices();
-
-        // Click outside to close dropdown
-        function handleClickOutside(event) {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                setIsDropdownOpen(false);
-            }
-        }
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [id]);
-
-    const loadFile = async () => {
-        setLoading(true);
+    const fetchFile = useCallback(async () => {
         try {
-            const data = await api.get(`/travelfiles/${id}`);
-            setFile(data);
+            setLoading(true);
+            const res = await api.get(`/travelfiles/${id}`);
+            setFile(res.data);
         } catch (error) {
-            showError("No se pudo cargar el expediente.");
+            console.error(error);
+            showError("Error al cargar el file");
+            navigate("/files");
         } finally {
             setLoading(false);
         }
-    };
+    }, [id, navigate]);
 
-    const loadSuppliers = async () => {
-        try {
-            const data = await api.get("/suppliers");
-            setSuppliers(data);
-        } catch {
-            console.log("Error loading suppliers");
-        }
-    };
+    useEffect(() => {
+        fetchFile();
+    }, [fetchFile]);
 
-    const loadPayments = async () => {
-        try {
-            const filePayments = await api.get(`/travelfiles/${id}/payments`);
-            setPayments(filePayments);
-        } catch {
-            console.log("Error loading payments");
-        }
-    };
-
-    const loadServices = async () => {
-        try {
-            const [hotels, transfers, packages, flights] = await Promise.all([
-                api.get(`/files/${id}/hotels`).catch(() => []),
-                api.get(`/files/${id}/transfers`).catch(() => []),
-                api.get(`/files/${id}/packages`).catch(() => []),
-                api.get(`/files/${id}/flights`).catch(() => [])
-            ]);
-            setHotelBookings(hotels || []);
-            setTransferBookings(transfers || []);
-            setPackageBookings(packages || []);
-            setFlightSegments(flights || []);
-        } catch {
-            console.log("Error loading services");
-        }
-    };
-
-    const handleAddPayment = async (e) => {
-        e.preventDefault();
-        if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
-            showError("El monto debe ser mayor a 0");
-            return;
-        }
-
-        try {
-            await api.post(`/travelfiles/${id}/payments`, {
-                amount: parseFloat(paymentForm.amount),
-                method: paymentForm.method,
-                notes: paymentForm.notes
-            });
-
-            showSuccess("Pago registrado correctamente");
-            setPaymentForm({ amount: "", method: "Transfer", notes: "" });
-            loadPayments();
-            loadFile(); // Reload to update balance
-        } catch (error) {
-            showError(error.message || "Error al registrar el pago");
-        }
-    };
-
-    const handleAddPassenger = async (e) => {
-        e.preventDefault();
-        if (!passengerForm.fullName.trim()) {
-            showError("El nombre es obligatorio");
-            return;
-        }
-
-        const payload = {
-            fullName: passengerForm.fullName,
-            documentType: passengerForm.documentType,
-            documentNumber: passengerForm.documentNumber,
-            birthDate: passengerForm.birthDate ? new Date(passengerForm.birthDate).toISOString() : null,
-            phone: passengerForm.phone,
-            email: passengerForm.email
-        };
-
-        try {
-            if (editingPassengerId) {
-                await api.put(`/travelfiles/passengers/${editingPassengerId}`, payload);
-                showSuccess("Pasajero actualizado correctamente");
-            } else {
-                await api.post(`/travelfiles/${id}/passengers`, payload);
-                showSuccess("Pasajero agregado correctamente");
-            }
-
-            setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", phone: "", email: "" });
-            setEditingPassengerId(null);
-            loadFile();
-        } catch (error) {
-            showError(error.message || "Error al guardar pasajero");
-        }
-    };
-
-    const handleEditPassenger = (pax) => {
-        setPassengerForm({
-            fullName: pax.fullName,
-            documentType: pax.documentType || "DNI",
-            documentNumber: pax.documentNumber || "",
-            birthDate: pax.birthDate ? pax.birthDate.split('T')[0] : "",
-            phone: pax.phone || "",
-            email: pax.email || ""
+    // --- ACTIONS: FILE ---
+    const handleArchiveFile = async () => {
+        const result = await Swal.fire({
+            title: '¿Archivar File?',
+            text: "El file pasará a estado 'Archivado' y no será visible en la lista activa.",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, archivar',
+            cancelButtonText: 'Cancelar'
         });
-        setEditingPassengerId(pax.id);
-        // Scroll to form if needed, or simply focus
-        document.getElementById('passenger-form-title')?.scrollIntoView({ behavior: 'smooth' });
-    };
 
-    const cancelEditPassenger = () => {
-        setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", phone: "", email: "" });
-        setEditingPassengerId(null);
-    };
-
-    const handleDeletePassenger = async (passengerId) => {
-        if (!confirm("¿Eliminar este pasajero?")) return;
-        try {
-            await api.delete(`/travelfiles/passengers/${passengerId}`);
-            showSuccess("Pasajero eliminado");
-            loadFile();
-        } catch (error) {
-            showError(error.message || "Error al eliminar pasajero");
-        }
-    };
-
-    const handleAddService = async (e) => {
-        e.preventDefault();
-        try {
-            const payload = {
-                ...serviceForm,
-                serviceType: serviceType,
-                supplierId: serviceForm.supplierId ? parseInt(serviceForm.supplierId) : null,
-                departureDate: new Date(serviceForm.departureDate).toISOString(),
-                returnDate: serviceForm.returnDate ? new Date(serviceForm.returnDate).toISOString() : null,
-                salePrice: parseFloat(serviceForm.salePrice),
-                netCost: parseFloat(serviceForm.netCost)
-            };
-
-            if (editingServiceId) {
-                await api.put(`/travelfiles/services/${editingServiceId}`, payload);
-                showSuccess("Servicio actualizado correctamente");
-            } else {
-                await api.post(`/travelfiles/${id}/services`, payload);
-                showSuccess("Servicio agregado correctamente");
+        if (result.isConfirmed) {
+            try {
+                await api.put(`/travelfiles/${id}/archive`);
+                showSuccess("File archivado correctamente");
+                navigate("/files");
+            } catch (error) {
+                showError("Error al archivar");
             }
-
-            setIsServiceModalOpen(false);
-            setEditingServiceId(null);
-            loadFile();
-            setServiceForm({
-                supplierId: "",
-                description: "",
-                confirmationNumber: "",
-                departureDate: "",
-                returnDate: "",
-                salePrice: 0,
-                netCost: 0
-            });
-        } catch (error) {
-            showError(error.message || "Error al guardar servicio");
         }
     };
 
-    const handleEditService = (service) => {
-        setServiceType(service.serviceType);
-
-        // Format dates for datetime-local input (YYYY-MM-DDTHH:mm)
-        const formatDate = (dateString) => {
-            if (!dateString) return "";
-            const date = new Date(dateString);
-            // Adjust to local ISO string somewhat or just slice if it's already ISO from backend but we need to respect timezone or just take it as is.
-            // Simplified approach:
-            return date.toISOString().slice(0, 16);
-        };
-
-        setServiceForm({
-            supplierId: service.supplierId || "",
-            description: service.description || "",
-            confirmationNumber: service.confirmationNumber || "",
-            departureDate: formatDate(service.departureDate),
-            returnDate: formatDate(service.returnDate),
-            salePrice: service.salePrice,
-            netCost: service.netCost
+    const handleDeleteFile = async () => {
+        const result = await Swal.fire({
+            title: '¿Eliminar File?',
+            text: "Esta acción no se puede deshacer. Solo permitido si es un Presupuesto sin pagos.",
+            icon: 'error',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            confirmButtonText: 'Sí, eliminar',
+            cancelButtonText: 'Cancelar'
         });
-        setEditingServiceId(service.id);
-        setIsServiceModalOpen(true);
-    };
 
-    const handleDeleteService = async (serviceId) => {
-        if (!confirm("¿Eliminar este servicio del expediente?")) return;
-        try {
-            await api.delete(`/travelfiles/services/${serviceId}`);
-            showSuccess("Servicio eliminado");
-            loadFile();
-        } catch (error) {
-            showError(error.message || "Error al eliminar servicio");
+        if (result.isConfirmed) {
+            try {
+                await api.delete(`/travelfiles/${id}`);
+                showSuccess("File eliminado correctamente");
+                navigate("/files");
+            } catch (error) {
+                showError(error.response?.data || "Error al eliminar");
+            }
         }
     };
-
-    const openServiceModal = (type) => {
-        setIsDropdownOpen(false); // Close dropdown if open
-        setSelectedServiceType(type || "Aereo"); // Set selected type
-        setIsNewServiceModalOpen(true); // Open new professional modal
-    }
-
-    const toggleDropdown = () => setIsDropdownOpen(!isDropdownOpen);
 
     const handleStatusChange = async (newStatus) => {
         try {
             await api.put(`/travelfiles/${id}/status`, { status: newStatus });
-            showSuccess(`Estado cambiado a "${newStatus}"`);
-            loadFile();
+            fetchFile();
+            showSuccess(`Estado actualizado a ${newStatus}`);
         } catch (error) {
-            showError(error.message || "Error al cambiar estado");
+            showError("Error al cambiar estado");
         }
     };
 
-    const EmptyState = () => (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center dark:border-slate-700 dark:bg-slate-900/50">
-            <div className="mb-4 rounded-full bg-indigo-50 p-4 text-indigo-500 dark:bg-indigo-900/20">
-                <Plus className="h-8 w-8" />
-            </div>
-            <h3 className="text-lg font-semibold">Sin servicios cargados</h3>
-            <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-                Comienza armando el itinerario agregando vuelos, hoteles o traslados.
-            </p>
-            <div className="mt-6 flex gap-3">
-                <Button variant="outline" onClick={() => openServiceModal("Aereo")}>
-                    <Plane className="h-4 w-4 mr-2" /> Aéreo
-                </Button>
-                <Button variant="outline" onClick={() => openServiceModal("Hotel")}>
-                    <Hotel className="h-4 w-4 mr-2" /> Hotel
-                </Button>
-                <Button variant="outline" onClick={() => openServiceModal("Traslado")}>
-                    <Bus className="h-4 w-4 mr-2" /> Traslado
-                </Button>
-            </div>
-        </div>
-    );
+    // --- ACTIONS: SERVICES ---
+    const handleEditService = (service) => {
+        setServiceToEdit(service);
+        setShowServiceModal(true);
+    };
 
-    if (loading) return <div>Cargando expediente...</div>;
-    if (!file) return <div>No encontrado</div>;
+    const handleDeleteService = async (service) => {
+        const result = await Swal.fire({
+            title: '¿Eliminar Servicio?',
+            text: "Se revertirá el costo y venta del total del file.",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            confirmButtonText: 'Sí, eliminar'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                // Build endpoint based on type (Logic matches backend controllers)
+                // flightSegments, hotelBookings, transferBookings, packageBookings
+                // Using generic mapping or distinct endpoints
+                let endpoint = "";
+
+                // Determine endpoint based on service object structure or type
+                // The backend returns separate lists, we consolidate them. 
+                // We need to know the TYPE to hit the right controller.
+                // We can inject a 'type' field when consolidating.
+                if (service._type === 'Flight') endpoint = `/files/${id}/flights/${service.id}`;
+                else if (service._type === 'Hotel') endpoint = `/files/${id}/hotels/${service.id}`;
+                else if (service._type === 'Transfer') endpoint = `/files/${id}/transfers/${service.id}`;
+                else if (service._type === 'Package') endpoint = `/files/${id}/packages/${service.id}`;
+
+                await api.delete(endpoint);
+                fetchFile();
+                showSuccess("Servicio eliminado");
+            } catch (error) {
+                showError("Error al eliminar servicio");
+            }
+        }
+    };
+
+    // --- ACTIONS: PASSENGERS ---
+    const handlePassengerSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            if (editingPassenger) {
+                await api.put(`/travelfiles/passengers/${editingPassenger.id}`, passengerForm);
+            } else {
+                await api.post(`/travelfiles/${id}/passengers`, passengerForm);
+            }
+            setShowPassengerForm(false);
+            setEditingPassenger(null);
+            setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", nationality: "", phone: "", email: "", gender: "M", notes: "" });
+            fetchFile();
+            showSuccess("Pasajero guardado");
+        } catch (error) {
+            showError(error.response?.data || "Error al guardarpasajero");
+        }
+    };
+
+    const handleDeletePassenger = async (passengerId) => {
+        if (!await confirmAction("¿Eliminar pasajero?")) return;
+        try {
+            await api.delete(`/travelfiles/passengers/${passengerId}`);
+            fetchFile();
+            showSuccess("Pasajero eliminado");
+        } catch (error) {
+            showError("Error al eliminar");
+        }
+    };
+
+    // --- ACTIONS: PAYMENTS ---
+    const handlePaymentSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await api.post(`/travelfiles/${id}/payments`, {
+                ...paymentForm,
+                amount: parseFloat(paymentForm.amount)
+            });
+            setShowPaymentForm(false);
+            setPaymentForm({ amount: "", method: "Transferencia", notes: "" });
+            fetchFile();
+            showSuccess("Pago registrado correctamente");
+        } catch (error) {
+            showError(error.response?.data || "Error al registrar pago");
+        }
+    };
+
+    const handleDeletePayment = async (paymentId, amount) => {
+        const result = await Swal.fire({
+            title: '¿Eliminar Pago?',
+            text: `Se anulará el pago de $${amount} y aumentará el saldo pendiente.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            confirmButtonText: 'Sí, eliminar'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                await api.delete(`/travelfiles/${id}/payments/${paymentId}`);
+                fetchFile();
+                showSuccess("Pago eliminado");
+            } catch (error) {
+                showError("Error al eliminar pago");
+            }
+        }
+    };
+
+    // --- HELPERS ---
+    const confirmAction = async (title) => {
+        const result = await Swal.fire({
+            title,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Sí',
+            cancelButtonText: 'No'
+        });
+        return result.isConfirmed;
+    };
+
+    // --- RENDER HELPERS ---
+    const getAllServices = () => {
+        if (!file) return [];
+        const services = [];
+        file.flightSegments?.forEach(f => services.push({ ...f, _type: 'Flight', date: f.departureTime, name: `${f.airlineName} ${f.flightNumber}` }));
+        file.hotelBookings?.forEach(h => services.push({ ...h, _type: 'Hotel', date: h.checkIn, name: h.hotelName }));
+        file.transferBookings?.forEach(t => services.push({ ...t, _type: 'Transfer', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
+        file.packageBookings?.forEach(p => services.push({ ...p, _type: 'Package', date: p.startDate, name: p.packageName }));
+        // Legacy support if needed, but assuming new structure
+        return services.sort((a, b) => new Date(a.date) - new Date(b.date));
+    };
+
+    const getCapacityWarning = () => {
+        if (!file) return null;
+        const paxCount = file.passengers?.length || 0;
+        if (paxCount === 0) return null;
+
+        let totalCapacity = 0;
+        // Simple heuristic
+        file.hotelBookings?.forEach(h => totalCapacity += (h.rooms * 2)); // Assume double occupancy avg
+        file.flightSegments?.forEach(f => totalCapacity += 1); // Flights usually 1 per person logic, but this is per segment. Hard to map.
+        // Better heuristic: "If any service has passengers count distinct from file pax count?"
+        // User asked: "sihay 1 habitacion doble pero cargado hay 3 pasajeros que avise"
+        // Let's check Hotels specially
+        let hotelCapacity = 0;
+        let hasHotels = false;
+        file.hotelBookings?.forEach(h => {
+            hasHotels = true;
+            // Check room type for better accuracy?
+            if (h.roomType.toLowerCase().includes('sing')) hotelCapacity += (1 * h.rooms);
+            else if (h.roomType.toLowerCase().includes('trip')) hotelCapacity += (3 * h.rooms);
+            else if (h.roomType.toLowerCase().includes('quad')) hotelCapacity += (4 * h.rooms);
+            else hotelCapacity += (2 * h.rooms); // Default Double
+        });
+
+        if (hasHotels && paxCount > hotelCapacity) {
+            return (
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
+                    <div className="flex">
+                        <div className="flex-shrink-0">
+                            <AlertTriangle className="h-5 w-5 text-yellow-400" aria-hidden="true" />
+                        </div>
+                        <div className="ml-3">
+                            <p className="text-sm text-yellow-700">
+                                Atención: Hay <strong>{paxCount}</strong> pasajeros cargados pero la capacidad hotelera estimada es de <strong>{hotelCapacity}</strong> plazas.
+                                <br /><span className="text-xs opacity-75">Verifique la distribución de habitaciones.</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        return null;
+    };
+
+    if (loading) return <div className="p-8 text-center">Cargando file...</div>;
+    if (!file) return <div className="p-8 text-center">File no encontrado</div>;
+
+    const allServices = getAllServices();
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
-                <div className="flex items-center gap-4">
-                    <Button variant="ghost" size="icon" onClick={() => navigate("/files")}>
-                        <ArrowLeft className="h-5 w-5" />
-                    </Button>
-                    <div>
-                        <h1 className="text-2xl font-bold flex items-center gap-2">
-                            {file.name}
-                            <span className="text-sm font-normal text-muted-foreground bg-slate-100 px-2 py-1 rounded dark:bg-slate-800">
-                                {file.fileNumber}
-                            </span>
-                        </h1>
-                        <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mt-1">
-                            <span className="flex items-center gap-1">
-                                <User className="h-3 w-3" /> {file.payer?.fullName || "Sin cliente"}
-                            </span>
-                            <span className="flex items-center gap-1">
-                                <Calendar className="h-3 w-3" />
-                                {file.startDate ? new Date(file.startDate).toLocaleDateString() : "Fecha abierta"}
-                            </span>
-                            <span className={`px-2 rounded-full text-xs font-medium bg-blue-100 text-blue-700`}>
-                                {file.status}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-                <div className="flex gap-2 relative flex-wrap">
-                    {/* Status Action Buttons */}
-                    {file.status === "Presupuesto" && (
-                        <Button
-                            variant="default"
-                            className="bg-emerald-600 hover:bg-emerald-700"
-                            onClick={() => handleStatusChange("Reservado")}
-                        >
-                            ✓ Confirmar Venta
-                        </Button>
-                    )}
-                    {file.status === "Reservado" && file.balance > 0 && (
-                        <Button
-                            variant="default"
-                            className="bg-blue-600 hover:bg-blue-700"
-                            onClick={() => handleStatusChange("Operativo")}
-                        >
-                            Pasar a Operativo
-                        </Button>
-                    )}
-                    {(file.status === "Operativo" || file.status === "Reservado") && file.balance <= 0 && (
-                        <Button
-                            variant="default"
-                            className="bg-slate-600 hover:bg-slate-700"
-                            onClick={() => handleStatusChange("Cerrado")}
-                        >
-                            Cerrar Expediente
-                        </Button>
-                    )}
-                    {file.status !== "Cancelado" && file.status !== "Cerrado" && (
-                        <Button
-                            variant="ghost"
-                            className="text-rose-500 hover:text-rose-600 hover:bg-rose-50"
-                            onClick={() => {
-                                if (confirm("¿Cancelar este expediente? Esta acción no se puede deshacer.")) {
-                                    handleStatusChange("Cancelado");
-                                }
-                            }}
-                        >
-                            Cancelar
-                        </Button>
-                    )}
+        <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
 
-                    <Button variant="outline">
-                        <FileText className="h-4 w-4 mr-2" /> Voucher
-                    </Button>
-
-                    <Button onClick={() => setIsNewServiceModalOpen(true)}>
-                        <Plus className="h-4 w-4 mr-2" /> Agregar Servicio
-                    </Button>
-                </div>
-            </div>
-
-            {/* Financial Summary */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="rounded-xl border bg-card p-4">
-                    <div className="text-xs text-muted-foreground uppercase font-bold">Total Venta</div>
-                    <div className="text-2xl font-bold mt-1">${file.totalSale?.toLocaleString()}</div>
-                </div>
-                <div className="rounded-xl border bg-card p-4">
-                    <div className="text-xs text-muted-foreground uppercase font-bold">Costo Neto</div>
-                    <div className="text-2xl font-bold mt-1 text-slate-600 dark:text-slate-400">${file.totalCost?.toLocaleString()}</div>
-                </div>
-                <div className="rounded-xl border bg-card p-4">
-                    <div className="text-xs text-muted-foreground uppercase font-bold">Rentabilidad</div>
-                    <div className={`text-2xl font-bold mt-1 ${(file.totalSale - file.totalCost) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        ${(file.totalSale - file.totalCost).toLocaleString()}
-                    </div>
-                </div>
-                <div className="rounded-xl border bg-card p-4 border-l-4 border-l-indigo-500 bg-indigo-50/20">
-                    <div className="text-xs text-muted-foreground uppercase font-bold">Saldo Pendiente</div>
-                    <div className="text-2xl font-bold mt-1 text-indigo-600">
-                        ${file.balance?.toLocaleString()}
-                    </div>
-                </div>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex gap-6 border-b border-slate-200 dark:border-slate-800 overflow-x-auto">
-                {['services', 'passengers', 'payments', 'notes'].map(tab => (
+            {/* HEADER */}
+            <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
                     <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={`pb-3 text-sm font-medium border-b-2 transition-colors capitalize whitespace-nowrap ${activeTab === tab
-                            ? 'border-primary text-primary'
-                            : 'border-transparent text-muted-foreground hover:text-foreground'
-                            }`}
+                        onClick={() => navigate("/files")}
+                        className="flex items-center text-gray-500 hover:text-gray-700 mb-2 transition-colors"
                     >
-                        {tab === 'services' ? 'Itinerario' :
-                            tab === 'passengers' ? 'Pasajeros' :
-                                tab === 'payments' ? 'Pagos / Cobros' : 'Notas'}
+                        <ArrowLeft className="w-4 h-4 mr-1" /> Volver a Lista
                     </button>
-                ))}
+                    <div className="flex items-center gap-3">
+                        <h1 className="text-3xl font-bold text-gray-900">File #{file.fileNumber}</h1>
+                        <span className={`px-3 py-1 rounded-full text-sm font-medium 
+                ${file.status === 'Budget' ? 'bg-gray-100 text-gray-800' :
+                                file.status === 'Reserved' ? 'bg-blue-100 text-blue-800' :
+                                    file.status === 'Operational' ? 'bg-purple-100 text-purple-800' :
+                                        file.status === 'Closed' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                            {file.status === 'Budget' ? 'Presupuesto' :
+                                file.status === 'Reserved' ? 'Reservado' :
+                                    file.status === 'Operational' ? 'Operativo' : file.status}
+                        </span>
+                    </div>
+                    <p className="text-xl text-gray-600 mt-1">{file.name}</p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                    {/* STATUS ACTIONS */}
+                    {file.status === 'Budget' && (
+                        <button onClick={() => handleStatusChange('Reserved')} className="btn btn-primary bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow">
+                            Confirmar Reserva
+                        </button>
+                    )}
+                    {file.status === 'Reserved' && (
+                        <button onClick={() => handleStatusChange('Operational')} className="btn btn-secondary bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded shadow">
+                            Pasar a Operativo
+                        </button>
+                    )}
+                    {file.status === 'Operational' && (
+                        <button onClick={() => handleStatusChange('Closed')} className="btn btn-success bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow">
+                            Cerrar File
+                        </button>
+                    )}
+
+                    {/* ADMIN ACTIONS */}
+                    <div className="ml-2 pl-2 border-l border-gray-300 flex gap-2">
+                        {file.status === 'Budget' && (
+                            <button onClick={handleDeleteFile} className="btn bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded" title="Eliminar File">
+                                <Trash2 className="w-5 h-5" />
+                            </button>
+                        )}
+                        <button onClick={handleArchiveFile} className="btn bg-gray-100 text-gray-600 hover:bg-gray-200 px-3 py-2 rounded" title="Archivar">
+                            <Archive className="w-5 h-5" />
+                        </button>
+                    </div>
+                </div>
             </div>
 
-            {/* Services Tab */}
-            {activeTab === 'services' && (
-                <div className="space-y-4">
-                    {file.reservations && file.reservations.length > 0 ? (
-                        <div className="space-y-3">
-                            {file.reservations.map(res => (
-                                <div key={res.id} className="flex flex-col sm:flex-row sm:items-center gap-4 rounded-xl border bg-card p-4 hover:shadow-sm transition-shadow">
-                                    <div className={`h-10 w-10 flex items-center justify-center rounded-lg bg-slate-100 text-slate-600 shrink-0`}>
-                                        {SERVICE_ICONS[res.serviceType] || <CreditCard className="h-5 w-5" />}
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-2">
-                                            <h4 className="font-semibold">{res.description || res.serviceType}</h4>
-                                            <span className="text-xs bg-slate-100 px-2 py-0.5 rounded text-slate-600 uppercase">
-                                                {res.status}
-                                            </span>
-                                        </div>
-                                        <div className="text-sm text-muted-foreground mt-1">
-                                            {res.supplier?.name} • Conf: {res.confirmationNumber || "Pendiente"}
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-between sm:block sm:text-right gap-4 mt-2 sm:mt-0">
-                                        <div>
-                                            <div className="font-bold text-lg">${res.salePrice?.toLocaleString()}</div>
-                                            <div className="text-xs text-muted-foreground">
-                                                {new Date(res.departureDate).toLocaleDateString()}
-                                            </div>
-                                        </div>
-                                        <div className="flex gap-1 sm:hidden">
-                                            <Button variant="ghost" size="icon" className="text-blue-500" onClick={() => handleEditService(res)}>
-                                                <Edit2 className="h-4 w-4" />
-                                            </Button>
-                                            <Button variant="ghost" size="icon" className="text-rose-500" onClick={() => handleDeleteService(res.id)}>
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                    </div>
-                                    <div className="hidden sm:flex gap-1">
-                                        <Button variant="ghost" size="icon" className="text-blue-500 hover:bg-blue-50" onClick={() => handleEditService(res)}>
-                                            <Edit2 className="h-4 w-4" />
-                                        </Button>
-                                        <Button variant="ghost" size="icon" onClick={() => handleDeleteService(res.id)} className="text-rose-500 hover:text-rose-600 hover:bg-rose-50">
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <EmptyState />
-                    )}
+            {/* SUMMARY CARDS */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                    <p className="text-sm font-medium text-gray-500 mb-1">Total Venta</p>
+                    <p className="text-2xl font-bold text-gray-900">${file.totalSale?.toLocaleString()}</p>
                 </div>
-            )}
+                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                    <p className="text-sm font-medium text-gray-500 mb-1">Total Costo</p>
+                    <p className="text-2xl font-bold text-gray-900">${file.totalCost?.toLocaleString()}</p>
+                </div>
+                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                    <p className="text-sm font-medium text-gray-500 mb-1">Cobrado</p>
+                    <p className="text-2xl font-bold text-green-600">${(file.totalSale - file.balance)?.toLocaleString()}</p>
+                </div>
+                <div className={`bg-white rounded-xl shadow-sm p-6 border-l-4 ${file.balance > 0 ? 'border-red-500' : 'border-green-500'}`}>
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <p className="text-sm font-medium text-gray-500 mb-1">Saldo Pendiente</p>
+                            <p className={`text-2xl font-bold ${file.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                ${file.balance?.toLocaleString()}
+                            </p>
+                        </div>
+                        {file.balance > 0 && <AlertTriangle className="w-6 h-6 text-red-500" />}
+                    </div>
+                </div>
+            </div>
 
-            {/* Passengers Tab */}
-            {activeTab === 'passengers' && (
-                <div className="space-y-6">
-                    {/* Passenger Form */}
-                    <div className="rounded-xl border bg-card p-6" id="passenger-form-title">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-lg font-semibold flex items-center gap-2">
-                                <User className="h-5 w-5 text-primary" />
-                                {editingPassengerId ? "Editar Pasajero" : "Agregar Pasajero"}
-                            </h3>
-                            {editingPassengerId && (
-                                <Button variant="ghost" size="sm" onClick={cancelEditPassenger} className="text-rose-500">
-                                    Cancelar Edición
-                                </Button>
+            {/* CAPACITY WARNING */}
+            {getCapacityWarning()}
+
+            {/* TABS */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-h-[500px]">
+                <div className="border-b border-gray-200">
+                    <nav className="flex -mb-px">
+                        <button
+                            onClick={() => setActiveTab('services')}
+                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                ${activeTab === 'services' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        >
+                            <FileText className="w-4 h-4" /> Servicios
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('passengers')}
+                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                ${activeTab === 'passengers' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        >
+                            <Users className="w-4 h-4" /> Pasajeros ({file.passengers?.length || 0})
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('payments')}
+                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                ${activeTab === 'payments' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        >
+                            <DollarSign className="w-4 h-4" /> Pagos
+                        </button>
+                    </nav>
+                </div>
+
+                <div className="p-6">
+                    {/* --- TAB: SERVICES --- */}
+                    {activeTab === 'services' && (
+                        <div>
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-lg font-medium text-gray-900">Servicios Contratados</h3>
+                                <button
+                                    onClick={() => { setServiceToEdit(null); setShowServiceModal(true); }}
+                                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                                >
+                                    <Plus className="w-4 h-4" /> Agregar Servicio
+                                </button>
+                            </div>
+
+                            {allServices.length === 0 ? (
+                                <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                                    <Plane className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                                    <p className="text-gray-500">No hay servicios cargados en este file.</p>
+                                </div>
+                            ) : (
+                                <div className="overflow-hidden rounded-lg border border-gray-200">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Confirmación</th>
+                                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Venta</th>
+                                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {allServices.map((svc, idx) => (
+                                                <tr key={`${svc._type}-${svc.id}`} className="hover:bg-gray-50">
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <div className="flex items-center">
+                                                            {svc._type === 'Flight' && <Plane className="w-5 h-5 text-blue-500 mr-2" />}
+                                                            {svc._type === 'Hotel' && <Hotel className="w-5 h-5 text-indigo-500 mr-2" />}
+                                                            {svc._type === 'Transfer' && <Car className="w-5 h-5 text-yellow-500 mr-2" />}
+                                                            {svc._type === 'Package' && <Package className="w-5 h-5 text-purple-500 mr-2" />}
+                                                            <span className="font-medium text-gray-900">{svc._type === 'Flight' ? 'Aéreo' : svc._type}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="text-sm text-gray-900 font-medium">{svc.name}</div>
+                                                        <div className="text-xs text-gray-500">{svc.notes || svc.description}</div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {new Date(svc.date).toLocaleDateString()}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                      {svc.confirmationNumber ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                            {svc.confirmationNumber || 'Pendiente'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900">
+                                                        ${svc.salePrice?.toLocaleString()}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                        <button onClick={() => handleEditService(svc)} className="text-blue-600 hover:text-blue-900 mr-3">
+                                                            <Edit2 className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => handleDeleteService(svc)} className="text-red-600 hover:text-red-900">
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             )}
                         </div>
-                        <form onSubmit={handleAddPassenger} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nombre Completo *</label>
-                                <input
-                                    type="text"
-                                    required
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    placeholder="Juan Pérez"
-                                    value={passengerForm.fullName}
-                                    onChange={(e) => setPassengerForm({ ...passengerForm, fullName: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Tipo Doc.</label>
-                                <select
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    value={passengerForm.documentType}
-                                    onChange={(e) => setPassengerForm({ ...passengerForm, documentType: e.target.value })}
-                                >
-                                    <option value="DNI">DNI</option>
-                                    <option value="Pasaporte">Pasaporte</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nro. Documento</label>
-                                <input
-                                    type="text"
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    placeholder="12345678"
-                                    value={passengerForm.documentNumber}
-                                    onChange={(e) => setPassengerForm({ ...passengerForm, documentNumber: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Fecha Nacimiento</label>
-                                <input
-                                    type="date"
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    value={passengerForm.birthDate}
-                                    onChange={(e) => setPassengerForm({ ...passengerForm, birthDate: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Teléfono</label>
-                                <input
-                                    type="text"
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    placeholder="+54 11 1234-5678"
-                                    value={passengerForm.phone}
-                                    onChange={(e) => setPassengerForm({ ...passengerForm, phone: e.target.value })}
-                                />
-                            </div>
-                            <div className="flex items-end">
-                                <Button type="submit" className="w-full">
-                                    <Plus className="h-4 w-4 mr-2" />
-                                    {editingPassengerId ? "Guardar Cambios" : "Agregar"}
-                                </Button>
-                            </div>
-                        </form>
-                    </div>
+                    )}
 
-                    {/* Passengers List */}
-                    <div className="rounded-xl border overflow-hidden">
-                        <div className="bg-muted/50 px-6 py-3 border-b">
-                            <h4 className="font-medium text-sm">Lista de Pasajeros ({file.passengers?.length || 0})</h4>
-                        </div>
-                        {file.passengers && file.passengers.length > 0 ? (
-                            <div className="divide-y">
-                                {file.passengers.map((pax) => (
-                                    <div key={pax.id} className="flex items-center justify-between px-6 py-4 hover:bg-muted/30 transition-colors">
-                                        <div className="flex items-center gap-4">
-                                            <div className="h-10 w-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
-                                                {pax.fullName?.charAt(0)?.toUpperCase() || "?"}
+                    {/* --- TAB: PASSENGERS --- */}
+                    {activeTab === 'passengers' && (
+                        <div>
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-lg font-medium text-gray-900">Lista de Pasajeros</h3>
+                                <button
+                                    onClick={() => { setEditingPassenger(null); setShowPassengerForm(true); }}
+                                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                                >
+                                    <Plus className="w-4 h-4" /> Agregar Pasajero
+                                </button>
+                            </div>
+
+                            {showPassengerForm && (
+                                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
+                                    <h4 className="text-sm font-bold text-gray-700 mb-3">{editingPassenger ? 'Editar Pasajero' : 'Nuevo Pasajero'}</h4>
+                                    <form onSubmit={handlePassengerSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-700">Nombre Completo</label>
+                                            <input required type="text" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
+                                                value={passengerForm.fullName} onChange={e => setPassengerForm({ ...passengerForm, fullName: e.target.value })} />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-700">Documento</label>
+                                            <div className="flex gap-2">
+                                                <select className="mt-1 block w-24 rounded-md border-gray-300 shadow-sm sm:text-sm"
+                                                    value={passengerForm.documentType} onChange={e => setPassengerForm({ ...passengerForm, documentType: e.target.value })}>
+                                                    <option>DNI</option> <option>Pasaporte</option>
+                                                </select>
+                                                <input type="text" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
+                                                    value={passengerForm.documentNumber} onChange={e => setPassengerForm({ ...passengerForm, documentNumber: e.target.value })} />
                                             </div>
-                                            <div>
-                                                <div className="font-medium">{pax.fullName}</div>
-                                                <div className="text-sm text-muted-foreground">
-                                                    {pax.documentType} {pax.documentNumber}
-                                                    {pax.birthDate && ` • ${new Date(pax.birthDate).toLocaleDateString()}`}
-                                                </div>
-                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-700">Fecha Nac.</label>
+                                            <input type="date" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
+                                                value={passengerForm.birthDate ? passengerForm.birthDate.split('T')[0] : ''}
+                                                onChange={e => setPassengerForm({ ...passengerForm, birthDate: e.target.value })} />
+                                        </div>
+                                        <div className="col-span-full flex justify-end gap-2 mt-2">
+                                            <button type="button" onClick={() => setShowPassengerForm(false)} className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
+                                            <button type="submit" className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">Guardar</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            )}
+
+                            {/* List of Passengers */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {file.passengers?.map(p => (
+                                    <div key={p.id} className="bg-white border border-gray-200 rounded-lg p-4 flex justify-between items-start hover:shadow-md transition-shadow">
+                                        <div>
+                                            <div className="font-medium text-gray-900">{p.fullName}</div>
+                                            <div className="text-sm text-gray-500">{p.documentType}: {p.documentNumber}</div>
+                                            {p.birthDate && <div className="text-xs text-gray-400 mt-1">Nac: {new Date(p.birthDate).toLocaleDateString()}</div>}
                                         </div>
                                         <div className="flex gap-1">
-                                            <Button variant="ghost" size="icon" onClick={() => handleEditPassenger(pax)} className="text-blue-500 hover:text-blue-600 hover:bg-blue-50">
-                                                <Edit2 className="h-4 w-4" />
-                                            </Button>
-                                            <Button variant="ghost" size="icon" onClick={() => handleDeletePassenger(pax.id)} className="text-rose-500 hover:text-rose-600 hover:bg-rose-50">
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
+                                            <button onClick={() => { setEditingPassenger(p); setPassengerForm(p); setShowPassengerForm(true); }} className="p-1 text-gray-400 hover:text-blue-600">
+                                                <Edit2 className="w-4 h-4" />
+                                            </button>
+                                            <button onClick={() => handleDeletePassenger(p.id)} className="p-1 text-gray-400 hover:text-red-600">
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
                                         </div>
                                     </div>
                                 ))}
                             </div>
-                        ) : (
-                            <div className="px-6 py-12 text-center text-muted-foreground text-sm">
-                                No hay pasajeros cargados aún.
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
+                        </div>
+                    )}
 
-            {/* Payments Tab */}
-            {activeTab === 'payments' && (
-                <div className="space-y-6">
-                    {/* Payment Form */}
-                    <div className="rounded-xl border bg-card p-6">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                            <CreditCard className="h-5 w-5 text-primary" />
-                            Registrar Cobro
-                        </h3>
-                        <form onSubmit={handleAddPayment} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Monto</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    required
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    placeholder="0.00"
-                                    value={paymentForm.amount}
-                                    onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Método</label>
-                                <select
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    value={paymentForm.method}
-                                    onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}
+                    {/* --- TAB: PAYMENTS --- */}
+                    {activeTab === 'payments' && (
+                        <div>
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-lg font-medium text-gray-900">Registro de Pagos</h3>
+                                <button
+                                    onClick={() => setShowPaymentForm(true)}
+                                    className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors shadow-sm"
+                                    disabled={file.balance <= 0}
                                 >
-                                    <option value="Cash">Efectivo</option>
-                                    <option value="Transfer">Transferencia</option>
-                                    <option value="Card">Tarjeta</option>
-                                </select>
+                                    <Plus className="w-4 h-4" /> Registrar Pago
+                                </button>
                             </div>
-                            <div className="md:col-span-1 flex items-end">
-                                <Button type="submit" className="w-full">
-                                    <Plus className="h-4 w-4 mr-2" />
-                                    Registrar
-                                </Button>
-                            </div>
-                            <div className="md:col-span-3">
-                                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Notas (opcional)</label>
-                                <input
-                                    type="text"
-                                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                    placeholder="Ej: Transferencia Banco Nación"
-                                    value={paymentForm.notes}
-                                    onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                                />
-                            </div>
-                        </form>
-                    </div>
 
-                    {/* Payments List */}
-                    <div className="rounded-xl border overflow-hidden">
-                        <div className="bg-muted/50 px-6 py-3 border-b">
-                            <h4 className="font-medium text-sm">Historial de Cobros</h4>
+                            {showPaymentForm && (
+                                <div className="bg-green-50 p-4 rounded-lg border border-green-200 mb-6">
+                                    <h4 className="text-sm font-bold text-green-800 mb-3">Nuevo Pago</h4>
+                                    <form onSubmit={handlePaymentSubmit} className="flex flex-wrap gap-4 items-end">
+                                        <div className="w-40">
+                                            <label className="block text-xs font-medium text-gray-700">Monto</label>
+                                            <div className="relative mt-1 rounded-md shadow-sm">
+                                                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                                                    <span className="text-gray-500 sm:text-sm">$</span>
+                                                </div>
+                                                <input type="number" step="0.01" required className="block w-full rounded-md border-gray-300 pl-7 sm:text-sm"
+                                                    value={paymentForm.amount} onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                                                    max={file.balance} />
+                                            </div>
+                                        </div>
+                                        <div className="w-48">
+                                            <label className="block text-xs font-medium text-gray-700">Método</label>
+                                            <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
+                                                value={paymentForm.method} onChange={e => setPaymentForm({ ...paymentForm, method: e.target.value })}>
+                                                <option>Efectivo</option><option>Transferencia</option><option>Tarjeta Crédito</option><option>Tarjeta Débito</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="block text-xs font-medium text-gray-700">Notas</label>
+                                            <input type="text" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
+                                                value={paymentForm.notes} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })} />
+                                        </div>
+                                        <button type="submit" className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700">Registrar</button>
+                                        <button type="button" onClick={() => setShowPaymentForm(false)} className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
+                                    </form>
+                                </div>
+                            )}
+
+                            <div className="overflow-hidden rounded-lg border border-gray-200">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
+                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {file.payments?.map(p => (
+                                            <tr key={p.id}>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    {new Date(p.paidAt).toLocaleDateString()}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                    {p.method}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600">
+                                                    ${p.amount.toLocaleString()}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                                                    <button onClick={() => handleDeletePayment(p.id, p.amount)} className="text-red-400 hover:text-red-600 p-1">
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                        {payments.length > 0 ? (
-                            <div className="divide-y">
-                                {payments.map((payment) => (
-                                    <div key={payment.id} className="flex items-center justify-between px-6 py-4 hover:bg-muted/30 transition-colors">
-                                        <div>
-                                            <div className="font-medium">${payment.amount?.toLocaleString()}</div>
-                                            <div className="text-sm text-muted-foreground">{new Date(payment.paidAt).toLocaleDateString()} · {payment.method}</div>
-                                            {payment.notes && <div className="text-xs text-muted-foreground mt-1">{payment.notes}</div>}
-                                        </div>
-                                        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-                                            Cobrado
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="px-6 py-12 text-center text-muted-foreground text-sm">
-                                No hay pagos registrados aún.
-                            </div>
-                        )}
-                    </div>
+                    )}
                 </div>
-            )}
+            </div>
 
-            {/* Service Modal */}
-            {isServiceModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-                    <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-slate-900 border dark:border-slate-800">
-                        <div className="flex items-center justify-between border-b p-4 dark:border-slate-800">
-                            <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
-                                {SERVICE_ICONS[serviceType]}
-                                {editingServiceId ? `Editar ${serviceType}` : `Cargar ${serviceType}`}
-                            </h3>
-                            <button onClick={() => { setIsServiceModalOpen(false); setEditingServiceId(null); }} className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
-                                <X className="h-5 w-5" />
-                            </button>
-                        </div>
-                        <form onSubmit={handleAddService} className="p-6 space-y-4">
-                            {/* Provider & Desc */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2 sm:col-span-1">
-                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Proveedor</label>
-                                    <select
-                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                        value={serviceForm.supplierId}
-                                        onChange={e => setServiceForm({ ...serviceForm, supplierId: e.target.value })}
-                                        required
-                                    >
-                                        <option value="">Seleccionar...</option>
-                                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                    </select>
-                                </div>
-                                <div className="col-span-2 sm:col-span-1">
-                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Código Confirmación</label>
-                                    <input
-                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                        placeholder="PNR / Voucher"
-                                        value={serviceForm.confirmationNumber}
-                                        onChange={e => setServiceForm({ ...serviceForm, confirmationNumber: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Descripción corta</label>
-                                <input
-                                    className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                    placeholder={serviceType === 'Aereo' ? 'Vuelo AA900 MIA-EZE' : serviceType === 'Hotel' ? 'Hotel Riu Palace - Standard Room' : 'Traslado Privado'}
-                                    value={serviceForm.description}
-                                    onChange={e => setServiceForm({ ...serviceForm, description: e.target.value })}
-                                    required
-                                />
-                            </div>
-
-                            {/* Dates */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Fecha {serviceType === 'Hotel' ? 'Check-In' : 'Salida'}</label>
-                                    <input
-                                        type="datetime-local"
-                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                        value={serviceForm.departureDate}
-                                        onChange={e => setServiceForm({ ...serviceForm, departureDate: e.target.value })}
-                                        required
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Fecha {serviceType === 'Hotel' ? 'Check-Out' : serviceType === 'Aereo' ? 'Regreso (Opc)' : 'Fin'}</label>
-                                    <input
-                                        type="datetime-local"
-                                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                        value={serviceForm.returnDate}
-                                        onChange={e => setServiceForm({ ...serviceForm, returnDate: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Financials */}
-                            <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700">
-                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Valores Económicos</h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Costo Neto</label>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-2 text-slate-500">$</span>
-                                            <input
-                                                type="number" step="0.01"
-                                                className="w-full rounded-lg border border-slate-300 bg-white pl-6 p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                                value={serviceForm.netCost}
-                                                onChange={e => setServiceForm({ ...serviceForm, netCost: e.target.value })}
-                                                required
-                                            />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Precio Venta</label>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-2 text-slate-500">$</span>
-                                            <input
-                                                type="number" step="0.01"
-                                                className="w-full rounded-lg border border-slate-300 bg-white pl-6 p-2 text-sm text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                                                value={serviceForm.salePrice}
-                                                onChange={e => setServiceForm({ ...serviceForm, salePrice: e.target.value })}
-                                                required
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end gap-2 pt-2">
-                                <Button type="button" variant="ghost" onClick={() => setIsServiceModalOpen(false)}>Cancelar</Button>
-                                <Button type="submit">Guardar Servicio</Button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* New Service Modal */}
             <ServiceFormModal
-                isOpen={isNewServiceModalOpen}
-                onClose={() => setIsNewServiceModalOpen(false)}
-                fileId={id}
-                suppliers={suppliers}
-                initialServiceType={selectedServiceType}
-                onSuccess={() => {
-                    loadFile();
-                    loadServices();
-                }}
+                isOpen={showServiceModal}
+                onClose={() => { setShowServiceModal(false); setServiceToEdit(null); }}
+                fileId={parseInt(id)}
+                onSuccess={fetchFile}
+                serviceToEdit={serviceToEdit}
             />
         </div>
     );
