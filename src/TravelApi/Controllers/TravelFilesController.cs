@@ -148,10 +148,17 @@ public class TravelFilesController : ControllerBase
     public async Task<IActionResult> CreateFile(CreateFileRequest request)
     {
         var nextId = await _context.TravelFiles.CountAsync() + 1000;
+        var fileNumber = $"F-{DateTime.Now.Year}-{nextId}";
+        
+        // Use provided name OR default to FileNumber if empty
+        var fileName = !string.IsNullOrWhiteSpace(request.Name) 
+            ? request.Name 
+            : $"File {fileNumber}";
+
         var file = new TravelFile
         {
-            Name = request.Name,
-            FileNumber = $"F-{DateTime.Now.Year}-{nextId}",
+            Name = fileName,
+            FileNumber = fileNumber,
             PayerId = request.PayerId,
             StartDate = request.StartDate,
             Description = request.Description,

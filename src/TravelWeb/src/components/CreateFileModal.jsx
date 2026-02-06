@@ -11,7 +11,6 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
 
     // Form State
     const [formData, setFormData] = useState({
-        name: "",
         payerId: "",
         startDate: "",
         isBudget: true // true = Presupuesto, false = Reserva Confirmada
@@ -48,15 +47,15 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        if (!formData.name.trim()) {
-            showError("Por favor ingresa un nombre para el viaje");
+        if (!formData.payerId) {
+            showError("Por favor selecciona un cliente principal");
             return;
         }
 
         setLoading(true);
         try {
             await api.post("/travelfiles", {
-                ...formData,
+                name: "", // Backend will auto-generate
                 payerId: formData.payerId ? parseInt(formData.payerId) : null,
                 startDate: formData.startDate ? new Date(formData.startDate).toISOString() : null,
                 status: formData.isBudget ? 'Presupuesto' : 'Reservado'
@@ -163,27 +162,12 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
 
                     {/* Step 2: Basic Info */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                        {/* Trip Name */}
-                        <div className="sm:col-span-2 space-y-2">
-                            <label className="text-sm font-medium flex items-center gap-2 text-slate-700 dark:text-slate-300">
-                                <FileText className="h-4 w-4 text-slate-400" />
-                                Nombre del Viaje <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                autoFocus
-                                value={formData.name}
-                                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                placeholder="Ej. Familia Perez - Caribe 2025"
-                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 focus:bg-white dark:focus:bg-slate-800 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
-                            />
-                        </div>
 
                         {/* Customer Selection */}
-                        <div className="space-y-2">
+                        <div className="sm:col-span-2 space-y-2">
                             <label className="text-sm font-medium flex items-center gap-2 text-slate-700 dark:text-slate-300">
                                 <User className="h-4 w-4 text-slate-400" />
-                                Cliente Principal
+                                Cliente Principal <span className="text-red-500">*</span>
                             </label>
                             <div className="relative">
                                 <select
@@ -200,14 +184,14 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
                                     <Search className="h-4 w-4" />
                                 </div>
                             </div>
-                            <p className="text-xs text-slate-500">¿No existe? Puedes crearlo después.</p>
+                            <p className="text-xs text-slate-500">Se usará para facturación y contacto.</p>
                         </div>
 
                         {/* Start Date */}
-                        <div className="space-y-2">
+                        <div className="sm:col-span-2 space-y-2">
                             <label className="text-sm font-medium flex items-center gap-2 text-slate-700 dark:text-slate-300">
                                 <Calendar className="h-4 w-4 text-slate-400" />
-                                Fecha de Inicio
+                                Fecha de Inicio (Opcional)
                             </label>
                             <input
                                 type="date"
@@ -231,8 +215,8 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
                             type="submit"
                             disabled={loading}
                             className={`px-6 py-2.5 rounded-lg text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] ${loading
-                                    ? 'bg-indigo-400 cursor-not-allowed'
-                                    : 'bg-indigo-600 hover:bg-indigo-700'
+                                ? 'bg-indigo-400 cursor-not-allowed'
+                                : 'bg-indigo-600 hover:bg-indigo-700'
                                 }`}
                         >
                             {loading ? (
