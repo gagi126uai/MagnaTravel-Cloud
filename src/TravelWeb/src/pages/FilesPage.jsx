@@ -93,14 +93,18 @@ export default function FilesPage() {
         );
     };
 
-    // Archive Logic (Soft delete or status change)
+    // Archive Logic
     const handleArchive = async (e, id) => {
         e.stopPropagation();
-        if (!confirm("¿Archivar este expediente?")) return;
-        // Implementation pending: PUT /travelfiles/{id} { status: 'Cerrado' }
-        // For now just console log
-        console.log("Archive", id);
-        showSuccess("Función Archivar en implementación");
+        if (!confirm("¿Archivar este expediente? Desaparecerá de la lista principal.")) return;
+
+        try {
+            await api.put(`/travelfiles/${id}/archive`);
+            showSuccess("Expediente archivado");
+            loadFiles(); // Refresh list to remove it from current view (unless view is 'archived')
+        } catch (error) {
+            showError(error.message || "Error al archivar");
+        }
     };
 
     const filteredFiles = files.filter(f => {
