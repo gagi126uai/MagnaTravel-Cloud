@@ -425,33 +425,9 @@ export default function FileDetailPage() {
                         <FileText className="h-4 w-4 mr-2" /> Voucher
                     </Button>
 
-                    <div className="relative" ref={dropdownRef}>
-                        <Button onClick={toggleDropdown} className={isDropdownOpen ? "ring-2 ring-indigo-500 ring-offset-2" : ""}>
-                            <Plus className="h-4 w-4 mr-2" /> Agregar Servicio <ChevronDown className="h-4 w-4 ml-1 opacity-70" />
-                        </Button>
-
-                        {isDropdownOpen && (
-                            <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-30 dark:border-slate-700 dark:bg-slate-800 animate-in fade-in zoom-in-95 duration-100">
-                                <button onClick={() => openServiceModal("Aereo")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
-                                    <div className="rounded-md bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"><Plane className="h-4 w-4" /></div>
-                                    <span className="font-medium">Aéreo</span>
-                                </button>
-                                <button onClick={() => openServiceModal("Hotel")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
-                                    <div className="rounded-md bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400"><Hotel className="h-4 w-4" /></div>
-                                    <span className="font-medium">Hotel</span>
-                                </button>
-                                <button onClick={() => openServiceModal("Traslado")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
-                                    <div className="rounded-md bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"><Bus className="h-4 w-4" /></div>
-                                    <span className="font-medium">Traslado</span>
-                                </button>
-                                <div className="my-1 h-px bg-slate-100 dark:bg-slate-700"></div>
-                                <button onClick={() => openServiceModal("Otro")} className="flex w-full items-center rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 gap-3 text-left transition-colors">
-                                    <div className="rounded-md bg-slate-50 p-1.5 text-slate-600 dark:bg-slate-700 dark:text-slate-400"><CreditCard className="h-4 w-4" /></div>
-                                    <span className="font-medium">Otro Servicio</span>
-                                </button>
-                            </div>
-                        )}
-                    </div>
+                    <Button onClick={() => setIsNewServiceModalOpen(true)}>
+                        <Plus className="h-4 w-4 mr-2" /> Agregar Servicio
+                    </Button>
                 </div>
             </div>
 
