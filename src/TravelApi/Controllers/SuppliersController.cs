@@ -413,26 +413,24 @@ public class SuppliersController : ControllerBase
     /// <summary>
     /// Registrar un pago al proveedor (egreso)
     /// </summary>
+    /// <summary>
+    /// Registrar un pago al proveedor (egreso)
+    /// </summary>
     [HttpPost("{id:int}/payments")]
     public async Task<ActionResult> AddSupplierPayment(int id, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
     {
         var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
-        if (supplier is null)
-        {
-            return NotFound("Proveedor no encontrado");
-        }
+        if (supplier is null) return NotFound("Proveedor no encontrado");
 
-        if (request.Amount <= 0)
-        {
-            return BadRequest("El monto debe ser mayor a 0");
-        }
+        if (request.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
 
-        // VALIDACIÓN DE SALDO NEGATIVO
-        // Si el pago es mayor a la deuda (saldo), no permitirlo.
-        // CurrentBalance es positivo cuando DEBEMOS dinero.
-        if (request.Amount > supplier.CurrentBalance)
+        // VALIDACIÓN: Calcular deuda real
+        var currentDebt = await CalculateSupplierDebt(id, cancellationToken);
+        
+        // Si el pago es mayor a la deuda real, no permitirlo.
+        if (request.Amount > currentDebt)
         {
-            return BadRequest($"El pago ({request.Amount:C}) excede la deuda actual con el proveedor ({supplier.CurrentBalance:C}).");
+            return BadRequest($"El pago ({request.Amount:C}) excede la deuda actual con el proveedor ({currentDebt:C}).");
         }
 
         var payment = new SupplierPayment
@@ -449,8 +447,8 @@ public class SuppliersController : ControllerBase
 
         _dbContext.SupplierPayments.Add(payment);
         
-        // Actualizar saldo del proveedor (reducir deuda)
-        supplier.CurrentBalance -= request.Amount;
+        // Actualizamos stored balance también para listados simples
+        supplier.CurrentBalance = currentDebt - request.Amount; 
         
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -471,18 +469,15 @@ public class SuppliersController : ControllerBase
 
         if (request.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
 
-        // Calcular la diferencia para validar el saldo
-        // Ejemplo: Deuda 100. Pago original 50. Deuda actual 50.
-        // Nuevo pago 80. Diferencia +30.
-        // Nueva deuda sería 50 - 30 = 20. OK.
-        // Nuevo pago 120. Diferencia +70.
-        // Nueva deuda sería 50 - 70 = -20. ERROR.
-        
-        var difference = request.Amount - payment.Amount;
+        // Recalcular deuda asumiendo que este pago NO existe (para validar el nuevo monto)
+        // Deuda Real = (Servicios) - (Pagos - PagoActual)
+        var realDebt = await CalculateSupplierDebt(id, cancellationToken);
+        // CalculateSupplierDebt ya resta TODOS los pagos. Sumamos el pago actual para ver la deuda "sin este pago".
+        var debtPrePayment = realDebt + payment.Amount;
 
-        if (supplier.CurrentBalance - difference < 0)
+        if (request.Amount > debtPrePayment)
         {
-             return BadRequest($"La modificación del pago excede la deuda actual. Saldo restante: {supplier.CurrentBalance:C}, Diferencia a aplicar: {difference:C}");
+             return BadRequest($"La modificación del pago excede la deuda actual. Deuda: {debtPrePayment:C}, Nuevo Monto: {request.Amount:C}");
         }
 
         // Actualizar campos
@@ -491,10 +486,9 @@ public class SuppliersController : ControllerBase
         payment.Reference = request.Reference;
         payment.Notes = request.Notes;
         payment.TravelFileId = request.TravelFileId;
-        // PaidAt no se actualiza usualmente para mantener historial, o se podría permitir
         
-        // Actualizar saldo
-        supplier.CurrentBalance -= difference;
+        // Actualizar stored balance
+        supplier.CurrentBalance = debtPrePayment - request.Amount;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -513,13 +507,30 @@ public class SuppliersController : ControllerBase
         var payment = await _dbContext.SupplierPayments.FirstOrDefaultAsync(p => p.Id == paymentId && p.SupplierId == id, cancellationToken);
         if (payment is null) return NotFound("Pago no encontrado");
 
-        // Restaurar la deuda (sumar el monto del pago eliminado al saldo)
-        supplier.CurrentBalance += payment.Amount;
+        var currentDebt = await CalculateSupplierDebt(id, cancellationToken);
+        supplier.CurrentBalance = currentDebt + payment.Amount;
 
         _dbContext.SupplierPayments.Remove(payment);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(new { Message = "Pago eliminado y saldo restaurado" });
+    }
+
+    // Helper para calcular deuda consistente
+    private async Task<decimal> CalculateSupplierDebt(int supplierId, CancellationToken cancellationToken)
+    {
+        var validStatuses = new[] { "Reservado", "Operativo", "Cerrado" };
+
+        var flights = await _dbContext.FlightSegments.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var hotels = await _dbContext.HotelBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var transfers = await _dbContext.TransferBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var packages = await _dbContext.PackageBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var reservations = await _dbContext.Reservations.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+
+        var totalPurchases = flights + hotels + transfers + packages + reservations;
+        var totalPaid = await _dbContext.SupplierPayments.Where(p => p.SupplierId == supplierId).SumAsync(p => p.Amount, cancellationToken);
+
+        return totalPurchases - totalPaid; // Saldo positivo = Deuda
     }
 
     /// <summary>
