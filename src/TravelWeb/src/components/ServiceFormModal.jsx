@@ -84,31 +84,47 @@ function RateSelector({ serviceType, supplierId, onSelect, suppliers }) {
             />
             {showDropdown && rates.length > 0 && (
                 <div className="absolute z-30 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg max-h-60 overflow-y-auto">
-                    {rates.map(rate => (
-                        <button
-                            key={rate.id}
-                            type="button"
-                            onClick={() => {
-                                onSelect(rate);
-                                setShowDropdown(false);
-                                setSearch(rate.productName || "");
-                            }}
-                            className="w-full text-left px-4 py-3 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors"
-                        >
-                            <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
-                            <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1 mt-1">
-                                <div className="flex items-center gap-3">
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">Costo: ${rate.netCost}</span>
-                                    <span className="text-indigo-600 dark:text-indigo-400 font-medium">Venta: ${rate.salePrice}</span>
+                    {rates.map(rate => {
+                        const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                        return (
+                            <button
+                                key={rate.id}
+                                type="button"
+                                disabled={isExpired}
+                                onClick={() => {
+                                    if (isExpired) return;
+                                    onSelect(rate);
+                                    setShowDropdown(false);
+                                    setSearch(rate.productName || "");
+                                }}
+                                className={`w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors
+                                    ${isExpired
+                                        ? "bg-red-50 dark:bg-red-900/10 cursor-not-allowed opacity-60"
+                                        : "hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer"
+                                    }`}
+                            >
+                                <div className="flex justify-between items-start">
+                                    <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
+                                    {isExpired && (
+                                        <span className="ml-2 px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 ring-1 ring-red-500/20">
+                                            VENCIDA
+                                        </span>
+                                    )}
                                 </div>
-                                {rate.serviceType === "Hotel" && (
-                                    <div className="text-slate-600 dark:text-slate-300">
-                                        {rate.roomType} {rate.roomCategory} {rate.roomFeatures && `(${rate.roomFeatures})`}
+                                <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1 mt-1">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">Costo: ${rate.netCost}</span>
+                                        <span className="text-indigo-600 dark:text-indigo-400 font-medium">Venta: ${rate.salePrice}</span>
                                     </div>
-                                )}
-                            </div>
-                        </button>
-                    ))}
+                                    {rate.serviceType === "Hotel" && (
+                                        <div className="text-slate-600 dark:text-slate-300">
+                                            {rate.roomType} {rate.roomCategory} {rate.roomFeatures && `(${rate.roomFeatures})`}
+                                        </div>
+                                    )}
+                                </div>
+                            </button>
+                        );
+                    })}
                 </div>
             )}
             {showDropdown && rates.length === 0 && !loading && search && (

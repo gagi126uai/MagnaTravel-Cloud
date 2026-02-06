@@ -36,11 +36,11 @@ const cabinClasses = [
     { value: "First", label: "First Class" },
 ];
 
-const Modal = ({ isOpen, onClose, title, children }) => {
+const Modal = ({ isOpen, onClose, title, children, className }) => {
     if (!isOpen) return null;
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm overflow-y-auto">
-            <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900 my-8">
+            <div className={`w-full overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900 my-8 ${className || "max-w-2xl"}`}>
                 <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h3>
                     <button onClick={onClose} className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white">
@@ -442,6 +442,14 @@ export default function RatesPage() {
                         </div>
                     </div>
                 ))}
+                {rates.some(r => r.validTo && new Date(r.validTo) < new Date()) && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/30 dark:bg-red-900/10">
+                        <div className="text-xs text-red-600 dark:text-red-400 uppercase font-bold">Vencidas</div>
+                        <div className="text-lg font-bold mt-1 text-red-700 dark:text-red-300">
+                            {rates.filter(r => r.validTo && new Date(r.validTo) < new Date()).length} <span className="text-xs font-normal">Acción requerida</span>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Table */}
@@ -464,73 +472,76 @@ export default function RatesPage() {
                             <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                                 {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas. Cree una nueva para comenzar."}
                             </td></tr>
-                        ) : filteredRates.map(rate => (
-                            <tr key={rate.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                                <td className="px-4 py-3">
-                                    <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
-                                        rate.serviceType === "Hotel" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
-                                            rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                                                rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
-                                                    "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
-                                        }`}>
-                                        {rate.serviceType}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
-                                <td className="px-4 py-3">
-                                    <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
-                                        {rate.serviceType === "Hotel" && (
-                                            <div className="flex flex-col">
-                                                <span className="font-medium">{rate.roomType} {rate.roomCategory}</span>
-                                                <span className="text-xs text-slate-500">{rate.mealPlan}</span>
-                                            </div>
-                                        )}
-                                        {rate.serviceType === "Aereo" && (
-                                            <div className="flex flex-col">
-                                                <span>{rate.airline} ({rate.airlineCode})</span>
-                                                <span className="text-xs text-slate-500">{rate.cabinClass}</span>
-                                            </div>
-                                        )}
-                                        {rate.serviceType === "Traslado" && (
-                                            <div className="flex flex-col">
-                                                <span>{rate.vehicleType}</span>
-                                                <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
-                                            </div>
-                                        )}
-                                        {rate.serviceType === "Paquete" && (
-                                            <div className="flex flex-col">
-                                                <span>{rate.destination}</span>
-                                                <span className="text-xs text-slate-500">{rate.durationDays} días</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <div className="flex flex-col text-xs">
-                                        <span className="text-slate-700 dark:text-slate-300">
-                                            Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
+                        ) : filteredRates.map(rate => {
+                            const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                            return (
+                                <tr key={rate.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
+                                    <td className="px-4 py-3">
+                                        <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
+                                            rate.serviceType === "Hotel" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                                                rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                                                    rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
+                                                        "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
+                                            }`}>
+                                            {rate.serviceType}
                                         </span>
-                                        <span className="text-slate-500 dark:text-slate-400">
-                                            Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
-                                        </span>
-                                    </div>
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                    <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
-                                    <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
-                                </td>
-                            </tr>
-                        ))}
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
+                                    <td className="px-4 py-3">
+                                        <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
+                                            {rate.serviceType === "Hotel" && (
+                                                <div className="flex flex-col">
+                                                    <span className="font-medium">{rate.roomType} {rate.roomCategory}</span>
+                                                    <span className="text-xs text-slate-500">{rate.mealPlan}</span>
+                                                </div>
+                                            )}
+                                            {rate.serviceType === "Aereo" && (
+                                                <div className="flex flex-col">
+                                                    <span>{rate.airline} ({rate.airlineCode})</span>
+                                                    <span className="text-xs text-slate-500">{rate.cabinClass}</span>
+                                                </div>
+                                            )}
+                                            {rate.serviceType === "Traslado" && (
+                                                <div className="flex flex-col">
+                                                    <span>{rate.vehicleType}</span>
+                                                    <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
+                                                </div>
+                                            )}
+                                            {rate.serviceType === "Paquete" && (
+                                                <div className="flex flex-col">
+                                                    <span>{rate.destination}</span>
+                                                    <span className="text-xs text-slate-500">{rate.durationDays} días</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <div className="flex flex-col text-xs">
+                                            <span className="text-slate-700 dark:text-slate-300">
+                                                Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
+                                            </span>
+                                            <span className="text-slate-500 dark:text-slate-400">
+                                                Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-3 text-center">
+                                        <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
+                                        <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>
 
             {/* Modal */}
-            <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={form.id ? "Editar Tarifa" : "Nueva Tarifa"}>
+            <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={form.id ? "Editar Tarifa" : "Nueva Tarifa"} className="max-w-4xl">
                 <form onSubmit={saveRate} className="space-y-5">
                     {/* Tipo de Servicio - Tabs visuales */}
                     <div>
@@ -891,9 +902,9 @@ export default function RatesPage() {
                         </button>
                     </div>
 
-                    {/* Precios (Ocultar si es Hotel Batch) */}
+                    {/* Precios (Mostrar si NO es Hotel O si es Single Edit/Entry no-batch) */}
                     <div className="grid grid-cols-4 gap-4">
-                        {form.serviceType !== "Hotel" && (
+                        {(form.serviceType !== "Hotel" || roomVariations.length === 0) && (
                             <>
                                 <div>
                                     <label className={labelClass}>Costo Neto *</label>
