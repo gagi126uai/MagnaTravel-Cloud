@@ -439,22 +439,6 @@ export default function SettingsPage() {
               <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Configuración Comercial</h3>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Comisión por Defecto (%)</label>
-                  <div className="relative mt-1">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.5"
-                      className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 pr-10 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                      value={agencyForm.defaultCommissionPercent}
-                      onChange={e => setAgencyForm({ ...agencyForm, defaultCommissionPercent: parseFloat(e.target.value) || 0 })}
-                    />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">%</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">Se aplicará automáticamente a nuevos servicios</p>
-                </div>
-                <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Moneda Principal</label>
                   <select
                     className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
@@ -465,6 +449,11 @@ export default function SettingsPage() {
                     <option value="USD">USD - Dólar Estadounidense</option>
                     <option value="EUR">EUR - Euro</option>
                   </select>
+                </div>
+                <div className="flex items-end">
+                  <p className="text-sm text-slate-500">
+                    💡 Las comisiones se configuran en la pestaña <strong>"Comisiones"</strong>
+                  </p>
                 </div>
               </div>
             </div>
