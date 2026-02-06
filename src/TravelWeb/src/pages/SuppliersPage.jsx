@@ -33,7 +33,8 @@ export default function SuppliersPage() {
       setSuppliers(data);
     } catch (error) {
       console.error("Error fetching suppliers:", error);
-      showError("No se pudieron cargar los proveedores");
+      const errorMsg = error.response?.data || error.message || "No se pudieron cargar los proveedores";
+      showError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg), "Error de carga");
     } finally {
       setLoading(false);
     }
@@ -82,7 +83,8 @@ export default function SuppliersPage() {
       fetchSuppliers();
     } catch (error) {
       console.error("Error saving supplier:", error);
-      showError("No se pudo guardar el proveedor");
+      const errorMsg = error.response?.data || error.message || "No se pudo guardar el proveedor";
+      showError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg), "Error al guardar");
     }
   };
 
