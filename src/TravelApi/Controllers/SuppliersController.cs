@@ -81,6 +81,36 @@ public class SuppliersController : ControllerBase
         return Ok(existing);
     }
 
+    [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> DeleteSupplier(int id, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
+        if (supplier is null)
+        {
+            return NotFound("Proveedor no encontrado");
+        }
+
+        // Check for related services
+        var hasServices = await _dbContext.Reservations.AnyAsync(r => r.SupplierId == id, cancellationToken);
+        if (hasServices)
+        {
+            return BadRequest("No se puede eliminar: el proveedor tiene servicios asociados");
+        }
+
+        // Check for related payments
+        var hasPayments = await _dbContext.SupplierPayments.AnyAsync(p => p.SupplierId == id, cancellationToken);
+        if (hasPayments)
+        {
+            return BadRequest("No se puede eliminar: el proveedor tiene pagos registrados");
+        }
+
+        _dbContext.Suppliers.Remove(supplier);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { Message = "Proveedor eliminado" });
+    }
+
     /// <summary>
     /// Cuenta corriente del proveedor: servicios comprados, pagos realizados, saldo
     /// </summary>

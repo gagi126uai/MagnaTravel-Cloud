@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Pencil, Wallet, Building2, Mail, Phone, Power, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, Search, Pencil, Wallet, Trash2, Building2, Mail, Phone, Power, CheckCircle2, XCircle } from "lucide-react";
 import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
 import Swal from "sweetalert2";
@@ -80,6 +80,28 @@ export default function SuppliersPage() {
     } catch (error) {
       console.error("Error saving supplier:", error);
       Swal.fire("Error", "No se pudo guardar el proveedor", "error");
+    }
+  };
+
+  const handleDelete = async (supplier) => {
+    const result = await Swal.fire({
+      title: "¿Eliminar proveedor?",
+      text: `¿Estás seguro de eliminar a ${supplier.name}?`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#ef4444",
+      confirmButtonText: "Sí, eliminar",
+      cancelButtonText: "Cancelar"
+    });
+
+    if (result.isConfirmed) {
+      try {
+        await api.delete(`/suppliers/${supplier.id}`);
+        Swal.fire("Eliminado", "Proveedor eliminado correctamente", "success");
+        fetchSuppliers();
+      } catch (error) {
+        Swal.fire("Error", error.response?.data || "No se pudo eliminar el proveedor", "error");
+      }
     }
   };
 
@@ -166,6 +188,13 @@ export default function SuppliersPage() {
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background/50 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
                       >
                         <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(supplier)}
+                        title="Eliminar Proveedor"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-500/50 bg-red-500/10 text-red-500 text-sm font-medium shadow-sm hover:bg-red-500/20"
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </td>
