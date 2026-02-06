@@ -117,9 +117,9 @@ export default function FilesPage() {
         // View Filter
         let viewMatch = true;
         if (viewFilter === 'all') {
-            viewMatch = !['Cerrado', 'Cancelado'].includes(f.status);
+            viewMatch = !['Cerrado', 'Cancelado', 'Archived'].includes(f.status);
         } else if (viewFilter === 'archived') {
-            viewMatch = ['Cerrado', 'Cancelado'].includes(f.status);
+            viewMatch = ['Cerrado', 'Cancelado', 'Archived'].includes(f.status);
         } else {
             viewMatch = f.status === viewFilter;
         }

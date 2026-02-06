@@ -303,13 +303,11 @@ export default function FileDetailPage() {
                     <div className="flex items-center gap-3">
                         <h1 className="text-3xl font-bold text-gray-900">File #{file.fileNumber}</h1>
                         <span className={`px-3 py-1 rounded-full text-sm font-medium 
-                ${file.status === 'Budget' ? 'bg-gray-100 text-gray-800' :
-                                file.status === 'Reserved' ? 'bg-blue-100 text-blue-800' :
-                                    file.status === 'Operational' ? 'bg-purple-100 text-purple-800' :
-                                        file.status === 'Closed' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                            {file.status === 'Budget' ? 'Presupuesto' :
-                                file.status === 'Reserved' ? 'Reservado' :
-                                    file.status === 'Operational' ? 'Operativo' : file.status}
+                ${file.status === 'Presupuesto' ? 'bg-gray-100 text-gray-800' :
+                                file.status === 'Reservado' ? 'bg-blue-100 text-blue-800' :
+                                    file.status === 'Operativo' ? 'bg-purple-100 text-purple-800' :
+                                        file.status === 'Cerrado' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                            {file.status}
                         </span>
                     </div>
                     <p className="text-xl text-gray-600 mt-1">{file.name}</p>
@@ -317,25 +315,25 @@ export default function FileDetailPage() {
 
                 <div className="flex flex-wrap gap-2">
                     {/* STATUS ACTIONS */}
-                    {file.status === 'Budget' && (
-                        <button onClick={() => handleStatusChange('Reserved')} className="btn btn-primary bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow">
+                    {file.status === 'Presupuesto' && (
+                        <button onClick={() => handleStatusChange('Reservado')} className="btn btn-primary bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow">
                             Confirmar Reserva
                         </button>
                     )}
-                    {file.status === 'Reserved' && (
-                        <button onClick={() => handleStatusChange('Operational')} className="btn btn-secondary bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded shadow">
+                    {file.status === 'Reservado' && (
+                        <button onClick={() => handleStatusChange('Operativo')} className="btn btn-secondary bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded shadow">
                             Pasar a Operativo
                         </button>
                     )}
-                    {file.status === 'Operational' && (
-                        <button onClick={() => handleStatusChange('Closed')} className="btn btn-success bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow">
+                    {file.status === 'Operativo' && (
+                        <button onClick={() => handleStatusChange('Cerrado')} className="btn btn-success bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow">
                             Cerrar File
                         </button>
                     )}
 
                     {/* ADMIN ACTIONS */}
                     <div className="ml-2 pl-2 border-l border-gray-300 flex gap-2">
-                        {file.status === 'Budget' && (
+                        {file.status === 'Presupuesto' && (
                             <button onClick={handleDeleteFile} className="btn bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded" title="Eliminar File">
                                 <Trash2 className="w-5 h-5" />
                             </button>
