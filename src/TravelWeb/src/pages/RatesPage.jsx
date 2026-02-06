@@ -452,17 +452,16 @@ export default function RatesPage() {
                             <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Producto</th>
                             <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Tipo</th>
                             <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Proveedor</th>
-                            <th className="px-4 py-3 text-right font-medium text-slate-600 dark:text-slate-300">Costo</th>
-                            <th className="px-4 py-3 text-right font-medium text-slate-600 dark:text-slate-300">Venta</th>
-                            <th className="px-4 py-3 text-right font-medium text-slate-600 dark:text-slate-300">Margen</th>
+                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Detalles</th>
+                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Vigencia</th>
                             <th className="px-4 py-3 text-center font-medium text-slate-600 dark:text-slate-300">Acciones</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                         {loading ? (
-                            <tr><td colSpan="7" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">Cargando...</td></tr>
+                            <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">Cargando...</td></tr>
                         ) : filteredRates.length === 0 ? (
-                            <tr><td colSpan="7" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                            <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                                 {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas. Cree una nueva para comenzar."}
                             </td></tr>
                         ) : filteredRates.map(rate => (
@@ -482,15 +481,43 @@ export default function RatesPage() {
                                     </span>
                                 </td>
                                 <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
-                                <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-slate-300">
-                                    ${rate.netCost?.toLocaleString()}
-                                    {rate.tax > 0 && <span className="text-xs text-slate-400 block">+${rate.tax} tax</span>}
+                                <td className="px-4 py-3">
+                                    <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
+                                        {rate.serviceType === "Hotel" && (
+                                            <div className="flex flex-col">
+                                                <span className="font-medium">{rate.roomType} {rate.roomCategory}</span>
+                                                <span className="text-xs text-slate-500">{rate.mealPlan}</span>
+                                            </div>
+                                        )}
+                                        {rate.serviceType === "Aereo" && (
+                                            <div className="flex flex-col">
+                                                <span>{rate.airline} ({rate.airlineCode})</span>
+                                                <span className="text-xs text-slate-500">{rate.cabinClass}</span>
+                                            </div>
+                                        )}
+                                        {rate.serviceType === "Traslado" && (
+                                            <div className="flex flex-col">
+                                                <span>{rate.vehicleType}</span>
+                                                <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
+                                            </div>
+                                        )}
+                                        {rate.serviceType === "Paquete" && (
+                                            <div className="flex flex-col">
+                                                <span>{rate.destination}</span>
+                                                <span className="text-xs text-slate-500">{rate.durationDays} días</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </td>
-                                <td className="px-4 py-3 text-right font-mono font-medium text-emerald-600 dark:text-emerald-400">${rate.salePrice?.toLocaleString()}</td>
-                                <td className="px-4 py-3 text-right">
-                                    <span className={`font-medium ${(rate.salePrice - rate.netCost - (rate.tax || 0)) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                        ${(rate.salePrice - rate.netCost - (rate.tax || 0)).toLocaleString()}
-                                    </span>
+                                <td className="px-4 py-3">
+                                    <div className="flex flex-col text-xs">
+                                        <span className="text-slate-700 dark:text-slate-300">
+                                            Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
+                                        </span>
+                                        <span className="text-slate-500 dark:text-slate-400">
+                                            Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
+                                        </span>
+                                    </div>
                                 </td>
                                 <td className="px-4 py-3 text-center">
                                     <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
