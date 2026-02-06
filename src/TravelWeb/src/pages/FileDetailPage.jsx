@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 import ServiceFormModal from "../components/ServiceFormModal";
+import PassengerFormModal from "../components/PassengerFormModal";
 import { showError, showSuccess } from "../alerts";
 
 export default function FileDetailPage() {
@@ -23,12 +24,6 @@ export default function FileDetailPage() {
     const [showPassengerForm, setShowPassengerForm] = useState(false);
     const [editingPassenger, setEditingPassenger] = useState(null);
     const [showPaymentForm, setShowPaymentForm] = useState(false);
-
-    // Passenger Form State
-    const [passengerForm, setPassengerForm] = useState({
-        fullName: "", documentType: "DNI", documentNumber: "",
-        birthDate: "", nationality: "", phone: "", email: "", gender: "M", notes: ""
-    });
 
     // Payment Form State
     const [paymentForm, setPaymentForm] = useState({
@@ -162,23 +157,8 @@ export default function FileDetailPage() {
     };
 
     // --- ACTIONS: PASSENGERS ---
-    const handlePassengerSubmit = async (e) => {
-        e.preventDefault();
-        try {
-            if (editingPassenger) {
-                await api.put(`/travelfiles/passengers/${editingPassenger.id}`, passengerForm);
-            } else {
-                await api.post(`/travelfiles/${id}/passengers`, passengerForm);
-            }
-            setShowPassengerForm(false);
-            setEditingPassenger(null);
-            setPassengerForm({ fullName: "", documentType: "DNI", documentNumber: "", birthDate: "", nationality: "", phone: "", email: "", gender: "M", notes: "" });
-            fetchFile();
-            showSuccess("Pasajero guardado");
-        } catch (error) {
-            showError(error.response?.data || "Error al guardarpasajero");
-        }
-    };
+    // --- ACTIONS: PASSENGERS ---
+    // Moved to PassengerFormModal
 
     const handleDeletePassenger = async (passengerId) => {
         if (!await confirmAction("¿Eliminar pasajero?")) return;
@@ -535,39 +515,7 @@ export default function FileDetailPage() {
                                 </button>
                             </div>
 
-                            {showPassengerForm && (
-                                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
-                                    <h4 className="text-sm font-bold text-gray-700 mb-3">{editingPassenger ? 'Editar Pasajero' : 'Nuevo Pasajero'}</h4>
-                                    <form onSubmit={handlePassengerSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700">Nombre Completo</label>
-                                            <input required type="text" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
-                                                value={passengerForm.fullName} onChange={e => setPassengerForm({ ...passengerForm, fullName: e.target.value })} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700">Documento</label>
-                                            <div className="flex gap-2">
-                                                <select className="mt-1 block w-24 rounded-md border-gray-300 shadow-sm sm:text-sm"
-                                                    value={passengerForm.documentType} onChange={e => setPassengerForm({ ...passengerForm, documentType: e.target.value })}>
-                                                    <option>DNI</option> <option>Pasaporte</option>
-                                                </select>
-                                                <input type="text" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
-                                                    value={passengerForm.documentNumber} onChange={e => setPassengerForm({ ...passengerForm, documentNumber: e.target.value })} />
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700">Fecha Nac.</label>
-                                            <input type="date" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
-                                                value={passengerForm.birthDate ? passengerForm.birthDate.split('T')[0] : ''}
-                                                onChange={e => setPassengerForm({ ...passengerForm, birthDate: e.target.value })} />
-                                        </div>
-                                        <div className="col-span-full flex justify-end gap-2 mt-2">
-                                            <button type="button" onClick={() => setShowPassengerForm(false)} className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
-                                            <button type="submit" className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">Guardar</button>
-                                        </div>
-                                    </form>
-                                </div>
-                            )}
+                            {/* Modal is rendered at bottom */}
 
                             {/* List of Passengers */}
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -579,7 +527,7 @@ export default function FileDetailPage() {
                                             {p.birthDate && <div className="text-xs text-gray-400 mt-1">Nac: {new Date(p.birthDate).toLocaleDateString()}</div>}
                                         </div>
                                         <div className="flex gap-1">
-                                            <button onClick={() => { setEditingPassenger(p); setPassengerForm(p); setShowPassengerForm(true); }} className="p-1 text-gray-400 hover:text-blue-600">
+                                            <button onClick={() => { setEditingPassenger(p); setShowPassengerForm(true); }} className="p-1 text-gray-400 hover:text-blue-600">
                                                 <Edit2 className="w-4 h-4" />
                                             </button>
                                             <button onClick={() => handleDeletePassenger(p.id)} className="p-1 text-gray-400 hover:text-red-600">
@@ -683,6 +631,14 @@ export default function FileDetailPage() {
                 onSuccess={fetchFile}
                 serviceToEdit={serviceToEdit}
                 suppliers={suppliers}
+            />
+
+            <PassengerFormModal
+                isOpen={showPassengerForm}
+                onClose={() => { setShowPassengerForm(false); setEditingPassenger(null); }}
+                fileId={parseInt(id)}
+                onSuccess={fetchFile}
+                passengerToEdit={editingPassenger}
             />
         </div>
     );
