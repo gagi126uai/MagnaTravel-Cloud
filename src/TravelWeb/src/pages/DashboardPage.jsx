@@ -63,7 +63,7 @@ export default function DashboardPage() {
             {/* Header */}
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+                    <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
                     <p className="text-muted-foreground">
                         Resumen ejecutivo de la operación diaria.
                     </p>
@@ -86,7 +86,7 @@ export default function DashboardPage() {
                         <FileText className="h-4 w-4 text-blue-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-blue-700 dark:text-blue-300">{dashboard.presupuestos}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-blue-700 dark:text-blue-300">{dashboard.presupuestos}</div>
                         <p className="text-xs text-blue-600/70">Borradores sin confirmar</p>
                     </CardContent>
                 </Card>
@@ -101,7 +101,7 @@ export default function DashboardPage() {
                         <Clock className="h-4 w-4 text-amber-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-amber-700 dark:text-amber-300">{dashboard.reservados}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-amber-700 dark:text-amber-300">{dashboard.reservados}</div>
                         <p className="text-xs text-amber-600/70">Ventas confirmadas</p>
                     </CardContent>
                 </Card>
@@ -116,7 +116,7 @@ export default function DashboardPage() {
                         <Briefcase className="h-4 w-4 text-emerald-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-emerald-700 dark:text-emerald-300">{dashboard.operativos}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-emerald-700 dark:text-emerald-300">{dashboard.operativos}</div>
                         <p className="text-xs text-emerald-600/70">En proceso de viaje</p>
                     </CardContent>
                 </Card>
@@ -128,7 +128,7 @@ export default function DashboardPage() {
                         <AlertCircle className="h-4 w-4 text-rose-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-rose-700 dark:text-rose-300">${dashboard.saldoPendiente?.toLocaleString()}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-rose-700 dark:text-rose-300">${dashboard.saldoPendiente?.toLocaleString()}</div>
                         <p className="text-xs text-rose-600/70">Por cobrar en expedientes activos</p>
                     </CardContent>
                 </Card>
@@ -142,7 +142,7 @@ export default function DashboardPage() {
                         <DollarSign className="h-4 w-4 text-indigo-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-indigo-700 dark:text-indigo-300">${dashboard.cobrosDelMes?.toLocaleString()}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-indigo-700 dark:text-indigo-300">${dashboard.cobrosDelMes?.toLocaleString()}</div>
                         <p className="text-xs text-indigo-600/70 mt-1">Ingresado de clientes</p>
                     </CardContent>
                 </Card>
@@ -153,7 +153,7 @@ export default function DashboardPage() {
                         <TrendingUp className="h-4 w-4 text-purple-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-purple-700 dark:text-purple-300">${dashboard.ventasDelMes?.toLocaleString()}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-purple-700 dark:text-purple-300">${dashboard.ventasDelMes?.toLocaleString()}</div>
                         <p className="text-xs text-purple-600/70 mt-1">Total vendido</p>
                     </CardContent>
                 </Card>
@@ -164,7 +164,7 @@ export default function DashboardPage() {
                         <DollarSign className="h-4 w-4 text-orange-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-orange-700 dark:text-orange-300">${dashboard.costosDelMes?.toLocaleString() || 0}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-orange-700 dark:text-orange-300">${dashboard.costosDelMes?.toLocaleString() || 0}</div>
                         <p className="text-xs text-orange-600/70 mt-1">Costo de servicios</p>
                     </CardContent>
                 </Card>
@@ -175,7 +175,7 @@ export default function DashboardPage() {
                         <TrendingUp className="h-4 w-4 text-emerald-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className={`text-3xl font-bold ${(dashboard.margenBruto || 0) >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600'}`}>
+                        <div className={`text-2xl md:text-3xl font-bold ${(dashboard.margenBruto || 0) >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600'}`}>
                             ${dashboard.margenBruto?.toLocaleString() || 0}
                         </div>
                         <p className="text-xs text-emerald-600/70 mt-1">Venta - Costo</p>
@@ -191,7 +191,7 @@ export default function DashboardPage() {
                         <DollarSign className="h-4 w-4 text-rose-600" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-rose-700 dark:text-rose-300">${dashboard.pagosProveedores?.toLocaleString()}</div>
+                        <div className="text-2xl md:text-3xl font-bold text-rose-700 dark:text-rose-300">${dashboard.pagosProveedores?.toLocaleString()}</div>
                         <p className="text-xs text-rose-600/70 mt-1">Egresos pagados a proveedores</p>
                     </CardContent>
                 </Card>

@@ -95,15 +95,15 @@ export default function CustomersPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-white">Clientes</h2>
-          <p className="text-muted-foreground">Pasajeros y Cuentas Corporativas</p>
+          <h2 className="text-xl md:text-2xl font-bold tracking-tight">Clientes</h2>
+          <p className="text-sm text-muted-foreground">Pasajeros y Cuentas Corporativas</p>
         </div>
         <button
           onClick={() => handleOpenModal()}
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
+          className="flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 w-full sm:w-auto"
         >
           <Plus className="h-4 w-4" />
           Nuevo Cliente

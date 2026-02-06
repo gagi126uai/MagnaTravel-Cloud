@@ -124,10 +124,10 @@ export default function FilesPage() {
     });
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <div>
-                    <h2 className="text-2xl font-bold tracking-tight">Gestión de Viajes</h2>
+                    <h2 className="text-xl md:text-2xl font-bold tracking-tight">Gestión de Viajes</h2>
                     <p className="text-sm text-muted-foreground">Administra tus expedientes, presupuestos y ventas.</p>
                 </div>
                 <Button onClick={() => setIsCreateModalOpen(true)} className="w-full sm:w-auto shadow-sm">

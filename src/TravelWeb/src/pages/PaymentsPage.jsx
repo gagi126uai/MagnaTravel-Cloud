@@ -48,15 +48,15 @@ export default function PaymentsPage() {
   const totalAmount = filteredPayments.reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Caja Administrativa</h2>
+          <h2 className="text-xl md:text-2xl font-bold tracking-tight">Caja Administrativa</h2>
           <p className="text-sm text-muted-foreground">Control de ingresos y egresos monetarios.</p>
         </div>
-        <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-4 py-2 rounded-xl border border-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800">
-          <div className="text-sm font-medium">Total en Vista:</div>
-          <div className="text-xl font-bold">${totalAmount.toLocaleString()}</div>
+        <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl border border-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800 w-full sm:w-auto justify-between sm:justify-start">
+          <div className="text-xs sm:text-sm font-medium">Total:</div>
+          <div className="text-lg sm:text-xl font-bold">${totalAmount.toLocaleString()}</div>
         </div>
       </div>
 
