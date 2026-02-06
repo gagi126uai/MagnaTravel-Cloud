@@ -210,24 +210,30 @@ export default function SettingsPage() {
   const saveCommissionRule = async (e) => {
     e.preventDefault();
     try {
-      const payload = {
-        supplierId: commissionForm.supplierId ? parseInt(commissionForm.supplierId) : null,
-        serviceType: commissionForm.serviceType || null,
-        commissionPercent: parseFloat(commissionForm.commissionPercent),
-        description: commissionForm.description || null
-      };
       if (commissionForm.id) {
-        await api.put(`/commissions/${commissionForm.id}`, payload);
+        // PUT: solo actualiza porcentaje, descripción e isActive
+        await api.put(`/commissions/${commissionForm.id}`, {
+          commissionPercent: parseFloat(commissionForm.commissionPercent),
+          description: commissionForm.description || null,
+          isActive: true
+        });
         Swal.fire("Guardado", "Regla de comisión actualizada", "success");
       } else {
-        await api.post("/commissions", payload);
+        // POST: crea nueva regla con todos los campos
+        await api.post("/commissions", {
+          supplierId: commissionForm.supplierId ? parseInt(commissionForm.supplierId) : null,
+          serviceType: commissionForm.serviceType || null,
+          commissionPercent: parseFloat(commissionForm.commissionPercent),
+          description: commissionForm.description || null
+        });
         Swal.fire("Guardado", "Regla de comisión creada", "success");
       }
       setShowCommissionModal(false);
       setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, description: "" });
       loadCommissionRules();
     } catch (error) {
-      Swal.fire("Error", error.response?.data || "Ya existe una regla similar", "error");
+      console.error("Error saving commission rule:", error);
+      Swal.fire("Error", error.message || "No se pudo guardar la regla", "error");
     }
   };
 
@@ -259,9 +265,11 @@ export default function SettingsPage() {
     if (result.isConfirmed) {
       try {
         await api.delete(`/commissions/${id}`);
+        Swal.fire("Eliminado", "Regla eliminada correctamente", "success");
         loadCommissionRules();
       } catch (error) {
-        Swal.fire("Error", "No se pudo eliminar", "error");
+        console.error("Error deleting commission rule:", error);
+        Swal.fire("Error", error.message || "No se pudo eliminar", "error");
       }
     }
   };
