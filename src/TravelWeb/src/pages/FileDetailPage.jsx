@@ -358,9 +358,14 @@ export default function FileDetailPage() {
                         </button>
                     )}
                     {file.status === 'Reservado' && (
-                        <button onClick={() => handleStatusChange('Operativo')} className="btn btn-secondary bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded shadow">
-                            Pasar a Operativo
-                        </button>
+                        <>
+                            <button onClick={() => handleStatusChange('Operativo')} className="btn btn-secondary bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded shadow">
+                                Pasar a Operativo
+                            </button>
+                            <button onClick={async () => { if (await confirmAction("¿Volver a Presupuesto?")) handleStatusChange('Presupuesto'); }} className="btn bg-amber-100 text-amber-800 hover:bg-amber-200 px-4 py-2 rounded shadow ml-2">
+                                Deshacer Reserva
+                            </button>
+                        </>
                     )}
                     {file.status === 'Operativo' && (
                         <button onClick={() => handleStatusChange('Cerrado')} className="btn btn-success bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow">

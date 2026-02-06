@@ -44,14 +44,14 @@ public class ReportsController : ControllerBase
             .Where(f => f.Status != FileStatus.Closed && f.Status != FileStatus.Cancelled)
             .SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
 
-        // Total vendido del mes
+        // Total vendido del mes (Solo Reservado, Operativo, Cerrado)
         var salesThisMonth = await _dbContext.TravelFiles
-            .Where(f => f.CreatedAt >= startOfMonth)
+            .Where(f => f.CreatedAt >= startOfMonth && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
             .SumAsync(f => (decimal?)f.TotalSale, cancellationToken) ?? 0m;
 
-        // Total costos del mes (NetCost de servicios)
+        // Total costos del mes (Solo Reservado, Operativo, Cerrado)
         var costsThisMonth = await _dbContext.TravelFiles
-            .Where(f => f.CreatedAt >= startOfMonth)
+            .Where(f => f.CreatedAt >= startOfMonth && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
             .SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
 
         // Pagos a proveedores del mes
