@@ -21,6 +21,11 @@ export async function apiRequest(path, options = {}) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      // Dispatch global event for session expiration
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    }
+
     let message = "Request failed";
     const errorText = await response.text();
     if (errorText) {

@@ -3,6 +3,7 @@ import { Moon, Sun, Menu } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import Sidebar from "./Sidebar";
 import { Button } from "./ui/button";
+import ChangePasswordModal from "./ChangePasswordModal";
 
 export default function Layout({ children, onLogout, isAdmin }) {
     const { theme, setTheme } = useTheme();
@@ -28,6 +29,9 @@ export default function Layout({ children, onLogout, isAdmin }) {
     const toggleTheme = () => {
         setTheme(theme === "dark" ? "light" : "dark");
     };
+
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
+    const [userMenuOpen, setUserMenuOpen] = useState(false);
 
     return (
         <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
@@ -102,8 +106,50 @@ export default function Layout({ children, onLogout, isAdmin }) {
                             <Moon className="absolute h-4 w-4 md:h-5 md:w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
                             <span className="sr-only">Cambiar tema</span>
                         </Button>
-                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-xs md:text-sm font-medium text-primary border border-primary/20">
-                            AD
+
+                        {/* User Menu Dropdown */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                                className="h-9 w-9 rounded-full bg-primary/20 flex items-center justify-center text-xs md:text-sm font-medium text-primary border border-primary/20 hover:bg-primary/30 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                title="Cuenta de Usuario"
+                            >
+                                AD
+                            </button>
+
+                            {userMenuOpen && (
+                                <>
+                                    <div
+                                        className="fixed inset-0 z-10"
+                                        onClick={() => setUserMenuOpen(false)}
+                                    />
+                                    <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-popover ring-1 ring-black ring-opacity-5 z-20 animate-in fade-in zoom-in-95 duration-150">
+                                        <div className="py-1" role="menu" aria-orientation="vertical">
+                                            <button
+                                                onClick={() => {
+                                                    setUserMenuOpen(false);
+                                                    setShowPasswordModal(true);
+                                                }}
+                                                className="block px-4 py-2 text-sm text-popover-foreground hover:bg-muted w-full text-left"
+                                                role="menuitem"
+                                            >
+                                                Cambiar Contraseña
+                                            </button>
+                                            <div className="border-t border-border my-1"></div>
+                                            <button
+                                                onClick={() => {
+                                                    setUserMenuOpen(false);
+                                                    onLogout();
+                                                }}
+                                                className="block px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 w-full text-left"
+                                                role="menuitem"
+                                            >
+                                                Cerrar Sesión
+                                            </button>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </header>
@@ -115,6 +161,11 @@ export default function Layout({ children, onLogout, isAdmin }) {
                     </div>
                 </main>
             </div>
+
+            <ChangePasswordModal
+                isOpen={showPasswordModal}
+                onClose={() => setShowPasswordModal(false)}
+            />
         </div>
     );
 }

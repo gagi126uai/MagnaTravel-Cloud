@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { clearAuthToken, isAdmin, isAuthenticated } from "./auth";
+import Swal from "sweetalert2";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
@@ -31,6 +32,28 @@ export default function App() {
     clearAuthToken();
     navigate("/login");
   };
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      // Prevent multiple alerts stacking
+      if (document.querySelector('.swal2-container')) return;
+
+      Swal.fire({
+        title: 'Sesión Expirada',
+        text: 'Tu sesión ha caducado por seguridad. Por favor ingresa nuevamente.',
+        icon: 'warning',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#4f46e5', // Indigo-600
+        allowOutsideClick: false,
+        allowEscapeKey: false
+      }).then(() => {
+        handleLogout();
+      });
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, [navigate]);
 
   return (
     <Routes>
