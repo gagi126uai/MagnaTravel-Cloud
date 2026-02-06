@@ -210,33 +210,13 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
             {/* Buscador de tarifas */}
             <RateSelector serviceType="Hotel" supplierId={form.supplierId} onSelect={onRateSelect} suppliers={suppliers} />
 
-            <div className="grid grid-cols-3 gap-4">
-                <div className="col-span-2">
-                    <label className={labelClass}>Hotel *</label>
-                    <input className={inputClass} placeholder="Hotel Riu Palace" value={form.hotelName || ""} onChange={e => setForm({ ...form, hotelName: e.target.value })} required />
-                </div>
-                <div>
-                    <label className={labelClass}>Estrellas</label>
-                    <select className={inputClass} value={form.starRating || ""} onChange={e => setForm({ ...form, starRating: e.target.value })}>
-                        <option value="">-</option>
-                        <option value="3">⭐⭐⭐</option>
-                        <option value="4">⭐⭐⭐⭐</option>
-                        <option value="5">⭐⭐⭐⭐⭐</option>
-                    </select>
-                </div>
+            {/* Nombre del hotel (viene del tarifario o se puede escribir) */}
+            <div>
+                <label className={labelClass}>Nombre Hotel *</label>
+                <input className={inputClass} placeholder="Se completa al buscar tarifa..." value={form.hotelName || ""} onChange={e => setForm({ ...form, hotelName: e.target.value })} required />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className={labelClass}>Ciudad *</label>
-                    <input className={inputClass} placeholder="Cancún" value={form.city || ""} onChange={e => setForm({ ...form, city: e.target.value })} required />
-                </div>
-                <div>
-                    <label className={labelClass}>País</label>
-                    <input className={inputClass} placeholder="México" value={form.country || ""} onChange={e => setForm({ ...form, country: e.target.value })} />
-                </div>
-            </div>
-
+            {/* Fechas y noches */}
             <div className="grid grid-cols-3 gap-4">
                 <div>
                     <label className={labelClass}>Check-In *</label>
@@ -254,27 +234,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className={labelClass}>Tipo Habitación</label>
-                    <select className={inputClass} value={form.roomType || "Doble"} onChange={e => setForm({ ...form, roomType: e.target.value })}>
-                        <option value="Single">Single</option>
-                        <option value="Doble">Doble</option>
-                        <option value="Triple">Triple</option>
-                        <option value="Suite">Suite</option>
-                    </select>
-                </div>
-                <div>
-                    <label className={labelClass}>Régimen</label>
-                    <select className={inputClass} value={form.mealPlan || "Desayuno"} onChange={e => setForm({ ...form, mealPlan: e.target.value })}>
-                        <option value="Solo Alojamiento">Solo Alojamiento</option>
-                        <option value="Desayuno">Desayuno</option>
-                        <option value="Media Pensión">Media Pensión</option>
-                        <option value="All Inclusive">All Inclusive</option>
-                    </select>
-                </div>
-            </div>
-
+            {/* Ocupación */}
             <div className="grid grid-cols-3 gap-4">
                 <div>
                     <label className={labelClass}>Adultos</label>
@@ -620,7 +580,7 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
     const currentType = SERVICE_TYPES.find(t => t.value === serviceType);
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
             <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden" onClick={e => e.stopPropagation()}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-indigo-500 to-purple-600">

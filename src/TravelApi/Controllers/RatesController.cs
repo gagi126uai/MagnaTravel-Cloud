@@ -46,7 +46,7 @@ public class RatesController : ControllerBase
                 r.ValidFrom, r.ValidTo, r.IsActive, r.InternalNotes,
                 // Campos dinámicos
                 r.Airline, r.AirlineCode, r.Origin, r.Destination, r.CabinClass, r.BaggageIncluded,
-                r.HotelName, r.City, r.StarRating, r.RoomType, r.MealPlan,
+                r.HotelName, r.City, r.StarRating, r.RoomType, r.MealPlan, r.HotelPriceType, r.ChildrenPayPercent, r.ChildMaxAge,
                 r.PickupLocation, r.DropoffLocation, r.VehicleType, r.MaxPassengers, r.IsRoundTrip,
                 r.IncludesFlight, r.IncludesHotel, r.IncludesTransfer, r.IncludesExcursions, r.IncludesInsurance,
                 r.DurationDays, r.Itinerary,
@@ -159,6 +159,9 @@ public class RatesController : ControllerBase
             StarRating = req.StarRating,
             RoomType = req.RoomType,
             MealPlan = req.MealPlan,
+            HotelPriceType = req.HotelPriceType ?? "base_doble",
+            ChildrenPayPercent = req.ChildrenPayPercent,
+            ChildMaxAge = req.ChildMaxAge,
             PickupLocation = req.PickupLocation,
             DropoffLocation = req.DropoffLocation,
             VehicleType = req.VehicleType,
@@ -212,6 +215,9 @@ public class RatesController : ControllerBase
         rate.StarRating = req.StarRating;
         rate.RoomType = req.RoomType;
         rate.MealPlan = req.MealPlan;
+        rate.HotelPriceType = req.HotelPriceType ?? "base_doble";
+        rate.ChildrenPayPercent = req.ChildrenPayPercent;
+        rate.ChildMaxAge = req.ChildMaxAge;
         rate.PickupLocation = req.PickupLocation;
         rate.DropoffLocation = req.DropoffLocation;
         rate.VehicleType = req.VehicleType;
@@ -272,6 +278,9 @@ public record RateDto(
     int? StarRating = null,
     string? RoomType = null,
     string? MealPlan = null,
+    string? HotelPriceType = "base_doble", // por_persona, base_doble
+    int ChildrenPayPercent = 0, // 0-100%
+    int ChildMaxAge = 12,
     // Traslado
     string? PickupLocation = null,
     string? DropoffLocation = null,

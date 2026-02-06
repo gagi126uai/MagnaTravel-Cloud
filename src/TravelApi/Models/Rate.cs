@@ -65,10 +65,26 @@ public class Rate
     public int? StarRating { get; set; } // 1-5 estrellas
     
     [MaxLength(100)]
-    public string? RoomType { get; set; } // Single, Double, Suite, etc
+    public string? RoomType { get; set; } // Single, Double, Triple, Suite, etc
     
     [MaxLength(50)]
-    public string? MealPlan { get; set; } // RO, BB, HB, FB, AI
+    public string? MealPlan { get; set; } // RO (Solo alojamiento), BB (Desayuno), HB (Media pensión), FB (Pensión completa), AI (All Inclusive)
+    
+    /// <summary>
+    /// Tipo de precio: "por_persona" o "base_doble" (precio por habitación para 2 personas)
+    /// </summary>
+    [MaxLength(20)]
+    public string? HotelPriceType { get; set; } = "base_doble"; // por_persona, base_doble
+    
+    /// <summary>
+    /// Porcentaje que pagan los niños (0 = gratis, 50 = mitad, 100 = pago completo)
+    /// </summary>
+    public int ChildrenPayPercent { get; set; } = 0; // 0-100%
+    
+    /// <summary>
+    /// Edad máxima considerada niño (ej: menores de 12)
+    /// </summary>
+    public int ChildMaxAge { get; set; } = 12;
     
     // --- Traslado ---
     [MaxLength(100)]
