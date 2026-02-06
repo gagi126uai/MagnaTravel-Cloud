@@ -12,6 +12,7 @@ import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import SupplierAccountPage from "./pages/SupplierAccountPage";
 import ReportsPage from "./pages/ReportsPage";
+import RatesPage from "./pages/RatesPage";
 
 // LEGACY REMOVED: Cupos, Quotes, Tariffs, Agencies
 
@@ -55,6 +56,7 @@ export default function App() {
 
                 {/* Treasury */}
                 <Route path="/payments" element={<PaymentsPage />} />
+                <Route path="/rates" element={<RatesPage />} />
 
                 {/* Admin */}
                 <Route

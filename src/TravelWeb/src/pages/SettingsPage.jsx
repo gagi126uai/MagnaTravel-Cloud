@@ -83,7 +83,6 @@ const Avatar = ({ name }) => {
 const tabs = [
   { id: "agency", label: "Datos de la Agencia" },
   { id: "commissions", label: "Comisiones" },
-  { id: "rates", label: "Tarifario" },
   { id: "users", label: "Usuarios" },
   { id: "programming", label: "Programación" },
 ];

@@ -8,7 +8,8 @@ import {
     Settings,
     LogOut,
     BarChart3,
-    X
+    X,
+    DollarSign
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -19,6 +20,7 @@ const menuLinks = [
     { to: "/customers", label: "Clientes", icon: Users },
     { to: "/payments", label: "Caja Administrativa", icon: CreditCard },
     { to: "/suppliers", label: "Proveedores", icon: Building2 },
+    { to: "/rates", label: "Tarifario", icon: DollarSign },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onToggleCollapse, onCloseMobile }) {
