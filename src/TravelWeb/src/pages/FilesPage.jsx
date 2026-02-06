@@ -5,15 +5,12 @@ import {
     Plus,
     Search,
     FolderOpen,
-    Calendar,
     User,
-    MoreVertical,
-    Briefcase,
-    Archive,
-    CheckCircle2
+    Archive
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useNavigate } from "react-router-dom";
+import CreateFileModal from "../components/CreateFileModal";
 
 export default function FilesPage() {
     const [files, setFiles] = useState([]);
@@ -24,18 +21,9 @@ export default function FilesPage() {
 
     // Create Modal State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-    const [newFile, setNewFile] = useState({
-        name: "",
-        payerId: "",
-        startDate: "",
-        description: "",
-        isBudget: true // Default to Budget/Presupuesto
-    });
-    const [customers, setCustomers] = useState([]);
 
     useEffect(() => {
         loadFiles();
-        loadCustomers();
     }, []);
 
     const loadFiles = async () => {
@@ -51,30 +39,9 @@ export default function FilesPage() {
         }
     };
 
-    const loadCustomers = async () => {
-        try {
-            const data = await api.get("/customers");
-            setCustomers(data);
-        } catch { }
-    };
-
-    const handleCreateFile = async (e) => {
-        e.preventDefault();
-        try {
-            await api.post("/travelfiles", {
-                ...newFile,
-                payerId: newFile.payerId ? parseInt(newFile.payerId) : null,
-                startDate: newFile.startDate ? new Date(newFile.startDate).toISOString() : null,
-                // If isBudget is true, backend creates as 'Presupuesto', else 'Reservado'
-                status: newFile.isBudget ? 'Presupuesto' : 'Reservado'
-            });
-            showSuccess("Expediente creado exitosamente");
-            setIsCreateModalOpen(false);
-            loadFiles();
-            setNewFile({ name: "", payerId: "", startDate: "", description: "", isBudget: true });
-        } catch (error) {
-            showError(error.message || "Error al crear el expediente");
-        }
+    const handleCreateSuccess = () => {
+        setIsCreateModalOpen(false);
+        loadFiles();
     };
 
     // Status Helpers
@@ -143,36 +110,15 @@ export default function FilesPage() {
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 {/* Status Filter Tabs */}
                 <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start sm:self-auto overflow-x-auto">
-                    <button
-                        onClick={() => setViewFilter("all")}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'all' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
-                    >
-                        Todos
-                    </button>
-                    <button
-                        onClick={() => setViewFilter("Presupuesto")}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'Presupuesto' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
-                    >
-                        Presupuestos
-                    </button>
-                    <button
-                        onClick={() => setViewFilter("Reservado")}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'Reservado' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
-                    >
-                        Reservados
-                    </button>
-                    <button
-                        onClick={() => setViewFilter("Operativo")}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'Operativo' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
-                    >
-                        Operativos
-                    </button>
-                    <button
-                        onClick={() => setViewFilter("archived")}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === 'archived' ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
-                    >
-                        Cerrados
-                    </button>
+                    {["all", "Presupuesto", "Reservado", "Operativo", "archived"].map((filter) => (
+                        <button
+                            key={filter}
+                            onClick={() => setViewFilter(filter)}
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === filter ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                        >
+                            {filter === "all" ? "Todos" : filter === "archived" ? "Cerrados" : filter + "s"}
+                        </button>
+                    ))}
                 </div>
 
                 {/* Search */}
@@ -265,73 +211,11 @@ export default function FilesPage() {
             </div>
 
             {/* Create Modal */}
-            {isCreateModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 border dark:border-slate-800">
-                        <h3 className="text-lg font-semibold mb-4">Nuevo Viaje / Presupuesto</h3>
-                        <form onSubmit={handleCreateFile} className="space-y-4">
-                            <div>
-                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Nombre del Viaje</label>
-                                <input
-                                    autoFocus
-                                    required
-                                    placeholder="Ej. Familia Perez - Caribe 2025"
-                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800"
-                                    value={newFile.name}
-                                    onChange={e => setNewFile({ ...newFile, name: e.target.value })}
-                                />
-                            </div>
-
-                            <div>
-                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cliente</label>
-                                <select
-                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800"
-                                    value={newFile.payerId}
-                                    onChange={e => setNewFile({ ...newFile, payerId: e.target.value })}
-                                >
-                                    <option value="">Seleccionar cliente...</option>
-                                    {customers.map(c => (
-                                        <option key={c.id} value={c.id}>{c.fullName}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Fecha de Inicio</label>
-                                <input
-                                    type="date"
-                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800"
-                                    value={newFile.startDate}
-                                    onChange={e => setNewFile({ ...newFile, startDate: e.target.value })}
-                                />
-                            </div>
-
-                            {/* Budget Toggle */}
-                            <div className="flex items-center gap-3 py-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setNewFile(prev => ({ ...prev, isBudget: !prev.isBudget }))}
-                                    className={`relative w-11 h-6 rounded-full transition-colors ${newFile.isBudget ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-700'}`}
-                                >
-                                    <span className={`absolute left-1 top-1 bg-white h-4 w-4 rounded-full transition-transform ${newFile.isBudget ? 'translate-x-5' : 'translate-x-0'}`} />
-                                </button>
-                                <span className="text-sm text-slate-700 dark:text-slate-300">
-                                    Es un Presupuesto (Borrador)
-                                </span>
-                            </div>
-
-                            <div className="flex justify-end gap-2 pt-2">
-                                <Button type="button" variant="ghost" onClick={() => setIsCreateModalOpen(false)}>
-                                    Cancelar
-                                </Button>
-                                <Button type="submit">
-                                    Crear
-                                </Button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <CreateFileModal
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                onSuccess={handleCreateSuccess}
+            />
         </div>
     );
 }
