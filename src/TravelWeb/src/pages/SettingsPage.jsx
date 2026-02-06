@@ -524,12 +524,7 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          {/* Info Card */}
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
-            <p className="text-sm text-blue-800 dark:text-blue-300">
-              <strong>💡 Tip:</strong> A mayor prioridad, la regla se aplica primero. Si hay empate, se usa la más específica.
-            </p>
-          </div>
+
 
           {/* Table */}
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
@@ -631,16 +626,15 @@ export default function SettingsPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Prioridad</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  required
+                <select
                   className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                   value={commissionForm.priority}
                   onChange={e => setCommissionForm({ ...commissionForm, priority: e.target.value })}
-                />
-                <p className="mt-1 text-xs text-slate-500">Mayor número = mayor prioridad</p>
+                >
+                  <option value="1">Baja - Se aplica si no hay otras reglas</option>
+                  <option value="2">Media - Prioridad normal</option>
+                  <option value="3">Alta - Se aplica antes que otras</option>
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Descripción (opcional)</label>
