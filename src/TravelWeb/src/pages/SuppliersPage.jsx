@@ -16,10 +16,11 @@ export default function SuppliersPage() {
     name: "",
     contactName: "",
     taxId: "",
+    taxCondition: "",
+    address: "",
     email: "",
     phone: "",
-    isActive: true,
-    currentBalance: 0
+    isActive: true
   });
 
   useEffect(() => {
@@ -44,22 +45,24 @@ export default function SuppliersPage() {
       setFormData({
         name: supplier.name,
         taxId: supplier.taxId || "",
+        taxCondition: supplier.taxCondition || "",
+        address: supplier.address || "",
         contactName: supplier.contactName || "",
         email: supplier.email || "",
         phone: supplier.phone || "",
-        isActive: supplier.isActive,
-        currentBalance: supplier.currentBalance
+        isActive: supplier.isActive
       });
     } else {
       setCurrentSupplier(null);
       setFormData({
         name: "",
         taxId: "",
+        taxCondition: "",
+        address: "",
         contactName: "",
         email: "",
         phone: "",
-        isActive: true,
-        currentBalance: 0
+        isActive: true
       });
     }
     setIsModalOpen(true);
@@ -235,11 +238,12 @@ export default function SuppliersPage() {
             </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">Nombre</label>
+                <div className="space-y-2 sm:col-span-2">
+                  <label className="text-sm font-medium text-muted-foreground">Razón Social / Nombre *</label>
                   <input
                     type="text"
                     required
+                    placeholder="Ej: Despegar Argentina S.A."
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
@@ -249,7 +253,6 @@ export default function SuppliersPage() {
                   <label className="text-sm font-medium text-muted-foreground">CUIT</label>
                   <input
                     type="text"
-                    required
                     placeholder="20-12345678-9"
                     value={formData.taxId}
                     onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
@@ -257,20 +260,26 @@ export default function SuppliersPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">Contacto</label>
-                  <input
-                    type="text"
-                    value={formData.contactName}
-                    onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+                  <label className="text-sm font-medium text-muted-foreground">Condición Fiscal</label>
+                  <select
+                    value={formData.taxCondition}
+                    onChange={(e) => setFormData({ ...formData, taxCondition: e.target.value })}
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
-                  />
+                  >
+                    <option value="">Seleccionar...</option>
+                    <option value="IVA_RESP_INSCRIPTO">IVA Responsable Inscripto</option>
+                    <option value="MONOTRIBUTISTA">Monotributista</option>
+                    <option value="IVA_EXENTO">IVA Exento</option>
+                    <option value="CONSUMIDOR_FINAL">Consumidor Final</option>
+                  </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">Email</label>
+                  <label className="text-sm font-medium text-muted-foreground">Persona de Contacto</label>
                   <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    type="text"
+                    placeholder="Nombre del contacto"
+                    value={formData.contactName}
+                    onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
                   />
                 </div>
@@ -278,22 +287,33 @@ export default function SuppliersPage() {
                   <label className="text-sm font-medium text-muted-foreground">Teléfono</label>
                   <input
                     type="text"
+                    placeholder="+54 11 1234-5678"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">Current Balance (Deuda)</label>
+                <div className="space-y-2 sm:col-span-2">
+                  <label className="text-sm font-medium text-muted-foreground">Email</label>
                   <input
-                    type="number"
-                    step="0.01"
-                    value={formData.currentBalance}
-                    onChange={(e) => setFormData({ ...formData, currentBalance: parseFloat(e.target.value) })}
+                    type="email"
+                    placeholder="contacto@proveedor.com"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
                   />
                 </div>
-                <div className="flex items-center space-x-2 pt-8">
+                <div className="space-y-2 sm:col-span-2">
+                  <label className="text-sm font-medium text-muted-foreground">Dirección</label>
+                  <input
+                    type="text"
+                    placeholder="Av. Corrientes 1234, CABA"
+                    value={formData.address}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="flex items-center space-x-2 sm:col-span-2">
                   <input
                     type="checkbox"
                     id="isActive"
@@ -302,7 +322,7 @@ export default function SuppliersPage() {
                     className="rounded border-gray-300 text-primary focus:ring-primary"
                   />
                   <label htmlFor="isActive" className="text-sm font-medium text-white">
-                    Activo
+                    Proveedor Activo
                   </label>
                 </div>
               </div>
@@ -318,7 +338,7 @@ export default function SuppliersPage() {
                   type="submit"
                   className="flex-1 rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
                 >
-                  Guardar
+                  {currentSupplier ? "Actualizar" : "Crear Proveedor"}
                 </button>
               </div>
             </form>

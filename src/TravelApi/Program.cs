@@ -287,6 +287,21 @@ using (var scope = app.Services.CreateScope())
         WHERE NOT EXISTS (SELECT 1 FROM "AgencySettings");
         """);
 
+    // Supplier new columns + fix existing data
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"TaxCondition\" character varying(50);");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"Address\" character varying(200);");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"CreatedAt\" timestamp with time zone DEFAULT NOW();");
+    // Fix existing suppliers with NULL CreatedAt
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "UPDATE \"Suppliers\" SET \"CreatedAt\" = NOW() WHERE \"CreatedAt\" IS NULL;");
+    // Make TaxId nullable if it was NOT NULL
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Suppliers\" ALTER COLUMN \"TaxId\" DROP NOT NULL;");
+
+
     // Seed roles
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();

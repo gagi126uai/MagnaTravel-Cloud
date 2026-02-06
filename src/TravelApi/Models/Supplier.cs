@@ -20,10 +20,26 @@ public class Supplier
     public string? Phone { get; set; }
     
     [MaxLength(20)]
-    public string TaxId { get; set; } = string.Empty; // CUIT/CUIL
+    public string? TaxId { get; set; } // CUIT
+
+    [MaxLength(50)]
+    public string? TaxCondition { get; set; } // IVA_RESP_INSCRIPTO, MONOTRIBUTISTA, IVA_EXENTO
+
+    [MaxLength(200)]
+    public string? Address { get; set; }
 
     public bool IsActive { get; set; } = true;
 
-    // Financials (what we owe them)
-    public decimal CurrentBalance { get; set; } = 0; // Positive = we owe them
+    // Financials (what we owe them) - calculated, not editable on create
+    public decimal CurrentBalance { get; set; } = 0;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public static class TaxConditions
+{
+    public const string IvaResponsableInscripto = "IVA_RESP_INSCRIPTO";
+    public const string Monotributista = "MONOTRIBUTISTA";
+    public const string IvaExento = "IVA_EXENTO";
+    public const string ConsumidorFinal = "CONSUMIDOR_FINAL";
 }

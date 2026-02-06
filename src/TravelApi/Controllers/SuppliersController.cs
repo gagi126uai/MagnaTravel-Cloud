@@ -48,6 +48,10 @@ public class SuppliersController : ControllerBase
             return BadRequest("El nombre del proveedor es requerido.");
         }
 
+        // Ensure defaults for new suppliers
+        supplier.CreatedAt = DateTime.UtcNow;
+        supplier.CurrentBalance = 0; // Always start at 0
+
         _dbContext.Suppliers.Add(supplier);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
