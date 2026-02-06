@@ -39,9 +39,9 @@ public class ReportsController : ControllerBase
             .Where(p => p.PaidAt >= startOfMonth)
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
 
-        // Saldo pendiente total (solo expedientes activos)
+        // Saldo pendiente total (solo expedientes activos y confirmados)
         var outstandingBalance = await _dbContext.TravelFiles
-            .Where(f => f.Status != FileStatus.Closed && f.Status != FileStatus.Cancelled)
+            .Where(f => f.Status != FileStatus.Closed && f.Status != FileStatus.Cancelled && f.Status != FileStatus.Budget)
             .SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
 
         // Total vendido del mes (Solo Reservado, Operativo, Cerrado)

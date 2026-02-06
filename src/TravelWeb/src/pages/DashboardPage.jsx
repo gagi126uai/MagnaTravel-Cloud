@@ -204,7 +204,7 @@ export default function DashboardPage() {
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <AlertCircle className="h-5 w-5 text-rose-500" />
-                            Expedientes por Cobrar
+                            Files por Cobrar
                         </CardTitle>
                         <CardDescription>Top 5 con mayor saldo pendiente</CardDescription>
                     </CardHeader>

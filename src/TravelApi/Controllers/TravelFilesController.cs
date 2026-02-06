@@ -111,6 +111,10 @@ public class TravelFilesController : ControllerBase
                 .Include(f => f.Payments)
                 .Include(f => f.Reservations)
                     .ThenInclude(r => r.Supplier)
+                .Include(f => f.HotelBookings)
+                .Include(f => f.FlightSegments)
+                .Include(f => f.TransferBookings)
+                .Include(f => f.PackageBookings)
                 .FirstOrDefaultAsync(f => f.Id == id);
 
             if (file == null) 
