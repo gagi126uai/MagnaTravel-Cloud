@@ -251,9 +251,15 @@ export default function RatesPage() {
                         childrenPayPercent: variation.childrenPayPercent,
                         childMaxAge: variation.childMaxAge,
                         productName: `${form.hotelName} - ${variation.roomType} ${variation.roomCategory}`,
-                        serviceType: "Hotel"
+                        serviceType: "Hotel",
+                        // Explicitly nullify incompatible fields to prevent JSON conversion errors
+                        maxPassengers: null,
+                        durationDays: null,
+                        airline: null, airlineCode: null,
+                        origin: null, destination: null,
+                        pickupLocation: null, dropoffLocation: null, vehicleType: null
                     };
-                    if (form.id) { // Si estamos editando y agregamos variaciones, esto es raro, mejor solo crear
+                    if (form.id) {
                         requests.push(api.post("/rates", payload));
                     } else {
                         requests.push(api.post("/rates", payload));
@@ -293,8 +299,22 @@ export default function RatesPage() {
         } catch (error) {
             console.error("Save Rate Error:", error);
             if (error.response?.data?.errors) {
-                const msgs = Object.values(error.response.data.errors).flat();
-                showError(`Error: ${msgs[0]}`);
+                // Filter out 'req' generic errors and map JSON errors to friendly text
+                const validationErrors = Object.entries(error.response.data.errors)
+                    .filter(([key]) => key !== "req") // Ignore 'req' field error
+                    .map(([key, msgs]) => {
+                        const fieldName = key.replace('$.', '');
+                        if (msgs[0].includes("could not be converted")) {
+                            return `Formato inválido en campo: ${fieldName}`;
+                        }
+                        return msgs[0];
+                    });
+
+                if (validationErrors.length > 0) {
+                    showError(`Error: ${validationErrors[0]}`);
+                } else {
+                    showError("Error de validación. Verifique los campos obligatorios.");
+                }
             } else {
                 showError(error.message || "Error al guardar tarifa");
             }
