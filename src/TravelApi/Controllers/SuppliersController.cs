@@ -112,6 +112,37 @@ public class SuppliersController : ControllerBase
     }
 
     /// <summary>
+    /// Forzar eliminación de proveedor (desvincula servicios y pagos primero)
+    /// Usar SOLO para proveedores corruptos o de prueba
+    /// </summary>
+    [HttpDelete("{id:int}/force")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> ForceDeleteSupplier(int id, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
+        if (supplier is null)
+        {
+            return NotFound("Proveedor no encontrado");
+        }
+
+        // Desvincular servicios (poner SupplierId = null)
+        await _dbContext.Reservations
+            .Where(r => r.SupplierId == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.SupplierId, (int?)null), cancellationToken);
+
+        // Eliminar pagos a este proveedor
+        await _dbContext.SupplierPayments
+            .Where(p => p.SupplierId == id)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        // Ahora sí eliminar el proveedor
+        _dbContext.Suppliers.Remove(supplier);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { Message = "Proveedor eliminado (forzado)" });
+    }
+
+    /// <summary>
     /// Cuenta corriente del proveedor: servicios comprados, pagos realizados, saldo
     /// </summary>
     [HttpGet("{id:int}/account")]

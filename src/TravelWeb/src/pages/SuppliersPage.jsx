@@ -100,7 +100,28 @@ export default function SuppliersPage() {
         Swal.fire("Eliminado", "Proveedor eliminado correctamente", "success");
         fetchSuppliers();
       } catch (error) {
-        Swal.fire("Error", error.response?.data || "No se pudo eliminar el proveedor", "error");
+        const errorMsg = error.response?.data || "No se pudo eliminar el proveedor";
+
+        // Ofrecer forzar eliminación si tiene servicios/pagos
+        const forceResult = await Swal.fire({
+          title: "No se puede eliminar",
+          text: `${errorMsg}. ¿Desea FORZAR la eliminación? (desvinculará servicios y eliminará pagos)`,
+          icon: "error",
+          showCancelButton: true,
+          confirmButtonColor: "#dc2626",
+          confirmButtonText: "Forzar Eliminación",
+          cancelButtonText: "Cancelar"
+        });
+
+        if (forceResult.isConfirmed) {
+          try {
+            await api.delete(`/suppliers/${supplier.id}/force`);
+            Swal.fire("Eliminado", "Proveedor eliminado (forzado)", "success");
+            fetchSuppliers();
+          } catch (forceError) {
+            Swal.fire("Error", forceError.response?.data || "No se pudo forzar la eliminación", "error");
+          }
+        }
       }
     }
   };
