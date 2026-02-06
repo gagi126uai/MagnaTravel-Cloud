@@ -29,9 +29,80 @@ public class TravelFilesController : ControllerBase
         return Ok(files);
     }
 
+    [HttpGet("debug/{id}")]
+    public async Task<IActionResult> DebugFile(int id)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"--- DEBUG REPORT FOR ID: {id} ---");
+
+        try
+        {
+            // 1. Simple Existence Check
+            var exists = await _context.TravelFiles.AnyAsync(f => f.Id == id);
+            sb.AppendLine($"1. Exists in DB: {exists}");
+
+            if (!exists) return Ok(sb.ToString());
+
+            // 2. Fetch without Includes
+            var simpleFile = await _context.TravelFiles.FirstOrDefaultAsync(f => f.Id == id);
+            sb.AppendLine($"2. Fetch Simple: Success. Name={simpleFile?.Name}");
+
+            // 3. Fetch with Reservations only
+            try 
+            {
+                var withRes = await _context.TravelFiles
+                    .Include(f => f.Reservations)
+                    .FirstOrDefaultAsync(f => f.Id == id);
+                sb.AppendLine($"3. Fetch w/ Reservations: Success. Count={withRes?.Reservations.Count}");
+                
+                if (withRes?.Reservations != null)
+                {
+                    foreach(var r in withRes.Reservations)
+                    {
+                         sb.AppendLine($"   - ResId: {r.Id}, Service: {r.ServiceType}, Product: {r.ProductType ?? "NULL"}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"3. Fetch w/ Reservations FAILED: {ex.Message}");
+            }
+
+            // 4. Fetch with Full Includes (The Failing One)
+            try
+            {
+                var fullFile = await _context.TravelFiles
+                    .Include(f => f.Payer)
+                    .Include(f => f.Passengers)
+                    .Include(f => f.Payments)
+                    .Include(f => f.Reservations)
+                        .ThenInclude(r => r.Supplier)
+                    .FirstOrDefaultAsync(f => f.Id == id);
+                
+                if (fullFile == null) 
+                    sb.AppendLine("4. Full Fetch returned NULL (WTF?)");
+                else
+                    sb.AppendLine("4. Full Fetch Success!");
+            }
+            catch (Exception ex) 
+            {
+                sb.AppendLine($"4. Full Fetch FAILED: {ex.Message}");
+                sb.AppendLine(ex.StackTrace);
+            }
+
+            return Ok(sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"CRITICAL FAILURE: {ex.Message}");
+            return Ok(sb.ToString());
+        }
+    }
+
     [HttpGet("{id}")]
     public async Task<IActionResult> GetFile(int id)
     {
+        Console.WriteLine($"[START] GetFile({id})");
         try 
         {
             var file = await _context.TravelFiles
@@ -42,25 +113,27 @@ public class TravelFilesController : ControllerBase
                     .ThenInclude(r => r.Supplier)
                 .FirstOrDefaultAsync(f => f.Id == id);
 
-            if (file == null) return NotFound($"File with ID {id} not found");
+            if (file == null) 
+            {
+                Console.WriteLine($"[WARN] GetFile({id}) returned NULL");
+                return NotFound($"File with ID {id} not found locally");
+            }
 
-            // Recalculate Balance on read to ensure consistency
+            // Recalculate Balance
             if (file.Payments != null)
             {
                 var totalPaid = file.Payments.Where(p => p.Status != "Cancelled").Sum(p => p.Amount);
                 file.Balance = file.TotalSale - totalPaid;
             }
 
+            Console.WriteLine($"[SUCCESS] GetFile({id}) returning data");
             return Ok(file);
         }
         catch (Exception ex)
         {
-            // Log the error (console for now in docker)
-            Console.WriteLine($"ERROR GetFile({id}): {ex.Message} \n {ex.StackTrace}");
-            if (ex.InnerException != null)
-                Console.WriteLine($"Inner: {ex.InnerException.Message}");
-                
-            return StatusCode(500, $"Internal Server Error: {ex.Message}");
+            Console.WriteLine($"[ERROR] GetFile({id}): {ex.Message} \n {ex.StackTrace}");
+            // Return error as JSON to see in frontend if possible
+            return StatusCode(500, new { Error = ex.Message, Stack = ex.StackTrace });
         }
     }
 
