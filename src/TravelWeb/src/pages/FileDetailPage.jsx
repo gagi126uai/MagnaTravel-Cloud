@@ -292,11 +292,11 @@ export default function FileDetailPage() {
 
     if (!file) return (
         <div className="p-8 text-center">
-            <h3 className="text-xl font-medium text-gray-900">Expediente no encontrado</h3>
-            <p className="text-gray-500 mt-2">No se pudo cargar la información. Verifique que el expediente exista.</p>
+            <h3 className="text-xl font-medium text-gray-900 dark:text-white">Expediente no encontrado</h3>
+            <p className="text-gray-500 dark:text-slate-400 mt-2">No se pudo cargar la información. Verifique que el expediente exista.</p>
             <div className="mt-4 flex gap-4 justify-center">
-                <button onClick={() => navigate("/files")} className="text-blue-600 hover:text-blue-800 underline">Volver a la lista</button>
-                <button onClick={handleDebug} className="bg-gray-800 text-white px-4 py-2 rounded text-sm hover:bg-gray-700">
+                <button onClick={() => navigate("/files")} className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline">Volver a la lista</button>
+                <button onClick={handleDebug} className="bg-gray-800 text-white px-4 py-2 rounded text-sm hover:bg-gray-700 dark:bg-slate-700 dark:hover:bg-slate-600">
                     🛠️ Ver Diagnóstico
                 </button>
             </div>
@@ -313,21 +313,21 @@ export default function FileDetailPage() {
                 <div>
                     <button
                         onClick={() => navigate("/files")}
-                        className="flex items-center text-gray-500 hover:text-gray-700 mb-2 transition-colors"
+                        className="flex items-center text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 mb-2 transition-colors"
                     >
                         <ArrowLeft className="w-4 h-4 mr-1" /> Volver a Lista
                     </button>
                     <div className="flex items-center gap-3">
-                        <h1 className="text-3xl font-bold text-gray-900">File #{file.fileNumber}</h1>
+                        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">File #{file.fileNumber}</h1>
                         <span className={`px-3 py-1 rounded-full text-sm font-medium 
-                ${file.status === 'Presupuesto' ? 'bg-gray-100 text-gray-800' :
-                                file.status === 'Reservado' ? 'bg-blue-100 text-blue-800' :
-                                    file.status === 'Operativo' ? 'bg-purple-100 text-purple-800' :
-                                        file.status === 'Cerrado' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                ${file.status === 'Presupuesto' ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200' :
+                                file.status === 'Reservado' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                                    file.status === 'Operativo' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
+                                        file.status === 'Cerrado' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'}`}>
                             {file.status}
                         </span>
                     </div>
-                    <p className="text-xl text-gray-600 mt-1">{file.name}</p>
+                    <p className="text-xl text-gray-600 dark:text-slate-400 mt-1">{file.name}</p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -360,7 +360,7 @@ export default function FileDetailPage() {
                                 <Trash2 className="w-5 h-5" />
                             </button>
                         )}
-                        <button onClick={handleArchiveFile} className="btn bg-gray-100 text-gray-600 hover:bg-gray-200 px-3 py-2 rounded" title="Archivar">
+                        <button onClick={handleArchiveFile} className="btn bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 px-3 py-2 rounded" title="Archivar">
                             <Archive className="w-5 h-5" />
                         </button>
                     </div>
@@ -369,23 +369,23 @@ export default function FileDetailPage() {
 
             {/* SUMMARY CARDS */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                    <p className="text-sm font-medium text-gray-500 mb-1">Total Venta</p>
-                    <p className="text-2xl font-bold text-gray-900">${file.totalSale?.toLocaleString()}</p>
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
+                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Total Venta</p>
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">${file.totalSale?.toLocaleString()}</p>
                 </div>
-                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                    <p className="text-sm font-medium text-gray-500 mb-1">Total Costo</p>
-                    <p className="text-2xl font-bold text-gray-900">${file.totalCost?.toLocaleString()}</p>
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
+                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Total Costo</p>
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">${file.totalCost?.toLocaleString()}</p>
                 </div>
-                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                    <p className="text-sm font-medium text-gray-500 mb-1">Cobrado</p>
-                    <p className="text-2xl font-bold text-green-600">${(file.totalSale - file.balance)?.toLocaleString()}</p>
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
+                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Cobrado</p>
+                    <p className="text-2xl font-bold text-green-600 dark:text-emerald-400">${(file.totalSale - file.balance)?.toLocaleString()}</p>
                 </div>
-                <div className={`bg-white rounded-xl shadow-sm p-6 border-l-4 ${file.balance > 0 ? 'border-red-500' : 'border-green-500'}`}>
+                <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border-l-4 ${file.balance > 0 ? 'border-red-500' : 'border-green-500'}`}>
                     <div className="flex justify-between items-start">
                         <div>
-                            <p className="text-sm font-medium text-gray-500 mb-1">Saldo Pendiente</p>
-                            <p className={`text-2xl font-bold ${file.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Saldo Pendiente</p>
+                            <p className={`text-2xl font-bold ${file.balance > 0 ? 'text-red-600 dark:text-rose-400' : 'text-green-600 dark:text-emerald-400'}`}>
                                 ${file.balance?.toLocaleString()}
                             </p>
                         </div>
@@ -398,27 +398,27 @@ export default function FileDetailPage() {
             {getCapacityWarning()}
 
             {/* TABS */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-h-[500px]">
-                <div className="border-b border-gray-200">
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden min-h-[500px]">
+                <div className="border-b border-gray-200 dark:border-slate-700">
                     <nav className="flex -mb-px">
                         <button
                             onClick={() => setActiveTab('services')}
                             className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
-                ${activeTab === 'services' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                ${activeTab === 'services' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <FileText className="w-4 h-4" /> Servicios
                         </button>
                         <button
                             onClick={() => setActiveTab('passengers')}
                             className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
-                ${activeTab === 'passengers' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                ${activeTab === 'passengers' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <Users className="w-4 h-4" /> Pasajeros ({file.passengers?.length || 0})
                         </button>
                         <button
                             onClick={() => setActiveTab('payments')}
                             className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
-                ${activeTab === 'payments' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                ${activeTab === 'payments' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <DollarSign className="w-4 h-4" /> Pagos
                         </button>
@@ -430,7 +430,7 @@ export default function FileDetailPage() {
                     {activeTab === 'services' && (
                         <div>
                             <div className="flex justify-between items-center mb-4">
-                                <h3 className="text-lg font-medium text-gray-900">Servicios Contratados</h3>
+                                <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios Contratados</h3>
                                 <button
                                     onClick={() => { setServiceToEdit(null); setShowServiceModal(true); }}
                                     className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
@@ -440,56 +440,56 @@ export default function FileDetailPage() {
                             </div>
 
                             {allServices.length === 0 ? (
-                                <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-                                    <Plane className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                                    <p className="text-gray-500">No hay servicios cargados en este file.</p>
+                                <div className="text-center py-12 bg-gray-50 dark:bg-slate-800 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
+                                    <Plane className="w-12 h-12 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
+                                    <p className="text-gray-500 dark:text-slate-400">No hay servicios cargados en este file.</p>
                                 </div>
                             ) : (
-                                <div className="overflow-hidden rounded-lg border border-gray-200">
-                                    <table className="min-w-full divide-y divide-gray-200">
-                                        <thead className="bg-gray-50">
+                                <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
+                                    <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                                        <thead className="bg-gray-50 dark:bg-slate-900 text-gray-500 dark:text-slate-400">
                                             <tr>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Confirmación</th>
-                                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Venta</th>
-                                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Tipo</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Descripción</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Confirmación</th>
+                                                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Venta</th>
+                                                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Acciones</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="bg-white divide-y divide-gray-200">
+                                        <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
                                             {allServices.map((svc, idx) => (
-                                                <tr key={`${svc._type}-${svc.id}`} className="hover:bg-gray-50">
+                                                <tr key={`${svc._type}-${svc.id}`} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
                                                     <td className="px-6 py-4 whitespace-nowrap">
                                                         <div className="flex items-center">
                                                             {svc._type === 'Flight' && <Plane className="w-5 h-5 text-blue-500 mr-2" />}
                                                             {svc._type === 'Hotel' && <Hotel className="w-5 h-5 text-indigo-500 mr-2" />}
                                                             {svc._type === 'Transfer' && <Car className="w-5 h-5 text-yellow-500 mr-2" />}
                                                             {svc._type === 'Package' && <Package className="w-5 h-5 text-purple-500 mr-2" />}
-                                                            <span className="font-medium text-gray-900">{svc._type === 'Flight' ? 'Aéreo' : svc._type}</span>
+                                                            <span className="font-medium text-gray-900 dark:text-white">{svc._type === 'Flight' ? 'Aéreo' : svc._type}</span>
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <div className="text-sm text-gray-900 font-medium">{svc.name}</div>
-                                                        <div className="text-xs text-gray-500">{svc.notes || svc.description}</div>
+                                                        <div className="text-sm text-gray-900 dark:text-white font-medium">{svc.name}</div>
+                                                        <div className="text-xs text-gray-500 dark:text-slate-400">{svc.notes || svc.description}</div>
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
                                                         {new Date(svc.date).toLocaleDateString()}
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap">
                                                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                                      {svc.confirmationNumber ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                      {svc.confirmationNumber ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'}`}>
                                                             {svc.confirmationNumber || 'Pendiente'}
                                                         </span>
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900">
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900 dark:text-white">
                                                         ${svc.salePrice?.toLocaleString()}
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                        <button onClick={() => handleEditService(svc)} className="text-blue-600 hover:text-blue-900 mr-3">
+                                                        <button onClick={() => handleEditService(svc)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 mr-3">
                                                             <Edit2 className="w-4 h-4" />
                                                         </button>
-                                                        <button onClick={() => handleDeleteService(svc)} className="text-red-600 hover:text-red-900">
+                                                        <button onClick={() => handleDeleteService(svc)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">
                                                             <Trash2 className="w-4 h-4" />
                                                         </button>
                                                     </td>
@@ -506,7 +506,7 @@ export default function FileDetailPage() {
                     {activeTab === 'passengers' && (
                         <div>
                             <div className="flex justify-between items-center mb-4">
-                                <h3 className="text-lg font-medium text-gray-900">Lista de Pasajeros</h3>
+                                <h3 className="text-lg font-medium text-gray-900 dark:text-white">Lista de Pasajeros</h3>
                                 <button
                                     onClick={() => { setEditingPassenger(null); setShowPassengerForm(true); }}
                                     className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
@@ -520,17 +520,17 @@ export default function FileDetailPage() {
                             {/* List of Passengers */}
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {file.passengers?.map(p => (
-                                    <div key={p.id} className="bg-white border border-gray-200 rounded-lg p-4 flex justify-between items-start hover:shadow-md transition-shadow">
+                                    <div key={p.id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 flex justify-between items-start hover:shadow-md transition-shadow">
                                         <div>
-                                            <div className="font-medium text-gray-900">{p.fullName}</div>
-                                            <div className="text-sm text-gray-500">{p.documentType}: {p.documentNumber}</div>
+                                            <div className="font-medium text-gray-900 dark:text-white">{p.fullName}</div>
+                                            <div className="text-sm text-gray-500 dark:text-slate-400">{p.documentType}: {p.documentNumber}</div>
                                             {p.birthDate && <div className="text-xs text-gray-400 mt-1">Nac: {new Date(p.birthDate).toLocaleDateString()}</div>}
                                         </div>
                                         <div className="flex gap-1">
-                                            <button onClick={() => { setEditingPassenger(p); setShowPassengerForm(true); }} className="p-1 text-gray-400 hover:text-blue-600">
+                                            <button onClick={() => { setEditingPassenger(p); setShowPassengerForm(true); }} className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400">
                                                 <Edit2 className="w-4 h-4" />
                                             </button>
-                                            <button onClick={() => handleDeletePassenger(p.id)} className="p-1 text-gray-400 hover:text-red-600">
+                                            <button onClick={() => handleDeletePassenger(p.id)} className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400">
                                                 <Trash2 className="w-4 h-4" />
                                             </button>
                                         </div>
@@ -544,7 +544,7 @@ export default function FileDetailPage() {
                     {activeTab === 'payments' && (
                         <div>
                             <div className="flex justify-between items-center mb-4">
-                                <h3 className="text-lg font-medium text-gray-900">Registro de Pagos</h3>
+                                <h3 className="text-lg font-medium text-gray-900 dark:text-white">Registro de Pagos</h3>
                                 <button
                                     onClick={() => setShowPaymentForm(true)}
                                     className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors shadow-sm"
@@ -555,7 +555,7 @@ export default function FileDetailPage() {
                             </div>
 
                             {showPaymentForm && (
-                                <div className="bg-green-50 p-4 rounded-lg border border-green-200 mb-6">
+                                <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800 mb-6">
                                     <h4 className="text-sm font-bold text-green-800 mb-3">Nuevo Pago</h4>
                                     <form onSubmit={handlePaymentSubmit} className="flex flex-wrap gap-4 items-end">
                                         <div className="w-40">
@@ -587,30 +587,30 @@ export default function FileDetailPage() {
                                 </div>
                             )}
 
-                            <div className="overflow-hidden rounded-lg border border-gray-200">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                            <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
+                                <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                                    <thead className="bg-gray-50 dark:bg-slate-900">
                                         <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
-                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
-                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Fecha</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Método</th>
+                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Monto</th>
+                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Acciones</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
                                         {file.payments?.map(p => (
                                             <tr key={p.id}>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
                                                     {new Date(p.paidAt).toLocaleDateString()}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                                                     {p.method}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600">
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600 dark:text-emerald-400">
                                                     ${p.amount.toLocaleString()}
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                                                    <button onClick={() => handleDeletePayment(p.id, p.amount)} className="text-red-400 hover:text-red-600 p-1">
+                                                    <button onClick={() => handleDeletePayment(p.id, p.amount)} className="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1">
                                                         <Trash2 className="w-4 h-4" />
                                                     </button>
                                                 </td>
