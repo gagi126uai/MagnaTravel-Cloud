@@ -126,6 +126,7 @@ export default function SettingsPage() {
     supplierId: "",
     serviceType: "",
     commissionPercent: 10,
+    priority: 1,
     description: ""
   });
 
@@ -214,6 +215,7 @@ export default function SettingsPage() {
         // PUT: solo actualiza porcentaje, descripción e isActive
         await api.put(`/commissions/${commissionForm.id}`, {
           commissionPercent: parseFloat(commissionForm.commissionPercent),
+          priority: parseInt(commissionForm.priority),
           description: commissionForm.description || null,
           isActive: true
         });
@@ -224,12 +226,13 @@ export default function SettingsPage() {
           supplierId: commissionForm.supplierId ? parseInt(commissionForm.supplierId) : null,
           serviceType: commissionForm.serviceType || null,
           commissionPercent: parseFloat(commissionForm.commissionPercent),
+          priority: parseInt(commissionForm.priority),
           description: commissionForm.description || null
         });
         Swal.fire("Guardado", "Regla de comisión creada", "success");
       }
       setShowCommissionModal(false);
-      setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, description: "" });
+      setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, priority: 1, description: "" });
       loadCommissionRules();
     } catch (error) {
       console.error("Error saving commission rule:", error);
@@ -243,13 +246,14 @@ export default function SettingsPage() {
       supplierId: rule.supplierId || "",
       serviceType: rule.serviceType || "",
       commissionPercent: rule.commissionPercent,
+      priority: rule.priority || 1,
       description: rule.description || ""
     });
     setShowCommissionModal(true);
   };
 
   const openNewCommissionModal = () => {
-    setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, description: "" });
+    setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, priority: 1, description: "" });
     setShowCommissionModal(true);
   };
 
@@ -523,7 +527,7 @@ export default function SettingsPage() {
           {/* Info Card */}
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
             <p className="text-sm text-blue-800 dark:text-blue-300">
-              <strong>Prioridad:</strong> Se aplica la regla más específica. Proveedor + Servicio {">"} Solo Proveedor / Solo Servicio {">"} Default de agencia
+              <strong>💡 Tip:</strong> A mayor prioridad, la regla se aplica primero. Si hay empate, se usa la más específica.
             </p>
           </div>
 
@@ -624,6 +628,19 @@ export default function SettingsPage() {
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">%</span>
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Prioridad</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  required
+                  className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                  value={commissionForm.priority}
+                  onChange={e => setCommissionForm({ ...commissionForm, priority: e.target.value })}
+                />
+                <p className="mt-1 text-xs text-slate-500">Mayor número = mayor prioridad</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Descripción (opcional)</label>

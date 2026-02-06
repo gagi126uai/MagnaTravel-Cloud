@@ -51,13 +51,6 @@ public class CommissionsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create([FromBody] CreateCommissionRuleRequest request, CancellationToken cancellationToken)
     {
-        // Calcular prioridad automáticamente
-        int priority = 1;
-        if (request.SupplierId.HasValue && !string.IsNullOrEmpty(request.ServiceType))
-            priority = 3; // Más específica
-        else if (request.SupplierId.HasValue || !string.IsNullOrEmpty(request.ServiceType))
-            priority = 2; // Media
-
         // Verificar si ya existe una regla igual
         var existing = await _dbContext.CommissionRules
             .FirstOrDefaultAsync(r => 
@@ -73,7 +66,7 @@ public class CommissionsController : ControllerBase
             SupplierId = request.SupplierId,
             ServiceType = request.ServiceType,
             CommissionPercent = request.CommissionPercent,
-            Priority = priority,
+            Priority = request.Priority,
             Description = request.Description,
             IsActive = true
         };
@@ -97,6 +90,7 @@ public class CommissionsController : ControllerBase
 
         rule.CommissionPercent = request.CommissionPercent;
         rule.Description = request.Description;
+        rule.Priority = request.Priority;
         rule.IsActive = request.IsActive;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -158,11 +152,13 @@ public record CreateCommissionRuleRequest(
     int? SupplierId,
     string? ServiceType,
     decimal CommissionPercent,
+    int Priority,
     string? Description
 );
 
 public record UpdateCommissionRuleRequest(
     decimal CommissionPercent,
+    int Priority,
     string? Description,
     bool IsActive
 );
