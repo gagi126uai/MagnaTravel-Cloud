@@ -188,7 +188,7 @@ export default function SupplierAccountPage() {
                                     <tr key={service.id} className="border-b hover:bg-muted/30">
                                         <td className="p-3">
                                             <span className="px-2 py-1 bg-primary/10 text-primary rounded text-xs font-medium">
-                                                {service.serviceType}
+                                                {service.type}
                                             </span>
                                         </td>
                                         <td className="p-3">{service.description || "-"}</td>
@@ -197,7 +197,7 @@ export default function SupplierAccountPage() {
                                                 <span className="text-primary font-medium">{service.fileNumber}</span>
                                             ) : "-"}
                                         </td>
-                                        <td className="p-3">{formatDate(service.departureDate)}</td>
+                                        <td className="p-3">{formatDate(service.date)}</td>
                                         <td className="p-3">
                                             <span className={`px-2 py-1 rounded text-xs ${service.status === "Confirmado" ? "bg-green-500/10 text-green-600" :
                                                 service.status === "Cancelado" ? "bg-red-500/10 text-red-600" :

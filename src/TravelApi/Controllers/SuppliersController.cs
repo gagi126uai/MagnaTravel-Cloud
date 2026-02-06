@@ -149,6 +149,9 @@ public class SuppliersController : ControllerBase
     /// <summary>
     /// Cuenta corriente del proveedor: servicios comprados, pagos realizados, saldo
     /// </summary>
+    /// <summary>
+    /// Cuenta corriente del proveedor: servicios comprados, pagos realizados, saldo
+    /// </summary>
     [HttpGet("{id:int}/account")]
     public async Task<ActionResult> GetSupplierAccount(int id, CancellationToken cancellationToken)
     {
@@ -161,25 +164,124 @@ public class SuppliersController : ControllerBase
             return NotFound("Proveedor no encontrado");
         }
 
-        // Servicios comprados a este proveedor
-        var services = await _dbContext.Reservations
+        // Definimos los estados que generan deuda (Confirmados)
+        var validStatuses = new[] { "Reservado", "Operativo", "Cerrado" };
+
+        // 1. Obtener Vuelos
+        var flights = await _dbContext.FlightSegments
             .AsNoTracking()
-            .Where(r => r.SupplierId == id)
-            .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new
+            .Include(f => f.TravelFile)
+            .Where(f => f.SupplierId == id && 
+                        validStatuses.Contains(f.TravelFile!.Status))
+            .Select(f => new ServiceDto
             {
-                r.Id,
-                r.ServiceType,
-                r.Description,
-                r.ConfirmationNumber,
-                r.NetCost,
-                r.SalePrice,
-                r.DepartureDate,
-                r.Status,
-                FileNumber = r.TravelFile != null ? r.TravelFile.FileNumber : null,
-                FileName = r.TravelFile != null ? r.TravelFile.Name : null
+                Id = f.Id,
+                Type = "Vuelo",
+                Description = $"{f.AirlineName} {f.FlightNumber} ({f.Origin}-{f.Destination})",
+                Confirmation = f.PNR ?? f.TicketNumber,
+                NetCost = f.NetCost,
+                SalePrice = f.SalePrice,
+                Date = f.DepartureTime,
+                Status = f.Status,
+                FileNumber = f.TravelFile!.FileNumber,
+                FileName = f.TravelFile!.Name
             })
             .ToListAsync(cancellationToken);
+
+        // 2. Obtener Hoteles
+        var hotels = await _dbContext.HotelBookings
+            .AsNoTracking()
+            .Include(h => h.TravelFile)
+            .Where(h => h.SupplierId == id && 
+                        validStatuses.Contains(h.TravelFile!.Status))
+            .Select(h => new ServiceDto
+            {
+                Id = h.Id,
+                Type = "Hotel",
+                Description = $"{h.HotelName} ({h.City})",
+                Confirmation = h.ConfirmationNumber,
+                NetCost = h.NetCost,
+                SalePrice = h.SalePrice,
+                Date = h.CheckIn,
+                Status = h.Status,
+                FileNumber = h.TravelFile!.FileNumber,
+                FileName = h.TravelFile!.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        // 3. Obtener Traslados
+        var transfers = await _dbContext.TransferBookings
+            .AsNoTracking()
+            .Include(t => t.TravelFile)
+            .Where(t => t.SupplierId == id && 
+                        validStatuses.Contains(t.TravelFile!.Status))
+            .Select(t => new ServiceDto
+            {
+                Id = t.Id,
+                Type = "Traslado",
+                Description = $"{t.TransferType} ({t.Origin} -> {t.Destination})",
+                Confirmation = t.ConfirmationNumber,
+                NetCost = t.NetCost,
+                SalePrice = t.SalePrice,
+                Date = t.PickupDateTime,
+                Status = t.Status,
+                FileNumber = t.TravelFile!.FileNumber,
+                FileName = t.TravelFile!.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        // 4. Obtener Paquetes
+        var packages = await _dbContext.PackageBookings
+            .AsNoTracking()
+            .Include(p => p.TravelFile)
+            .Where(p => p.SupplierId == id && 
+                        validStatuses.Contains(p.TravelFile!.Status))
+            .Select(p => new ServiceDto
+            {
+                Id = p.Id,
+                Type = "Paquete",
+                Description = p.PackageName,
+                Confirmation = p.ConfirmationNumber,
+                NetCost = p.NetCost,
+                SalePrice = p.SalePrice,
+                Date = p.StartDate,
+                Status = p.Status,
+                FileNumber = p.TravelFile!.FileNumber,
+                FileName = p.TravelFile!.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        // 5. Obtener Reservas Genéricas
+        var reservations = await _dbContext.Reservations
+            .AsNoTracking()
+            .Include(r => r.TravelFile)
+            .Where(r => r.SupplierId == id && 
+                        validStatuses.Contains(r.TravelFile!.Status))
+            .Select(r => new ServiceDto
+            {
+                Id = r.Id,
+                Type = r.ServiceType,
+                Description = r.Description ?? r.ServiceType,
+                Confirmation = r.ConfirmationNumber,
+                NetCost = r.NetCost,
+                SalePrice = r.SalePrice,
+                Date = r.DepartureDate,
+                Status = r.Status,
+                FileNumber = r.TravelFile!.FileNumber,
+                FileName = r.TravelFile!.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        // Unificar todo
+        var allServices = new List<ServiceDto>();
+        allServices.AddRange(flights);
+        allServices.AddRange(hotels);
+        allServices.AddRange(transfers);
+        allServices.AddRange(packages);
+        allServices.AddRange(reservations);
+
+        // Ordenar por fecha descendente
+        allServices = allServices.OrderByDescending(s => s.Date).ToList();
 
         // Pagos realizados a este proveedor
         var payments = await _dbContext.SupplierPayments
@@ -199,7 +301,7 @@ public class SuppliersController : ControllerBase
             .ToListAsync(cancellationToken);
 
         // Totales
-        var totalPurchases = services.Sum(s => s.NetCost);
+        var totalPurchases = allServices.Sum(s => s.NetCost);
         var totalPaid = payments.Sum(p => p.Amount);
         var balance = totalPurchases - totalPaid; // Positivo = le debemos
 
@@ -214,17 +316,32 @@ public class SuppliersController : ControllerBase
                 supplier.Phone,
                 supplier.TaxId
             },
-            Services = services,
+            Services = allServices, // Enviamos la lista unificada
             Payments = payments,
             Summary = new
             {
                 TotalPurchases = totalPurchases,
                 TotalPaid = totalPaid,
                 Balance = balance, // Positivo = le debemos
-                ServiceCount = services.Count,
+                ServiceCount = allServices.Count,
                 PaymentCount = payments.Count
             }
         });
+    }
+
+    // DTO Helper class
+    public class ServiceDto
+    {
+        public int Id { get; set; }
+        public string Type { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string? Confirmation { get; set; }
+        public decimal NetCost { get; set; }
+        public decimal SalePrice { get; set; }
+        public DateTime Date { get; set; }
+        public string Status { get; set; } = "";
+        public string? FileNumber { get; set; }
+        public string? FileName { get; set; }
     }
 
     /// <summary>
