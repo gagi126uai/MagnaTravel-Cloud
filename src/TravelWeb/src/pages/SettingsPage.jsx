@@ -122,6 +122,7 @@ export default function SettingsPage() {
   const [suppliers, setSuppliers] = useState([]);
   const [showCommissionModal, setShowCommissionModal] = useState(false);
   const [commissionForm, setCommissionForm] = useState({
+    id: null,
     supplierId: "",
     serviceType: "",
     commissionPercent: 10,
@@ -207,19 +208,41 @@ export default function SettingsPage() {
   const saveCommissionRule = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/commissions", {
+      const payload = {
         supplierId: commissionForm.supplierId ? parseInt(commissionForm.supplierId) : null,
         serviceType: commissionForm.serviceType || null,
         commissionPercent: parseFloat(commissionForm.commissionPercent),
         description: commissionForm.description || null
-      });
-      Swal.fire("Guardado", "Regla de comisión creada", "success");
+      };
+      if (commissionForm.id) {
+        await api.put(`/commissions/${commissionForm.id}`, payload);
+        Swal.fire("Guardado", "Regla de comisión actualizada", "success");
+      } else {
+        await api.post("/commissions", payload);
+        Swal.fire("Guardado", "Regla de comisión creada", "success");
+      }
       setShowCommissionModal(false);
-      setCommissionForm({ supplierId: "", serviceType: "", commissionPercent: 10, description: "" });
+      setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, description: "" });
       loadCommissionRules();
     } catch (error) {
       Swal.fire("Error", error.response?.data || "Ya existe una regla similar", "error");
     }
+  };
+
+  const editCommissionRule = (rule) => {
+    setCommissionForm({
+      id: rule.id,
+      supplierId: rule.supplierId || "",
+      serviceType: rule.serviceType || "",
+      commissionPercent: rule.commissionPercent,
+      description: rule.description || ""
+    });
+    setShowCommissionModal(true);
+  };
+
+  const openNewCommissionModal = () => {
+    setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, description: "" });
+    setShowCommissionModal(true);
   };
 
   const deleteCommissionRule = async (id) => {
@@ -479,7 +502,7 @@ export default function SettingsPage() {
               <p className="text-sm text-slate-500">Configura comisiones por proveedor y/o tipo de servicio</p>
             </div>
             <button
-              onClick={() => setShowCommissionModal(true)}
+              onClick={openNewCommissionModal}
               className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500"
             >
               <Plus className="h-4 w-4" />
@@ -524,12 +547,22 @@ export default function SettingsPage() {
                       {rule.priority === 3 ? "Alta" : rule.priority === 2 ? "Media" : "Base"}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right">
-                      <button
-                        onClick={() => deleteCommissionRule(rule.id)}
-                        className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/30 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => editCommissionRule(rule)}
+                          className="rounded-lg p-2 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30"
+                          title="Editar"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => deleteCommissionRule(rule.id)}
+                          className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/30"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -542,8 +575,8 @@ export default function SettingsPage() {
             )}
           </div>
 
-          {/* Modal Nueva Regla */}
-          <Modal isOpen={showCommissionModal} onClose={() => setShowCommissionModal(false)} title="Nueva Regla de Comisión">
+          {/* Modal Regla */}
+          <Modal isOpen={showCommissionModal} onClose={() => setShowCommissionModal(false)} title={commissionForm.id ? "Editar Regla de Comisión" : "Nueva Regla de Comisión"}>
             <form onSubmit={saveCommissionRule} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor (opcional)</label>
@@ -594,7 +627,7 @@ export default function SettingsPage() {
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button type="button" onClick={() => setShowCommissionModal(false)} className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancelar</button>
-                <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">Crear Regla</button>
+                <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">{commissionForm.id ? "Guardar Cambios" : "Crear Regla"}</button>
               </div>
             </form>
           </Modal>
