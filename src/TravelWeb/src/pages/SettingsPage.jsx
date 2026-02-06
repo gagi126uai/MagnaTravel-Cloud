@@ -83,6 +83,7 @@ const Avatar = ({ name }) => {
 const tabs = [
   { id: "agency", label: "Datos de la Agencia" },
   { id: "commissions", label: "Comisiones" },
+  { id: "rates", label: "Tarifario" },
   { id: "users", label: "Usuarios" },
   { id: "programming", label: "Programación" },
 ];
@@ -116,6 +117,22 @@ export default function SettingsPage() {
     currency: "ARS"
   });
   const [savingAgency, setSavingAgency] = useState(false);
+
+  // Rates (Tarifario) State
+  const [rates, setRates] = useState([]);
+  const [showRateModal, setShowRateModal] = useState(false);
+  const [rateForm, setRateForm] = useState({
+    id: null,
+    supplierId: "",
+    serviceType: "Aereo",
+    productName: "",
+    description: "",
+    netCost: 0,
+    salePrice: 0,
+    currency: "USD",
+    validFrom: "",
+    validTo: ""
+  });
 
   // Commission Rules State
   const [commissionRules, setCommissionRules] = useState([]);
@@ -206,6 +223,82 @@ export default function SettingsPage() {
       const data = await api.get("/suppliers");
       setSuppliers(data);
     } catch { }
+  };
+
+  // Rates (Tarifario) functions
+  const loadRates = async () => {
+    try {
+      const data = await api.get("/rates");
+      setRates(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error loading rates:", error);
+      setRates([]);
+    }
+  };
+
+  const saveRate = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        ...rateForm,
+        supplierId: rateForm.supplierId ? parseInt(rateForm.supplierId) : null,
+        netCost: parseFloat(rateForm.netCost),
+        salePrice: parseFloat(rateForm.salePrice),
+        validFrom: rateForm.validFrom ? new Date(rateForm.validFrom).toISOString() : null,
+        validTo: rateForm.validTo ? new Date(rateForm.validTo).toISOString() : null
+      };
+
+      if (rateForm.id) {
+        await api.put(`/rates/${rateForm.id}`, payload);
+        showSuccess("Tarifa actualizada correctamente");
+      } else {
+        await api.post("/rates", payload);
+        showSuccess("Tarifa creada correctamente");
+      }
+
+      setShowRateModal(false);
+      setRateForm({ id: null, supplierId: "", serviceType: "Aereo", productName: "", description: "", netCost: 0, salePrice: 0, currency: "USD", validFrom: "", validTo: "" });
+      loadRates();
+    } catch (error) {
+      showError(error.message || "Error al guardar tarifa");
+    }
+  };
+
+  const deleteRate = async (rateId) => {
+    const result = await Swal.fire({
+      title: "¿Eliminar tarifa?",
+      text: "Esta acción no se puede deshacer",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#ef4444",
+      confirmButtonText: "Sí, eliminar",
+      cancelButtonText: "Cancelar"
+    });
+    if (result.isConfirmed) {
+      try {
+        await api.delete(`/rates/${rateId}`);
+        showSuccess("Tarifa eliminada");
+        loadRates();
+      } catch (error) {
+        showError("Error al eliminar tarifa");
+      }
+    }
+  };
+
+  const editRate = (rate) => {
+    setRateForm({
+      id: rate.id,
+      supplierId: rate.supplierId?.toString() || "",
+      serviceType: rate.serviceType,
+      productName: rate.productName,
+      description: rate.description || "",
+      netCost: rate.netCost,
+      salePrice: rate.salePrice,
+      currency: rate.currency || "USD",
+      validFrom: rate.validFrom ? rate.validFrom.split("T")[0] : "",
+      validTo: rate.validTo ? rate.validTo.split("T")[0] : ""
+    });
+    setShowRateModal(true);
   };
 
   const saveCommissionRule = async (e) => {
@@ -649,6 +742,138 @@ export default function SettingsPage() {
               <div className="flex justify-end gap-3 pt-4">
                 <button type="button" onClick={() => setShowCommissionModal(false)} className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancelar</button>
                 <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">{commissionForm.id ? "Guardar Cambios" : "Crear Regla"}</button>
+              </div>
+            </form>
+          </Modal>
+        </section>
+      )}
+
+      {/* Rates Tab */}
+      {activeTab === "rates" && (
+        <section className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-lg font-semibold">Tarifario</h2>
+              <p className="text-sm text-slate-500">Gestione las tarifas de sus proveedores</p>
+            </div>
+            <button
+              onClick={() => { setRateForm({ id: null, supplierId: "", serviceType: "Aereo", productName: "", description: "", netCost: 0, salePrice: 0, currency: "USD", validFrom: "", validTo: "" }); setShowRateModal(true); loadRates(); loadSuppliers(); }}
+              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-500"
+            >
+              <Plus className="h-4 w-4" />
+              Nueva Tarifa
+            </button>
+          </div>
+
+          {/* Rates Table */}
+          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden dark:border-slate-800 dark:bg-slate-900/50">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-800/50">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Producto</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Tipo</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Proveedor</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-600 dark:text-slate-300">Costo</th>
+                  <th className="px-4 py-3 text-right font-medium text-slate-600 dark:text-slate-300">Venta</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Vigencia</th>
+                  <th className="px-4 py-3 text-center font-medium text-slate-600 dark:text-slate-300">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {rates.length === 0 ? (
+                  <tr><td colSpan="7" className="px-4 py-8 text-center text-slate-500">No hay tarifas cargadas. Cree una nueva tarifa para comenzar.</td></tr>
+                ) : rates.map(rate => (
+                  <tr key={rate.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                    <td className="px-4 py-3 font-medium">{rate.productName}</td>
+                    <td className="px-4 py-3">{rate.serviceType}</td>
+                    <td className="px-4 py-3">{rate.supplierName || "-"}</td>
+                    <td className="px-4 py-3 text-right">${rate.netCost?.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-medium text-emerald-600">${rate.salePrice?.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"} al {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Pencil className="h-4 w-4" /></button>
+                      <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg"><Trash2 className="h-4 w-4" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Rate Modal */}
+          <Modal isOpen={showRateModal} onClose={() => setShowRateModal(false)} title={rateForm.id ? "Editar Tarifa" : "Nueva Tarifa"}>
+            <form onSubmit={saveRate} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Producto *</label>
+                <input type="text" required className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                  value={rateForm.productName} onChange={e => setRateForm({ ...rateForm, productName: e.target.value })} placeholder="Vuelo Miami-Buenos Aires" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo Servicio *</label>
+                  <select className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={rateForm.serviceType} onChange={e => setRateForm({ ...rateForm, serviceType: e.target.value })}>
+                    {serviceTypes.filter(s => s.value).map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor</label>
+                  <select className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={rateForm.supplierId} onChange={e => setRateForm({ ...rateForm, supplierId: e.target.value })}>
+                    <option value="">Sin proveedor específico</option>
+                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Descripción</label>
+                <input type="text" className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                  value={rateForm.description} onChange={e => setRateForm({ ...rateForm, description: e.target.value })} placeholder="Temporada alta, Economy" />
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Costo Neto *</label>
+                  <div className="relative mt-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                    <input type="number" step="0.01" required className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-7 pr-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                      value={rateForm.netCost} onChange={e => setRateForm({ ...rateForm, netCost: e.target.value })} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Precio Venta *</label>
+                  <div className="relative mt-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                    <input type="number" step="0.01" required className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-7 pr-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                      value={rateForm.salePrice} onChange={e => setRateForm({ ...rateForm, salePrice: e.target.value })} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Moneda</label>
+                  <select className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={rateForm.currency} onChange={e => setRateForm({ ...rateForm, currency: e.target.value })}>
+                    <option value="USD">USD</option>
+                    <option value="ARS">ARS</option>
+                    <option value="EUR">EUR</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Vigencia Desde</label>
+                  <input type="date" className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={rateForm.validFrom} onChange={e => setRateForm({ ...rateForm, validFrom: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Vigencia Hasta</label>
+                  <input type="date" className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={rateForm.validTo} onChange={e => setRateForm({ ...rateForm, validTo: e.target.value })} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <button type="button" onClick={() => setShowRateModal(false)} className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancelar</button>
+                <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">{rateForm.id ? "Guardar Cambios" : "Crear Tarifa"}</button>
               </div>
             </form>
           </Modal>
