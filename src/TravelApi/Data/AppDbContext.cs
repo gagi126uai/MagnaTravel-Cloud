@@ -24,6 +24,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
     public DbSet<CommissionRule> CommissionRules => Set<CommissionRule>();
+    
+    // Sprint 5: Servicios específicos y Tarifario
+    public DbSet<HotelBooking> HotelBookings => Set<HotelBooking>();
+    public DbSet<TransferBooking> TransferBookings => Set<TransferBooking>();
+    public DbSet<PackageBooking> PackageBookings => Set<PackageBooking>();
+    public DbSet<Rate> Rates => Set<Rate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

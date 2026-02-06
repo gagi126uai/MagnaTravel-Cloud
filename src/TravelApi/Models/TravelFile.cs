@@ -54,4 +54,10 @@ public class TravelFile
     public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
     public ICollection<Passenger> Passengers { get; set; } = new List<Passenger>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+    
+    // Servicios específicos
+    public ICollection<HotelBooking> HotelBookings { get; set; } = new List<HotelBooking>();
+    public ICollection<TransferBooking> TransferBookings { get; set; } = new List<TransferBooking>();
+    public ICollection<PackageBooking> PackageBookings { get; set; } = new List<PackageBooking>();
+    public ICollection<FlightSegment> FlightSegments { get; set; } = new List<FlightSegment>();
 }
