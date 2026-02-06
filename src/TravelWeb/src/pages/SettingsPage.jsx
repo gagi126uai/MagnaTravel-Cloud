@@ -192,9 +192,11 @@ export default function SettingsPage() {
   const loadCommissionRules = async () => {
     try {
       const data = await api.get("/commissions");
-      setCommissionRules(data);
+      console.log("Commission rules loaded:", data);
+      setCommissionRules(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.log("Error loading commission rules");
+      console.error("Error loading commission rules:", error);
+      setCommissionRules([]);
     }
   };
 
