@@ -410,6 +410,9 @@ public class SuppliersController : ControllerBase
     /// <summary>
     /// Registrar un pago al proveedor (egreso)
     /// </summary>
+    /// <summary>
+    /// Registrar un pago al proveedor (egreso)
+    /// </summary>
     [HttpPost("{id:int}/payments")]
     public async Task<ActionResult> AddSupplierPayment(int id, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
     {
@@ -422,6 +425,14 @@ public class SuppliersController : ControllerBase
         if (request.Amount <= 0)
         {
             return BadRequest("El monto debe ser mayor a 0");
+        }
+
+        // VALIDACIÓN DE SALDO NEGATIVO
+        // Si el pago es mayor a la deuda (saldo), no permitirlo.
+        // CurrentBalance es positivo cuando DEBEMOS dinero.
+        if (request.Amount > supplier.CurrentBalance)
+        {
+            return BadRequest($"El pago ({request.Amount:C}) excede la deuda actual con el proveedor ({supplier.CurrentBalance:C}).");
         }
 
         var payment = new SupplierPayment
@@ -447,6 +458,71 @@ public class SuppliersController : ControllerBase
     }
 
     /// <summary>
+    /// Actualizar un pago existente
+    /// </summary>
+    [HttpPut("{id:int}/payments/{paymentId:int}")]
+    public async Task<ActionResult> UpdateSupplierPayment(int id, int paymentId, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
+        if (supplier is null) return NotFound("Proveedor no encontrado");
+
+        var payment = await _dbContext.SupplierPayments.FirstOrDefaultAsync(p => p.Id == paymentId && p.SupplierId == id, cancellationToken);
+        if (payment is null) return NotFound("Pago no encontrado");
+
+        if (request.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
+
+        // Calcular la diferencia para validar el saldo
+        // Ejemplo: Deuda 100. Pago original 50. Deuda actual 50.
+        // Nuevo pago 80. Diferencia +30.
+        // Nueva deuda sería 50 - 30 = 20. OK.
+        // Nuevo pago 120. Diferencia +70.
+        // Nueva deuda sería 50 - 70 = -20. ERROR.
+        
+        var difference = request.Amount - payment.Amount;
+
+        if (supplier.CurrentBalance - difference < 0)
+        {
+             return BadRequest($"La modificación del pago excede la deuda actual. Saldo restante: {supplier.CurrentBalance:C}, Diferencia a aplicar: {difference:C}");
+        }
+
+        // Actualizar campos
+        payment.Amount = request.Amount;
+        payment.Method = request.Method ?? payment.Method;
+        payment.Reference = request.Reference;
+        payment.Notes = request.Notes;
+        payment.TravelFileId = request.TravelFileId;
+        // PaidAt no se actualiza usualmente para mantener historial, o se podría permitir
+        
+        // Actualizar saldo
+        supplier.CurrentBalance -= difference;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { Message = "Pago actualizado correctamente" });
+    }
+
+    /// <summary>
+    /// Eliminar un pago y restaurar la deuda
+    /// </summary>
+    [HttpDelete("{id:int}/payments/{paymentId:int}")]
+    public async Task<ActionResult> DeleteSupplierPayment(int id, int paymentId, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
+        if (supplier is null) return NotFound("Proveedor no encontrado");
+
+        var payment = await _dbContext.SupplierPayments.FirstOrDefaultAsync(p => p.Id == paymentId && p.SupplierId == id, cancellationToken);
+        if (payment is null) return NotFound("Pago no encontrado");
+
+        // Restaurar la deuda (sumar el monto del pago eliminado al saldo)
+        supplier.CurrentBalance += payment.Amount;
+
+        _dbContext.SupplierPayments.Remove(payment);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { Message = "Pago eliminado y saldo restaurado" });
+    }
+
+    /// <summary>
     /// Historial de pagos al proveedor
     /// </summary>
     [HttpGet("{id:int}/payments")]
@@ -465,7 +541,8 @@ public class SuppliersController : ControllerBase
                 p.Reference,
                 p.Notes,
                 FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null,
-                FileName = p.TravelFile != null ? p.TravelFile.Name : null
+                FileName = p.TravelFile != null ? p.TravelFile.Name : null,
+                TravelFileId = p.TravelFileId 
             })
             .ToListAsync(cancellationToken);
 

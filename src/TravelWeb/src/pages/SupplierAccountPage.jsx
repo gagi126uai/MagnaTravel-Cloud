@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Building2, Phone, Mail, CreditCard, DollarSign, TrendingUp, FileText, Plus } from "lucide-react";
+import { ArrowLeft, Building2, Phone, Mail, CreditCard, DollarSign, TrendingUp, FileText, Plus, Pencil, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { formatCurrency, formatDate } from "../lib/utils";
 import Swal from "sweetalert2";
@@ -11,11 +11,13 @@ export default function SupplierAccountPage() {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [editingPayment, setEditingPayment] = useState(null);
     const [paymentForm, setPaymentForm] = useState({
         amount: "",
         method: "Transfer",
         reference: "",
-        notes: ""
+        notes: "",
+        travelFileId: null
     });
 
     useEffect(() => {
@@ -34,26 +36,72 @@ export default function SupplierAccountPage() {
         }
     };
 
-    const handleAddPayment = async () => {
+    const handleOpenPaymentModal = (payment = null) => {
+        if (payment) {
+            setEditingPayment(payment);
+            setPaymentForm({
+                amount: payment.amount,
+                method: payment.method,
+                reference: payment.reference || "",
+                notes: payment.notes || "",
+                travelFileId: payment.travelFileId
+            });
+        } else {
+            setEditingPayment(null);
+            setPaymentForm({ amount: "", method: "Transfer", reference: "", notes: "", travelFileId: null });
+        }
+        setShowPaymentModal(true);
+    };
+
+    const handleSavePayment = async () => {
         if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
             Swal.fire("Error", "El monto debe ser mayor a 0", "error");
             return;
         }
 
         try {
-            await api.post(`/suppliers/${id}/payments`, {
+            const payload = {
                 amount: parseFloat(paymentForm.amount),
                 method: paymentForm.method,
                 reference: paymentForm.reference,
-                notes: paymentForm.notes
-            });
+                notes: paymentForm.notes,
+                travelFileId: paymentForm.travelFileId
+            };
 
-            Swal.fire("Éxito", "Pago registrado correctamente", "success");
+            if (editingPayment) {
+                await api.put(`/suppliers/${id}/payments/${editingPayment.id}`, payload);
+                Swal.fire("Éxito", "Pago actualizado correctamente", "success");
+            } else {
+                await api.post(`/suppliers/${id}/payments`, payload);
+                Swal.fire("Éxito", "Pago registrado correctamente", "success");
+            }
+
             setShowPaymentModal(false);
-            setPaymentForm({ amount: "", method: "Transfer", reference: "", notes: "" });
             fetchData();
         } catch (error) {
-            Swal.fire("Error", error.response?.data || "Error al registrar el pago", "error");
+            console.error(error);
+            Swal.fire("Error", error.response?.data || "Error al guardar el pago", "error");
+        }
+    };
+
+    const handleDeletePayment = async (payment) => {
+        const result = await Swal.fire({
+            title: "¿Eliminar pago?",
+            text: `Se restaurará la deuda de ${formatCurrency(payment.amount)}. Esta acción no se puede deshacer.`,
+            icon: "warning",
+            showCancelButton: true,
+            confirmButtonText: "Sí, eliminar",
+            cancelButtonText: "Cancelar"
+        });
+
+        if (result.isConfirmed) {
+            try {
+                await api.delete(`/suppliers/${id}/payments/${payment.id}`);
+                Swal.fire("Eliminado", "El pago ha sido eliminado y el saldo restaurado.", "success");
+                fetchData();
+            } catch (error) {
+                Swal.fire("Error", "No se pudo eliminar el pago", "error");
+            }
         }
     };
 
@@ -147,7 +195,7 @@ export default function SupplierAccountPage() {
             {/* Add Payment Button */}
             <div className="flex justify-end">
                 <button
-                    onClick={() => setShowPaymentModal(true)}
+                    onClick={() => handleOpenPaymentModal()}
                     className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
                 >
                     <Plus className="h-4 w-4" />
@@ -234,6 +282,7 @@ export default function SupplierAccountPage() {
                                 <th className="p-3 text-left font-medium">Expediente</th>
                                 <th className="p-3 text-left font-medium">Notas</th>
                                 <th className="p-3 text-right font-medium">Monto</th>
+                                <th className="p-3 text-center font-medium">Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -258,6 +307,24 @@ export default function SupplierAccountPage() {
                                         <td className="p-3 text-right font-mono text-green-600 font-medium">
                                             {formatCurrency(payment.amount)}
                                         </td>
+                                        <td className="p-3 text-center">
+                                            <div className="flex justify-center gap-2">
+                                                <button
+                                                    onClick={() => handleOpenPaymentModal(payment)}
+                                                    className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                                    title="Editar"
+                                                >
+                                                    <Pencil className="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeletePayment(payment)}
+                                                    className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                                    title="Eliminar"
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        </td>
                                     </tr>
                                 ))
                             )}
@@ -270,7 +337,7 @@ export default function SupplierAccountPage() {
             {showPaymentModal && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
                     <div className="bg-background border rounded-xl p-6 w-full max-w-md space-y-4">
-                        <h3 className="text-lg font-semibold">Registrar Pago a {supplier.name}</h3>
+                        <h3 className="text-lg font-semibold">{editingPayment ? "Editar Pago" : "Registrar Pago"} a {supplier.name}</h3>
 
                         <div className="space-y-3">
                             <div>
@@ -330,10 +397,10 @@ export default function SupplierAccountPage() {
                                 Cancelar
                             </button>
                             <button
-                                onClick={handleAddPayment}
+                                onClick={handleSavePayment}
                                 className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
                             >
-                                Registrar Pago
+                                {editingPayment ? "Guardar Cambios" : "Registrar Pago"}
                             </button>
                         </div>
                     </div>
