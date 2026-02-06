@@ -26,15 +26,27 @@ export async function apiRequest(path, options = {}) {
     if (errorText) {
       try {
         const data = JSON.parse(errorText);
+
+        // Case 1: Array of strings ["Error 1", "Error 2"]
         if (Array.isArray(data) && data.length > 0) {
           message = data.join(", ");
-        } else if (data?.message) {
+        }
+        // Case 2: FluentValidation / RFC 7807 Problem Details { errors: { Field: ["Error"] } }
+        else if (data.errors && typeof data.errors === 'object') {
+          const errorMessages = Object.values(data.errors).flat();
+          message = errorMessages.length > 0 ? errorMessages.join("\n") : "Error de validación";
+        }
+        // Case 3: Standard object { message: "Error" }
+        else if (data?.message) {
           message = data.message;
-        } else {
-          message = errorText;
+        }
+        // Case 4: Any other object
+        else {
+          // Try to find any property that looks like a message
+          message = data.error || data.title || JSON.stringify(data);
         }
       } catch {
-        message = errorText;
+        message = errorText; // Fallback to raw text
       }
     }
     throw new Error(message);

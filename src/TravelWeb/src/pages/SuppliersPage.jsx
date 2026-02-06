@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Plus, Search, Pencil, Wallet, Trash2, Building2, Mail, Phone, Power, CheckCircle2, XCircle } from "lucide-react";
 import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
-import Swal from "sweetalert2";
+import { showError, showSuccess, showConfirm } from "../alerts";
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
@@ -33,7 +33,7 @@ export default function SuppliersPage() {
       setSuppliers(data);
     } catch (error) {
       console.error("Error fetching suppliers:", error);
-      Swal.fire("Error", "No se pudieron cargar los proveedores", "error");
+      showError("No se pudieron cargar los proveedores");
     } finally {
       setLoading(false);
     }
@@ -73,56 +73,50 @@ export default function SuppliersPage() {
     try {
       if (currentSupplier) {
         await api.put(`/suppliers/${currentSupplier.id}`, { ...formData, id: currentSupplier.id });
-        Swal.fire("Éxito", "Proveedor actualizado", "success");
+        showSuccess("Proveedor actualizado");
       } else {
         await api.post("/suppliers", formData);
-        Swal.fire("Éxito", "Proveedor creado", "success");
+        showSuccess("Proveedor creado");
       }
       setIsModalOpen(false);
       fetchSuppliers();
     } catch (error) {
       console.error("Error saving supplier:", error);
-      Swal.fire("Error", "No se pudo guardar el proveedor", "error");
+      showError("No se pudo guardar el proveedor");
     }
   };
 
   const handleDelete = async (supplier) => {
-    const result = await Swal.fire({
-      title: "¿Eliminar proveedor?",
-      text: `¿Estás seguro de eliminar a ${supplier.name}?`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#ef4444",
-      confirmButtonText: "Sí, eliminar",
-      cancelButtonText: "Cancelar"
-    });
+    const confirmed = await showConfirm(
+      "¿Eliminar proveedor?",
+      `¿Estás seguro de eliminar a ${supplier.name}?`,
+      "Sí, eliminar",
+      "red"
+    );
 
-    if (result.isConfirmed) {
+    if (confirmed) {
       try {
         await api.delete(`/suppliers/${supplier.id}`);
-        Swal.fire("Eliminado", "Proveedor eliminado correctamente", "success");
+        showSuccess("Proveedor eliminado correctamente");
         fetchSuppliers();
       } catch (error) {
         const errorMsg = error.response?.data || "No se pudo eliminar el proveedor";
 
-        // Ofrecer forzar eliminación si tiene servicios/pagos
-        const forceResult = await Swal.fire({
-          title: "No se puede eliminar",
-          text: `${errorMsg}. ¿Desea FORZAR la eliminación? (desvinculará servicios y eliminará pagos)`,
-          icon: "error",
-          showCancelButton: true,
-          confirmButtonColor: "#dc2626",
-          confirmButtonText: "Forzar Eliminación",
-          cancelButtonText: "Cancelar"
-        });
+        // Ofrecer forzar eliminación
+        const forceConfirmed = await showConfirm(
+          "No se puede eliminar",
+          `${errorMsg}. ¿Desea FORZAR la eliminación? (desvinculará servicios y eliminará pagos)`,
+          "Forzar Eliminación",
+          "red"
+        );
 
-        if (forceResult.isConfirmed) {
+        if (forceConfirmed) {
           try {
             await api.delete(`/suppliers/${supplier.id}/force`);
-            Swal.fire("Eliminado", "Proveedor eliminado (forzado)", "success");
+            showSuccess("Proveedor eliminado (forzado)");
             fetchSuppliers();
           } catch (forceError) {
-            Swal.fire("Error", forceError.response?.data || "No se pudo forzar la eliminación", "error");
+            showError(forceError.response?.data || "No se pudo forzar la eliminación");
           }
         }
       }

@@ -4,21 +4,17 @@ import { ArrowLeft, Building2, Phone, Mail, CreditCard, DollarSign, TrendingUp, 
 import { api } from "../api";
 import { formatCurrency, formatDate } from "../lib/utils";
 import Swal from "sweetalert2";
+import SupplierPaymentModal from "../components/SupplierPaymentModal"; // Import New Modal
 
 export default function SupplierAccountPage() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
+
+    // Payment Modal State
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [editingPayment, setEditingPayment] = useState(null);
-    const [paymentForm, setPaymentForm] = useState({
-        amount: "",
-        method: "Transfer",
-        reference: "",
-        notes: "",
-        travelFileId: null
-    });
 
     useEffect(() => {
         fetchData();
@@ -37,51 +33,14 @@ export default function SupplierAccountPage() {
     };
 
     const handleOpenPaymentModal = (payment = null) => {
-        if (payment) {
-            setEditingPayment(payment);
-            setPaymentForm({
-                amount: payment.amount,
-                method: payment.method,
-                reference: payment.reference || "",
-                notes: payment.notes || "",
-                travelFileId: payment.travelFileId
-            });
-        } else {
-            setEditingPayment(null);
-            setPaymentForm({ amount: "", method: "Transfer", reference: "", notes: "", travelFileId: null });
-        }
+        setEditingPayment(payment);
         setShowPaymentModal(true);
     };
 
-    const handleSavePayment = async () => {
-        if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
-            Swal.fire("Error", "El monto debe ser mayor a 0", "error");
-            return;
-        }
-
-        try {
-            const payload = {
-                amount: parseFloat(paymentForm.amount),
-                method: paymentForm.method,
-                reference: paymentForm.reference,
-                notes: paymentForm.notes,
-                travelFileId: paymentForm.travelFileId
-            };
-
-            if (editingPayment) {
-                await api.put(`/suppliers/${id}/payments/${editingPayment.id}`, payload);
-                Swal.fire("Éxito", "Pago actualizado correctamente", "success");
-            } else {
-                await api.post(`/suppliers/${id}/payments`, payload);
-                Swal.fire("Éxito", "Pago registrado correctamente", "success");
-            }
-
-            setShowPaymentModal(false);
-            fetchData();
-        } catch (error) {
-            console.error(error);
-            Swal.fire("Error", error.response?.data || "Error al guardar el pago", "error");
-        }
+    const handlePaymentSuccess = () => {
+        setShowPaymentModal(false);
+        fetchData();
+        // Feedback is handled inside the modal (showSuccess)
     };
 
     const handleDeletePayment = async (payment) => {
@@ -196,7 +155,7 @@ export default function SupplierAccountPage() {
             <div className="flex justify-end">
                 <button
                     onClick={() => handleOpenPaymentModal()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 shadow-sm shadow-emerald-500/20"
                 >
                     <Plus className="h-4 w-4" />
                     Registrar Pago
@@ -333,79 +292,16 @@ export default function SupplierAccountPage() {
                 </div>
             </div>
 
-            {/* Payment Modal */}
-            {showPaymentModal && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="bg-background border rounded-xl p-6 w-full max-w-md space-y-4">
-                        <h3 className="text-lg font-semibold">{editingPayment ? "Editar Pago" : "Registrar Pago"} a {supplier.name}</h3>
-
-                        <div className="space-y-3">
-                            <div>
-                                <label className="text-sm font-medium">Monto *</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    value={paymentForm.amount}
-                                    onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                                    className="w-full mt-1 rounded-md border border-input bg-background px-3 py-2"
-                                    placeholder="0.00"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="text-sm font-medium">Método de Pago</label>
-                                <select
-                                    value={paymentForm.method}
-                                    onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}
-                                    className="w-full mt-1 rounded-md border border-input bg-background px-3 py-2"
-                                >
-                                    <option value="Transfer">Transferencia</option>
-                                    <option value="Cash">Efectivo</option>
-                                    <option value="Card">Tarjeta</option>
-                                    <option value="Check">Cheque</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="text-sm font-medium">Referencia (Nro. transferencia, cheque, etc.)</label>
-                                <input
-                                    type="text"
-                                    value={paymentForm.reference}
-                                    onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })}
-                                    className="w-full mt-1 rounded-md border border-input bg-background px-3 py-2"
-                                    placeholder="Nro. de comprobante"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="text-sm font-medium">Notas</label>
-                                <textarea
-                                    value={paymentForm.notes}
-                                    onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                                    className="w-full mt-1 rounded-md border border-input bg-background px-3 py-2"
-                                    rows={2}
-                                    placeholder="Notas adicionales..."
-                                />
-                            </div>
-                        </div>
-
-                        <div className="flex justify-end gap-2">
-                            <button
-                                onClick={() => setShowPaymentModal(false)}
-                                className="px-4 py-2 text-sm font-medium rounded-md border hover:bg-accent"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={handleSavePayment}
-                                className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
-                            >
-                                {editingPayment ? "Guardar Cambios" : "Registrar Pago"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* New Professional Payment Modal */}
+            <SupplierPaymentModal
+                isOpen={showPaymentModal}
+                onClose={() => setShowPaymentModal(false)}
+                onSuccess={handlePaymentSuccess}
+                supplierId={supplier.id}
+                supplierName={supplier.name}
+                currentBalance={summary.balance} // We pass the current Debt to validate overpayment
+                editingPayment={editingPayment}
+            />
         </div>
     );
 }
