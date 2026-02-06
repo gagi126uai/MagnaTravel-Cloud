@@ -32,21 +32,36 @@ public class TravelFilesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetFile(int id)
     {
-        var file = await _context.TravelFiles
-            .Include(f => f.Payer)
-            .Include(f => f.Passengers)
-            .Include(f => f.Payments.OrderByDescending(p => p.PaidAt))
-            .Include(f => f.Reservations)
-                .ThenInclude(r => r.Supplier)
-            .FirstOrDefaultAsync(f => f.Id == id);
+        try 
+        {
+            var file = await _context.TravelFiles
+                .Include(f => f.Payer)
+                .Include(f => f.Passengers)
+                .Include(f => f.Payments.OrderByDescending(p => p.PaidAt))
+                .Include(f => f.Reservations)
+                    .ThenInclude(r => r.Supplier)
+                .FirstOrDefaultAsync(f => f.Id == id);
 
-        if (file == null) return NotFound();
+            if (file == null) return NotFound($"File with ID {id} not found");
 
-        // Recalculate Balance on read to ensure consistency
-        var totalPaid = file.Payments.Where(p => p.Status != "Cancelled").Sum(p => p.Amount);
-        file.Balance = file.TotalSale - totalPaid;
+            // Recalculate Balance on read to ensure consistency
+            if (file.Payments != null)
+            {
+                var totalPaid = file.Payments.Where(p => p.Status != "Cancelled").Sum(p => p.Amount);
+                file.Balance = file.TotalSale - totalPaid;
+            }
 
-        return Ok(file);
+            return Ok(file);
+        }
+        catch (Exception ex)
+        {
+            // Log the error (console for now in docker)
+            Console.WriteLine($"ERROR GetFile({id}): {ex.Message} \n {ex.StackTrace}");
+            if (ex.InnerException != null)
+                Console.WriteLine($"Inner: {ex.InnerException.Message}");
+                
+            return StatusCode(500, $"Internal Server Error: {ex.Message}");
+        }
     }
 
     [HttpPost]
