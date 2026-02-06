@@ -111,6 +111,7 @@ public class TravelFilesController : ControllerBase
                 .Include(f => f.Payments.OrderByDescending(p => p.PaidAt))
                 .Include(f => f.Reservations)
                     .ThenInclude(r => r.Supplier)
+                .AsSplitQuery()
                 .FirstOrDefaultAsync(f => f.Id == id);
 
             if (file == null) 

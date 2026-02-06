@@ -42,8 +42,9 @@ export default function FileDetailPage() {
             setFile(res.data);
         } catch (error) {
             console.error(error);
-            showError("Error al cargar el file");
-            navigate("/files");
+            showError("Error al cargar el expediente: " + (error.message || "Error desconocido"));
+            // Do NOT navigate away automatically, let the user see the error
+            setFile(null);
         } finally {
             setLoading(false);
         }
@@ -284,7 +285,13 @@ export default function FileDetailPage() {
     };
 
     if (loading) return <div className="p-8 text-center">Cargando file...</div>;
-    if (!file) return <div className="p-8 text-center">File no encontrado</div>;
+    if (!file) return (
+        <div className="p-8 text-center">
+            <h3 className="text-xl font-medium text-gray-900">Expediente no encontrado</h3>
+            <p className="text-gray-500 mt-2">No se pudo cargar la información. Verifique que el expediente exista.</p>
+            <button onClick={() => navigate("/files")} className="mt-4 text-blue-600 hover:text-blue-800 underline">Volver a la lista</button>
+        </div>
+    );
 
     const allServices = getAllServices();
 
