@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
-import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator, Plane, Hotel, Car, Package, Star } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator, Plane, Hotel, Car, Package, Star, ChevronDown, ChevronRight, BedDouble } from "lucide-react";
 import Swal from "sweetalert2";
 
 const serviceTypes = [
@@ -64,6 +64,9 @@ export default function RatesPage() {
     const [showModal, setShowModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [filterType, setFilterType] = useState("");
+
+    // Grouping State
+    const [expandedHotels, setExpandedHotels] = useState({});
 
     const emptyForm = {
         id: null, supplierId: "", serviceType: "Aereo", productName: "", description: "",
@@ -387,6 +390,7 @@ export default function RatesPage() {
         await fetchCommission("", "Aereo");
     };
 
+    // Filter Logic
     const filteredRates = rates.filter(rate => {
         const matchSearch = !searchTerm ||
             rate.productName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -396,6 +400,45 @@ export default function RatesPage() {
         const matchType = !filterType || rate.serviceType === filterType;
         return matchSearch && matchType;
     });
+
+    // Toggle Hotel Expanded
+    const toggleHotel = (hotelKey) => {
+        setExpandedHotels(prev => ({
+            ...prev,
+            [hotelKey]: !prev[hotelKey]
+        }));
+    };
+
+    // Helper: Group by Hotel
+    const getGroupedRates = () => {
+        // Separe Hotels from others
+        const hotelRates = filteredRates.filter(r => r.serviceType === "Hotel");
+        const otherRates = filteredRates.filter(r => r.serviceType !== "Hotel");
+
+        // Group hotel rates by Name+City
+        const grouped = {};
+        hotelRates.forEach(rate => {
+            const key = `${rate.hotelName || "Sin Nombre"}_${rate.city || ""}`;
+            if (!grouped[key]) {
+                grouped[key] = {
+                    key,
+                    name: rate.hotelName || "Hotel Sin Nombre",
+                    city: rate.city,
+                    supplierName: rate.supplierName, // Take first one found
+                    starRating: rate.starRating,
+                    items: []
+                };
+            }
+            grouped[key].items.push(rate);
+        });
+
+        // Convert grouped to array
+        const hotelGroups = Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name));
+
+        return { hotelGroups, otherRates };
+    };
+
+    const { hotelGroups, otherRates } = getGroupedRates();
 
     // Renderizar descripción resumida según tipo
     const getTypeDescription = (rate) => {
@@ -477,7 +520,7 @@ export default function RatesPage() {
                 <table className="w-full text-sm">
                     <thead className="bg-slate-50 dark:bg-slate-700">
                         <tr>
-                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Producto</th>
+                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Producto / Hotel</th>
                             <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Tipo</th>
                             <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Proveedor</th>
                             <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Detalles</th>
@@ -488,74 +531,151 @@ export default function RatesPage() {
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                         {loading ? (
                             <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">Cargando...</td></tr>
-                        ) : filteredRates.length === 0 ? (
+                        ) : (filteredRates.length === 0) ? (
                             <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                                 {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas. Cree una nueva para comenzar."}
                             </td></tr>
-                        ) : filteredRates.map(rate => {
-                            const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
-                            return (
-                                <tr key={rate.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
-                                    <td className="px-4 py-3">
-                                        <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
-                                        <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
-                                            rate.serviceType === "Hotel" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
-                                                rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                                                    rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
-                                                        "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
-                                            }`}>
-                                            {rate.serviceType}
-                                        </span>
-                                    </td>
-                                    <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
-                                    <td className="px-4 py-3">
-                                        <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
-                                            {rate.serviceType === "Hotel" && (
-                                                <div className="flex flex-col">
-                                                    <span className="font-medium">{rate.roomType} {rate.roomCategory}</span>
-                                                    <span className="text-xs text-slate-500">{rate.mealPlan}</span>
-                                                </div>
-                                            )}
-                                            {rate.serviceType === "Aereo" && (
-                                                <div className="flex flex-col">
-                                                    <span>{rate.airline} ({rate.airlineCode})</span>
-                                                    <span className="text-xs text-slate-500">{rate.cabinClass}</span>
-                                                </div>
-                                            )}
-                                            {rate.serviceType === "Traslado" && (
-                                                <div className="flex flex-col">
-                                                    <span>{rate.vehicleType}</span>
-                                                    <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
-                                                </div>
-                                            )}
-                                            {rate.serviceType === "Paquete" && (
-                                                <div className="flex flex-col">
-                                                    <span>{rate.destination}</span>
-                                                    <span className="text-xs text-slate-500">{rate.durationDays} días</span>
-                                                </div>
-                                            )}
+                        ) : (
+                            <>
+                                {/* 1. Render Hotel Groups */}
+                                {(!filterType || filterType === "Hotel") && hotelGroups.map(group => {
+                                    const isExpanded = expandedHotels[group.key];
+                                    const minPrice = Math.min(...group.items.map(i => i.salePrice));
+                                    const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
+
+                                    return (
+                                        <div key={group.key} className="contents">
+                                            {/* Parent Row */}
+                                            <tr
+                                                onClick={() => toggleHotel(group.key)}
+                                                className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 ${hasExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : 'bg-slate-50/50 dark:bg-slate-800/50'}`}
+                                            >
+                                                <td className="px-4 py-3">
+                                                    <div className="flex items-center gap-2">
+                                                        {isExpanded ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+                                                        <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                                                            <Hotel className="h-4 w-4 text-amber-500" />
+                                                            {group.name}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-xs text-slate-500 pl-6">{group.city} {group.starRating ? `• ${group.starRating} Estrellas` : ""}</div>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                                        Hotel • {group.items.length} Habitaciones
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{group.supplierName}</td>
+                                                <td className="px-4 py-3 text-slate-500 text-xs">
+                                                    Desde <span className="font-semibold text-slate-700 dark:text-slate-300">${minPrice}</span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    {hasExpired && <span className="text-xs font-bold text-red-600">⚠ Contiene tarifas vencidas</span>}
+                                                </td>
+                                                <td className="px-4 py-3 text-center text-xs text-slate-400">
+                                                    Click para ver detalles
+                                                </td>
+                                            </tr>
+
+                                            {/* Child Rows (Expanded) */}
+                                            {isExpanded && group.items.map(rate => {
+                                                const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                                                return (
+                                                    <tr key={rate.id} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-indigo-400'} animate-in fade-in slide-in-from-top-1 duration-200`}>
+                                                        <td className="px-4 py-2 pl-8">
+                                                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                                                <BedDouble className="h-3 w-3 text-slate-400" />
+                                                                {rate.roomType} <span className="text-slate-400 ml-1 font-normal">{rate.roomCategory}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-2"></td>
+                                                        <td className="px-4 py-2"></td>
+                                                        <td className="px-4 py-2">
+                                                            <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded inline-block">
+                                                                {rate.mealPlan} • {rate.hotelPriceType === 'por_persona' ? 'Por Persona' : 'Base Doble'}
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-2 text-xs">
+                                                            <div className={`flex flex-col ${isExpired ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
+                                                                <span>{new Date(rate.validFrom).toLocaleDateString()} - {new Date(rate.validTo).toLocaleDateString()}</span>
+                                                                {isExpired && <span>Vencida</span>}
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-2 text-center">
+                                                            <div className="flex justify-center gap-1">
+                                                                <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg"><Pencil className="h-4 w-4" /></button>
+                                                                <button onClick={(e) => { e.stopPropagation(); deleteRate(rate.id); }} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg"><Trash2 className="h-4 w-4" /></button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
                                         </div>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <div className="flex flex-col text-xs">
-                                            <span className="text-slate-700 dark:text-slate-300">
-                                                Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
-                                            </span>
-                                            <span className="text-slate-500 dark:text-slate-400">
-                                                Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-center">
-                                        <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
-                                        <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
-                                    </td>
-                                </tr>
-                            );
-                        })}
+                                    );
+                                })}
+
+                                {/* 2. Render Other Rates (Flat) */}
+                                {(!filterType || filterType !== "Hotel") && otherRates.map(rate => {
+                                    const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                                    return (
+                                        <tr key={rate.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
+                                            <td className="px-4 py-3">
+                                                <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
+                                                <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
+                                                        rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                                                            rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
+                                                                "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
+                                                    }`}>
+                                                    {rate.serviceType}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
+                                            <td className="px-4 py-3">
+                                                <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
+                                                    {rate.serviceType === "Aereo" && (
+                                                        <div className="flex flex-col">
+                                                            <span>{rate.airline} ({rate.airlineCode})</span>
+                                                            <span className="text-xs text-slate-500">{rate.cabinClass}</span>
+                                                        </div>
+                                                    )}
+                                                    {rate.serviceType === "Traslado" && (
+                                                        <div className="flex flex-col">
+                                                            <span>{rate.vehicleType}</span>
+                                                            <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
+                                                        </div>
+                                                    )}
+                                                    {rate.serviceType === "Paquete" && (
+                                                        <div className="flex flex-col">
+                                                            <span>{rate.destination}</span>
+                                                            <span className="text-xs text-slate-500">{rate.durationDays} días</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex flex-col text-xs">
+                                                    <span className="text-slate-700 dark:text-slate-300">
+                                                        Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
+                                                    </span>
+                                                    <span className="text-slate-500 dark:text-slate-400">
+                                                        Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-center">
+                                                <div className="flex justify-center gap-2">
+                                                    <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
+                                                    <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </>
+                        )}
                     </tbody>
                 </table>
             </div>
@@ -799,20 +919,26 @@ export default function RatesPage() {
                                         <div className="col-span-2 border-t border-slate-200 dark:border-slate-700 pt-4 mt-2">
                                             <div className="grid grid-cols-3 gap-4">
                                                 <div>
-                                                    <label className={labelClass}>Costo Neto</label>
-                                                    <input type="text" className={inputClass} required={roomVariations.length === 0} value={form.netCost}
-                                                        onChange={handleNetCostChange} placeholder="0.00" />
-                                                    <div className="text-xs text-slate-500 mt-1">Por habitación/noche</div>
+                                                    <label className={labelClass}>Costo Neto *</label>
+                                                    <div className="relative">
+                                                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                                                        <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.netCost} onChange={handleNetCostChange} />
+                                                    </div>
                                                 </div>
                                                 <div>
-                                                    <label className={labelClass}>Impuestos (Tax)</label>
-                                                    <input type="text" className={inputClass} value={form.tax}
-                                                        onChange={handleTaxChange} placeholder="0.00" />
+                                                    <label className={labelClass}>Impuestos</label>
+                                                    <div className="relative">
+                                                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                                                        <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.tax || ""} onChange={handleTaxChange} />
+                                                    </div>
                                                 </div>
                                                 <div>
                                                     <label className={labelClass}>Precio Venta</label>
-                                                    <input type="text" className={inputClass} required={roomVariations.length === 0} value={form.salePrice}
-                                                        onChange={e => setForm({ ...form, salePrice: e.target.value })} placeholder="0.00" />
+                                                    <div className="relative">
+                                                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                                                        <input type="number" step="0.01" className={`${inputClass} pl-6 font-bold text-emerald-600`} value={form.salePrice}
+                                                            onChange={e => setForm({ ...form, salePrice: e.target.value })} />
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -822,181 +948,73 @@ export default function RatesPage() {
                         </div>
                     )}
 
-                    {form.serviceType === "Traslado" && (
-                        <div className="p-4 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 space-y-4">
-                            <div className="flex items-center gap-2 text-green-700 dark:text-green-400 font-medium text-sm">
-                                <Car className="h-4 w-4" /> Datos del Traslado
+                    {/* Common Fields */}
+                    {form.serviceType !== "Hotel" && (
+                        <>
+                            <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700">
+                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Valores Económicos</h4>
+                                <div className="grid grid-cols-3 gap-4">
+                                    <div>
+                                        <label className={labelClass}>Costo Neto *</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                                            <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.netCost} onChange={handleNetCostChange} required />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Impuestos</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                                            <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.tax || ""} onChange={handleTaxChange} />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Precio Venta *</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                                            <input type="number" step="0.01" className={`${inputClass} pl-6 font-bold text-emerald-600`} value={form.salePrice}
+                                                onChange={e => setForm({ ...form, salePrice: e.target.value })} required />
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 mt-3">
+                                    <button type="button" onClick={applyCommission} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800">
+                                        <Calculator className="h-3 w-3" /> Aplicar {commissionPercent}% de comisión sugerida
+                                    </button>
+                                </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className={labelClass}>Punto de Recogida</label>
-                                    <input type="text" className={inputClass} value={form.pickupLocation}
-                                        onChange={e => setForm({ ...form, pickupLocation: e.target.value })} placeholder="Aeropuerto EZE" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Punto de Destino</label>
-                                    <input type="text" className={inputClass} value={form.dropoffLocation}
-                                        onChange={e => setForm({ ...form, dropoffLocation: e.target.value })} placeholder="Hotel Centro" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Tipo de Vehículo</label>
-                                    <input type="text" className={inputClass} value={form.vehicleType}
-                                        onChange={e => setForm({ ...form, vehicleType: e.target.value })} placeholder="Van, Sedan, Bus" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Máx. Pasajeros</label>
-                                    <input type="number" className={inputClass} value={form.maxPassengers}
-                                        onChange={e => setForm({ ...form, maxPassengers: e.target.value })} placeholder="4" />
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input type="checkbox" checked={form.isRoundTrip}
-                                            onChange={e => setForm({ ...form, isRoundTrip: e.target.checked })}
-                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                                        <span className={labelClass}>Incluye ida y vuelta</span>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
+                        </>
                     )}
 
-                    {form.serviceType === "Paquete" && (
-                        <div className="p-4 rounded-xl bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800 space-y-4">
-                            <div className="flex items-center gap-2 text-violet-700 dark:text-violet-400 font-medium text-sm">
-                                <Package className="h-4 w-4" /> Datos del Paquete
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className={labelClass}>Destino</label>
-                                    <input type="text" className={inputClass} value={form.destination}
-                                        onChange={e => setForm({ ...form, destination: e.target.value })} placeholder="Punta Cana" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Duración (días)</label>
-                                    <input type="number" className={inputClass} value={form.durationDays}
-                                        onChange={e => setForm({ ...form, durationDays: e.target.value })} placeholder="7" />
-                                </div>
-                                <div className="col-span-2 grid grid-cols-3 gap-2">
-                                    {[
-                                        { key: "includesFlight", label: "Vuelo" },
-                                        { key: "includesHotel", label: "Hotel" },
-                                        { key: "includesTransfer", label: "Traslados" },
-                                        { key: "includesExcursions", label: "Excursiones" },
-                                        { key: "includesInsurance", label: "Seguro" },
-                                    ].map(item => (
-                                        <label key={item.key} className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" checked={form[item.key]}
-                                                onChange={e => setForm({ ...form, [item.key]: e.target.checked })}
-                                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                                            <span className="text-sm text-slate-700 dark:text-slate-300">{item.label}</span>
-                                        </label>
-                                    ))}
-                                </div>
-                                <div className="col-span-2">
-                                    <label className={labelClass}>Itinerario</label>
-                                    <textarea className={inputClass} rows={3} value={form.itinerary}
-                                        onChange={e => setForm({ ...form, itinerary: e.target.value })}
-                                        placeholder="Día 1: Llegada y traslado al hotel. Día 2: Excursión a..." />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Descripción */}
-                    <div>
-                        <label className={labelClass}>Descripción Detallada</label>
-                        <textarea className={inputClass} rows={2} value={form.description}
-                            onChange={e => setForm({ ...form, description: e.target.value })}
-                            placeholder="Incluye información adicional, condiciones, restricciones..." />
-                    </div>
-
-                    {/* Comisión Badge */}
-                    <div className="flex items-center gap-2 p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800">
-                        <Calculator className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                        <span className="text-sm text-indigo-700 dark:text-indigo-300">
-                            Comisión aplicable: <strong>{commissionPercent}%</strong>
-                            {isCalculating && <span className="ml-2 text-xs opacity-70">(calculando...)</span>}
-                        </span>
-                        <button type="button" onClick={applyCommission} className="ml-auto text-xs px-2 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">
-                            Recalcular
-                        </button>
-                    </div>
-
-                    {/* Precios (Mostrar si NO es Hotel O si es Single Edit/Entry no-batch) */}
-                    <div className="grid grid-cols-4 gap-4">
-                        {(form.serviceType !== "Hotel" || roomVariations.length === 0) && (
-                            <>
-                                <div>
-                                    <label className={labelClass}>Costo Neto *</label>
-                                    <div className="relative mt-1">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-                                        <input type="number" step="0.01" required className={`${inputClass} pl-7`}
-                                            value={form.netCost} onChange={handleNetCostChange} />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Impuestos</label>
-                                    <div className="relative mt-1">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-                                        <input type="number" step="0.01" className={`${inputClass} pl-7`}
-                                            value={form.tax} onChange={handleTaxChange} />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Precio Venta *</label>
-                                    <div className="relative mt-1">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-                                        <input type="number" step="0.01" required className={`${inputClass} pl-7`}
-                                            value={form.salePrice} onChange={e => setForm({ ...form, salePrice: e.target.value })} />
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                        <div>
-                            <label className={labelClass}>Moneda</label>
-                            <select className={inputClass} value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })}>
-                                <option value="USD">USD</option>
-                                <option value="ARS">ARS</option>
-                                <option value="EUR">EUR</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    {/* Vigencia */}
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className={labelClass}>Vigencia Desde</label>
-                            <input id="validFrom" type="date" className={inputClass} value={form.validFrom}
+                            <label className={labelClass}>Válido Desde *</label>
+                            <input type="date" required className={inputClass} id="validFrom" value={form.validFrom}
                                 onChange={e => setForm({ ...form, validFrom: e.target.value })} />
                         </div>
                         <div>
-                            <label className={labelClass}>Vigencia Hasta</label>
-                            <input id="validTo" type="date" className={inputClass} value={form.validTo}
+                            <label className={labelClass}>Válido Hasta *</label>
+                            <input type="date" required className={inputClass} id="validTo" value={form.validTo}
                                 onChange={e => setForm({ ...form, validTo: e.target.value })} />
                         </div>
                     </div>
 
-                    {/* Notas internas */}
                     <div>
-                        <label className={labelClass}>Notas Internas (no visible para clientes)</label>
-                        <input type="text" className={inputClass} value={form.internalNotes}
-                            onChange={e => setForm({ ...form, internalNotes: e.target.value })}
-                            placeholder="Comisión especial, contacto, etc." />
+                        <label className={labelClass}>Notas Internas</label>
+                        <textarea className={inputClass} rows="2" value={form.internalNotes}
+                            onChange={e => setForm({ ...form, internalNotes: e.target.value })} placeholder="Solo visible por la agencia..." />
                     </div>
 
-                    {/* Botones */}
-                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-700">
-                        <button type="button" onClick={() => setShowModal(false)}
-                            className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700">
+                    <div className="pt-4 flex justify-end gap-3 border-t dark:border-slate-700">
+                        <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg transition-colors dark:text-slate-300 dark:hover:bg-slate-800">
                             Cancelar
                         </button>
-                        <button type="submit"
-                            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+                        <button type="submit" className="px-6 py-2 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-500 shadow-lg shadow-indigo-500/30 transition-all">
                             {form.id ? "Guardar Cambios" : "Crear Tarifa"}
                         </button>
                     </div>
                 </form>
             </Modal>
-        </div >
+        </div>
     );
 }
