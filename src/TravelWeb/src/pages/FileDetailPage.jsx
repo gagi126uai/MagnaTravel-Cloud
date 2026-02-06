@@ -39,7 +39,7 @@ export default function FileDetailPage() {
         try {
             setLoading(true);
             const res = await api.get(`/travelfiles/${id}`);
-            setFile(res.data);
+            setFile(res);
         } catch (error) {
             console.error(error);
             showError("Error al cargar el expediente: " + (error.message || "Error desconocido"));
