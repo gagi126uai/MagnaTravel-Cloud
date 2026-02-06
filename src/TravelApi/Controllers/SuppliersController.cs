@@ -59,8 +59,8 @@ public class SuppliersController : ControllerBase
 
         // 5. Costos de Reservas Genéricas
         var reservationCosts = await _dbContext.Reservations
-            .Where(r => supplierIds.Contains(r.SupplierId) && validStatuses.Contains(r.TravelFile!.Status))
-            .GroupBy(r => r.SupplierId)
+            .Where(r => r.SupplierId.HasValue && supplierIds.Contains(r.SupplierId.Value) && validStatuses.Contains(r.TravelFile!.Status))
+            .GroupBy(r => r.SupplierId!.Value)
             .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
             .ToListAsync(cancellationToken);
 
