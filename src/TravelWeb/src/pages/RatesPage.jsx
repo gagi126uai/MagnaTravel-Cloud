@@ -201,6 +201,24 @@ export default function RatesPage() {
 
     const saveRate = async (e) => {
         e.preventDefault();
+
+        // Validaciones básicas
+        if (!form.supplierId) {
+            showError("Por favor, seleccione un Proveedor");
+            document.getElementById("supplierId")?.focus();
+            return;
+        }
+        if (!form.validFrom) {
+            showError("Debe completar la fecha de inicio");
+            document.getElementById("validFrom")?.focus();
+            return;
+        }
+        if (!form.validTo) {
+            showError("Debe completar la fecha de fin");
+            document.getElementById("validTo")?.focus();
+            return;
+        }
+
         try {
             const basePayload = {
                 ...form,
@@ -247,16 +265,15 @@ export default function RatesPage() {
                     ...basePayload,
                     netCost: parseFloat(form.netCost) || 0,
                     salePrice: parseFloat(form.salePrice) || 0,
-                    // Fields specifics are already in form
-                    starRating: form.starRating ? parseInt(form.starRating) : null,
                     maxPassengers: form.maxPassengers ? parseInt(form.maxPassengers) : null,
                     durationDays: form.durationDays ? parseInt(form.durationDays) : null,
-                    roomType: form.roomType,
-                    roomCategory: form.roomCategory,
-                    roomFeatures: form.roomFeatures,
-                    hotelPriceType: form.hotelPriceType,
-                    childrenPayPercent: parseInt(form.childrenPayPercent) || 0,
-                    childMaxAge: parseInt(form.childMaxAge) || 12
+                    // Hotel fields null if not hotel (single edit)
+                    roomType: form.serviceType === "Hotel" ? form.roomType : null,
+                    roomCategory: form.serviceType === "Hotel" ? form.roomCategory : null,
+                    roomFeatures: form.serviceType === "Hotel" ? form.roomFeatures : null,
+                    hotelPriceType: form.serviceType === "Hotel" ? form.hotelPriceType : null,
+                    childrenPayPercent: form.serviceType === "Hotel" ? (parseInt(form.childrenPayPercent) || 0) : null,
+                    childMaxAge: form.serviceType === "Hotel" ? (parseInt(form.childMaxAge) || 12) : null
                 };
 
                 if (form.id) {
@@ -274,7 +291,13 @@ export default function RatesPage() {
             setRoomVariations([]);
             loadRates();
         } catch (error) {
-            showError(error.message || "Error al guardar tarifa");
+            console.error("Save Rate Error:", error);
+            if (error.response?.data?.errors) {
+                const msgs = Object.values(error.response.data.errors).flat();
+                showError(`Error: ${msgs[0]}`);
+            } else {
+                showError(error.message || "Error al guardar tarifa");
+            }
         }
     };
 
@@ -511,7 +534,7 @@ export default function RatesPage() {
                         </div>
                         <div>
                             <label className={labelClass}>Proveedor</label>
-                            <select className={inputClass} value={form.supplierId} onChange={handleSupplierChange}>
+                            <select id="supplierId" className={inputClass} value={form.supplierId} onChange={handleSupplierChange}>
                                 <option value="">Seleccionar proveedor</option>
                                 {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
@@ -841,32 +864,36 @@ export default function RatesPage() {
                         </button>
                     </div>
 
-                    {/* Precios */}
+                    {/* Precios (Ocultar si es Hotel Batch) */}
                     <div className="grid grid-cols-4 gap-4">
-                        <div>
-                            <label className={labelClass}>Costo Neto *</label>
-                            <div className="relative mt-1">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-                                <input type="number" step="0.01" required className={`${inputClass} pl-7`}
-                                    value={form.netCost} onChange={handleNetCostChange} />
-                            </div>
-                        </div>
-                        <div>
-                            <label className={labelClass}>Impuestos</label>
-                            <div className="relative mt-1">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-                                <input type="number" step="0.01" className={`${inputClass} pl-7`}
-                                    value={form.tax} onChange={handleTaxChange} />
-                            </div>
-                        </div>
-                        <div>
-                            <label className={labelClass}>Precio Venta *</label>
-                            <div className="relative mt-1">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-                                <input type="number" step="0.01" required className={`${inputClass} pl-7`}
-                                    value={form.salePrice} onChange={e => setForm({ ...form, salePrice: e.target.value })} />
-                            </div>
-                        </div>
+                        {form.serviceType !== "Hotel" && (
+                            <>
+                                <div>
+                                    <label className={labelClass}>Costo Neto *</label>
+                                    <div className="relative mt-1">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                                        <input type="number" step="0.01" required className={`${inputClass} pl-7`}
+                                            value={form.netCost} onChange={handleNetCostChange} />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>Impuestos</label>
+                                    <div className="relative mt-1">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                                        <input type="number" step="0.01" className={`${inputClass} pl-7`}
+                                            value={form.tax} onChange={handleTaxChange} />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>Precio Venta *</label>
+                                    <div className="relative mt-1">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                                        <input type="number" step="0.01" required className={`${inputClass} pl-7`}
+                                            value={form.salePrice} onChange={e => setForm({ ...form, salePrice: e.target.value })} />
+                                    </div>
+                                </div>
+                            </>
+                        )}
                         <div>
                             <label className={labelClass}>Moneda</label>
                             <select className={inputClass} value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })}>
@@ -881,12 +908,12 @@ export default function RatesPage() {
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className={labelClass}>Vigencia Desde</label>
-                            <input type="date" className={inputClass} value={form.validFrom}
+                            <input id="validFrom" type="date" className={inputClass} value={form.validFrom}
                                 onChange={e => setForm({ ...form, validFrom: e.target.value })} />
                         </div>
                         <div>
                             <label className={labelClass}>Vigencia Hasta</label>
-                            <input type="date" className={inputClass} value={form.validTo}
+                            <input id="validTo" type="date" className={inputClass} value={form.validTo}
                                 onChange={e => setForm({ ...form, validTo: e.target.value })} />
                         </div>
                     </div>
