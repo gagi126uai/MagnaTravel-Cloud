@@ -285,11 +285,29 @@ export default function FileDetailPage() {
     };
 
     if (loading) return <div className="p-8 text-center">Cargando file...</div>;
+    const handleDebug = async () => {
+        try {
+            const res = await api.get(`/travelfiles/debug/${id}`);
+            Swal.fire({
+                title: 'Reporte de Diagnóstico',
+                html: `<pre style="text-align: left; font-size: 12px; max-height: 400px; overflow: auto; background: #f0f0f0; padding: 10px;">${res}</pre>`,
+                width: '600px'
+            });
+        } catch (err) {
+            showError("No se pudo ejecutar el diagnóstico: " + err.message);
+        }
+    };
+
     if (!file) return (
         <div className="p-8 text-center">
             <h3 className="text-xl font-medium text-gray-900">Expediente no encontrado</h3>
             <p className="text-gray-500 mt-2">No se pudo cargar la información. Verifique que el expediente exista.</p>
-            <button onClick={() => navigate("/files")} className="mt-4 text-blue-600 hover:text-blue-800 underline">Volver a la lista</button>
+            <div className="mt-4 flex gap-4 justify-center">
+                <button onClick={() => navigate("/files")} className="text-blue-600 hover:text-blue-800 underline">Volver a la lista</button>
+                <button onClick={handleDebug} className="bg-gray-800 text-white px-4 py-2 rounded text-sm hover:bg-gray-700">
+                    🛠️ Ver Diagnóstico
+                </button>
+            </div>
         </div>
     );
 
