@@ -13,3 +13,12 @@ export function formatCurrency(amount) {
         minimumFractionDigits: 2,
     }).format(amount);
 }
+
+export function formatDate(date) {
+    if (!date) return "-";
+    return new Date(date).toLocaleDateString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+    });
+}
