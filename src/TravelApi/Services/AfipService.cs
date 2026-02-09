@@ -40,19 +40,19 @@ public class AfipService : IAfipService
         _httpClient = httpClient;
     }
 
-    public async Task<bool> ValidateCertificate(byte[] certData, string password)
+    public Task<bool> ValidateCertificate(byte[] certData, string password)
     {
         try
         {
-            if (certData == null || certData.Length == 0) return false;
+            if (certData == null || certData.Length == 0) return Task.FromResult(false);
             // Validate we can open it
             var cert = new X509Certificate2(certData, password, X509KeyStorageFlags.Exportable);
-            return cert.HasPrivateKey;
+            return Task.FromResult(cert.HasPrivateKey);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error validating certificate");
-            return false;
+            return Task.FromResult(false);
         }
     }
 
@@ -79,7 +79,7 @@ public class AfipService : IAfipService
                      isValid = true;
                  }
                  // Legacy fix: Check if it's Argentina Time treated as UTC
-                 else if (settings.TokenExpiration.AddHours(3) > DateTime.UtcNow)
+                 else if (settings.TokenExpiration.HasValue && settings.TokenExpiration.Value.AddHours(3) > DateTime.UtcNow)
                  {
                      isValid = true;
                  }
