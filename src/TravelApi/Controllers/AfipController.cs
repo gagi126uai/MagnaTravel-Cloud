@@ -54,7 +54,22 @@ public class AfipController : ControllerBase
     [HttpPost("settings")]
     public async Task<ActionResult<AfipSettings>> UpdateSettings([FromForm] AfipSettingsRequest request)
     {
-        Console.WriteLine($"[AfipController] UpdateSettings: Cuit={request.Cuit}, Ptos={request.PuntoDeVenta}, Prod={request.IsProduction}, File={request.Certificate?.FileName}, PwdProvided={!string.IsNullOrEmpty(request.Password)}");
+        Console.WriteLine($"[AfipController] Request Validation:");
+        Console.WriteLine($" - Content-Type: {Request.ContentType}");
+        if (Request.HasFormContentType)
+        {
+            Console.WriteLine($" - Form Keys received: {string.Join(", ", Request.Form.Keys)}");
+            foreach (var key in Request.Form.Keys)
+            {
+                Console.WriteLine($"   - {key}: {Request.Form[key]}");
+            }
+        }
+        else
+        {
+            Console.WriteLine(" - NO Form Content Type detected!");
+        }
+
+        Console.WriteLine($"[AfipController] DTO Binding Result: Cuit={request.Cuit}, Ptos={request.PuntoDeVenta}, Prod={request.IsProduction}, File={request.Certificate?.FileName}, PwdProvided={!string.IsNullOrEmpty(request.Password)}");
 
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
         if (settings == null)
