@@ -61,7 +61,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(f => f.Status).HasMaxLength(50).IsRequired();
 
             entity.HasOne(f => f.Payer)
-                  .WithMany()
+                  .WithMany(c => c.TravelFiles)
                   .HasForeignKey(f => f.PayerId)
                   .OnDelete(DeleteBehavior.Restrict);
 
