@@ -123,7 +123,12 @@ public class AfipService : IAfipService
 </soapenv:Envelope>";
 
         var url = settings.IsProduction ? WsaaUrlProd : WsaaUrlDev;
-        var response = await _httpClient.PostAsync(url, new StringContent(soapEnv, Encoding.UTF8, "text/xml"));
+        
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("SOAPAction", "\"\""); // Empty action for WSAA
+        request.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+        var response = await _httpClient.SendAsync(request);
         var responseXml = await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
