@@ -38,102 +38,123 @@ public class PackageBookingsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create(int fileId, [FromBody] CreatePackageRequest req, CancellationToken ct)
     {
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file == null) return NotFound("File no encontrado");
-
-        var package = new PackageBooking
+        try
         {
-            TravelFileId = fileId,
-            SupplierId = req.SupplierId,
-            PackageName = req.PackageName,
-            Destination = req.Destination,
-            StartDate = req.StartDate,
-            EndDate = req.EndDate,
-            Nights = (req.EndDate - req.StartDate).Days,
-            IncludesHotel = req.IncludesHotel,
-            IncludesFlight = req.IncludesFlight,
-            IncludesTransfer = req.IncludesTransfer,
-            IncludesExcursions = req.IncludesExcursions,
-            IncludesMeals = req.IncludesMeals,
-            Adults = req.Adults,
-            Children = req.Children,
-            Itinerary = req.Itinerary,
-            NetCost = req.NetCost,
-            SalePrice = req.SalePrice,
-            Commission = req.Commission,
-            Notes = req.Notes
-        };
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file == null) return NotFound("File no encontrado");
 
-        _db.PackageBookings.Add(package);
-        
-        file.TotalCost += package.NetCost;
-        file.TotalSale += package.SalePrice;
-        file.Balance = file.TotalSale - file.TotalCost;
-        
-        await _db.SaveChangesAsync(ct);
-        return Ok(package);
+            var package = new PackageBooking
+            {
+                TravelFileId = fileId,
+                SupplierId = req.SupplierId,
+                PackageName = req.PackageName,
+                Destination = req.Destination,
+                StartDate = req.StartDate,
+                EndDate = req.EndDate,
+                Nights = (req.EndDate - req.StartDate).Days,
+                IncludesHotel = req.IncludesHotel,
+                IncludesFlight = req.IncludesFlight,
+                IncludesTransfer = req.IncludesTransfer,
+                IncludesExcursions = req.IncludesExcursions,
+                IncludesMeals = req.IncludesMeals,
+                Adults = req.Adults,
+                Children = req.Children,
+                Itinerary = req.Itinerary,
+                NetCost = req.NetCost,
+                SalePrice = req.SalePrice,
+                Commission = req.Commission,
+                Notes = req.Notes
+            };
+
+            _db.PackageBookings.Add(package);
+            
+            file.TotalCost += package.NetCost;
+            file.TotalSale += package.SalePrice;
+            file.Balance = file.TotalSale - file.TotalCost;
+            
+            await _db.SaveChangesAsync(ct);
+            return Ok(package);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error creando paquete: {ex.Message}");
+        }
     }
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int fileId, int id, [FromBody] UpdatePackageRequest req, CancellationToken ct)
     {
-        var package = await _db.PackageBookings.FindAsync(new object[] { id }, ct);
-        if (package == null || package.TravelFileId != fileId) return NotFound();
+        try
+        {
+            var package = await _db.PackageBookings.FindAsync(new object[] { id }, ct);
+            if (package == null || package.TravelFileId != fileId) return NotFound();
 
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file == null) return NotFound("File no encontrado");
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file == null) return NotFound("File no encontrado");
 
-        var diffCost = req.NetCost - package.NetCost;
-        var diffSale = req.SalePrice - package.SalePrice;
+            var diffCost = req.NetCost - package.NetCost;
+            var diffSale = req.SalePrice - package.SalePrice;
 
-        file.TotalCost += diffCost;
-        file.TotalSale += diffSale;
-        file.Balance = file.TotalSale - file.TotalCost;
+            file.TotalCost += diffCost;
+            file.TotalSale += diffSale;
+            file.Balance = file.TotalSale - file.TotalCost;
 
-        package.SupplierId = req.SupplierId;
-        package.PackageName = req.PackageName;
-        package.Destination = req.Destination;
-        package.StartDate = req.StartDate;
-        package.EndDate = req.EndDate;
-        package.Nights = (req.EndDate - req.StartDate).Days;
-        package.IncludesHotel = req.IncludesHotel;
-        package.IncludesFlight = req.IncludesFlight;
-        package.IncludesTransfer = req.IncludesTransfer;
-        package.IncludesExcursions = req.IncludesExcursions;
-        package.IncludesMeals = req.IncludesMeals;
-        package.Adults = req.Adults;
-        package.Children = req.Children;
-        package.Itinerary = req.Itinerary;
-        package.ConfirmationNumber = req.ConfirmationNumber;
-        package.NetCost = req.NetCost;
-        package.SalePrice = req.SalePrice;
-        package.Commission = req.Commission;
-        package.Status = req.Status;
-        package.Notes = req.Notes;
+            package.SupplierId = req.SupplierId;
+            package.PackageName = req.PackageName;
+            package.Destination = req.Destination;
+            package.StartDate = req.StartDate;
+            package.EndDate = req.EndDate;
+            package.Nights = (req.EndDate - req.StartDate).Days;
+            package.IncludesHotel = req.IncludesHotel;
+            package.IncludesFlight = req.IncludesFlight;
+            package.IncludesTransfer = req.IncludesTransfer;
+            package.IncludesExcursions = req.IncludesExcursions;
+            package.IncludesMeals = req.IncludesMeals;
+            package.Adults = req.Adults;
+            package.Children = req.Children;
+            package.Itinerary = req.Itinerary;
+            package.ConfirmationNumber = req.ConfirmationNumber;
+            package.NetCost = req.NetCost;
+            package.SalePrice = req.SalePrice;
+            package.Commission = req.Commission;
+            package.Status = req.Status;
+            package.Notes = req.Notes;
 
-        await _db.SaveChangesAsync(ct);
-        return Ok(package);
+            await _db.SaveChangesAsync(ct);
+            return Ok(package);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error actualizando paquete: {ex.Message}");
+        }
     }
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(int fileId, int id, CancellationToken ct)
     {
-        var package = await _db.PackageBookings.FindAsync(new object[] { id }, ct);
-        if (package == null || package.TravelFileId != fileId) return NotFound();
-
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file != null)
+        try
         {
-            file.TotalCost -= package.NetCost;
-            file.TotalSale -= package.SalePrice;
-            file.Balance = file.TotalSale - file.TotalCost;
-        }
+            var package = await _db.PackageBookings.FindAsync(new object[] { id }, ct);
+            if (package == null || package.TravelFileId != fileId) return NotFound();
 
-        _db.PackageBookings.Remove(package);
-        await _db.SaveChangesAsync(ct);
-        return Ok();
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file != null)
+            {
+                file.TotalCost -= package.NetCost;
+                file.TotalSale -= package.SalePrice;
+                file.Balance = file.TotalSale - file.TotalCost;
+            }
+
+            _db.PackageBookings.Remove(package);
+            await _db.SaveChangesAsync(ct);
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+             return StatusCode(500, $"Error eliminando paquete: {ex.Message}");
+        }
     }
 }
 

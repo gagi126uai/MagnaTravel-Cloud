@@ -46,105 +46,126 @@ public class HotelBookingsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create(int fileId, [FromBody] CreateHotelRequest req, CancellationToken ct)
     {
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file == null) return NotFound("File no encontrado");
-
-        var hotel = new HotelBooking
+        try
         {
-            TravelFileId = fileId,
-            SupplierId = req.SupplierId,
-            HotelName = req.HotelName,
-            StarRating = req.StarRating,
-            City = req.City,
-            Country = req.Country,
-            CheckIn = req.CheckIn,
-            CheckOut = req.CheckOut,
-            Nights = (req.CheckOut - req.CheckIn).Days,
-            RoomType = req.RoomType,
-            MealPlan = req.MealPlan,
-            Adults = req.Adults,
-            Children = req.Children,
-            Rooms = req.Rooms,
-            ConfirmationNumber = req.ConfirmationNumber,
-            NetCost = req.NetCost,
-            SalePrice = req.SalePrice,
-            Commission = req.Commission,
-            Notes = req.Notes
-        };
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file == null) return NotFound("File no encontrado");
 
-        _db.HotelBookings.Add(hotel);
-        
-        // Actualizar totales del File
-        file.TotalCost += hotel.NetCost;
-        file.TotalSale += hotel.SalePrice;
-        file.Balance = file.TotalSale - file.TotalCost;
-        
-        await _db.SaveChangesAsync(ct);
-        return Ok(hotel);
+            var hotel = new HotelBooking
+            {
+                TravelFileId = fileId,
+                SupplierId = req.SupplierId,
+                HotelName = req.HotelName,
+                StarRating = req.StarRating,
+                City = req.City,
+                Country = req.Country,
+                CheckIn = req.CheckIn,
+                CheckOut = req.CheckOut,
+                Nights = (req.CheckOut - req.CheckIn).Days,
+                RoomType = req.RoomType,
+                MealPlan = req.MealPlan,
+                Adults = req.Adults,
+                Children = req.Children,
+                Rooms = req.Rooms,
+                ConfirmationNumber = req.ConfirmationNumber,
+                NetCost = req.NetCost,
+                SalePrice = req.SalePrice,
+                Commission = req.Commission,
+                Notes = req.Notes
+            };
+
+            _db.HotelBookings.Add(hotel);
+            
+            // Actualizar totales del File
+            file.TotalCost += hotel.NetCost;
+            file.TotalSale += hotel.SalePrice;
+            file.Balance = file.TotalSale - file.TotalCost;
+            
+            await _db.SaveChangesAsync(ct);
+            return Ok(hotel);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error creando hotel: {ex.Message}");
+        }
     }
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int fileId, int id, [FromBody] UpdateHotelRequest req, CancellationToken ct)
     {
-        var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
-        if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
+        try
+        {
+            var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
+            if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
 
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file == null) return NotFound("File no encontrado");
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file == null) return NotFound("File no encontrado");
 
-        // Calculate differences for totals
-        var diffCost = req.NetCost - hotel.NetCost;
-        var diffSale = req.SalePrice - hotel.SalePrice;
+            // Calculate differences for totals
+            var diffCost = req.NetCost - hotel.NetCost;
+            var diffSale = req.SalePrice - hotel.SalePrice;
 
-        // Update File Totals
-        file.TotalCost += diffCost;
-        file.TotalSale += diffSale;
-        file.Balance = file.TotalSale - file.TotalCost;
+            // Update File Totals
+            file.TotalCost += diffCost;
+            file.TotalSale += diffSale;
+            file.Balance = file.TotalSale - file.TotalCost;
 
-        // Update Hotel Fields
-        hotel.SupplierId = req.SupplierId;
-        hotel.HotelName = req.HotelName;
-        hotel.StarRating = req.StarRating;
-        hotel.City = req.City;
-        hotel.Country = req.Country;
-        hotel.CheckIn = req.CheckIn;
-        hotel.CheckOut = req.CheckOut;
-        hotel.Nights = (req.CheckOut - req.CheckIn).Days;
-        hotel.RoomType = req.RoomType;
-        hotel.MealPlan = req.MealPlan;
-        hotel.Adults = req.Adults;
-        hotel.Children = req.Children;
-        hotel.Rooms = req.Rooms;
-        hotel.ConfirmationNumber = req.ConfirmationNumber;
-        hotel.NetCost = req.NetCost;
-        hotel.SalePrice = req.SalePrice;
-        hotel.Commission = req.Commission;
-        hotel.Status = req.Status;
-        hotel.Notes = req.Notes;
+            // Update Hotel Fields
+            hotel.SupplierId = req.SupplierId;
+            hotel.HotelName = req.HotelName;
+            hotel.StarRating = req.StarRating;
+            hotel.City = req.City;
+            hotel.Country = req.Country;
+            hotel.CheckIn = req.CheckIn;
+            hotel.CheckOut = req.CheckOut;
+            hotel.Nights = (req.CheckOut - req.CheckIn).Days;
+            hotel.RoomType = req.RoomType;
+            hotel.MealPlan = req.MealPlan;
+            hotel.Adults = req.Adults;
+            hotel.Children = req.Children;
+            hotel.Rooms = req.Rooms;
+            hotel.ConfirmationNumber = req.ConfirmationNumber;
+            hotel.NetCost = req.NetCost;
+            hotel.SalePrice = req.SalePrice;
+            hotel.Commission = req.Commission;
+            hotel.Status = req.Status;
+            hotel.Notes = req.Notes;
 
-        await _db.SaveChangesAsync(ct);
-        return Ok(hotel);
+            await _db.SaveChangesAsync(ct);
+            return Ok(hotel);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error actualizando hotel: {ex.Message}");
+        }
     }
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(int fileId, int id, CancellationToken ct)
     {
-        var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
-        if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
-
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file != null)
+        try
         {
-            file.TotalCost -= hotel.NetCost;
-            file.TotalSale -= hotel.SalePrice;
-            file.Balance = file.TotalSale - file.TotalCost;
-        }
+            var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
+            if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
 
-        _db.HotelBookings.Remove(hotel);
-        await _db.SaveChangesAsync(ct);
-        return Ok();
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file != null)
+            {
+                file.TotalCost -= hotel.NetCost;
+                file.TotalSale -= hotel.SalePrice;
+                file.Balance = file.TotalSale - file.TotalCost;
+            }
+
+            _db.HotelBookings.Remove(hotel);
+            await _db.SaveChangesAsync(ct);
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error eliminando hotel: {ex.Message}");
+        }
     }
 }
 

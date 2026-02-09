@@ -39,102 +39,123 @@ public class FlightSegmentsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create(int fileId, [FromBody] CreateFlightRequest req, CancellationToken ct)
     {
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file == null) return NotFound("File no encontrado");
-
-        var flight = new FlightSegment
+        try
         {
-            TravelFileId = fileId,
-            SupplierId = req.SupplierId,
-            AirlineCode = req.AirlineCode,
-            AirlineName = req.AirlineName,
-            FlightNumber = req.FlightNumber,
-            Origin = req.Origin,
-            OriginCity = req.OriginCity,
-            Destination = req.Destination,
-            DestinationCity = req.DestinationCity,
-            DepartureTime = req.DepartureTime,
-            ArrivalTime = req.ArrivalTime,
-            CabinClass = req.CabinClass,
-            Baggage = req.Baggage,
-            PNR = req.PNR,
-            NetCost = req.NetCost,
-            SalePrice = req.SalePrice,
-            Commission = req.Commission,
-            Tax = req.Tax,
-            Notes = req.Notes
-        };
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file == null) return NotFound("File no encontrado");
 
-        _db.FlightSegments.Add(flight);
-        
-        file.TotalCost += flight.NetCost + flight.Tax;
-        file.TotalSale += flight.SalePrice;
-        file.Balance = file.TotalSale - file.TotalCost;
-        
-        await _db.SaveChangesAsync(ct);
-        return Ok(flight);
+            var flight = new FlightSegment
+            {
+                TravelFileId = fileId,
+                SupplierId = req.SupplierId,
+                AirlineCode = req.AirlineCode,
+                AirlineName = req.AirlineName,
+                FlightNumber = req.FlightNumber,
+                Origin = req.Origin,
+                OriginCity = req.OriginCity,
+                Destination = req.Destination,
+                DestinationCity = req.DestinationCity,
+                DepartureTime = req.DepartureTime,
+                ArrivalTime = req.ArrivalTime,
+                CabinClass = req.CabinClass,
+                Baggage = req.Baggage,
+                PNR = req.PNR,
+                NetCost = req.NetCost,
+                SalePrice = req.SalePrice,
+                Commission = req.Commission,
+                Tax = req.Tax,
+                Notes = req.Notes
+            };
+
+            _db.FlightSegments.Add(flight);
+            
+            file.TotalCost += flight.NetCost + flight.Tax;
+            file.TotalSale += flight.SalePrice;
+            file.Balance = file.TotalSale - file.TotalCost;
+            
+            await _db.SaveChangesAsync(ct);
+            return Ok(flight);
+        }
+        catch (Exception ex)
+        {
+             return StatusCode(500, $"Error creando vuelo: {ex.Message}");
+        }
     }
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int fileId, int id, [FromBody] UpdateFlightRequest req, CancellationToken ct)
     {
-        var flight = await _db.FlightSegments.FindAsync(new object[] { id }, ct);
-        if (flight == null || flight.TravelFileId != fileId) return NotFound();
+        try
+        {
+            var flight = await _db.FlightSegments.FindAsync(new object[] { id }, ct);
+            if (flight == null || flight.TravelFileId != fileId) return NotFound();
 
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file == null) return NotFound("File no encontrado");
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file == null) return NotFound("File no encontrado");
 
-        var diffCost = (req.NetCost + req.Tax) - (flight.NetCost + flight.Tax);
-        var diffSale = req.SalePrice - flight.SalePrice;
+            var diffCost = (req.NetCost + req.Tax) - (flight.NetCost + flight.Tax);
+            var diffSale = req.SalePrice - flight.SalePrice;
 
-        file.TotalCost += diffCost;
-        file.TotalSale += diffSale;
-        file.Balance = file.TotalSale - file.TotalCost;
+            file.TotalCost += diffCost;
+            file.TotalSale += diffSale;
+            file.Balance = file.TotalSale - file.TotalCost;
 
-        flight.SupplierId = req.SupplierId;
-        flight.AirlineCode = req.AirlineCode;
-        flight.AirlineName = req.AirlineName;
-        flight.FlightNumber = req.FlightNumber;
-        flight.Origin = req.Origin;
-        flight.OriginCity = req.OriginCity;
-        flight.Destination = req.Destination;
-        flight.DestinationCity = req.DestinationCity;
-        flight.DepartureTime = req.DepartureTime;
-        flight.ArrivalTime = req.ArrivalTime;
-        flight.CabinClass = req.CabinClass;
-        flight.Baggage = req.Baggage;
-        flight.TicketNumber = req.TicketNumber;
-        flight.PNR = req.PNR;
-        flight.NetCost = req.NetCost;
-        flight.SalePrice = req.SalePrice;
-        flight.Commission = req.Commission;
-        flight.Tax = req.Tax;
-        flight.Status = req.Status;
-        flight.Notes = req.Notes;
+            flight.SupplierId = req.SupplierId;
+            flight.AirlineCode = req.AirlineCode;
+            flight.AirlineName = req.AirlineName;
+            flight.FlightNumber = req.FlightNumber;
+            flight.Origin = req.Origin;
+            flight.OriginCity = req.OriginCity;
+            flight.Destination = req.Destination;
+            flight.DestinationCity = req.DestinationCity;
+            flight.DepartureTime = req.DepartureTime;
+            flight.ArrivalTime = req.ArrivalTime;
+            flight.CabinClass = req.CabinClass;
+            flight.Baggage = req.Baggage;
+            flight.TicketNumber = req.TicketNumber;
+            flight.PNR = req.PNR;
+            flight.NetCost = req.NetCost;
+            flight.SalePrice = req.SalePrice;
+            flight.Commission = req.Commission;
+            flight.Tax = req.Tax;
+            flight.Status = req.Status;
+            flight.Notes = req.Notes;
 
-        await _db.SaveChangesAsync(ct);
-        return Ok(flight);
+            await _db.SaveChangesAsync(ct);
+            return Ok(flight);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error actualizando vuelo: {ex.Message}");
+        }
     }
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(int fileId, int id, CancellationToken ct)
     {
-        var flight = await _db.FlightSegments.FindAsync(new object[] { id }, ct);
-        if (flight == null || flight.TravelFileId != fileId) return NotFound();
-
-        var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-        if (file != null)
+        try
         {
-            file.TotalCost -= (flight.NetCost + flight.Tax);
-            file.TotalSale -= flight.SalePrice;
-            file.Balance = file.TotalSale - file.TotalCost;
-        }
+            var flight = await _db.FlightSegments.FindAsync(new object[] { id }, ct);
+            if (flight == null || flight.TravelFileId != fileId) return NotFound();
 
-        _db.FlightSegments.Remove(flight);
-        await _db.SaveChangesAsync(ct);
-        return Ok();
+            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
+            if (file != null)
+            {
+                file.TotalCost -= (flight.NetCost + flight.Tax);
+                file.TotalSale -= flight.SalePrice;
+                file.Balance = file.TotalSale - file.TotalCost;
+            }
+
+            _db.FlightSegments.Remove(flight);
+            await _db.SaveChangesAsync(ct);
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error eliminando vuelo: {ex.Message}");
+        }
     }
 }
 
