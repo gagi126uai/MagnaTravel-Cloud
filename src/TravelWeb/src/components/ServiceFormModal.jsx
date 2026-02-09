@@ -147,7 +147,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div>
@@ -221,7 +221,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div>
@@ -286,7 +286,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div>
@@ -368,7 +368,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div>
@@ -485,6 +485,14 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
     const [selectedRate, setSelectedRate] = useState(null); // Validar selectedRate para recálculos
     const [loading, setLoading] = useState(false);
     const [commissionPercent, setCommissionPercent] = useState(10);
+
+    // Sort suppliers: Active first, then by name
+    const sortedSuppliers = useMemo(() => {
+        return [...suppliers].sort((a, b) => {
+            if (a.isActive === b.isActive) return a.name.localeCompare(b.name);
+            return a.isActive ? -1 : 1;
+        });
+    }, [suppliers]);
 
     // Reset form cuando cambia el tipo de servicio
     const handleTypeChange = (newType) => {
@@ -714,10 +722,10 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
 
                 {/* Formulario */}
                 <form onSubmit={handleSubmit} className="p-4 space-y-4 overflow-y-auto max-h-[60vh]">
-                    {serviceType === "Aereo" && <FlightForm form={form} setForm={setForm} suppliers={suppliers} onRateSelect={handleRateSelect} />}
-                    {serviceType === "Hotel" && <HotelForm form={form} setForm={setForm} suppliers={suppliers} onRateSelect={handleRateSelect} />}
-                    {serviceType === "Traslado" && <TransferForm form={form} setForm={setForm} suppliers={suppliers} onRateSelect={handleRateSelect} />}
-                    {serviceType === "Paquete" && <PackageForm form={form} setForm={setForm} suppliers={suppliers} onRateSelect={handleRateSelect} />}
+                    {serviceType === "Aereo" && <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} />}
+                    {serviceType === "Hotel" && <HotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} />}
+                    {serviceType === "Traslado" && <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} />}
+                    {serviceType === "Paquete" && <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} />}
 
                     <PricingForm form={form} setForm={setForm} commissionPercent={commissionPercent} onRecalculate={applyCommission} />
 

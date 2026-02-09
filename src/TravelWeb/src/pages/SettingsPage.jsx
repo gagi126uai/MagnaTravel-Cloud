@@ -220,7 +220,12 @@ export default function SettingsPage() {
   const loadSuppliers = async () => {
     try {
       const data = await api.get("/suppliers");
-      setSuppliers(data);
+      // Sort: Active first, then name
+      const sorted = Array.isArray(data) ? data.sort((a, b) => {
+        if (a.isActive === b.isActive) return a.name.localeCompare(b.name);
+        return a.isActive ? -1 : 1;
+      }) : [];
+      setSuppliers(sorted);
     } catch { }
   };
 
