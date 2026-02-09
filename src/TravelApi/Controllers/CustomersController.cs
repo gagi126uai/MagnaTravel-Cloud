@@ -189,6 +189,7 @@ public class CustomersController : ControllerBase
                     p.Method,
                     PaymentDate = p.PaidAt,
                     p.Notes,
+                    TravelFileId = p.TravelFileId,
                     FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null,
                     FileName = p.TravelFile != null ? p.TravelFile.Name : null
                 })

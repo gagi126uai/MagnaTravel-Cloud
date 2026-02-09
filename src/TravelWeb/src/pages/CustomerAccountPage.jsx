@@ -12,8 +12,13 @@ import {
     Calendar,
     DollarSign,
     TrendingUp,
-    Building
+    Building,
+    Plus,
+    Pencil,
+    Trash2
 } from "lucide-react";
+import CustomerPaymentModal from "../components/CustomerPaymentModal";
+import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 
 const StatusBadge = ({ status }) => {
@@ -54,7 +59,10 @@ export default function CustomerAccountPage() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [data, setData] = useState(null);
+
     const [loading, setLoading] = useState(true);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [paymentToEdit, setPaymentToEdit] = useState(null);
 
     useEffect(() => {
         loadAccount();
@@ -69,6 +77,34 @@ export default function CustomerAccountPage() {
             showError("No se pudo cargar la cuenta corriente");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleOpenModal = (payment = null) => {
+        setPaymentToEdit(payment);
+        setIsModalOpen(true);
+    };
+
+    const handleDeletePayment = async (payment) => {
+        const result = await Swal.fire({
+            title: "¿Eliminar pago?",
+            text: `Se anulará el pago de ${formatCurrency(payment.amount)} y la deuda volverá al expediente.`,
+            icon: "warning",
+            showCancelButton: true,
+            confirmButtonText: "Sí, eliminar",
+            cancelButtonText: "Cancelar",
+            confirmButtonColor: "#ef4444"
+        });
+
+        if (result.isConfirmed) {
+            try {
+                await api.delete(`/travelfiles/${payment.travelFileId}/payments/${payment.id}`);
+                Swal.fire("Eliminado", "El pago ha sido eliminado.", "success");
+                loadAccount();
+            } catch (error) {
+                console.error(error);
+                showError("No se pudo eliminar el pago.");
+            }
         }
     };
 
@@ -93,14 +129,20 @@ export default function CustomerAccountPage() {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={() => navigate("/customers")}>
-                    <ArrowLeft className="h-5 w-5" />
-                </Button>
-                <div>
-                    <h1 className="text-2xl font-bold">Cuenta Corriente</h1>
-                    <p className="text-muted-foreground">{customer.fullName}</p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                    <Button variant="ghost" size="icon" onClick={() => navigate("/customers")}>
+                        <ArrowLeft className="h-5 w-5" />
+                    </Button>
+                    <div>
+                        <h1 className="text-2xl font-bold">Cuenta Corriente</h1>
+                        <p className="text-muted-foreground">{customer.fullName}</p>
+                    </div>
                 </div>
+                <Button onClick={() => handleOpenModal(null)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
+                    <Plus className="h-4 w-4" />
+                    Nueva Cobranza
+                </Button>
             </div>
 
             {/* Customer Info Card */}
@@ -282,15 +324,23 @@ export default function CustomerAccountPage() {
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                                    <div className="flex items-center gap-1 text-sm text-muted-foreground justify-end">
                                         <Calendar className="h-3 w-3" />
                                         {formatDate(payment.paymentDate)}
                                     </div>
                                     {payment.notes && (
-                                        <div className="text-xs text-muted-foreground truncate max-w-48">
+                                        <div className="text-xs text-muted-foreground truncate max-w-48 mb-1">
                                             {payment.notes}
                                         </div>
                                     )}
+                                    <div className="flex items-center gap-1 justify-end">
+                                        <button onClick={() => handleOpenModal(payment)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Editar">
+                                            <Pencil className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button onClick={() => handleDeletePayment(payment)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Eliminar">
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         ))}
@@ -301,6 +351,16 @@ export default function CustomerAccountPage() {
                     </div>
                 )}
             </div>
-        </div>
+
+
+            <CustomerPaymentModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                paymentToEdit={paymentToEdit}
+                customerId={id}
+                availableFiles={files.filter(f => f.status !== "Cancelado")}
+                onSave={loadAccount}
+            />
+        </div >
     );
 }

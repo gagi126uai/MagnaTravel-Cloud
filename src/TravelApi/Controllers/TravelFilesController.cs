@@ -433,6 +433,43 @@ public class TravelFilesController : ControllerBase
         }
     }
 
+    [HttpPut("{id}/payments/{paymentId}")]
+    public async Task<IActionResult> UpdatePayment(int id, int paymentId, Payment updatedPayment)
+    {
+        try
+        {
+            var payment = await _context.Payments.FindAsync(paymentId);
+            if (payment == null) return NotFound("Pago no encontrado");
+            
+            if (payment.TravelFileId != id) return BadRequest("El pago no corresponde al File");
+
+            var file = await _context.TravelFiles.FindAsync(id);
+            if (file == null) return NotFound("File no encontrado");
+
+            // Revert old amount
+            file.Balance += payment.Amount;
+
+            // Update fields
+            if (updatedPayment.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
+            
+            payment.Amount = updatedPayment.Amount;
+            payment.Method = updatedPayment.Method;
+            payment.PaidAt = updatedPayment.PaidAt.ToUniversalTime();
+            payment.Notes = updatedPayment.Notes;
+
+            // Apply new amount
+            file.Balance -= payment.Amount;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(payment);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error actualizando pago: {ex.Message}");
+        }
+    }
+
     [HttpDelete("{id}/payments/{paymentId}")]
     public async Task<IActionResult> DeletePayment(int id, int paymentId)
     {
