@@ -31,6 +31,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<PackageBooking> PackageBookings => Set<PackageBooking>();
     public DbSet<Rate> Rates => Set<Rate>();
 
+    // Sprint 5: AFIP / Facturación
+    public DbSet<AfipSettings> AfipSettings => Set<AfipSettings>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

@@ -97,6 +97,8 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
+builder.Services.AddHttpClient<TravelApi.Services.IAfipService, TravelApi.Services.AfipService>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("web", policy =>
