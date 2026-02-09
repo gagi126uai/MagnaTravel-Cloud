@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { showError } from "../alerts";
 import { useNavigate } from "react-router-dom";
 import {
     FileText,
@@ -11,7 +10,10 @@ import {
     Calendar,
     AlertCircle,
     ArrowRight,
-    Plane
+    Plane,
+    PieChart,
+    BarChart3,
+    Wallet
 } from "lucide-react";
 import {
     Card,
@@ -20,7 +22,21 @@ import {
     CardHeader,
     CardTitle
 } from "../components/ui/card";
-import { Button } from "../components/ui/button";
+import {
+    BarChart,
+    Bar,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    ResponsiveContainer,
+    AreaChart,
+    Area,
+    PieChart as RePieChart,
+    Pie,
+    Cell,
+    Legend
+} from "recharts";
 
 export default function DashboardPage() {
     const [dashboard, setDashboard] = useState(null);
@@ -44,8 +60,11 @@ export default function DashboardPage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+            <div className="flex items-center justify-center min-h-[400px]">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+                    <p className="text-sm text-muted-foreground animate-pulse">Cargando métricas...</p>
+                </div>
             </div>
         );
     }
@@ -58,225 +77,297 @@ export default function DashboardPage() {
         );
     }
 
+    // Prepare data for charts
+    const statusData = [
+        { name: 'Presupuesto', value: dashboard.distribucionEstados?.budgets || 0, color: '#94a3b8' }, // Slate-400
+        { name: 'Reservado', value: dashboard.distribucionEstados?.reserved || 0, color: '#f59e0b' }, // Amber-500
+        { name: 'Operativo', value: dashboard.distribucionEstados?.operational || 0, color: '#10b981' }, // Emerald-500
+        { name: 'Cerrado', value: dashboard.distribucionEstados?.closed || 0, color: '#6366f1' }, // Indigo-500
+        { name: 'Cancelado', value: dashboard.distribucionEstados?.cancelled || 0, color: '#ef4444' }, // Red-500
+    ].filter(item => item.value > 0);
+
     return (
-        <div className="space-y-6">
+        <div className="space-y-8 animate-in fade-in duration-500">
             {/* Header */}
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div>
-                    <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
-                    <p className="text-muted-foreground">
-                        Resumen ejecutivo de la operación diaria.
-                    </p>
-                </div>
-                <div className="flex items-center gap-2 rounded-full border bg-card px-4 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-sm">
-                    <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
-                    En tiempo real
-                </div>
+            <div>
+                <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Dashboard</h2>
+                <p className="text-muted-foreground mt-1">
+                    Vista general del rendimiento de tu agencia.
+                </p>
             </div>
 
-            {/* Main Stats */}
+            {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                {/* Presupuestos */}
-                <Card
-                    className="cursor-pointer hover:shadow-md transition-shadow border-blue-200 bg-blue-50/50 dark:bg-blue-900/10 dark:border-blue-800"
-                    onClick={() => navigate("/files")}
-                >
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-blue-700 dark:text-blue-300">Presupuestos</CardTitle>
-                        <FileText className="h-4 w-4 text-blue-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-blue-700 dark:text-blue-300">{dashboard.presupuestos}</div>
-                        <p className="text-xs text-blue-600/70">Borradores sin confirmar</p>
-                    </CardContent>
-                </Card>
-
-                {/* Reservados */}
-                <Card
-                    className="cursor-pointer hover:shadow-md transition-shadow border-amber-200 bg-amber-50/50 dark:bg-amber-900/10 dark:border-amber-800"
-                    onClick={() => navigate("/files")}
-                >
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-amber-700 dark:text-amber-300">Reservados</CardTitle>
-                        <Clock className="h-4 w-4 text-amber-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-amber-700 dark:text-amber-300">{dashboard.reservados}</div>
-                        <p className="text-xs text-amber-600/70">Ventas confirmadas</p>
-                    </CardContent>
-                </Card>
-
-                {/* Operativos */}
-                <Card
-                    className="cursor-pointer hover:shadow-md transition-shadow border-emerald-200 bg-emerald-50/50 dark:bg-emerald-900/10 dark:border-emerald-800"
-                    onClick={() => navigate("/files")}
-                >
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Operativos</CardTitle>
-                        <Briefcase className="h-4 w-4 text-emerald-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-emerald-700 dark:text-emerald-300">{dashboard.operativos}</div>
-                        <p className="text-xs text-emerald-600/70">En proceso de viaje</p>
-                    </CardContent>
-                </Card>
-
-                {/* Saldo Pendiente */}
-                <Card className="border-rose-200 bg-rose-50/50 dark:bg-rose-900/10 dark:border-rose-800">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-rose-700 dark:text-rose-300">Saldo Pendiente</CardTitle>
-                        <AlertCircle className="h-4 w-4 text-rose-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-rose-700 dark:text-rose-300">${dashboard.saldoPendiente?.toLocaleString()}</div>
-                        <p className="text-xs text-rose-600/70">Por cobrar en expedientes activos</p>
-                    </CardContent>
-                </Card>
+                <KpiCard
+                    title="Ventas del Mes"
+                    value={dashboard.ventasDelMes}
+                    icon={TrendingUp}
+                    color="text-indigo-600 dark:text-indigo-400"
+                    bg="bg-indigo-50 dark:bg-indigo-900/10"
+                    trend="Ingresos brutos"
+                />
+                <KpiCard
+                    title="Margen Bruto"
+                    value={dashboard.margenBruto}
+                    icon={PieChart}
+                    color="text-emerald-600 dark:text-emerald-400"
+                    bg="bg-emerald-50 dark:bg-emerald-900/10"
+                    trend="Beneficio neto"
+                />
+                <KpiCard
+                    title="Cobros Clientes"
+                    value={dashboard.cobrosDelMes}
+                    icon={Wallet}
+                    color="text-blue-600 dark:text-blue-400"
+                    bg="bg-blue-50 dark:bg-blue-900/10"
+                    trend="Ingresos de caja"
+                />
+                <KpiCard
+                    title="Saldo Pendiente"
+                    value={dashboard.saldoPendiente}
+                    icon={AlertCircle}
+                    color="text-rose-600 dark:text-rose-400"
+                    bg="bg-rose-50 dark:bg-rose-900/10"
+                    trend="Por cobrar"
+                />
             </div>
 
-            {/* Financial Stats */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <Card className="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-900/20 dark:to-slate-900 dark:border-indigo-800">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-indigo-700 dark:text-indigo-300">Cobros del Mes</CardTitle>
-                        <DollarSign className="h-4 w-4 text-indigo-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-indigo-700 dark:text-indigo-300">${dashboard.cobrosDelMes?.toLocaleString()}</div>
-                        <p className="text-xs text-indigo-600/70 mt-1">Ingresado de clientes</p>
-                    </CardContent>
-                </Card>
-
-                <Card className="border-purple-200 bg-gradient-to-br from-purple-50 to-white dark:from-purple-900/20 dark:to-slate-900 dark:border-purple-800">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-purple-700 dark:text-purple-300">Ventas del Mes</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-purple-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-purple-700 dark:text-purple-300">${dashboard.ventasDelMes?.toLocaleString()}</div>
-                        <p className="text-xs text-purple-600/70 mt-1">Total vendido</p>
-                    </CardContent>
-                </Card>
-
-                <Card className="border-orange-200 bg-gradient-to-br from-orange-50 to-white dark:from-orange-900/20 dark:to-slate-900 dark:border-orange-800">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-orange-700 dark:text-orange-300">Costos del Mes</CardTitle>
-                        <DollarSign className="h-4 w-4 text-orange-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-orange-700 dark:text-orange-300">${dashboard.costosDelMes?.toLocaleString() || 0}</div>
-                        <p className="text-xs text-orange-600/70 mt-1">Costo de servicios</p>
-                    </CardContent>
-                </Card>
-
-                <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/20 dark:to-slate-900 dark:border-emerald-800">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Margen Bruto</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-emerald-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className={`text-2xl md:text-3xl font-bold ${(dashboard.margenBruto || 0) >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600'}`}>
-                            ${dashboard.margenBruto?.toLocaleString() || 0}
-                        </div>
-                        <p className="text-xs text-emerald-600/70 mt-1">Venta - Costo</p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* Supplier Payments Alert */}
-            {(dashboard.pagosProveedores || 0) > 0 && (
-                <Card className="border-rose-200 bg-gradient-to-br from-rose-50 to-white dark:from-rose-900/20 dark:to-slate-900 dark:border-rose-800">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-rose-700 dark:text-rose-300">Pagos a Proveedores (Este Mes)</CardTitle>
-                        <DollarSign className="h-4 w-4 text-rose-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl md:text-3xl font-bold text-rose-700 dark:text-rose-300">${dashboard.pagosProveedores?.toLocaleString()}</div>
-                        <p className="text-xs text-rose-600/70 mt-1">Egresos pagados a proveedores</p>
-                    </CardContent>
-                </Card>
-            )}
-
-            {/* Lists */}
-            <div className="grid gap-6 lg:grid-cols-2">
-                {/* Expedientes con Saldo Pendiente */}
-                <Card>
+            {/* Charts Section */}
+            <div className="grid gap-6 lg:grid-cols-7">
+                {/* Main Trends Chart */}
+                <Card className="lg:col-span-4 shadow-sm">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <AlertCircle className="h-5 w-5 text-rose-500" />
-                            Files por Cobrar
+                            <BarChart3 className="h-5 w-5 text-slate-500" />
+                            Rendimiento Semestral
                         </CardTitle>
-                        <CardDescription>Top 5 con mayor saldo pendiente</CardDescription>
+                        <CardDescription>Comparativa de Ventas vs Costos (Últimos 6 meses)</CardDescription>
+                    </CardHeader>
+                    <CardContent className="pl-0">
+                        <div className="h-[300px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={dashboard.tendenciaHistorica} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                    <XAxis
+                                        dataKey="month"
+                                        stroke="#64748b"
+                                        fontSize={12}
+                                        tickLine={false}
+                                        axisLine={false}
+                                    />
+                                    <YAxis
+                                        stroke="#64748b"
+                                        fontSize={12}
+                                        tickLine={false}
+                                        axisLine={false}
+                                        tickFormatter={(value) => `$${value / 1000}k`}
+                                    />
+                                    <Tooltip
+                                        cursor={{ fill: '#f1f5f9' }}
+                                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                        formatter={(value) => [`$${value.toLocaleString()}`, undefined]}
+                                    />
+                                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                                    <Bar dataKey="sales" name="Ventas" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={30} />
+                                    <Bar dataKey="costs" name="Costos" fill="#94a3b8" radius={[4, 4, 0, 0]} barSize={30} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* Status Distribution */}
+                <Card className="lg:col-span-3 shadow-sm">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <PieChart className="h-5 w-5 text-slate-500" />
+                            Estado de Expedientes
+                        </CardTitle>
+                        <CardDescription>Distribución actual de files activos</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        {dashboard.expedientesPendientes?.length > 0 ? (
-                            <div className="space-y-3">
-                                {dashboard.expedientesPendientes.map((file) => (
+                        <div className="h-[300px] w-full flex items-center justify-center">
+                            {statusData.length > 0 ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <RePieChart>
+                                        <Pie
+                                            data={statusData}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={80}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                        >
+                                            {statusData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.color} strokeWidth={0} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip
+                                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                        />
+                                        <Legend
+                                            layout="vertical"
+                                            verticalAlign="middle"
+                                            align="right"
+                                            wrapperStyle={{ paddingLeft: '20px' }}
+                                        />
+                                    </RePieChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div className="text-center text-muted-foreground p-8">
+                                    <Clock className="h-10 w-10 mx-auto mb-2 opacity-20" />
+                                    No hay datos suficientes
+                                </div>
+                            )}
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Operational Lists */}
+            <div className="grid gap-6 md:grid-cols-2">
+                {/* Pending Balances */}
+                <Card className="shadow-sm">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                            <AlertCircle className="h-5 w-5" />
+                            Cobros Pendientes
+                        </CardTitle>
+                        <CardDescription>Prioridad de gestión de cobranza</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="space-y-4">
+                            {dashboard.expedientesPendientes?.length > 0 ? (
+                                dashboard.expedientesPendientes.map((file) => (
                                     <div
                                         key={file.id}
-                                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                        className="flex items-center justify-between p-3 rounded-lg bg-rose-50/50 hover:bg-rose-100/50 dark:bg-rose-900/10 dark:hover:bg-rose-900/20 cursor-pointer transition-colors border border-rose-100 dark:border-rose-900/20"
                                         onClick={() => navigate(`/files/${file.id}`)}
                                     >
-                                        <div>
-                                            <div className="font-medium">{file.name}</div>
-                                            <div className="text-xs text-muted-foreground">{file.fileNumber}</div>
+                                        <div className="flex gap-3 items-center">
+                                            <div className="bg-rose-100 dark:bg-rose-900/30 p-2 rounded-full">
+                                                <DollarSign className="h-4 w-4 text-rose-600" />
+                                            </div>
+                                            <div>
+                                                <div className="font-medium text-slate-800 dark:text-slate-200">{file.name}</div>
+                                                <div className="text-xs text-rose-600/80 font-medium">{file.fileNumber}</div>
+                                            </div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="font-bold text-rose-600">${file.balance?.toLocaleString()}</div>
-                                            <ArrowRight className="h-4 w-4 text-muted-foreground inline-block" />
+                                            <div className="font-bold text-rose-700 dark:text-rose-400">
+                                                ${file.balance?.toLocaleString()}
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground uppercase">Pendiente</div>
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-muted-foreground">
-                                <DollarSign className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                                <p>No hay expedientes con saldo pendiente</p>
-                            </div>
-                        )}
+                                ))
+                            ) : (
+                                <EmptyState message="No hay saldos pendientes" />
+                            )}
+                        </div>
                     </CardContent>
                 </Card>
 
-                {/* Próximos Viajes */}
-                <Card>
+                {/* Upcoming Trips */}
+                <Card className="shadow-sm">
                     <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Plane className="h-5 w-5 text-blue-500" />
-                            Próximos Viajes
+                        <CardTitle className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                            <Plane className="h-5 w-5" />
+                            Próximas Salidas
                         </CardTitle>
-                        <CardDescription>Salidas en los próximos 7 días</CardDescription>
+                        <CardDescription>Viajes iniciando en los próximos 7 días</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        {dashboard.proximosViajes?.length > 0 ? (
-                            <div className="space-y-3">
-                                {dashboard.proximosViajes.map((trip) => (
+                        <div className="space-y-4">
+                            {dashboard.proximosViajes?.length > 0 ? (
+                                dashboard.proximosViajes.map((trip) => (
                                     <div
                                         key={trip.id}
-                                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 cursor-pointer transition-colors border border-slate-100 dark:border-slate-800"
                                         onClick={() => navigate(`/files/${trip.id}`)}
                                     >
-                                        <div>
-                                            <div className="font-medium">{trip.name}</div>
-                                            <div className="text-xs text-muted-foreground">{trip.fileNumber}</div>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="flex items-center gap-1 text-blue-600 font-medium">
-                                                <Calendar className="h-3 w-3" />
-                                                {new Date(trip.startDate).toLocaleDateString()}
+                                        <div className="flex gap-3 items-center">
+                                            <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-full">
+                                                <Calendar className="h-4 w-4 text-blue-600" />
+                                            </div>
+                                            <div>
+                                                <div className="font-medium text-slate-800 dark:text-slate-200">{trip.name}</div>
+                                                <div className="text-xs text-muted-foreground">{trip.fileNumber}</div>
                                             </div>
                                         </div>
+                                        <div className="text-right">
+                                            <div className="font-medium text-blue-600 dark:text-blue-400">
+                                                {new Date(trip.startDate).toLocaleDateString()}
+                                            </div>
+                                            <BadgeStatus status={trip.status} />
+                                        </div>
                                     </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-muted-foreground">
-                                <Calendar className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                                <p>No hay viajes próximos en los siguientes 7 días</p>
-                            </div>
-                        )}
+                                ))
+                            ) : (
+                                <EmptyState message="No hay salidas próximas" />
+                            )}
+                        </div>
                     </CardContent>
                 </Card>
             </div>
         </div>
+    );
+}
+
+function KpiCard({ title, value, icon: Icon, color, bg, trend }) {
+    return (
+        <Card className={`border-none shadow-sm ${bg} transition-all hover:scale-[1.02] cursor-default`}>
+            <CardContent className="p-6">
+                <div className="flex items-center justify-between space-y-0">
+                    <p className={`text-sm font-medium ${color} opacity-80`}>{title}</p>
+                    <Icon className={`h-4 w-4 ${color}`} />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                    <span className={`text-3xl font-bold ${color}`}>
+                        ${value?.toLocaleString() || '0'}
+                    </span>
+                </div>
+                {trend && (
+                    <p className={`text-xs ${color} mt-1 opacity-70`}>{trend}</p>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+function EmptyState({ message }) {
+    return (
+        <div className="text-center py-8 text-muted-foreground flex flex-col items-center">
+            <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-full mb-3">
+                <Briefcase className="h-6 w-6 opacity-30" />
+            </div>
+            <p className="text-sm">{message}</p>
+        </div>
+    );
+}
+
+function BadgeStatus({ status }) {
+    const styles = {
+        'Presupuesto': 'bg-slate-100 text-slate-600',
+        'Reservado': 'bg-amber-100 text-amber-700',
+        'Operativo': 'bg-emerald-100 text-emerald-700',
+        'Cerrado': 'bg-indigo-100 text-indigo-700',
+        'Cancelado': 'bg-red-100 text-red-700'
+    };
+
+    // Map English status if necessary or just default
+    const mapStatus = {
+        'Budget': 'Presupuesto',
+        'Reserved': 'Reservado',
+        'Operational': 'Operativo',
+        'Closed': 'Cerrado',
+        'Cancelled': 'Cancelado'
+    }[status] || status;
+
+    return (
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${styles[mapStatus] || 'bg-slate-100'}`}>
+            {mapStatus}
+        </span>
     );
 }

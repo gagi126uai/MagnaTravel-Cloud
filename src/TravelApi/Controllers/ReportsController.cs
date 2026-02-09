@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
 using TravelApi.Models;
+using System.Globalization;
 
 namespace TravelApi.Controllers;
 
@@ -33,6 +34,8 @@ public class ReportsController : ControllerBase
         var presupuestos = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Budget)?.Count ?? 0;
         var reservados = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Reserved)?.Count ?? 0;
         var operativos = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Operational)?.Count ?? 0;
+        var cerrados = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Closed)?.Count ?? 0;
+        var cancelados = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Cancelled)?.Count ?? 0;
 
         // Cobros del mes (ingresos de clientes)
         var paymentsThisMonth = await _dbContext.Payments
@@ -79,6 +82,44 @@ public class ReportsController : ControllerBase
             .Select(f => new UpcomingTripDto(f.Id, f.FileNumber, f.Name, f.StartDate!.Value, f.Status))
             .ToListAsync(cancellationToken);
 
+        // --- Historical Data (Last 6 Months) ---
+        var sixMonthsAgo = startOfMonth.AddMonths(-5);
+        
+        var monthlyData = await _dbContext.TravelFiles
+            .Where(f => f.CreatedAt >= sixMonthsAgo && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+            .GroupBy(f => new { f.CreatedAt.Year, f.CreatedAt.Month })
+            .Select(g => new
+            {
+                Year = g.Key.Year,
+                Month = g.Key.Month,
+                TotalSales = g.Sum(f => f.TotalSale),
+                TotalCosts = g.Sum(f => f.TotalCost)
+            })
+            .ToListAsync(cancellationToken);
+
+        var historicalTrend = new List<MonthlyMetricDto>();
+        for (int i = 0; i < 6; i++)
+        {
+            var targetDate = sixMonthsAgo.AddMonths(i);
+            var record = monthlyData.FirstOrDefault(m => m.Year == targetDate.Year && m.Month == targetDate.Month);
+
+            var sales = record?.TotalSales ?? 0m;
+            var costs = record?.TotalCosts ?? 0m;
+            var profit = sales - costs;
+            var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(targetDate.Month);
+
+            historicalTrend.Add(new MonthlyMetricDto(monthName, sales, costs, profit));
+        }
+
+        // --- Status Distribution for Pie Chart ---
+        var statusDistribution = new StatusDistributionDto(
+            presupuestos, 
+            reservados, 
+            operativos, 
+            cerrados, 
+            cancelados
+        );
+
         return Ok(new DashboardResponse(
             Presupuestos: presupuestos,
             Reservados: reservados,
@@ -90,7 +131,9 @@ public class ReportsController : ControllerBase
             MargenBruto: grossMarginThisMonth,
             PagosProveedores: supplierPaymentsThisMonth,
             ExpedientesPendientes: pendingFiles,
-            ProximosViajes: upcomingTrips
+            ProximosViajes: upcomingTrips,
+            TendenciaHistorica: historicalTrend,
+            DistribucionEstados: statusDistribution
         ));
     }
 
@@ -183,10 +226,14 @@ public record DashboardResponse(
     decimal MargenBruto,
     decimal PagosProveedores,
     List<PendingFileDto> ExpedientesPendientes,
-    List<UpcomingTripDto> ProximosViajes);
+    List<UpcomingTripDto> ProximosViajes,
+    List<MonthlyMetricDto> TendenciaHistorica,
+    StatusDistributionDto DistribucionEstados);
 
 public record PendingFileDto(int Id, string FileNumber, string Name, decimal Balance, string Status);
 public record UpcomingTripDto(int Id, string FileNumber, string Name, DateTime StartDate, string Status);
+public record MonthlyMetricDto(string Month, decimal Sales, decimal Costs, decimal Profit);
+public record StatusDistributionDto(int Budgets, int Reserved, int Operational, int Closed, int Cancelled);
 
 public record ReportsSummaryResponse(
     int TotalCustomers,
@@ -198,4 +245,5 @@ public record ReportsSummaryResponse(
     decimal TotalSupplierPayments,
     decimal TotalSales,
     decimal GrossMargin);
+
 
