@@ -3,17 +3,13 @@ const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
 export async function apiRequest(path, options = {}) {
   const token = localStorage.getItem("token");
   const headers = {
-    // Default to JSON unless overridden (e.g. by FormData logic in wrappers)
-    "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
 
-  // If explicitly set to null/undefined in options, remove it (for FormData)
-  if (options.headers && options.headers["Content-Type"] === undefined && headers["Content-Type"] === "application/json") {
-    // Keep default.
-  } else if (options.headers && !options.headers["Content-Type"]) {
-    delete headers["Content-Type"];
+  // Only add default Content-Type if not FormData and not already set
+  if (!(options.body instanceof FormData) && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
   }
 
   // Ensure proper URL construction
@@ -85,12 +81,7 @@ export const api = {
     return apiRequest(url, {
       ...options,
       method: 'POST',
-      body: isFormData ? data : JSON.stringify(data),
-      headers: {
-        ...(options.headers || {}),
-        // If FormData, let browser set Content-Type (boundary). Else JSON.
-        ...(isFormData ? {} : { "Content-Type": "application/json" })
-      }
+      body: isFormData ? data : JSON.stringify(data)
     });
   },
   put: (url, data, options = {}) => {
@@ -98,11 +89,7 @@ export const api = {
     return apiRequest(url, {
       ...options,
       method: 'PUT',
-      body: isFormData ? data : JSON.stringify(data),
-      headers: {
-        ...(options.headers || {}),
-        ...(isFormData ? {} : { "Content-Type": "application/json" })
-      }
+      body: isFormData ? data : JSON.stringify(data)
     });
   },
   delete: (url, options) => apiRequest(url, { ...options, method: 'DELETE' })
