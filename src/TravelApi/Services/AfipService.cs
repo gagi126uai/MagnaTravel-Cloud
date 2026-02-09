@@ -95,14 +95,17 @@ public class AfipService : IAfipService
 
         // 2. Create Login Ticket
         // UniqueId must be 32-bit unsigned int
-        var uniqueId = (uint)(DateTime.UtcNow.Ticks % uint.MaxValue); 
+        var uniqueId = (uint)(DateTime.UtcNow.Ticks % uint.MaxValue);
+        
+        // AFIP expects Argentina Time (UTC-3)
+        var argentinaTime = DateTime.UtcNow.AddHours(-3);
         
         var xml = new XElement("loginTicketRequest",
             new XAttribute("version", "1.0"),
             new XElement("header",
                 new XElement("uniqueId", uniqueId),
-                new XElement("generationTime", DateTime.Now.AddMinutes(-10).ToString("yyyy-MM-ddTHH:mm:ss")),
-                new XElement("expirationTime", DateTime.Now.AddMinutes(+10).ToString("yyyy-MM-ddTHH:mm:ss"))
+                new XElement("generationTime", argentinaTime.AddMinutes(-10).ToString("yyyy-MM-ddTHH:mm:ss")),
+                new XElement("expirationTime", argentinaTime.AddMinutes(+10).ToString("yyyy-MM-ddTHH:mm:ss"))
             ),
             new XElement("service", "wsfe")
         );
