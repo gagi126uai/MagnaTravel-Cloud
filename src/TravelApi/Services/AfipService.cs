@@ -87,17 +87,67 @@ public class AfipService : IAfipService
 
             if (isValid)
             {
-                return "Online (Token Válido)";
+                // Verify WSFE access quickly (Ping)
+                // return "Online (Token Válido)";
+                return await CheckWsfeStatus(settings);
             }
             
             // Try to login if expired
             await EnsureAuth(settings);
-            return "Online (Conectado)";
+            return await CheckWsfeStatus(settings);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "AFIP Status Error");
             return $"Error: {ex.Message}";
+        }
+    }
+
+    private async Task<string> CheckWsfeStatus(AfipSettings settings)
+    {
+        try
+        {
+             // Call FECompUltimoAutorizado to check if we can reach the business service
+             var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
+             var action = "http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado";
+
+             var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+  <soap:Body>
+    <FECompUltimoAutorizado xmlns=""http://ar.gov.afip.dif.FEV1/"">
+      <Auth>
+        <Token>{settings.Token}</Token>
+        <Sign>{settings.Sign}</Sign>
+        <Cuit>{settings.Cuit}</Cuit>
+      </Auth>
+      <PtoVta>{settings.PuntoDeVenta}</PtoVta>
+      <CbteTipo>1</CbteTipo> 
+    </FECompUltimoAutorizado>
+  </soap:Body>
+</soap:Envelope>";
+
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Add("SOAPAction", action);
+            request.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+            
+            var response = await _httpClient.SendAsync(request);
+            var responseXml = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode && responseXml.Contains("FECompUltimoAutorizadoResult"))
+            {
+                // Parse CBTE
+                 var doc = XDocument.Parse(responseXml);
+                 var result = doc.Descendants(XName.Get("FECompUltimoAutorizadoResult", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
+                 var cbteNro = result?.Element(XName.Get("CbteNro", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                 
+                 return $"Online (WSFE OK - Ult. Factura A: {cbteNro})";
+            }
+            
+            return "Online (Auth OK, WSFE Error)";
+        }
+        catch
+        {
+            return "Online (Auth OK, WSFE Unreachable)";
         }
     }
     
