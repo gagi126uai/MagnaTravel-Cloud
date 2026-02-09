@@ -18,6 +18,8 @@ public class Customer
     public string? TaxId { get; set; } // CUIT/CUIL
     public decimal CreditLimit { get; set; } = 0;
     public decimal CurrentBalance { get; set; } = 0; // Positive = they owe us
+    public bool IsActive { get; set; } = true;
 
     public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
+    public ICollection<TravelFile> TravelFiles { get; set; } = new List<TravelFile>();
 }

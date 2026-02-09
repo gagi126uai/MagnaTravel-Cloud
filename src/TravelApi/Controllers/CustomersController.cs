@@ -19,21 +19,46 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Customer>>> GetCustomers(CancellationToken cancellationToken)
+    public async Task<ActionResult<IEnumerable<object>>> GetCustomers([FromQuery] bool includeInactive = false, CancellationToken cancellationToken = default)
     {
-        var customers = await _dbContext.Customers
-            .AsNoTracking()
+        var query = _dbContext.Customers.AsNoTracking();
+        
+        if (!includeInactive)
+        {
+            query = query.Where(c => c.IsActive);
+        }
+
+        var customers = await query
+            .Include(c => c.TravelFiles)
             .OrderBy(customer => customer.FullName)
+            .Select(c => new 
+            {
+                c.Id,
+                c.FullName,
+                c.Email,
+                c.Phone,
+                c.DocumentNumber,
+                c.Address,
+                c.Notes,
+                c.TaxId,
+                c.CreditLimit,
+                c.IsActive,
+                // Live Balance Calculation: Sum of balance of all non-cancelled files
+                CurrentBalance = c.TravelFiles
+                    .Where(f => f.Status != FileStatus.Cancelled && f.Status != FileStatus.Budget)
+                    .Sum(f => f.Balance)
+            })
             .ToListAsync(cancellationToken);
 
         return Ok(customers);
     }
 
     [HttpGet("{id:int}")]
-    public async Task<ActionResult<Customer>> GetCustomer(int id, CancellationToken cancellationToken)
+    public async Task<ActionResult<object>> GetCustomer(int id, CancellationToken cancellationToken)
     {
         var customer = await _dbContext.Customers
             .AsNoTracking()
+            .Include(c => c.TravelFiles)
             .FirstOrDefaultAsync(found => found.Id == id, cancellationToken);
 
         if (customer is null)
@@ -41,7 +66,22 @@ public class CustomersController : ControllerBase
             return NotFound();
         }
 
-        return Ok(customer);
+        return Ok(new 
+        {
+            customer.Id,
+            customer.FullName,
+            customer.Email,
+            customer.Phone,
+            customer.DocumentNumber,
+            customer.Address,
+            customer.Notes,
+            customer.TaxId,
+            customer.CreditLimit,
+            customer.IsActive,
+            CurrentBalance = customer.TravelFiles
+                .Where(f => f.Status != FileStatus.Cancelled && f.Status != FileStatus.Budget)
+                .Sum(f => f.Balance)
+        });
     }
 
     [HttpPost]
@@ -49,6 +89,7 @@ public class CustomersController : ControllerBase
     {
         try
         {
+            customer.IsActive = true; // Default to active
             _dbContext.Customers.Add(customer);
             await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -81,11 +122,12 @@ public class CustomersController : ControllerBase
             existing.DocumentNumber = customer.DocumentNumber;
             existing.Address = customer.Address;
             existing.Notes = customer.Notes;
+            existing.IsActive = customer.IsActive; // Allow updating status
             
             // Retail Pivot: Update Financials
             existing.TaxId = customer.TaxId;
             existing.CreditLimit = customer.CreditLimit;
-            // existing.CurrentBalance = customer.CurrentBalance; // Should not be editable directly here usually
+            // Balance is read-only calculated field now, ignoring input
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
