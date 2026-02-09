@@ -80,8 +80,11 @@ const Avatar = ({ name }) => {
 
 // --- Page ---
 
+import AfipSettingsTab from "../components/AfipSettingsTab";
+
 const tabs = [
   { id: "agency", label: "Datos de la Agencia" },
+  { id: "afip", label: "Facturación (AFIP)" },
   { id: "commissions", label: "Comisiones" },
   { id: "users", label: "Usuarios" },
   { id: "programming", label: "Programación" },
@@ -604,6 +607,8 @@ export default function SettingsPage() {
           </form>
         </section>
       )}
+
+      {activeTab === "afip" && <AfipSettingsTab />}
 
       {activeTab === "commissions" && (
         <section className="space-y-4">
