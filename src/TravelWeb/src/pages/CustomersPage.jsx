@@ -198,7 +198,6 @@ export default function CustomersPage() {
               <tr className="border-b transition-colors">
                 <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400">Cliente</th>
                 <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400">Contacto</th>
-                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right">Límite Crédito</th>
                 <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right">Saldo Actual</th>
                 <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-center">Estado</th>
                 <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right">Acciones</th>
@@ -229,9 +228,6 @@ export default function CustomersPage() {
                         {customer.phone || "-"}
                       </div>
                     </div>
-                  </td>
-                  <td className="p-4 align-middle text-right text-muted-foreground font-mono">
-                    {formatCurrency(customer.creditLimit)}
                   </td>
                   <td className="p-4 align-middle text-right">
                     <div className={`font-mono font-medium ${(customer.currentBalance || 0) > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
@@ -392,20 +388,7 @@ export default function CustomersPage() {
                       <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Información Financiera</h4>
                     </div>
 
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Límite de Crédito</label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2 text-muted-foreground">$</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={formData.creditLimit}
-                            onChange={(e) => setFormData({ ...formData, creditLimit: parseFloat(e.target.value) })}
-                            className="w-full rounded-md border border-slate-200 bg-white pl-6 pr-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800"
-                          />
-                        </div>
-                      </div>
+                    <div className="grid gap-4 sm:grid-cols-1">
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Saldo Actual (Automático)</label>
                         <div className="relative">
