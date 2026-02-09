@@ -31,6 +31,7 @@ public class SuppliersController : ControllerBase
 
         // 1. Costos de Vuelos
         var flightCosts = await _dbContext.FlightSegments
+            .Include(f => f.TravelFile)
             .Where(f => supplierIds.Contains(f.SupplierId) && validStatuses.Contains(f.TravelFile!.Status))
             .GroupBy(f => f.SupplierId)
             .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
@@ -38,6 +39,7 @@ public class SuppliersController : ControllerBase
 
         // 2. Costos de Hoteles
         var hotelCosts = await _dbContext.HotelBookings
+            .Include(h => h.TravelFile)
             .Where(h => supplierIds.Contains(h.SupplierId) && validStatuses.Contains(h.TravelFile!.Status))
             .GroupBy(h => h.SupplierId)
             .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
@@ -45,6 +47,7 @@ public class SuppliersController : ControllerBase
 
         // 3. Costos de Traslados
         var transferCosts = await _dbContext.TransferBookings
+            .Include(t => t.TravelFile)
             .Where(t => supplierIds.Contains(t.SupplierId) && validStatuses.Contains(t.TravelFile!.Status))
             .GroupBy(t => t.SupplierId)
             .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
@@ -52,6 +55,7 @@ public class SuppliersController : ControllerBase
 
         // 4. Costos de Paquetes
         var packageCosts = await _dbContext.PackageBookings
+            .Include(p => p.TravelFile)
             .Where(p => supplierIds.Contains(p.SupplierId) && validStatuses.Contains(p.TravelFile!.Status))
             .GroupBy(p => p.SupplierId)
             .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
@@ -59,6 +63,7 @@ public class SuppliersController : ControllerBase
 
         // 5. Costos de Reservas Genéricas
         var reservationCosts = await _dbContext.Reservations
+            .Include(r => r.TravelFile)
             .Where(r => r.SupplierId.HasValue && supplierIds.Contains(r.SupplierId.Value) && validStatuses.Contains(r.TravelFile!.Status))
             .GroupBy(r => r.SupplierId!.Value)
             .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
