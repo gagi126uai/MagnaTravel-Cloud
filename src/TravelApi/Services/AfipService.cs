@@ -110,6 +110,16 @@ public class AfipService : IAfipService
              // Call FECompUltimoAutorizado to check if we can reach the business service
              var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
              var action = "http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado";
+             
+             // Determine Voucher Type based on Agency Tax Condition
+             // Responsable Inscripto -> Check Type 001 (Factura A)
+             // Monotributo -> Check Type 011 (Factura C)
+             // Exento -> Check Type 011 (Factura C) (Usually)
+             int cbteTipo = 1; // Default Factura A
+             if (settings.TaxCondition == "Monotributo" || settings.TaxCondition == "Exento")
+             {
+                 cbteTipo = 11; // Factura C
+             }
 
              var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
 <soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
@@ -121,7 +131,7 @@ public class AfipService : IAfipService
         <Cuit>{settings.Cuit}</Cuit>
       </Auth>
       <PtoVta>{settings.PuntoDeVenta}</PtoVta>
-      <CbteTipo>1</CbteTipo> 
+      <CbteTipo>{cbteTipo}</CbteTipo> 
     </FECompUltimoAutorizado>
   </soap:Body>
 </soap:Envelope>";

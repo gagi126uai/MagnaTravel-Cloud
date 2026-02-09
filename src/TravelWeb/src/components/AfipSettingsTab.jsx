@@ -30,6 +30,7 @@ export default function AfipSettingsTab() {
                     cuit: data.cuit || "",
                     puntoDeVenta: data.puntoDeVenta || 1,
                     isProduction: data.isProduction || false,
+                    taxCondition: data.taxCondition || "Responsable Inscripto",
                     certificatePassword: "" // Don't show password
                 });
                 if (data.certificatePath) {
@@ -72,6 +73,7 @@ export default function AfipSettingsTab() {
         formData.append("Cuit", form.cuit);
         formData.append("PuntoDeVenta", form.puntoDeVenta);
         formData.append("IsProduction", form.isProduction);
+        formData.append("TaxCondition", form.taxCondition);
         if (form.certificatePassword) {
             formData.append("Password", form.certificatePassword);
         }
@@ -127,6 +129,20 @@ export default function AfipSettingsTab() {
                         <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Datos Fiscales</h3>
 
                         <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condición Fiscal</label>
+                                <select
+                                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                    value={form.taxCondition}
+                                    onChange={e => setForm({ ...form, taxCondition: e.target.value })}
+                                >
+                                    <option value="Responsable Inscripto">Responsable Inscripto</option>
+                                    <option value="Monotributo">Monotributo</option>
+                                    <option value="Exento">Exento</option>
+                                </select>
+                                <p className="text-xs text-slate-500 mt-1">Determina el tipo de comprobante (A, B o C).</p>
+                            </div>
+
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">CUIT Emisor</label>
                                 <input

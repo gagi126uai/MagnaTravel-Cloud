@@ -47,6 +47,7 @@ public class AfipController : ControllerBase
         public long Cuit { get; set; }
         public int PuntoDeVenta { get; set; }
         public bool IsProduction { get; set; }
+        public string TaxCondition { get; set; } = "Responsable Inscripto";
         public IFormFile? Certificate { get; set; }
         public string? Password { get; set; }
     }
@@ -64,6 +65,7 @@ public class AfipController : ControllerBase
         settings.Cuit = request.Cuit;
         settings.PuntoDeVenta = request.PuntoDeVenta;
         settings.IsProduction = request.IsProduction;
+        settings.TaxCondition = request.TaxCondition;
 
         if (request.Certificate != null)
         {

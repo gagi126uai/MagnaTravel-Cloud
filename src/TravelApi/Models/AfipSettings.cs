@@ -26,4 +26,7 @@ public class AfipSettings
     public string? Token { get; set; }
     public string? Sign { get; set; }
     public DateTime? TokenExpiration { get; set; }
+
+    [MaxLength(50)]
+    public string TaxCondition { get; set; } = "Responsable Inscripto"; // Monotributo, Exento
 }
