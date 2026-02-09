@@ -46,10 +46,11 @@ export default function AfipSettingsTab() {
     const checkStatus = async () => {
         setCheckingStatus(true);
         try {
-            const statusText = await api.get("/afip/status");
-            setStatus(statusText);
+            const data = await api.get("/afip/status");
+            setStatus(data.status);
         } catch (error) {
-            setStatus("Error de conexión");
+            console.error("Status check failed:", error);
+            setStatus("Error: " + error.message);
         } finally {
             setCheckingStatus(false);
         }
@@ -101,11 +102,11 @@ export default function AfipSettingsTab() {
                     <p className="text-sm text-slate-500 mt-1">Verifica la conexión con los servidores de AFIP</p>
                 </div>
                 <div className="flex items-center gap-4">
-                    <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium ${status.includes("Online")
-                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                        : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                    <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium ${status?.includes("Online")
+                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                            : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
                         }`}>
-                        {status.includes("Online") ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                        {status?.includes("Online") ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
                         {status}
                     </div>
                     <button

@@ -22,9 +22,10 @@ public class AfipController : ControllerBase
     }
 
     [HttpGet("status")]
-    public async Task<ActionResult<string>> GetStatus()
+    public async Task<IActionResult> GetStatus()
     {
-        return await _afipService.GetStatus();
+        var status = await _afipService.GetStatus();
+        return Ok(new { status });
     }
 
     [HttpGet("settings")]
