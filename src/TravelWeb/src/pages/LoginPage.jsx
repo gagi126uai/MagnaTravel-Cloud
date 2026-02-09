@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api";
 import { setAuthToken } from "../auth";
 import { showError, showSuccess } from "../alerts";
+import { Mail, Lock, User, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
+import clsx from "clsx";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -10,90 +12,228 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [isRegister, setIsRegister] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [keepSignedIn, setKeepSignedIn] = useState(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (isLoading) return;
+
+    setIsLoading(true);
     try {
       const path = isRegister ? "/api/auth/register" : "/api/auth/login";
       const payload = isRegister
         ? { fullName, email, password }
         : { email, password };
+
       const response = await apiRequest(path, {
         method: "POST",
         body: JSON.stringify(payload),
       });
 
       setAuthToken(response.token);
-      await showSuccess(isRegister ? "Cuenta creada correctamente." : "Bienvenido.");
+
+      // Optional: Store preference for keeping session (if backend supported extendable tokens)
+      if (keepSignedIn) {
+        localStorage.setItem("keepSignedIn", "true");
+      }
+
+      await showSuccess(isRegister ? "¡Cuenta creada con éxito!" : "Bienvenido de nuevo.");
       navigate("/dashboard");
     } catch (err) {
-      await showError(err.message || "No pudimos iniciar sesión. Revisa los datos.");
+      await showError(err.message || "Credenciales incorrectas o error de conexión.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
+  const toggleMode = () => {
+    setIsRegister(!isRegister);
+    setEmail("");
+    setPassword("");
+    setFullName("");
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-50 to-white px-4 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
-      <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white/90 p-8 shadow-2xl shadow-indigo-500/10 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600/10 text-indigo-600 dark:text-indigo-300">
-            MT
+    <div className="flex min-h-screen w-full bg-slate-50 dark:bg-slate-950">
+      {/* Left Side - Branding & Visuals */}
+      <div className="hidden lg:flex lg:w-1/2 relative bg-slate-900 overflow-hidden">
+        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?q=80&w=2021&auto=format&fit=crop')] bg-cover bg-center opacity-40 mix-blend-overlay"></div>
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/40 to-slate-900/10"></div>
+
+        <div className="relative z-10 flex flex-col justify-between p-12 text-white w-full">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20 text-indigo-400 backdrop-blur-sm border border-indigo-500/30">
+              <span className="font-bold text-lg">MT</span>
+            </div>
+            <span className="text-xl font-medium tracking-wide">MagnaTravel</span>
           </div>
-          <div>
-            <h1 className="text-2xl font-semibold">MagnaTravel</h1>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Backoffice</p>
+
+          <div className="space-y-6 max-w-lg">
+            <h1 className="text-4xl font-bold leading-tight">
+              Gestiona tus viajes <br />
+              <span className="text-indigo-400">con excelencia.</span>
+            </h1>
+            <p className="text-lg text-slate-300 leading-relaxed">
+              La plataforma integral para agencias de viaje modernas. Control total sobre expedientes, proveedores y finanzas en un solo lugar.
+            </p>
+
+            <div className="flex gap-4 pt-4">
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <CheckCircle2 className="h-4 w-4 text-indigo-400" />
+                <span>Gestión de Expedientes</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <CheckCircle2 className="h-4 w-4 text-indigo-400" />
+                <span>Control Financiero</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-sm text-slate-500">
+            © {new Date().getFullYear()} MagnaTravel Cloud. Todos los derechos reservados.
           </div>
         </div>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          {isRegister ? "Crea tu cuenta de administrador." : "Accede a tu back office."}
-        </p>
+      </div>
 
-        <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-          {isRegister && (
-            <div>
-              <label className="text-sm text-slate-500 dark:text-slate-300">Nombre completo</label>
-              <input
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-                value={fullName}
-                onChange={(event) => setFullName(event.target.value)}
-                required
-              />
+      {/* Right Side - Form */}
+      <div className="flex w-full items-center justify-center p-8 lg:w-1/2 bg-white dark:bg-slate-950">
+        <div className="w-full max-w-sm space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+          <div className="text-center lg:text-left">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600/10 text-indigo-600 lg:hidden dark:bg-indigo-500/10 dark:text-indigo-400">
+              <span className="font-bold text-xl">MT</span>
             </div>
-          )}
-          <div>
-            <label className="text-sm text-slate-500 dark:text-slate-300">Email</label>
-            <input
-              type="email"
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+              {isRegister ? "Crear cuenta administrativa" : "Iniciar sesión"}
+            </h2>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              {isRegister
+                ? "Ingresa tus datos para configurar el acceso."
+                : "Bienvenido de nuevo. Por favor ingresa tus datos."}
+            </p>
           </div>
-          <div>
-            <label className="text-sm text-slate-500 dark:text-slate-300">Contraseña</label>
-            <input
-              type="password"
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/30"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </div>
-          <button
-            type="submit"
-            className="w-full rounded-xl bg-indigo-600 px-3 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-500"
-          >
-            {isRegister ? "Crear cuenta" : "Ingresar"}
-          </button>
-        </form>
 
-        <button
-          type="button"
-          className="mt-5 text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-300 dark:hover:text-indigo-200"
-          onClick={() => setIsRegister((prev) => !prev)}
-        >
-          {isRegister ? "Ya tengo cuenta" : "Crear cuenta administrador"}
-        </button>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {isRegister && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Nombre completo
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    className="w-full rounded-lg border border-slate-200 bg-white px-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white dark:focus:border-indigo-500"
+                    placeholder="Juan Pérez"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Email corporativo
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+                <input
+                  type="email"
+                  required
+                  className="w-full rounded-lg border border-slate-200 bg-white px-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white dark:focus:border-indigo-500"
+                  placeholder="nombre@empresa.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Contraseña
+                </label>
+                {!isRegister && (
+                  <a href="#" className="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">
+                    ¿Olvidaste tu contraseña?
+                  </a>
+                )}
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  className="w-full rounded-lg border border-slate-200 bg-white px-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white dark:focus:border-indigo-500"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {!isRegister && (
+              <div className="flex items-center space-x-2">
+                <input
+                  id="keep-signed-in"
+                  type="checkbox"
+                  checked={keepSignedIn}
+                  onChange={(e) => setKeepSignedIn(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900"
+                />
+                <label
+                  htmlFor="keep-signed-in"
+                  className="text-sm font-medium text-slate-600 dark:text-slate-400"
+                >
+                  Mantener sesión iniciada
+                </label>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className={clsx(
+                "group flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed",
+                isRegister ? "bg-indigo-600" : "bg-indigo-600"
+              )}
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  {isRegister ? "Crear cuenta" : "Ingresar al sistema"}
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t border-slate-200 dark:border-slate-800" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-white px-2 text-slate-500 dark:bg-slate-950 dark:text-slate-400">
+                O continúa con
+              </span>
+            </div>
+          </div>
+
+          <div className="text-center text-sm">
+            <span className="text-slate-500 dark:text-slate-400">
+              {isRegister ? "¿Ya tienes una cuenta?" : "¿No tienes una cuenta?"}
+            </span>{" "}
+            <button
+              onClick={toggleMode}
+              className="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 transition-colors"
+            >
+              {isRegister ? "Inicia sesión aquí" : "Regístrate ahora"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
