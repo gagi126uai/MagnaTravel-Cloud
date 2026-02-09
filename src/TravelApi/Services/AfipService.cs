@@ -155,11 +155,21 @@ public class AfipService : IAfipService
             var response = await _httpClient.SendAsync(request);
             var responseXml = await response.Content.ReadAsStringAsync();
 
-            if (!response.IsSuccessStatusCode)
-                throw new Exception($"WSAA Error {response.StatusCode}: {responseXml}");
-
             // 5. Parse Response
-            var doc = XDocument.Parse(responseXml);
+            // AFIP returns 500 for Faults, so we must parse XML first before checking status code
+            XDocument doc;
+            try 
+            {
+                doc = XDocument.Parse(responseXml);
+            }
+            catch
+            {
+                // If not XML and error status, throw original error
+                if (!response.IsSuccessStatusCode)
+                    throw new Exception($"WSAA Error {response.StatusCode}: {responseXml}");
+                throw;
+            }
+
             // Check for Faults explicitly
             var fault = doc.Descendants(XName.Get("Fault", "http://schemas.xmlsoap.org/soap/envelope/")).FirstOrDefault();
             if (fault != null)
@@ -168,14 +178,25 @@ public class AfipService : IAfipService
                 var faultCode = fault.Element("faultcode")?.Value;
                 
                 // Handle "Already Authenticated" - If we have a token, assume it's valid
-                if (faultCode != null && faultCode.Contains("alreadyAuthenticated") && !string.IsNullOrEmpty(settings.Token))
+                if (faultCode != null && faultCode.Contains("alreadyAuthenticated"))
                 {
-                    _logger.LogWarning("AFIP reported alreadyAuthenticated. Assuming current local token is valid despite expiration check.");
-                    return; 
+                     if (!string.IsNullOrEmpty(settings.Token)) 
+                     {
+                        _logger.LogWarning("AFIP reported alreadyAuthenticated. Using existing local token.");
+                        return;
+                     }
+                     else
+                     {
+                         // No local token but AFIP says we have one. We are locked out.
+                         throw new Exception($"AFIP Error: Ya existe un token válido pero no lo tenemos guardado. Esperá 10 minutos para reintentar. ({faultCode})");
+                     }
                 }
                 
                 throw new Exception($"WSAA Fault: {faultCode} - {faultString}");
             }
+
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"WSAA Error {response.StatusCode}: {responseXml}");
 
             var loginCmsReturn = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "loginCmsReturn")?.Value;
             
