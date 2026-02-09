@@ -189,8 +189,9 @@ public class AfipService : IAfipService
             // Parse Expiration correctly as Argentina Time (-03:00) then convert to UTC
             var expirationStr = ticket.Descendants("expirationTime").First().Value; // yyyy-MM-ddTHH:mm:ss
             var expirationLocal = DateTime.Parse(expirationStr); // Unspecified
-            // Assume it is Argentina Time (-3)
-            var expirationUtc = DateTime.SpecifyKind(expirationLocal, DateTimeKind.Unspecified).AddHours(3);
+            // Assume it is Argentina Time (-3). To get UTC, we add 3 hours.
+            // We specify it as UTC directly to avoid ambiguity.
+            var expirationUtc = DateTime.SpecifyKind(expirationLocal.AddHours(3), DateTimeKind.Utc);
             // Wait, if Parse returns Unspecified, and we know it's -3. 
             // -3 means "add 3 hours to get UTC".
             // So 17:00 ART + 3 = 20:00 UTC.
@@ -199,7 +200,17 @@ public class AfipService : IAfipService
             settings.Token = token;
             settings.Sign = sign;
             settings.TokenExpiration = expirationUtc;
-            await _context.SaveChangesAsync();
+            
+            try 
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception dbEx)
+            {
+                var innerMessage = dbEx.InnerException?.Message ?? "No inner exception";
+                _logger.LogError(dbEx, $"Error saving AFIP Token to DB: {dbEx.Message} | Inner: {innerMessage}");
+                throw new Exception($"Error guardando token en BD: {innerMessage}");
+            }
         }
         catch (Exception ex)
         {
