@@ -79,9 +79,7 @@ export default function AfipSettingsTab() {
         }
 
         try {
-            await api.post("/afip/settings", formData, {
-                headers: { "Content-Type": "multipart/form-data" }
-            });
+            await api.post("/afip/settings", formData);
             showSuccess("Configuración de AFIP guardada.");
             checkStatus();
         } catch (error) {
@@ -104,8 +102,8 @@ export default function AfipSettingsTab() {
                 </div>
                 <div className="flex items-center gap-4">
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium ${status.includes("Online")
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                            : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
                         }`}>
                         {status.includes("Online") ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
                         {status}

@@ -3,10 +3,18 @@ const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
 export async function apiRequest(path, options = {}) {
   const token = localStorage.getItem("token");
   const headers = {
+    // Default to JSON unless overridden (e.g. by FormData logic in wrappers)
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
+
+  // If explicitly set to null/undefined in options, remove it (for FormData)
+  if (options.headers && options.headers["Content-Type"] === undefined && headers["Content-Type"] === "application/json") {
+    // Keep default.
+  } else if (options.headers && !options.headers["Content-Type"]) {
+    delete headers["Content-Type"];
+  }
 
   // Ensure proper URL construction
   const cleanBaseUrl = baseUrl.replace(/\/$/, "");
@@ -72,7 +80,30 @@ export async function apiRequest(path, options = {}) {
 
 export const api = {
   get: (url, options) => apiRequest(url, { ...options, method: 'GET' }),
-  post: (url, data, options) => apiRequest(url, { ...options, method: 'POST', body: JSON.stringify(data) }),
-  put: (url, data, options) => apiRequest(url, { ...options, method: 'PUT', body: JSON.stringify(data) }),
+  post: (url, data, options = {}) => {
+    const isFormData = data instanceof FormData;
+    return apiRequest(url, {
+      ...options,
+      method: 'POST',
+      body: isFormData ? data : JSON.stringify(data),
+      headers: {
+        ...(options.headers || {}),
+        // If FormData, let browser set Content-Type (boundary). Else JSON.
+        ...(isFormData ? {} : { "Content-Type": "application/json" })
+      }
+    });
+  },
+  put: (url, data, options = {}) => {
+    const isFormData = data instanceof FormData;
+    return apiRequest(url, {
+      ...options,
+      method: 'PUT',
+      body: isFormData ? data : JSON.stringify(data),
+      headers: {
+        ...(options.headers || {}),
+        ...(isFormData ? {} : { "Content-Type": "application/json" })
+      }
+    });
+  },
   delete: (url, options) => apiRequest(url, { ...options, method: 'DELETE' })
 };
