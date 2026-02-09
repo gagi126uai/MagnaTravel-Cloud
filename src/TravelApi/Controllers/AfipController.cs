@@ -42,9 +42,20 @@ public class AfipController : ControllerBase
         return settings;
     }
 
-    [HttpPost("settings")]
-    public async Task<ActionResult<AfipSettings>> UpdateSettings([FromForm] long cuit, [FromForm] int puntoDeVenta, [FromForm] bool isProduction, [FromForm] IFormFile? certificate, [FromForm] string? password)
+    public class AfipSettingsRequest
     {
+        public long Cuit { get; set; }
+        public int PuntoDeVenta { get; set; }
+        public bool IsProduction { get; set; }
+        public IFormFile? Certificate { get; set; }
+        public string? Password { get; set; }
+    }
+
+    [HttpPost("settings")]
+    public async Task<ActionResult<AfipSettings>> UpdateSettings([FromForm] AfipSettingsRequest request)
+    {
+        Console.WriteLine($"[AfipController] UpdateSettings: Cuit={request.Cuit}, Ptos={request.PuntoDeVenta}, Prod={request.IsProduction}, File={request.Certificate?.FileName}, PwdProvided={!string.IsNullOrEmpty(request.Password)}");
+
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
         if (settings == null)
         {
@@ -52,32 +63,40 @@ public class AfipController : ControllerBase
             _context.AfipSettings.Add(settings);
         }
 
-        settings.Cuit = cuit;
-        settings.PuntoDeVenta = puntoDeVenta;
-        settings.IsProduction = isProduction;
+        settings.Cuit = request.Cuit;
+        settings.PuntoDeVenta = request.PuntoDeVenta;
+        settings.IsProduction = request.IsProduction;
 
-        if (certificate != null)
+        if (request.Certificate != null)
         {
             using (var memoryStream = new MemoryStream())
             {
-                await certificate.CopyToAsync(memoryStream);
+                await request.Certificate.CopyToAsync(memoryStream);
                 var certData = memoryStream.ToArray();
                 
                 // Validate before saving
-                var certPassword = !string.IsNullOrEmpty(password) ? password : settings.CertificatePassword;
-                if (!await _afipService.ValidateCertificate(certData, certPassword))
+                var certPassword = !string.IsNullOrEmpty(request.Password) ? request.Password : settings.CertificatePassword;
+                
+                try 
                 {
-                    return BadRequest("El certificado es inválido o la contraseña es incorrecta. Verifique que sea un archivo .pfx válido.");
+                     if (!await _afipService.ValidateCertificate(certData, certPassword))
+                     {
+                         return BadRequest("El certificado es inválido o la contraseña es incorrecta. Asegurate de que sea un archivo .pfx válido.");
+                     }
+                }
+                catch (Exception ex)
+                {
+                     return BadRequest($"Error validando certificado: {ex.Message}");
                 }
 
                 settings.CertificateData = certData;
-                settings.CertificatePath = certificate.FileName; // Just for display
+                settings.CertificatePath = request.Certificate.FileName; // Just for display
             }
         }
 
-        if (!string.IsNullOrEmpty(password))
+        if (!string.IsNullOrEmpty(request.Password))
         {
-            settings.CertificatePassword = password;
+            settings.CertificatePassword = request.Password;
         }
 
         await _context.SaveChangesAsync();

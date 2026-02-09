@@ -69,14 +69,14 @@ export default function AfipSettingsTab() {
         setLoading(true);
 
         const formData = new FormData();
-        formData.append("cuit", form.cuit);
-        formData.append("puntoDeVenta", form.puntoDeVenta);
-        formData.append("isProduction", form.isProduction);
+        formData.append("Cuit", form.cuit);
+        formData.append("PuntoDeVenta", form.puntoDeVenta);
+        formData.append("IsProduction", form.isProduction);
         if (form.certificatePassword) {
-            formData.append("password", form.certificatePassword);
+            formData.append("Password", form.certificatePassword);
         }
         if (certificateFile) {
-            formData.append("certificate", certificateFile);
+            formData.append("Certificate", certificateFile);
         }
 
         try {
@@ -103,8 +103,8 @@ export default function AfipSettingsTab() {
                 </div>
                 <div className="flex items-center gap-4">
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium ${status?.includes("Online")
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                            : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
                         }`}>
                         {status?.includes("Online") ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
                         {status}
