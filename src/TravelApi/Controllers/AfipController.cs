@@ -57,20 +57,21 @@ public class AfipController : ControllerBase
 
         if (certificate != null)
         {
-            // Save file
-            var certsDir = Path.Combine(Directory.GetCurrentDirectory(), "Certificates");
-            if (!Directory.Exists(certsDir)) Directory.CreateDirectory(certsDir);
-
-            var fileName = $"{cuit}_{DateTime.Now.Ticks}.pfx";
-            var filePath = Path.Combine(certsDir, fileName);
-
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            using (var memoryStream = new MemoryStream())
             {
-                await certificate.CopyToAsync(stream);
-            }
+                await certificate.CopyToAsync(memoryStream);
+                var certData = memoryStream.ToArray();
+                
+                // Validate before saving
+                var certPassword = !string.IsNullOrEmpty(password) ? password : settings.CertificatePassword;
+                if (!await _afipService.ValidateCertificate(certData, certPassword))
+                {
+                    return BadRequest("El certificado es inválido o la contraseña es incorrecta. Verifique que sea un archivo .pfx válido.");
+                }
 
-            settings.CertificatePath = filePath;
-            // Validar que el pfx abre con el password?
+                settings.CertificateData = certData;
+                settings.CertificatePath = certificate.FileName; // Just for display
+            }
         }
 
         if (!string.IsNullOrEmpty(password))

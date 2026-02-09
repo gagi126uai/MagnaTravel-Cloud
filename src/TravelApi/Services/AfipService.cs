@@ -14,7 +14,7 @@ namespace TravelApi.Services;
 public interface IAfipService
 {
     // Configuration
-    Task<bool> ValidateCertificate(string certPath, string password);
+    Task<bool> ValidateCertificate(byte[] certData, string password);
     Task<string> GetStatus();
 
     // Core
@@ -40,13 +40,13 @@ public class AfipService : IAfipService
         _httpClient = httpClient;
     }
 
-    public async Task<bool> ValidateCertificate(string certPath, string password)
+    public async Task<bool> ValidateCertificate(byte[] certData, string password)
     {
         try
         {
-            if (!File.Exists(certPath)) return false;
+            if (certData == null || certData.Length == 0) return false;
             // Validate we can open it
-            var cert = new X509Certificate2(certPath, password, X509KeyStorageFlags.Exportable);
+            var cert = new X509Certificate2(certData, password, X509KeyStorageFlags.Exportable);
             return cert.HasPrivateKey;
         }
         catch (Exception ex)
@@ -62,7 +62,7 @@ public class AfipService : IAfipService
         {
             var settings = await _context.AfipSettings.FirstOrDefaultAsync();
             if (settings == null) return "No Configurado";
-            if (string.IsNullOrEmpty(settings.CertificatePath) || !File.Exists(settings.CertificatePath)) return "Certificado Faltante";
+            if (settings.CertificateData == null || settings.CertificateData.Length == 0) return "Certificado Faltante";
 
             // Try to check token validity
             if (settings.TokenExpiration > DateTime.Now)
@@ -88,10 +88,10 @@ public class AfipService : IAfipService
             return; // Valid token
         }
 
-        if (string.IsNullOrEmpty(settings.CertificatePath)) throw new Exception("Certificado no configurado");
+        if (settings.CertificateData == null) throw new Exception("Certificado no configurado");
 
         // 1. Load Certificate
-        var cert = new X509Certificate2(settings.CertificatePath, settings.CertificatePassword, X509KeyStorageFlags.Exportable);
+        var cert = new X509Certificate2(settings.CertificateData, settings.CertificatePassword, X509KeyStorageFlags.Exportable);
 
         // 2. Create Login Ticket
         var xml = new XElement("loginTicketRequest",

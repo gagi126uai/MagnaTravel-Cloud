@@ -16,8 +16,9 @@ public class AfipSettings
 
     // We store the certificate content as Base64 to avoid filesystem issues in Docker/Azure
     // Alternatively, we could store the path if volume mounting is guaranteed.
-    // For now, let's store the path string, assuming the user uploads it to a specific folder.
     public string? CertificatePath { get; set; }
+    
+    public byte[]? CertificateData { get; set; } // Stored in DB for docker persistence
 
     public string? CertificatePassword { get; set; }
     
