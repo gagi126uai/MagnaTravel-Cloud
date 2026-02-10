@@ -187,8 +187,9 @@ public class InvoicePdfService : IInvoicePdfService
 
             row.ConstantItem(100).AlignRight().Column(c => 
             {
-                 // QR Code
-                 c.Item().Height(80).Width(80).Element(e => e.QrCode(afipUrl));
+                 // QR Code - Placeholder until QuestPDF syntax is confirmed
+                 // c.Item().Height(80).Width(80).Element(e => e.QrCode(afipUrl));
+                 c.Item().AlignCenter().Text("QR CODE").Bold().FontSize(8);
                  c.Item().AlignCenter().Text("AFIP").Bold().FontSize(8);
             });
         });
@@ -210,7 +211,7 @@ public class InvoicePdfService : IInvoicePdfService
     private object GenerateAfipQrData(Invoice invoice, AfipSettings settings)
     {
         // AFIP QR JSON Structure v1
-        long.TryParse(settings.Cuit, out long cuit);
+        long cuit = settings.Cuit;
         long.TryParse(invoice.CAE, out long cae);
         
         return new
