@@ -65,9 +65,17 @@ public class InvoicesController : ControllerBase
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
         if (settings == null) return BadRequest("Configuración de AFIP no encontrada");
 
-        var pdfBytes = _pdfService.GenerateInvoicePdf(invoice, invoice.TravelFile, settings);
-        
-        return File(pdfBytes, "application/pdf", $"Factura-{invoice.TipoComprobante}-{invoice.NumeroComprobante}.pdf");
+        try
+        {
+            var pdfBytes = _pdfService.GenerateInvoicePdf(invoice, invoice.TravelFile, settings);
+            return File(pdfBytes, "application/pdf", $"Factura-{invoice.TipoComprobante}-{invoice.NumeroComprobante}.pdf");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating PDF: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
+            return StatusCode(500, new { message = $"Error generando PDF: {ex.Message}" });
+        }
     }
 }
 
