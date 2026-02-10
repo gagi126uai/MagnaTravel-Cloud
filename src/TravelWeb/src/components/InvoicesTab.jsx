@@ -75,6 +75,22 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated }) {
         }
     };
 
+    const handleDownloadPdf = async (invoice) => {
+        try {
+            const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([response]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Factura-${invoice.tipoComprobante}-${invoice.numeroComprobante}.pdf`);
+            document.body.appendChild(link);
+            link.click();
+            link.parentNode.removeChild(link);
+        } catch (error) {
+            console.error("Error downloading PDF:", error);
+            showError("No se pudo descargar el PDF");
+        }
+    };
+
     return (
         <div>
             <div className="flex justify-between items-center mb-4">
@@ -130,15 +146,26 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated }) {
                                         ${inv.importeTotal.toLocaleString()}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                                        {inv.resultado === 'A' ? (
-                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                                                Aprobado
-                                            </span>
-                                        ) : (
-                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                                                Rechazado
-                                            </span>
-                                        )}
+                                        <div className="flex items-center justify-end gap-2">
+                                            {inv.resultado === 'A' ? (
+                                                <>
+                                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                                                        Aprobado
+                                                    </span>
+                                                    <button
+                                                        onClick={() => handleDownloadPdf(inv)}
+                                                        className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                                                        title="Descargar PDF"
+                                                    >
+                                                        <FileText className="w-4 h-4" />
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                                                    Rechazado
+                                                </span>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))}

@@ -97,7 +97,8 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-builder.Services.AddHttpClient<TravelApi.Services.IAfipService, TravelApi.Services.AfipService>();
+builder.Services.AddHttpClient<IAfipService, AfipService>();
+builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 
 builder.Services.AddCors(options =>
 {

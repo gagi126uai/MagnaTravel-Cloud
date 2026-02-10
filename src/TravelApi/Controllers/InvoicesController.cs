@@ -14,11 +14,13 @@ public class InvoicesController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IAfipService _afipService;
+    private readonly IInvoicePdfService _pdfService;
 
-    public InvoicesController(AppDbContext context, IAfipService afipService)
+    public InvoicesController(AppDbContext context, IAfipService afipService, IInvoicePdfService pdfService)
     {
         _context = context;
         _afipService = afipService;
+        _pdfService = pdfService;
     }
 
     [HttpPost]
@@ -48,6 +50,24 @@ public class InvoicesController : ControllerBase
             .OrderByDescending(i => i.CreatedAt)
             .ToListAsync();
         return Ok(invoices);
+    }
+
+    [HttpGet("{id}/pdf")]
+    public async Task<IActionResult> GetInvoicePdf(int id)
+    {
+        var invoice = await _context.Invoices
+            .Include(i => i.TravelFile)
+            .ThenInclude(t => t.Payer)
+            .FirstOrDefaultAsync(i => i.Id == id);
+
+        if (invoice == null) return NotFound();
+
+        var settings = await _context.AfipSettings.FirstOrDefaultAsync();
+        if (settings == null) return BadRequest("Configuración de AFIP no encontrada");
+
+        var pdfBytes = _pdfService.GenerateInvoicePdf(invoice, invoice.TravelFile, settings);
+        
+        return File(pdfBytes, "application/pdf", $"Factura-{invoice.TipoComprobante}-{invoice.NumeroComprobante}.pdf");
     }
 }
 
