@@ -65,6 +65,10 @@ export async function apiRequest(path, options = {}) {
     return null;
   }
 
+  if (options.responseType === 'blob') {
+    return response.blob();
+  }
+
   // Handle empty responses (e.g., DELETE returning 200 with no body)
   const text = await response.text();
   if (!text) {
