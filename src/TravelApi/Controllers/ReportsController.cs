@@ -202,7 +202,9 @@ public class ReportsController : ControllerBase
             settings.AgencyName = updated.AgencyName;
             settings.LegalName = updated.LegalName;
             settings.TaxCondition = updated.TaxCondition;
-            settings.ActivityStartDate = updated.ActivityStartDate;
+            settings.ActivityStartDate = updated.ActivityStartDate.HasValue 
+                ? DateTime.SpecifyKind(updated.ActivityStartDate.Value, DateTimeKind.Utc) 
+                : null;
             settings.TaxId = updated.TaxId;
             settings.Address = updated.Address;
             settings.Phone = updated.Phone;
