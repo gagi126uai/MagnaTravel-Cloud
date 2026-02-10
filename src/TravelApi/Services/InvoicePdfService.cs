@@ -188,7 +188,7 @@ public class InvoicePdfService : IInvoicePdfService
             row.ConstantItem(100).AlignRight().Column(c => 
             {
                  // QR Code
-                 c.Item().Height(80).Width(80).QrCode(afipUrl);
+                 c.Item().Height(80).Width(80).Element(e => e.QrCode(afipUrl));
                  c.Item().AlignCenter().Text("AFIP").Bold().FontSize(8);
             });
         });
@@ -210,11 +210,14 @@ public class InvoicePdfService : IInvoicePdfService
     private object GenerateAfipQrData(Invoice invoice, AfipSettings settings)
     {
         // AFIP QR JSON Structure v1
+        long.TryParse(settings.Cuit, out long cuit);
+        long.TryParse(invoice.CAE, out long cae);
+        
         return new
         {
             ver = 1,
             fecha = invoice.CreatedAt.ToString("yyyy-MM-dd"),
-            cuit = long.Parse(settings.Cuit),
+            cuit = cuit,
             ptoVta = invoice.PuntoDeVenta,
             tipoCmp = invoice.TipoComprobante,
             nroCmp = invoice.NumeroComprobante,
@@ -224,7 +227,7 @@ public class InvoicePdfService : IInvoicePdfService
             tipoDocRec = 80, // CUIT (Update dynamically if needed, 96 for DNI, 99 for Cons Final)
             nroDocRec = 0, // Should be Payer CUIT/DNI. 
             tipoCodAut = "E",
-            codAut = long.Parse(invoice.CAE ?? "0")
+            codAut = cae
         };
     }
 }

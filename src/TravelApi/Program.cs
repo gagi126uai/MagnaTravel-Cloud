@@ -6,6 +6,7 @@ using System.Text;
 using TravelApi.Data;
 using TravelApi.Models;
 using TravelApi.Options;
+using TravelApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 

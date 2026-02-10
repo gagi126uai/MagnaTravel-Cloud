@@ -296,7 +296,7 @@ public class AfipService : IAfipService
                 throw new Exception($"Error guardando token en BD: {innerMessage}");
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             // If we caught an exception but checked for alreadyAuthenticated inside, rethrow unless we handled it.
             // But here we just rethrow any unforeseen errors.
