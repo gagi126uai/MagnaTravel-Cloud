@@ -512,7 +512,7 @@ public class AfipService : IAfipService
             PuntoDeVenta = settings.PuntoDeVenta,
             NumeroComprobante = cbteNro,
             CAE = cae,
-            VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null),
+            VencimientoCAE = DateTime.SpecifyKind(DateTime.ParseExact(caeVto!, "yyyyMMdd", null), DateTimeKind.Utc),
             Resultado = cabResult,
             ImporteTotal = total,
             ImporteNeto = net,
