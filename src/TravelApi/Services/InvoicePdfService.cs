@@ -46,79 +46,82 @@ public class InvoicePdfService : IInvoicePdfService
         var mainTitle = !string.IsNullOrEmpty(agencySettings.AgencyName) ? agencySettings.AgencyName : agencySettings.LegalName;
         var legalName = agencySettings.LegalName;
         
-        container.Row(row =>
+        container.Column(mainColumn =>
         {
-            // Left: Agency Identity
-            row.RelativeItem().Column(column =>
+            mainColumn.Item().Row(row =>
             {
-                // Main Title (Fantasy Name)
-                column.Item().Text(mainTitle).Style(titleStyle);
-                
-                // Legal Name (if different)
-                if (!string.IsNullOrEmpty(legalName) && legalName != mainTitle)
+                // Left: Agency Identity
+                row.RelativeItem().Column(column =>
                 {
-                    column.Item().PaddingTop(2).Text(legalName).Style(subTitleStyle);
-                }
-                
-                // Address & contact
-                column.Item().PaddingTop(5).Text($"Domicilio: {agencySettings.Address ?? "-"}").Style(addressStyle);
-                column.Item().Text($"Condición IVA: {agencySettings.TaxCondition ?? "Responsable Inscripto"}").Style(addressStyle);
-                
-                if (!string.IsNullOrEmpty(agencySettings.Phone))
-                    column.Item().Text($"Tel: {agencySettings.Phone}").Style(addressStyle);
-                if (!string.IsNullOrEmpty(agencySettings.Email))
-                    column.Item().Text($"Email: {agencySettings.Email}").Style(addressStyle);
-            });
-
-            // Center: Letter Box (Standard AFIP Style)
-            row.ConstantItem(60).PaddingHorizontal(5).Column(column =>
-            {
-                 var letter = GetInvoiceLetter(invoice.TipoComprobante);
-                 var letterCode = GetInvoiceCode(invoice.TipoComprobante);
-
-                 column.Item()
-                    .Border(1)
-                    .BorderColor(Colors.Black)
-                    .Background(Colors.Grey.Lighten4)
-                    .AlignCenter()
-                    .Padding(5)
-                    .Text(letter)
-                    .FontSize(24)
-                    .Bold();
-                 
-                 column.Item().PaddingTop(2).AlignCenter().Text($"COD. {letterCode:00}").FontSize(7).Bold();
-            });
-
-            // Right: Invoice Details
-            row.RelativeItem().AlignRight().Column(column =>
-            {
-                column.Item().Text("FACTURA").FontSize(22).Bold().FontColor(Colors.Black);
-                
-                column.Item().PaddingTop(10).Row(r => 
-                {
-                    r.RelativeItem().AlignRight().Text("Punto de Venta:").Bold();
-                    r.ConstantItem(5).Text("");
-                    r.ConstantItem(40).AlignRight().Text($"{invoice.PuntoDeVenta:0000}").Bold();
-                });
-                
-                column.Item().Row(r => 
-                {
-                    r.RelativeItem().AlignRight().Text("Comp. Nro:").Bold();
-                    r.ConstantItem(5).Text("");
-                    r.ConstantItem(60).AlignRight().Text($"{invoice.NumeroComprobante:00000000}").Bold();
+                    // Main Title (Fantasy Name)
+                    column.Item().Text(mainTitle).Style(titleStyle);
+                    
+                    // Legal Name (if different)
+                    if (!string.IsNullOrEmpty(legalName) && legalName != mainTitle)
+                    {
+                        column.Item().PaddingTop(2).Text(legalName).Style(subTitleStyle);
+                    }
+                    
+                    // Address & contact
+                    column.Item().PaddingTop(5).Text($"Domicilio: {agencySettings.Address ?? "-"}").Style(addressStyle);
+                    column.Item().Text($"Condición IVA: {agencySettings.TaxCondition ?? "Responsable Inscripto"}").Style(addressStyle);
+                    
+                    if (!string.IsNullOrEmpty(agencySettings.Phone))
+                        column.Item().Text($"Tel: {agencySettings.Phone}").Style(addressStyle);
+                    if (!string.IsNullOrEmpty(agencySettings.Email))
+                        column.Item().Text($"Email: {agencySettings.Email}").Style(addressStyle);
                 });
 
-                column.Item().PaddingTop(5).Text($"Fecha de Emisión: {invoice.CreatedAt:dd/MM/yyyy}");
-                column.Item().Text($"CUIT: {settings.Cuit}");
-                column.Item().Text($"Ingresos Brutos: {settings.Cuit}"); // Assume IIBB same as CUIT
-                
-                if (agencySettings.ActivityStartDate.HasValue)
-                    column.Item().Text($"Inicio de Actividades: {agencySettings.ActivityStartDate:dd/MM/yyyy}");
+                // Center: Letter Box (Standard AFIP Style)
+                row.ConstantItem(60).PaddingHorizontal(5).Column(column =>
+                {
+                     var letter = GetInvoiceLetter(invoice.TipoComprobante);
+                     var letterCode = GetInvoiceCode(invoice.TipoComprobante);
+
+                     column.Item()
+                        .Border(1)
+                        .BorderColor(Colors.Black)
+                        .Background(Colors.Grey.Lighten4)
+                        .AlignCenter()
+                        .Padding(5)
+                        .Text(letter)
+                        .FontSize(24)
+                        .Bold();
+                     
+                     column.Item().PaddingTop(2).AlignCenter().Text($"COD. {letterCode:00}").FontSize(7).Bold();
+                });
+
+                // Right: Invoice Details
+                row.RelativeItem().AlignRight().Column(column =>
+                {
+                    column.Item().Text("FACTURA").FontSize(22).Bold().FontColor(Colors.Black);
+                    
+                    column.Item().PaddingTop(10).Row(r => 
+                    {
+                        r.RelativeItem().AlignRight().Text("Punto de Venta:").Bold();
+                        r.ConstantItem(5).Text("");
+                        r.ConstantItem(40).AlignRight().Text($"{invoice.PuntoDeVenta:0000}").Bold();
+                    });
+                    
+                    column.Item().Row(r => 
+                    {
+                        r.RelativeItem().AlignRight().Text("Comp. Nro:").Bold();
+                        r.ConstantItem(5).Text("");
+                        r.ConstantItem(60).AlignRight().Text($"{invoice.NumeroComprobante:00000000}").Bold();
+                    });
+
+                    column.Item().PaddingTop(5).Text($"Fecha de Emisión: {invoice.CreatedAt:dd/MM/yyyy}");
+                    column.Item().Text($"CUIT: {settings.Cuit}");
+                    column.Item().Text($"Ingresos Brutos: {settings.Cuit}"); // Assume IIBB same as CUIT
+                    
+                    if (agencySettings.ActivityStartDate.HasValue)
+                        column.Item().Text($"Inicio de Actividades: {agencySettings.ActivityStartDate:dd/MM/yyyy}");
+                });
             });
+            
+            // Add a separator line below the header
+            mainColumn.Item().PaddingTop(10).LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
         });
-        
-        // Add a separator line below the header
-        container.PaddingTop(10).LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
     }
 
     void ComposeContent(IContainer container, Invoice invoice, TravelFile travelFile)
