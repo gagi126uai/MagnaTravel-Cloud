@@ -1,3 +1,4 @@
+using QRCoder;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -15,7 +16,7 @@ public class InvoicePdfService : IInvoicePdfService
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
-    public byte[] GenerateInvoicePdf(Invoice invoice, TravelFile travelFile, AfipSettings settings)
+    public byte[] GenerateInvoicePdf(Invoice invoice, TravelFile travelFile, AfipSettings afipSettings, AgencySettings agencySettings)
     {
         var document = Document.Create(container =>
         {
@@ -26,29 +27,34 @@ public class InvoicePdfService : IInvoicePdfService
                 page.PageColor(Colors.White);
                 page.DefaultTextStyle(x => x.FontSize(10));
 
-                page.Header().Element(header => ComposeHeader(header, invoice, travelFile, settings));
+                page.Header().Element(header => ComposeHeader(header, invoice, travelFile, afipSettings, agencySettings));
                 page.Content().Element(content => ComposeContent(content, invoice, travelFile));
-                page.Footer().Element(footer => ComposeFooter(footer, invoice, settings));
+                page.Footer().Element(footer => ComposeFooter(footer, invoice, afipSettings));
             });
         });
 
         return document.GeneratePdf();
     }
 
-    void ComposeHeader(IContainer container, Invoice invoice, TravelFile travelFile, AfipSettings settings)
+    void ComposeHeader(IContainer container, Invoice invoice, TravelFile travelFile, AfipSettings settings, AgencySettings agencySettings)
     {
         var titleStyle = TextStyle.Default.FontSize(20).SemiBold().FontColor(Colors.Blue.Medium);
         var letterStyle = TextStyle.Default.FontSize(24).Bold().FontColor(Colors.Black);
         
+        var mainTitle = !string.IsNullOrEmpty(agencySettings.LegalName) ? agencySettings.LegalName : agencySettings.AgencyName;
+        var subTitle = !string.IsNullOrEmpty(agencySettings.LegalName) && agencySettings.AgencyName != agencySettings.LegalName ? agencySettings.AgencyName : null;
+
         container.Row(row =>
         {
             // Left: Logo & Company Info
             row.RelativeItem().Column(column =>
             {
-                column.Item().Text($"MAGNA TRAVEL").Style(titleStyle);
-                column.Item().Text("Razón Social: Magna Travel S.A.");
-                column.Item().Text("Domicilio: Av. Siempre Viva 123, CABA"); // Customize
-                column.Item().Text("Condición IVA: Responsable Inscripto");
+                column.Item().Text(mainTitle).Style(titleStyle);
+                if (subTitle != null) column.Item().Text(subTitle).FontSize(12).Italic();
+                
+                column.Item().PaddingTop(5).Text($"Razón Social: {agencySettings.LegalName ?? agencySettings.AgencyName}");
+                column.Item().Text($"Domicilio: {agencySettings.Address ?? "-"}");
+                column.Item().Text($"Condición IVA: {agencySettings.TaxCondition ?? "Responsable Inscripto"}");
             });
 
             // Center: Letter Box (A/B/C)
@@ -69,7 +75,11 @@ public class InvoicePdfService : IInvoicePdfService
                 column.Item().Text($"Fecha de Emisión: {invoice.CreatedAt:dd/MM/yyyy}");
                 column.Item().Text($"CUIT: {settings.Cuit}");
                 column.Item().Text($"Ingresos Brutos: {settings.Cuit}");
-                column.Item().Text($"Inicio de Actividades: 01/01/2020");
+                
+                if (agencySettings.ActivityStartDate.HasValue)
+                    column.Item().Text($"Inicio de Actividades: {agencySettings.ActivityStartDate:dd/MM/yyyy}");
+                else
+                    column.Item().Text($"Inicio de Actividades: -");
             });
         });
     }
@@ -173,7 +183,9 @@ public class InvoicePdfService : IInvoicePdfService
     void ComposeFooter(IContainer container, Invoice invoice, AfipSettings settings)
     {
         var qrData = GenerateAfipQrData(invoice, settings);
-        var afipUrl = "https://www.afip.gob.ar/fe/qr/?p=" + Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(qrData)));
+        var json = JsonSerializer.Serialize(qrData);
+        var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+        var afipUrl = "https://www.afip.gob.ar/fe/qr/?p=" + base64;
 
         container.Row(row =>
         {
@@ -187,12 +199,26 @@ public class InvoicePdfService : IInvoicePdfService
 
             row.ConstantItem(100).AlignRight().Column(c => 
             {
-                 // QR Code - Placeholder until QuestPDF syntax is confirmed
-                 // c.Item().Height(80).Width(80).Element(e => e.QrCode(afipUrl));
-                 c.Item().AlignCenter().Text("QR CODE").Bold().FontSize(8);
-                 c.Item().AlignCenter().Text("AFIP").Bold().FontSize(8);
+                try
+                {
+                    var qrBytes = GenerateQrCodeBytes(afipUrl);
+                    c.Item().Height(80).Width(80).Image(qrBytes);
+                }
+                catch
+                {
+                    c.Item().AlignCenter().Text("QR ERROR").Bold().FontSize(8).FontColor(Colors.Red.Medium);
+                }
+                c.Item().AlignCenter().Text("AFIP").Bold().FontSize(8);
             });
         });
+    }
+
+    private byte[] GenerateQrCodeBytes(string text)
+    {
+        using var qrGenerator = new QRCodeGenerator();
+        using var qrCodeData = qrGenerator.CreateQrCode(text, QRCodeGenerator.ECCLevel.M);
+        using var qrCode = new PngByteQRCode(qrCodeData);
+        return qrCode.GetGraphic(20);
     }
 
     private string GetInvoiceLetter(int type)

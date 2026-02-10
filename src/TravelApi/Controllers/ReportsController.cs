@@ -200,6 +200,9 @@ public class ReportsController : ControllerBase
         else
         {
             settings.AgencyName = updated.AgencyName;
+            settings.LegalName = updated.LegalName;
+            settings.TaxCondition = updated.TaxCondition;
+            settings.ActivityStartDate = updated.ActivityStartDate;
             settings.TaxId = updated.TaxId;
             settings.Address = updated.Address;
             settings.Phone = updated.Phone;

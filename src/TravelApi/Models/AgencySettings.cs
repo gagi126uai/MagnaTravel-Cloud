@@ -12,13 +12,21 @@ public class AgencySettings
 
     [Required]
     [MaxLength(200)]
-    public string AgencyName { get; set; } = "Mi Agencia de Viajes";
+    public string AgencyName { get; set; } = "Mi Agencia de Viajes"; // Nombre de Fantasía
+
+    [MaxLength(200)]
+    public string? LegalName { get; set; } // Razón Social
+
+    [MaxLength(50)]
+    public string? TaxCondition { get; set; } // Responsable Inscripto, Monotributo
+
+    public DateTime? ActivityStartDate { get; set; } // Inicio de Actividades
 
     [MaxLength(20)]
     public string? TaxId { get; set; } // CUIT
 
     [MaxLength(500)]
-    public string? Address { get; set; }
+    public string? Address { get; set; } // Domicilio Fiscal
 
     [MaxLength(100)]
     public string? Phone { get; set; }

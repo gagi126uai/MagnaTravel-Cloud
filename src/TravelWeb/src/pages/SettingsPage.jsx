@@ -111,6 +111,9 @@ export default function SettingsPage() {
   const [agencySettings, setAgencySettings] = useState(null);
   const [agencyForm, setAgencyForm] = useState({
     agencyName: "",
+    legalName: "",
+    taxCondition: "Responsable Inscripto",
+    activityStartDate: "",
     taxId: "",
     address: "",
     phone: "",
@@ -182,6 +185,9 @@ export default function SettingsPage() {
         setAgencySettings(data);
         setAgencyForm({
           agencyName: data.agencyName || "",
+          legalName: data.legalName || "",
+          taxCondition: data.taxCondition || "Responsable Inscripto",
+          activityStartDate: data.activityStartDate ? data.activityStartDate.split('T')[0] : "",
           taxId: data.taxId || "",
           address: data.address || "",
           phone: data.phone || "",
@@ -529,6 +535,37 @@ export default function SettingsPage() {
                     className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                     value={agencyForm.agencyName}
                     onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Razón Social</label>
+                  <input
+                    type="text"
+                    placeholder="Razón Social Legal (si difiere del nombre de fantasía)"
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.legalName}
+                    onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condición IVA</label>
+                  <select
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.taxCondition}
+                    onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}
+                  >
+                    <option value="Responsable Inscripto">Responsable Inscripto</option>
+                    <option value="Monotributo">Monotributo</option>
+                    <option value="Exento">Exento</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Inicio de Actividades</label>
+                  <input
+                    type="date"
+                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    value={agencyForm.activityStartDate}
+                    onChange={e => setAgencyForm({ ...agencyForm, activityStartDate: e.target.value })}
                   />
                 </div>
                 <div>
