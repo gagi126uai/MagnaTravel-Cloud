@@ -1,3 +1,6 @@
+#pragma warning disable CS8601, CS8602, CS8604, CS8618
+using System.Net.Http;
+using System.Globalization;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -308,11 +311,245 @@ public class AfipService : IAfipService
 
         await EnsureAuth(settings);
 
-        if (invoiceData.ImporteTotal > 0)
+        // 1. Get TravelFile & Customer
+        var travelFile = await _context.TravelFiles
+            .Include(f => f.Payer)
+            .FirstOrDefaultAsync(f => f.Id == travelFileId);
+
+        if (travelFile == null) throw new Exception("Expediente no encontrado");
+        var customer = travelFile.Payer;
+        if (customer == null) throw new Exception("El expediente no tiene cliente asignado");
+
+        // 2. Determine Invoice Type (A, B, C)
+        int cbteTipo = 6; // Default B
+        
+        if (settings.TaxCondition == "Responsable Inscripto")
         {
-             // return Mock invoice...
+            if (customer.TaxCondition == "Responsable Inscripto")
+            {
+                cbteTipo = 1; // A
+            }
+            else
+            {
+                cbteTipo = 6; // B
+            }
+        }
+        else // Monotributo or Exento
+        {
+            cbteTipo = 11; // C
+        }
+
+        // 3. Get Next Voucher Number
+        int cbteNro = await GetNextVoucherNumber(settings, cbteTipo);
+
+        // 4. Prepare Data
+        var concept = 2; // Servicios
+        var docTipo = 99; // Sin identificar / Consumidor Final
+        long docNro = 0;
+
+        if (!string.IsNullOrEmpty(customer.TaxId))
+        {
+            var cleanCuit = customer.TaxId.Replace("-", "").Replace(".", "").Trim();
+            if (long.TryParse(cleanCuit, out long cuitVal))
+            {
+                docTipo = 80; // CUIT
+                docNro = cuitVal;
+            }
+        }
+        else if (!string.IsNullOrEmpty(customer.DocumentNumber))
+        {
+             // Assume DNI if TaxId is empty but DocumentNumber exists
+             if (long.TryParse(customer.DocumentNumber, out long dniVal))
+             {
+                 docTipo = 96; // DNI
+                 docNro = dniVal;
+             }
+        }
+
+        // Dates
+        var today = DateTime.Now.ToString("yyyyMMdd"); 
+        var fchServDesde = today;
+        var fchServHasta = today;
+        var fchVtoPago = DateTime.Now.AddDays(10).ToString("yyyyMMdd");
+
+        // Amounts
+        decimal total = invoiceData.ImporteTotal;
+        decimal net = total;
+        decimal iva = 0;
+        int ivaId = 3; // 0%
+
+        if (cbteTipo == 1 || cbteTipo == 6)
+        {
+            net = Math.Round(total / 1.21m, 2);
+            iva = Math.Round(total - net, 2);
+            ivaId = 5; // 21%
+        }
+        else 
+        {
+            net = total;
+            iva = 0;
+            ivaId = 3;
+        }
+
+        // 5. Build FECAESolicitar
+        var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
+        var action = "http://ar.gov.afip.dif.FEV1/FECAESolicitar";
+        
+        string ivaBlock = "";
+        if (cbteTipo == 1 || cbteTipo == 6)
+        {
+            ivaBlock = $@"
+            <Iva>
+                <AlicIva>
+                    <Id>{ivaId}</Id>
+                    <BaseImp>{net.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}</BaseImp>
+                    <Importe>{iva.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}</Importe>
+                </AlicIva>
+            </Iva>";
+        }
+
+        var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+  <soap:Body>
+    <FECAESolicitar xmlns=""http://ar.gov.afip.dif.FEV1/"">
+      <Auth>
+        <Token>{settings.Token}</Token>
+        <Sign>{settings.Sign}</Sign>
+        <Cuit>{settings.Cuit}</Cuit>
+      </Auth>
+      <FeCAEReq>
+        <FeCabReq>
+          <CantReg>1</CantReg>
+          <PtoVta>{settings.PuntoDeVenta}</PtoVta>
+          <CbteTipo>{cbteTipo}</CbteTipo>
+        </FeCabReq>
+        <FeDetReq>
+          <FECAEDetRequest>
+            <Concepto>{concept}</Concepto>
+            <DocTipo>{docTipo}</DocTipo>
+            <DocNro>{docNro}</DocNro>
+            <CbteDesde>{cbteNro}</CbteDesde>
+            <CbteHasta>{cbteNro}</CbteHasta>
+            <CbteFch>{today}</CbteFch>
+            <ImpTotal>{total.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}</ImpTotal>
+            <ImpTotConc>0</ImpTotConc>
+            <ImpNeto>{net.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}</ImpNeto>
+            <ImpOpEx>0</ImpOpEx>
+            <ImpTrib>0</ImpTrib>
+            <ImpIVA>{iva.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}</ImpIVA>
+            <FchServDesde>{fchServDesde}</FchServDesde>
+            <FchServHasta>{fchServHasta}</FchServHasta>
+            <FchVtoPago>{fchVtoPago}</FchVtoPago>
+            <MonId>PES</MonId>
+            <MonCotiz>1</MonCotiz>
+            {ivaBlock}
+          </FECAEDetRequest>
+        </FeDetReq>
+      </FeCAEReq>
+    </FECAESolicitar>
+  </soap:Body>
+</soap:Envelope>";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("SOAPAction", action);
+        request.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseXml = await response.Content.ReadAsStringAsync();
+        
+        // 6. Parse Response
+        var doc = XDocument.Parse(responseXml);
+        
+        // Check Errors in FECAESolicitarResult
+        var resultNode = doc.Descendants(XName.Get("FECAESolicitarResult", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
+        if (resultNode == null) 
+             throw new Exception($"Error SOAP (Sin Resultado): {responseXml}");
+
+        var cabResult = resultNode.Element(XName.Get("FeCabResp", "http://ar.gov.afip.dif.FEV1/"))?.Element(XName.Get("Resultado", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+        
+        if (cabResult == "R")
+        {
+             // Extract Errors
+             var errors = resultNode.Descendants(XName.Get("Errors", "http://ar.gov.afip.dif.FEV1/")).Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
+             var sb = new StringBuilder();
+             foreach(var err in errors)
+             {
+                 sb.AppendLine($"{err.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}: {err.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+             }
+             throw new Exception($"AFIP Rechazó el comprobante: {sb.ToString()}");
+        }
+
+        // Success (A or P)
+        var detResp = resultNode.Descendants(XName.Get("FECAEDetResponse", "http://ar.gov.afip.dif.FEV1/")).First();
+        var cae = detResp.Element(XName.Get("CAE", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+        var caeVto = detResp.Element(XName.Get("CAEFchVto", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+
+        if (string.IsNullOrEmpty(cae) || string.IsNullOrEmpty(caeVto))
+        {
+            throw new Exception("AFIP autorizó pero no devolvió CAE/Vencimiento");
+        }
+
+        // 7. Save Entity
+        var newInvoice = new Invoice
+        {
+            TravelFileId = travelFileId,
+            TipoComprobante = cbteTipo,
+            PuntoDeVenta = settings.PuntoDeVenta,
+            NumeroComprobante = cbteNro,
+            CAE = cae,
+            VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null),
+            Resultado = cabResult,
+            ImporteTotal = total,
+            ImporteNeto = net,
+            ImporteIva = iva,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Invoices.Add(newInvoice);
+        await _context.SaveChangesAsync();
+
+        return newInvoice;
+    }
+
+    private async Task<int> GetNextVoucherNumber(AfipSettings settings, int cbteTipo)
+    {
+        var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
+        var action = "http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado";
+
+        var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+  <soap:Body>
+    <FECompUltimoAutorizado xmlns=""http://ar.gov.afip.dif.FEV1/"">
+      <Auth>
+        <Token>{settings.Token}</Token>
+        <Sign>{settings.Sign}</Sign>
+        <Cuit>{settings.Cuit}</Cuit>
+      </Auth>
+      <PtoVta>{settings.PuntoDeVenta}</PtoVta>
+      <CbteTipo>{cbteTipo}</CbteTipo>
+    </FECompUltimoAutorizado>
+  </soap:Body>
+</soap:Envelope>";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("SOAPAction", action);
+        request.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseXml = await response.Content.ReadAsStringAsync();
+        
+        var doc = XDocument.Parse(responseXml);
+        var resultNode = doc.Descendants(XName.Get("FECompUltimoAutorizadoResult", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
+        
+        if (resultNode == null) throw new Exception("Error al obtener último comprobante: " + responseXml);
+        
+        var cbteNroStr = resultNode.Element(XName.Get("CbteNro", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+        
+        if (int.TryParse(cbteNroStr, out int cbteNro))
+        {
+            return cbteNro + 1;
         }
         
-        throw new NotImplementedException("Facturación real pendiente para Fase 2");
+        return 1; 
     }
 }

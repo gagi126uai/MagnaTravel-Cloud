@@ -9,6 +9,7 @@ import {
 import Swal from "sweetalert2";
 import ServiceFormModal from "../components/ServiceFormModal";
 import PassengerFormModal from "../components/PassengerFormModal";
+import InvoicesTab from "../components/InvoicesTab";
 import { showError, showSuccess } from "../alerts";
 
 export default function FileDetailPage() {
@@ -422,6 +423,13 @@ export default function FileDetailPage() {
                         >
                             <DollarSign className="w-4 h-4" /> Pagos
                         </button>
+                        <button
+                            onClick={() => setActiveTab('invoices')}
+                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                ${activeTab === 'invoices' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                        >
+                            <FileText className="w-4 h-4" /> Facturación
+                        </button>
                     </nav>
                 </div>
 
@@ -665,8 +673,18 @@ export default function FileDetailPage() {
                             </div>
                         </div>
                     )}
+                    {/* --- TAB: INVOICES --- */}
+                    {activeTab === 'invoices' && (
+                        <InvoicesTab
+                            fileId={parseInt(id)}
+                            balance={file.balance}
+                            onInvoiceCreated={fetchFile}
+                        />
+                    )}
                 </div>
             </div>
+
+
 
             <ServiceFormModal
                 isOpen={showServiceModal}
@@ -684,6 +702,6 @@ export default function FileDetailPage() {
                 onSuccess={fetchFile}
                 passengerToEdit={editingPassenger}
             />
-        </div>
+        </div >
     );
 }

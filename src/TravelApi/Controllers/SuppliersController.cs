@@ -1,3 +1,4 @@
+#pragma warning disable CS8601, CS8602, CS8604, CS8618
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -402,7 +403,7 @@ public class SuppliersController : ControllerBase
     {
         public int Id { get; set; }
         public string Type { get; set; } = "";
-        public string Description { get; set; } = "";
+        public string? Description { get; set; } = "";
         public string? Confirmation { get; set; }
         public decimal NetCost { get; set; }
         public decimal SalePrice { get; set; }
@@ -556,8 +557,8 @@ public class SuppliersController : ControllerBase
                 p.PaidAt,
                 p.Reference,
                 p.Notes,
-                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null,
-                FileName = p.TravelFile != null ? p.TravelFile.Name : null,
+                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : (string?)null,
+                FileName = p.TravelFile != null ? p.TravelFile.Name : (string?)null,
                 TravelFileId = p.TravelFileId 
             })
             .ToListAsync(cancellationToken);

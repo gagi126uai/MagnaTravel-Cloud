@@ -16,6 +16,8 @@ public class Customer
     // Retail Pivot: Financials
     [MaxLength(20)]
     public string? TaxId { get; set; } // CUIT/CUIL
+    [MaxLength(50)]
+    public string TaxCondition { get; set; } = "Consumidor Final"; // Responsable Inscripto, Monotributo, Exento, Consumidor Final
     public decimal CreditLimit { get; set; } = 0;
     public decimal CurrentBalance { get; set; } = 0; // Positive = they owe us
     public bool IsActive { get; set; } = true;
