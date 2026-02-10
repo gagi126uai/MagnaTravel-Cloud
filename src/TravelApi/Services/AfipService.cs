@@ -469,6 +469,8 @@ public class AfipService : IAfipService
         
         if (cabResult == "R")
         {
+             _logger.LogError($"AFIP Response (Rechazado): {responseXml}");
+
              // Extract Errors
              var errors = resultNode.Descendants(XName.Get("Errors", "http://ar.gov.afip.dif.FEV1/")).Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
              var sb = new StringBuilder();
@@ -476,6 +478,18 @@ public class AfipService : IAfipService
              {
                  sb.AppendLine($"{err.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}: {err.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
              }
+             
+             // Extract Observations (sometimes useful info is here too)
+             var obs = resultNode.Descendants(XName.Get("Observaciones", "http://ar.gov.afip.dif.FEV1/")).Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
+             if (obs.Any())
+             {
+                 sb.AppendLine("Observaciones:");
+                 foreach(var o in obs)
+                 {
+                      sb.AppendLine($"{o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}: {o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+                 }
+             }
+
              throw new Exception($"AFIP Rechazó el comprobante: {sb.ToString()}");
         }
 
