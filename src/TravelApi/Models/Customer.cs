@@ -18,6 +18,7 @@ public class Customer
     public string? TaxId { get; set; } // CUIT/CUIL
     [MaxLength(50)]
     public string TaxCondition { get; set; } = "Consumidor Final"; // Responsable Inscripto, Monotributo, Exento, Consumidor Final
+    public int? TaxConditionId { get; set; } // AFIP Code: 1=RI, 4=Exento, 5=Consumidor Final, 6=Monotributo
     public decimal CreditLimit { get; set; } = 0;
     public decimal CurrentBalance { get; set; } = 0; // Positive = they owe us
     public bool IsActive { get; set; } = true;

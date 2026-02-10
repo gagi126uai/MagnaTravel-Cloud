@@ -442,6 +442,7 @@ public class AfipService : IAfipService
             <FchVtoPago>{fchVtoPago}</FchVtoPago>
             <MonId>PES</MonId>
             <MonCotiz>1</MonCotiz>
+            <CondicionIVAReceptorId>{GetTaxConditionId(travelFile.Payer)}</CondicionIVAReceptorId>
             {ivaBlock}
           </FECAEDetRequest>
         </FeDetReq>
@@ -565,5 +566,30 @@ public class AfipService : IAfipService
         }
         
         return 1; 
+    }
+
+    private int GetTaxConditionId(Customer payer)
+    {
+        // 1 = IVA Responsable Inscripto
+        // 4 = IVA Sujeto Exento
+        // 5 = Consumidor Final
+        // 6 = Responsable Monotributo
+        // 8 = Proveedor del Exterior
+        // 9 = Cliente del Exterior
+        // 10 = IVA Liberado - Ley Nº 19.640
+        // 11 = IVA Responsable Inscripto - Agente de Percepción
+        // 13 = Monotributista Social
+        // 15 = IVA No Alcanzado
+
+        if (payer.TaxConditionId.HasValue) return payer.TaxConditionId.Value;
+
+        // Fallback by String
+        var condition = payer.TaxCondition?.ToLower() ?? "";
+        
+        if (condition.Contains("inscripto")) return 1;
+        if (condition.Contains("exento")) return 4;
+        if (condition.Contains("monotributo")) return 6;
+        
+        return 5; // Default: Consumidor Final
     }
 }

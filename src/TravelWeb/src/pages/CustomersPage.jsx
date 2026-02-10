@@ -56,6 +56,7 @@ export default function CustomersPage() {
         notes: customer.notes || "",
         creditLimit: customer.creditLimit || 0,
         isActive: customer.isActive,
+        taxConditionId: customer.taxConditionId || 5,
         // Current balance is read-only and passed separately
       });
     } else {
@@ -69,7 +70,8 @@ export default function CustomersPage() {
         address: "",
         notes: "",
         creditLimit: 0,
-        isActive: true
+        isActive: true,
+        taxConditionId: 5 // Default Conf. Final
       });
     }
     setIsModalOpen(true);
@@ -340,6 +342,20 @@ export default function CustomersPage() {
                       onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
                       className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
                     />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Condición AFIP <span className="text-red-500">*</span></label>
+                    <select
+                      value={formData.taxConditionId || 5}
+                      onChange={(e) => setFormData({ ...formData, taxConditionId: parseInt(e.target.value) })}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value={1}>Responsable Inscripto</option>
+                      <option value={6}>Monotributo</option>
+                      <option value={4}>Exento</option>
+                      <option value={5}>Consumidor Final</option>
+                    </select>
                   </div>
 
                   <div className="col-span-2 grid sm:grid-cols-2 gap-4">
