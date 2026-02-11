@@ -43,6 +43,17 @@ public class InvoicePdfService : IInvoicePdfService
         var addressStyle = TextStyle.Default.FontSize(9).FontColor(Colors.Grey.Darken1);
         
         // Priority: Fantasy Name (AgencyName) > Legal Name
+        // Try to use Snapshot first
+        if (!string.IsNullOrEmpty(invoice.AgencySnapshot))
+        {
+            try 
+            {
+                var snapshot = JsonSerializer.Deserialize<AgencySettings>(invoice.AgencySnapshot);
+                if (snapshot != null) agencySettings = snapshot;
+            }
+            catch {}
+        }
+
         var mainTitle = !string.IsNullOrEmpty(agencySettings.AgencyName) ? agencySettings.AgencyName : agencySettings.LegalName;
         var legalName = agencySettings.LegalName;
         
@@ -126,6 +137,28 @@ public class InvoicePdfService : IInvoicePdfService
 
     void ComposeContent(IContainer container, Invoice invoice, TravelFile travelFile)
     {
+        // Snapshot Logic for Customer
+        var customerName = travelFile.Payer?.FullName ?? "Consumidor Final";
+        var customerAddress = travelFile.Payer?.Address ?? "-";
+        var customerTaxCondition = travelFile.Payer?.TaxCondition ?? "Consumidor Final";
+        var customerDoc = travelFile.Payer?.TaxId ?? travelFile.Payer?.DocumentNumber ?? "-";
+        
+        if (!string.IsNullOrEmpty(invoice.CustomerSnapshot))
+        {
+            try
+            {
+                var snapshot = JsonSerializer.Deserialize<Customer>(invoice.CustomerSnapshot);
+                if (snapshot != null)
+                {
+                    customerName = snapshot.FullName;
+                    customerAddress = snapshot.Address ?? "-";
+                    customerTaxCondition = snapshot.TaxCondition;
+                    customerDoc = snapshot.TaxId ?? snapshot.DocumentNumber ?? "-";
+                }
+            }
+            catch {}
+        }
+
         container.PaddingVertical(10).Column(column =>
         {
             // Customer Section
@@ -133,14 +166,14 @@ public class InvoicePdfService : IInvoicePdfService
             {
                 row.RelativeItem().Column(c =>
                 {
-                    c.Item().Text($"Cliente: {travelFile.Payer?.FullName ?? "Consumidor Final"}").Bold();
-                    c.Item().Text($"Domicilio: {travelFile.Payer?.Address ?? "-"}");
-                    c.Item().Text($"Condición IVA: {travelFile.Payer?.TaxCondition ?? "Consumidor Final"}");
+                    c.Item().Text($"Cliente: {customerName}").Bold();
+                    c.Item().Text($"Domicilio: {customerAddress}");
+                    c.Item().Text($"Condición IVA: {customerTaxCondition}");
                 });
 
                 row.RelativeItem().AlignRight().Column(c =>
                 {
-                    c.Item().Text($"CUIT/DNI: {travelFile.Payer?.TaxId ?? travelFile.Payer?.DocumentNumber ?? "-"}");
+                    c.Item().Text($"CUIT/DNI: {customerDoc}");
                     // Payment Condition could be here
                     c.Item().Text("Condición de Venta: Contado");
                 });

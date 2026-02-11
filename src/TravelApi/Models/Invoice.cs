@@ -29,6 +29,10 @@ public class Invoice
     
     [Column(TypeName = "decimal(18,2)")]
     public decimal ImporteIva { get; set; }
+
+    // Snapshots (JSON) for Immutability
+    public string? AgencySnapshot { get; set; }
+    public string? CustomerSnapshot { get; set; }
     
     // Relationships
     public int? TravelFileId { get; set; }

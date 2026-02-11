@@ -505,6 +505,8 @@ public class AfipService : IAfipService
         }
 
         // 7. Save Entity
+        var agencySettings = await _context.AgencySettings.FirstOrDefaultAsync();
+        
         var newInvoice = new Invoice
         {
             TravelFileId = travelFileId,
@@ -517,7 +519,10 @@ public class AfipService : IAfipService
             ImporteTotal = total,
             ImporteNeto = net,
             ImporteIva = iva,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            // Snapshot Data for Immutability
+            AgencySnapshot = agencySettings != null ? System.Text.Json.JsonSerializer.Serialize(agencySettings) : null,
+            CustomerSnapshot = System.Text.Json.JsonSerializer.Serialize(customer)
         };
 
         _context.Invoices.Add(newInvoice);
