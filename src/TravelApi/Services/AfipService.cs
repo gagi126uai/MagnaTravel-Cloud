@@ -255,11 +255,16 @@ public class AfipService : IAfipService
                      }
                 }
                 
-                throw new Exception($"WSAA Fault: {faultCode} - {faultString}");
+                if (faultCode != null && faultCode.Contains("cms"))
+                {
+                     throw new Exception($"Error de Certificado AFIP: El certificado subido no es válido o está corrupto. ({faultString})");
+                }
+                
+                throw new Exception($"Error de Autenticación AFIP (WSAA): {faultString}");
             }
 
             if (!response.IsSuccessStatusCode)
-                throw new Exception($"WSAA Error {response.StatusCode}: {responseXml}");
+                throw new Exception($"Error de conexión con AFIP (WSAA): {response.StatusCode}. Intentá de nuevo en unos minutos.");
 
             var loginCmsReturn = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "loginCmsReturn")?.Value;
             
@@ -475,23 +480,38 @@ public class AfipService : IAfipService
              // Extract Errors
              var errors = resultNode.Descendants(XName.Get("Errors", "http://ar.gov.afip.dif.FEV1/")).Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
              var sb = new StringBuilder();
+             
              foreach(var err in errors)
              {
-                 sb.AppendLine($"{err.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}: {err.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+                 var code = err.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                 var msg = err.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                 
+                 // User Friendly Translation
+                 var friendlyMsg = code switch
+                 {
+                     "10016" => "El número de comprobante ya existe en AFIP. Es probable que se haya desincronizado la numeración. Contactá a soporte.",
+                     "10015" => "El comprobante ya fue informado anteriormente.",
+                     "10004" => "El Punto de Venta configurado no es válido o no pertenece a este CUIT.",
+                     "80" => "El CUIT del cliente tiene errores o no es válido para la condición de IVA indicada.",
+                     _ => $"{msg} (Cód: {code})"
+                 };
+                 
+                 sb.AppendLine($"- {friendlyMsg}");
              }
              
              // Extract Observations (sometimes useful info is here too)
              var obs = resultNode.Descendants(XName.Get("Observaciones", "http://ar.gov.afip.dif.FEV1/")).Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
              if (obs.Any())
              {
-                 sb.AppendLine("Observaciones:");
                  foreach(var o in obs)
                  {
-                      sb.AppendLine($"{o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}: {o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+                      var code = o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                      var msg = o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                      sb.AppendLine($"Obs: {msg} (Cód: {code})");
                  }
              }
 
-             throw new Exception($"AFIP Rechazó el comprobante: {sb.ToString()}");
+             throw new Exception($"AFIP no autorizó la factura:\n{sb.ToString()}");
         }
 
         // Success (A or P)
