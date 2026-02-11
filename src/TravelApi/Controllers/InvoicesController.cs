@@ -23,6 +23,17 @@ public class InvoicesController : ControllerBase
         _pdfService = pdfService;
     }
 
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<Invoice>>> GetInvoices()
+    {
+        var invoices = await _context.Invoices
+            .Include(i => i.TravelFile)
+            .ThenInclude(t => t.Payer)
+            .OrderByDescending(i => i.CreatedAt)
+            .ToListAsync();
+        return Ok(invoices);
+    }
+
     [HttpPost]
     public async Task<ActionResult<Invoice>> CreateInvoice([FromBody] CreateInvoiceRequest request)
     {

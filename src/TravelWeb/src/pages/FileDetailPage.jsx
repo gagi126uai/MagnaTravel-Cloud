@@ -553,91 +553,19 @@ export default function FileDetailPage() {
                         <div>
                             <div className="flex justify-between items-center mb-4">
                                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Registro de Pagos</h3>
-                                <button
-                                    onClick={() => setShowPaymentForm(true)}
-                                    className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors shadow-sm"
-                                    disabled={file.balance <= 0}
-                                >
-                                    <Plus className="w-4 h-4" /> Registrar Pago
-                                </button>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => navigate("/payments")}
+                                        className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
+                                    >
+                                        Ir a Caja Administrativa
+                                    </button>
+                                </div>
                             </div>
 
-                            {showPaymentForm && (
-                                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-200 dark:border-slate-700 mb-6 shadow-sm mx-1">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h4 className="text-lg font-medium text-gray-900 dark:text-white flex items-center gap-2">
-                                            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg text-green-600 dark:text-green-400">
-                                                <DollarSign className="w-5 h-5" />
-                                            </div>
-                                            Registrar Nuevo Pago
-                                        </h4>
-                                        <button onClick={() => setShowPaymentForm(false)} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
-                                            <X className="w-5 h-5" />
-                                        </button>
-                                    </div>
-                                    <form onSubmit={handlePaymentSubmit}>
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Monto</label>
-                                                <div className="relative">
-                                                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                                                        <span className="text-gray-500 dark:text-slate-400 sm:text-sm">$</span>
-                                                    </div>
-                                                    <input
-                                                        type="number"
-                                                        step="0.01"
-                                                        required
-                                                        className="block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white pl-7 focus:border-green-500 focus:ring-green-500 sm:text-sm py-2"
-                                                        placeholder="0.00"
-                                                        value={paymentForm.amount}
-                                                        onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                                                        max={file.balance}
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Método de Pago</label>
-                                                <select
-                                                    className="block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:border-green-500 focus:ring-green-500 sm:text-sm py-2"
-                                                    value={paymentForm.method}
-                                                    onChange={e => setPaymentForm({ ...paymentForm, method: e.target.value })}
-                                                >
-                                                    <option>Transferencia</option>
-                                                    <option>Efectivo</option>
-                                                    <option>Tarjeta Crédito</option>
-                                                    <option>Tarjeta Débito</option>
-                                                    <option>Cheque</option>
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Notas / Referencia</label>
-                                                <input
-                                                    type="text"
-                                                    className="block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:border-green-500 focus:ring-green-500 sm:text-sm py-2"
-                                                    placeholder="Ej: Comprobante #1234"
-                                                    value={paymentForm.notes}
-                                                    onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="mt-6 flex justify-end gap-3">
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowPaymentForm(false)}
-                                                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-600"
-                                            >
-                                                Cancelar
-                                            </button>
-                                            <button
-                                                type="submit"
-                                                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:ring-4 focus:ring-green-300 dark:focus:ring-green-800 shadow-sm flex items-center gap-2"
-                                            >
-                                                <DollarSign className="w-4 h-4" /> Registrar Pago
-                                            </button>
-                                        </div>
-                                    </form>
-                                </div>
-                            )}
+                            <div className="p-4 mb-4 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 rounded-lg text-sm border border-blue-100 dark:border-blue-800">
+                                ℹ️ Los pagos y cobranzas ahora se gestionan desde la <strong>Caja Administrativa</strong>.
+                            </div>
 
                             <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
                                 <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
@@ -646,7 +574,6 @@ export default function FileDetailPage() {
                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Fecha</th>
                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Método</th>
                                             <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Monto</th>
-                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Acciones</th>
                                         </tr>
                                     </thead>
                                     <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
@@ -661,11 +588,6 @@ export default function FileDetailPage() {
                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600 dark:text-emerald-400">
                                                     ${p.amount.toLocaleString()}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                                                    <button onClick={() => handleDeletePayment(p.id, p.amount)} className="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1">
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </button>
-                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -675,11 +597,22 @@ export default function FileDetailPage() {
                     )}
                     {/* --- TAB: INVOICES --- */}
                     {activeTab === 'invoices' && (
-                        <InvoicesTab
-                            fileId={parseInt(id)}
-                            balance={file.balance}
-                            onInvoiceCreated={fetchFile}
-                        />
+                        <div>
+                            <div className="flex justify-end mb-2">
+                                <button
+                                    onClick={() => navigate("/payments")}
+                                    className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
+                                >
+                                    Ir a Caja Administrativa
+                                </button>
+                            </div>
+                            <InvoicesTab
+                                fileId={parseInt(id)}
+                                balance={file.balance}
+                                onInvoiceCreated={fetchFile}
+                                readOnly={true}
+                            />
+                        </div>
                     )}
                 </div>
             </div>

@@ -1,148 +1,362 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
+import Swal from "sweetalert2";
 import {
   Search,
   CreditCard,
   Banknote,
   ArrowUpRight,
-  ArrowDownLeft,
-  Filter
+  Filter,
+  DollarSign,
+  FileText,
+  Clock,
+  Briefcase,
+  AlertTriangle,
+  CheckCircle,
+  Download,
+  Plus,
+  Loader2
 } from "lucide-react";
 import { Button } from "../components/ui/button";
+import PaymentModal from "../components/PaymentModal";
+import InvoicesTab from "../components/InvoicesTab";
 
 export default function PaymentsPage() {
-  const [payments, setPayments] = useState([]);
+  const [activeTab, setActiveTab] = useState("receivables"); // receivables, history, invoices
   const [loading, setLoading] = useState(true);
+
+  // Data States
+  const [receivables, setReceivables] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+
+  // Modals
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
+
+  // Filters
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState("All");
 
-  useEffect(() => {
-    loadPayments();
-  }, []);
-
-  const loadPayments = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // Assuming a general endpoint for all payments (In / out)
-      // If not exists, we might need to create one or assume this is only 'receipts' (Cobros)
-      // For now, I'll use the existing /treasury/receipts or similar, but let's stick to what we know exists or mock it
-      // The user complained about "Reservations" dropdown.
-      // Let's try to get all payments. 
-      const data = await api.get("/payments");
-      setPayments(data.reverse()); // Show newest first
+      if (activeTab === 'receivables') {
+        const files = await api.get("/travelfiles");
+        // Filter locally for now: Status != Budget AND Balance > 0
+        const pending = files.filter(f => f.status !== 'Presupuesto' && f.balance > 0);
+        setReceivables(pending);
+      } else if (activeTab === 'history') {
+        try {
+          const data = await api.get("/payments"); // We need to ensure this endpoint exists in backend or TravelFilesController
+          setPayments(data.reverse());
+        } catch (e) {
+          // Fallback if global endpoint doesn't exist: fetch files and aggregate
+          const files = await api.get("/travelfiles");
+          const allPayments = files.flatMap(f => f.payments.map(p => ({ ...p, travelFile: f })));
+          allPayments.sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
+          setPayments(allPayments);
+        }
+      } else if (activeTab === 'invoices') {
+        const data = await api.get("/invoices"); // New endpoint we added
+        setInvoices(data);
+      }
     } catch (error) {
-      console.log("Error loading payments");
+      console.error("Error loading data:", error);
+      showError("Error al cargar datos");
     } finally {
       setLoading(false);
     }
+  }, [activeTab]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleOpenPayment = (file) => {
+    setSelectedFile(file);
+    setShowPaymentModal(true);
   };
 
-  const filteredPayments = payments.filter(p => {
-    const matchSearch = p.reservation?.customer?.fullName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.id?.toString().includes(searchTerm);
-    const matchFilter = filterType === 'All' || p.method === filterType;
-    return matchSearch && matchFilter;
-  });
+  const handleCreateInvoice = async (file) => {
+    // 1. Validate Status being NOT 'Presupuesto'
+    if (file.status === 'Presupuesto') {
+      showError("No se puede facturar un expediente en estado Presupuesto.");
+      return;
+    }
 
-  const totalAmount = filteredPayments.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+    // 2. Validate Reservation Statuses
+    const hasConfirmedServices = file.reservations && file.reservations.some(r =>
+      ['Confirmed', 'Issued', 'Confirmado', 'Emitido'].includes(r.status)
+    );
+
+    if (!hasConfirmedServices) {
+      showError("El expediente no tiene servicios confirmados o emitidos.");
+      return;
+    }
+
+    // 3. Confirm Action
+    const result = await Swal.fire({
+      title: '¿Emitir Factura?',
+      text: `Se generará una factura para el File ${file.fileNumber} por el saldo: $${file.balance?.toLocaleString()}`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, emitir',
+      cancelButtonText: 'Cancelar'
+    });
+
+    if (result.isConfirmed) {
+      try {
+        setCreatingInvoice(true);
+        await api.post('/invoices', {
+          travelFileId: file.id,
+          amount: file.balance
+        });
+        showSuccess(`Factura emitida correctamente para el File ${file.fileNumber}`);
+        loadData(); // Refresh list
+      } catch (error) {
+        console.error(error);
+        showError(error.response?.data?.message || "Error al emitir factura");
+      } finally {
+        setCreatingInvoice(false);
+      }
+    }
+  };
+
+  const handleDownloadPdf = async (invoice) => {
+    try {
+      const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Factura-${invoice.tipoComprobante}-${invoice.numeroComprobante}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error) {
+      showError("Error al descargar PDF");
+    }
+  };
 
   return (
-    <div className="space-y-4 md:space-y-6">
+    <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h2 className="text-xl md:text-2xl font-bold tracking-tight">Caja Administrativa</h2>
-          <p className="text-sm text-muted-foreground">Control de ingresos y egresos monetarios.</p>
-        </div>
-        <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl border border-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800 w-full sm:w-auto justify-between sm:justify-start">
-          <div className="text-xs sm:text-sm font-medium">Total:</div>
-          <div className="text-lg sm:text-xl font-bold">${totalAmount.toLocaleString()}</div>
+          <h2 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Consola de Administración</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Gestión centralizada de cobranzas, caja y facturación.</p>
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-        <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
-          <Button variant={filterType === 'All' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('All')}>Todos</Button>
-          <Button variant={filterType === 'Cash' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('Cash')}>Efectivo</Button>
-          <Button variant={filterType === 'Transfer' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('Transfer')}>Transferencia</Button>
-          <Button variant={filterType === 'Card' ? 'default' : 'ghost'} size="sm" onClick={() => setFilterType('Card')}>Tarjeta</Button>
-        </div>
-
-        <div className="relative w-full sm:max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            className="w-full bg-transparent pl-9 pr-4 py-2 text-sm border-none focus:outline-none placeholder:text-muted-foreground/70"
-            placeholder="Buscar movimiento..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
+      {/* Tabs Navigation */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
+        <nav className="flex -mb-px">
+          <button
+            onClick={() => setActiveTab('receivables')}
+            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+               ${activeTab === 'receivables' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-slate-700/50' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+          >
+            <Briefcase className="w-4 h-4" /> Cuentas por Cobrar
+          </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+               ${activeTab === 'history' ? 'border-green-500 text-green-600 dark:text-green-400 bg-green-50 dark:bg-slate-700/50' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+          >
+            <Clock className="w-4 h-4" /> Historial de Pagos
+          </button>
+          <button
+            onClick={() => setActiveTab('invoices')}
+            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+               ${activeTab === 'invoices' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-slate-700/50' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+          >
+            <FileText className="w-4 h-4" /> Facturas Emitidas
+          </button>
+        </nav>
       </div>
 
-      {/* Data Table */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800">
-              <tr>
-                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">ID</th>
-                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Fecha</th>
-                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Concepto / Cliente</th>
-                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Método</th>
-                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Monto</th>
-                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-center">Estado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredPayments.map((payment) => (
-                <tr key={payment.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                  <td className="px-6 py-4 font-mono text-xs text-slate-500">#{payment.id}</td>
-                  <td className="px-6 py-4">
-                    {new Date(payment.paidAt).toLocaleDateString()}
-                    <div className="text-xs text-slate-400">{new Date(payment.paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="font-medium">
-                      {payment.travelFile?.name || payment.reservation?.customer?.fullName || "Sin expediente"}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {payment.travelFile ? `File ${payment.travelFile.fileNumber}` : `Reserva #${payment.reservationId || "-"}`}
-                      {payment.notes && ` • ${payment.notes}`}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      {payment.method === 'Cash' && <Banknote className="h-4 w-4 text-emerald-500" />}
-                      {payment.method === 'Card' && <CreditCard className="h-4 w-4 text-indigo-500" />}
-                      {payment.method === 'Transfer' && <ArrowUpRight className="h-4 w-4 text-blue-500" />}
-                      <span>{payment.method === 'Cash' ? 'Efectivo' : payment.method === 'Card' ? 'Tarjeta' : 'Transf.'}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-right font-mono font-bold text-slate-700 dark:text-slate-200">
-                    ${payment.amount?.toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${payment.status === 'Paid' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                      payment.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
-                        'bg-slate-100 text-slate-600'
-                      }`}>
-                      {payment.status === 'Paid' ? 'Completado' : payment.status === 'Pending' ? 'Pendiente' : payment.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {filteredPayments.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
-                    No hay movimientos registrados.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {loading ? (
+        <div className="py-12 text-center text-gray-500">Cargando información...</div>
+      ) : (
+        <>
+          {/* --- TAB: RECEIVABLES --- */}
+          {activeTab === 'receivables' && (
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
+              <div className="p-4 border-b border-gray-200 dark:border-slate-700 flex justify-between items-center">
+                <h3 className="font-medium text-gray-900 dark:text-white">Expedientes con Saldo Pendiente</h3>
+                <div className="text-sm text-gray-500">Total: <span className="font-bold text-gray-900 dark:text-white">${receivables.reduce((acc, curr) => acc + curr.balance, 0).toLocaleString()}</span></div>
+              </div>
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                <thead className="bg-gray-50 dark:bg-slate-900">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">File</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Venta</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Saldo</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                  {receivables.map((file) => (
+                    <tr key={file.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                        {file.fileNumber}
+                        <div className="text-xs text-gray-500 font-normal">{file.name}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                        {file.payer?.fullName || "-"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium 
+                                            ${file.status === 'Reservado' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                            file.status === 'Operativo' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
+                              'bg-gray-100 text-gray-800'}`}>
+                          {file.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500 dark:text-slate-400">
+                        ${file.totalSale?.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-red-600 dark:text-rose-400">
+                        ${file.balance?.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium flex justify-end gap-2">
+                        <button
+                          onClick={() => handleOpenPayment(file)}
+                          className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 font-medium px-2 py-1 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
+                        >
+                          Cobrar
+                        </button>
+                        <button
+                          onClick={() => handleCreateInvoice(file)}
+                          className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium px-2 py-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded flex items-center gap-1"
+                          disabled={creatingInvoice}
+                        >
+                          {creatingInvoice ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                          Facturar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {receivables.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                        <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3 opacity-50" />
+                        <p>¡Todo al día! No hay cuentas por cobrar pendientes.</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* --- TAB: HISTORY --- */}
+          {activeTab === 'history' && (
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                <thead className="bg-gray-50 dark:bg-slate-900">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">File / Concepto</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                  {payments.map((payment) => (
+                    <tr key={payment.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                        {new Date(payment.paidAt).toLocaleDateString()}
+                        <div className="text-xs text-gray-400">{new Date(payment.paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          {payment.travelFile ? `File ${payment.travelFile.fileNumber}` : "-"}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {payment.notes || "Sin notas"}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                        {payment.method}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600 dark:text-emerald-400">
+                        ${payment.amount?.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                  {payments.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center text-gray-500">No hay pagos registrados.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* --- TAB: INVOICES --- */}
+          {activeTab === 'invoices' && (
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                <thead className="bg-gray-50 dark:bg-slate-900">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Comprobante</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Importe</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                  {invoices.map((inv) => (
+                    <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                        {new Date(inv.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                        {inv.tipoComprobante === 1 ? "Factura A" : inv.tipoComprobante === 6 ? "Factura B" : "Comprobante"}
+                        <span className="ml-2 text-gray-500 font-mono">#{inv.numeroComprobante}</span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                        {inv.travelFile?.payer?.fullName || "Consumidor Final"}
+                        <div className="text-xs text-gray-400">File {inv.travelFile?.fileNumber}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900 dark:text-white">
+                        ${inv.importeTotal?.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        <button
+                          onClick={() => handleDownloadPdf(inv)}
+                          className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center justify-end gap-1 w-full"
+                        >
+                          <Download className="w-4 h-4" /> PDF
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {invoices.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">No hay facturas emitidas.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Payment Modal */}
+      <PaymentModal
+        isOpen={showPaymentModal}
+        onClose={() => { setShowPaymentModal(false); setSelectedFile(null); }}
+        fileId={selectedFile?.id}
+        maxAmount={selectedFile?.balance}
+        onSuccess={() => { loadData(); }}
+      />
     </div>
   );
 }

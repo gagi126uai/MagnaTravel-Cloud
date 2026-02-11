@@ -319,9 +319,29 @@ public class AfipService : IAfipService
         // 1. Get TravelFile & Customer
         var travelFile = await _context.TravelFiles
             .Include(f => f.Payer)
+            .Include(f => f.Reservations)
             .FirstOrDefaultAsync(f => f.Id == travelFileId);
 
         if (travelFile == null) throw new Exception("Expediente no encontrado");
+        
+        // --- VALIDATIONS ---
+        if (travelFile.Status == FileStatus.Budget)
+        {
+            throw new Exception("No se puede facturar un expediente en estado Presupuesto.");
+        }
+
+        var hasConfirmedServices = travelFile.Reservations.Any(r => 
+            r.Status == "Confirmed" || 
+            r.Status == "Issued" || 
+            r.Status == "Confirmado" || 
+            r.Status == "Emitido");
+
+        if (!hasConfirmedServices)
+        {
+            throw new Exception("El expediente no tiene servicios confirmados o emitidos para facturar.");
+        }
+        // -------------------
+
         var customer = travelFile.Payer;
         if (customer == null) throw new Exception("El expediente no tiene cliente asignado");
 

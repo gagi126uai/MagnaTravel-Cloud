@@ -24,6 +24,7 @@ public class TravelFilesController : ControllerBase
     {
         var files = await _context.TravelFiles
             .Include(f => f.Payer)
+            .Include(f => f.Reservations) // Added for billing status checks
             .OrderByDescending(f => f.CreatedAt)
             .ToListAsync();
         return Ok(files);

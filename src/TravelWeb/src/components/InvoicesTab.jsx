@@ -4,7 +4,7 @@ import { FileText, Plus, CheckCircle, XCircle, AlertTriangle, Eye, RefreshCw } f
 import Swal from "sweetalert2";
 import { showError, showSuccess } from "../alerts";
 
-export default function InvoicesTab({ fileId, balance, onInvoiceCreated }) {
+export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnly = false }) {
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(false);
     const [creating, setCreating] = useState(false);
@@ -95,14 +95,16 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated }) {
         <div>
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Facturas Emitidas</h3>
-                <button
-                    onClick={handleCreateInvoice}
-                    disabled={creating}
-                    className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50"
-                >
-                    {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    Emitir Factura
-                </button>
+                {!readOnly && (
+                    <button
+                        onClick={handleCreateInvoice}
+                        disabled={creating}
+                        className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50"
+                    >
+                        {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                        Emitir Factura
+                    </button>
+                )}
             </div>
 
             {loading ? (
