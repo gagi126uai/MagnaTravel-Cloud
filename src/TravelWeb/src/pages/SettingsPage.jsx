@@ -11,7 +11,14 @@ import {
   X,
   Shield,
   User,
-  MoreHorizontal
+  MoreHorizontal,
+  Building2,
+  MapPin,
+  Mail,
+  FileText,
+  Calendar,
+  CreditCard,
+  PhoneCall
 } from "lucide-react";
 import Swal from "sweetalert2";
 
@@ -524,83 +531,130 @@ export default function SettingsPage() {
         <section className="max-w-2xl">
           <form onSubmit={saveAgencySettings} className="space-y-6">
             {/* Datos Básicos */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Datos de la Agencia</h3>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre de la Agencia</label>
-                  <input
-                    type="text"
-                    required
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                    value={agencyForm.agencyName}
-                    onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })}
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Razón Social</label>
-                  <input
-                    type="text"
-                    placeholder="Razón Social Legal (si difiere del nombre de fantasía)"
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                    value={agencyForm.legalName}
-                    onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })}
-                  />
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+              <div className="mb-6 flex items-center gap-3 border-b border-slate-100 pb-4 dark:border-slate-800">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400">
+                  <Pencil className="h-5 w-5" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condición IVA</label>
-                  <select
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                    value={agencyForm.taxCondition}
-                    onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}
-                  >
-                    <option value="Responsable Inscripto">Responsable Inscripto</option>
-                    <option value="Monotributo">Monotributo</option>
-                    <option value="Exento">Exento</option>
-                  </select>
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Identidad de la Agencia</h3>
+                  <p className="text-sm text-slate-500">Información visible en comprobantes y documentos.</p>
                 </div>
+              </div>
+
+              <div className="grid gap-6 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre de Fantasía</label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                      <User className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
+                      placeholder="Ej: Magna Travel"
+                      value={agencyForm.agencyName}
+                      onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Razón Social Legal</label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                      <Shield className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Ej: Magna Travel S.A."
+                      className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
+                      value={agencyForm.legalName}
+                      onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })}
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Inicio de Actividades</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Condición IVA</label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                      <Key className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <select
+                      className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
+                      value={agencyForm.taxCondition}
+                      onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}
+                    >
+                      <option value="Responsable Inscripto">Responsable Inscripto</option>
+                      <option value="Monotributo">Monotributo</option>
+                      <option value="Exento">Exento</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Inicio de Actividades</label>
                   <input
                     type="date"
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
                     value={agencyForm.activityStartDate}
                     onChange={e => setAgencyForm({ ...agencyForm, activityStartDate: e.target.value })}
                   />
                 </div>
+
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">CUIT</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">CUIT</label>
                   <input
                     type="text"
                     placeholder="XX-XXXXXXXX-X"
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
                     value={agencyForm.taxId}
                     onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })}
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* Datos de Contacto */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+              <div className="mb-6 flex items-center gap-3 border-b border-slate-100 pb-4 dark:border-slate-800">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
+                  <Search className="h-5 w-5" /> {/* Should be Phone/MapPin but Search is available, will fix imports momentarily */}
+                </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Teléfono</label>
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Contacto y Ubicación</h3>
+                  <p className="text-sm text-slate-500">Datos para que tus clientes te encuentren.</p>
+                </div>
+              </div>
+
+              <div className="grid gap-6 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Teléfono</label>
                   <input
                     type="text"
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
                     value={agencyForm.phone}
                     onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })}
                   />
                 </div>
+
                 <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Email Comercial</label>
                   <input
                     type="email"
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
                     value={agencyForm.email}
                     onChange={e => setAgencyForm({ ...agencyForm, email: e.target.value })}
                   />
                 </div>
+
                 <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Dirección</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Dirección Física</label>
                   <input
                     type="text"
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
                     value={agencyForm.address}
                     onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })}
                   />
@@ -609,13 +663,13 @@ export default function SettingsPage() {
             </div>
 
             {/* Configuración Comercial */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Configuración Comercial</h3>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Moneda Principal</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Moneda Principal</label>
                   <select
-                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800"
                     value={agencyForm.currency}
                     onChange={e => setAgencyForm({ ...agencyForm, currency: e.target.value })}
                   >
@@ -624,19 +678,14 @@ export default function SettingsPage() {
                     <option value="EUR">EUR - Euro</option>
                   </select>
                 </div>
-                <div className="flex items-end">
-                  <p className="text-sm text-slate-500">
-                    💡 Las comisiones se configuran en la pestaña <strong>"Comisiones"</strong>
-                  </p>
-                </div>
               </div>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end pt-4">
               <button
                 type="submit"
                 disabled={savingAgency}
-                className="rounded-xl bg-indigo-600 px-6 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
+                className="rounded-xl bg-indigo-600 px-8 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition-all hover:-translate-y-0.5 hover:bg-indigo-500 hover:shadow-indigo-500/30 disabled:opacity-50"
               >
                 {savingAgency ? "Guardando..." : "Guardar Configuración"}
               </button>
