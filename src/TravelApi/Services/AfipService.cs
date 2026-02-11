@@ -527,28 +527,41 @@ public class AfipService : IAfipService
         // 7. Save Entity
         var agencySettings = await _context.AgencySettings.FirstOrDefaultAsync();
         
-        var newInvoice = new Invoice
+        try
         {
-            TravelFileId = travelFileId,
-            TipoComprobante = cbteTipo,
-            PuntoDeVenta = settings.PuntoDeVenta,
-            NumeroComprobante = cbteNro,
-            CAE = cae,
-            VencimientoCAE = DateTime.SpecifyKind(DateTime.ParseExact(caeVto!, "yyyyMMdd", null), DateTimeKind.Utc),
-            Resultado = cabResult,
-            ImporteTotal = total,
-            ImporteNeto = net,
-            ImporteIva = iva,
-            CreatedAt = DateTime.UtcNow,
-            // Snapshot Data for Immutability
-            AgencySnapshot = agencySettings != null ? System.Text.Json.JsonSerializer.Serialize(agencySettings) : null,
-            CustomerSnapshot = System.Text.Json.JsonSerializer.Serialize(customer)
-        };
+            var newInvoice = new Invoice
+            {
+                TravelFileId = travelFileId,
+                TipoComprobante = cbteTipo,
+                PuntoDeVenta = settings.PuntoDeVenta,
+                NumeroComprobante = cbteNro,
+                CAE = cae,
+                VencimientoCAE = DateTime.SpecifyKind(DateTime.ParseExact(caeVto!, "yyyyMMdd", null), DateTimeKind.Utc),
+                Resultado = cabResult,
+                ImporteTotal = total,
+                ImporteNeto = net,
+                ImporteIva = iva,
+                CreatedAt = DateTime.UtcNow,
+                // Snapshot Data for Immutability
+                AgencySnapshot = agencySettings != null ? System.Text.Json.JsonSerializer.Serialize(agencySettings) : null,
+                CustomerSnapshot = System.Text.Json.JsonSerializer.Serialize(customer, new System.Text.Json.JsonSerializerOptions 
+                { 
+                    ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles 
+                })
+            };
 
-        _context.Invoices.Add(newInvoice);
-        await _context.SaveChangesAsync();
+            _context.Invoices.Add(newInvoice);
+            await _context.SaveChangesAsync();
 
-        return newInvoice;
+            return newInvoice;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error saving invoice to DB (Post-AFIP Auth)");
+            // If we fail here, we have a problem: AFIP authorized it but we failed to save.
+            // In a real system we should have a recovery mechanism.
+            throw new Exception($"Error guardando factura en BD (AFIP ya autorizó: CAE {cae}). Contactá a soporte urgente: {ex.Message}");
+        }
     }
 
     private async Task<int> GetNextVoucherNumber(AfipSettings settings, int cbteTipo)
