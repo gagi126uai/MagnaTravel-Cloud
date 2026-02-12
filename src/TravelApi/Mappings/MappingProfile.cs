@@ -25,7 +25,8 @@ public class MappingProfile : Profile
                 src.TipoComprobante == 6 ? "B" :
                 src.TipoComprobante == 11 ? "C" : 
                 src.TipoComprobante == 51 ? "M" : 
-                src.TipoComprobante.ToString()));
+                src.TipoComprobante == 51 ? "M" : 
+                "UNK"));
 
         // Services
         CreateMap<FlightSegment, FlightSegmentDto>()
