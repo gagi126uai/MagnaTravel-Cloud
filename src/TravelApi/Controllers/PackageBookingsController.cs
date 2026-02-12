@@ -1,7 +1,10 @@
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
+using TravelApi.DTOs;
 using TravelApi.Models;
 
 namespace TravelApi.Controllers;
@@ -12,24 +15,21 @@ namespace TravelApi.Controllers;
 public class PackageBookingsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IMapper _mapper;
 
-    public PackageBookingsController(AppDbContext db) => _db = db;
+    public PackageBookingsController(AppDbContext db, IMapper mapper)
+    {
+        _db = db;
+        _mapper = mapper;
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
     {
         var packages = await _db.PackageBookings
             .Where(p => p.TravelFileId == fileId)
-            .Include(p => p.Supplier)
             .OrderBy(p => p.StartDate)
-            .Select(p => new {
-                p.Id, p.PackageName, p.Destination, p.StartDate, p.EndDate, p.Nights,
-                p.IncludesHotel, p.IncludesFlight, p.IncludesTransfer, p.IncludesExcursions, p.IncludesMeals,
-                p.Adults, p.Children, p.Itinerary, p.ConfirmationNumber, p.Status,
-                p.NetCost, p.SalePrice, p.Commission, p.Notes,
-                SupplierId = p.SupplierId,
-                SupplierName = p.Supplier != null ? p.Supplier.Name : null
-            })
+            .ProjectTo<PackageBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
         return Ok(packages);
     }
@@ -43,28 +43,9 @@ public class PackageBookingsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            var package = new PackageBooking
-            {
-                TravelFileId = fileId,
-                SupplierId = req.SupplierId,
-                PackageName = req.PackageName,
-                Destination = req.Destination,
-                StartDate = req.StartDate,
-                EndDate = req.EndDate,
-                Nights = (req.EndDate - req.StartDate).Days,
-                IncludesHotel = req.IncludesHotel,
-                IncludesFlight = req.IncludesFlight,
-                IncludesTransfer = req.IncludesTransfer,
-                IncludesExcursions = req.IncludesExcursions,
-                IncludesMeals = req.IncludesMeals,
-                Adults = req.Adults,
-                Children = req.Children,
-                Itinerary = req.Itinerary,
-                NetCost = req.NetCost,
-                SalePrice = req.SalePrice,
-                Commission = req.Commission,
-                Notes = req.Notes
-            };
+            var package = _mapper.Map<PackageBooking>(req);
+            package.TravelFileId = fileId;
+            // Nights calculated in AutoMapper
 
             _db.PackageBookings.Add(package);
             
@@ -73,7 +54,7 @@ public class PackageBookingsController : ControllerBase
             file.Balance = file.TotalSale - file.TotalCost;
             
             await _db.SaveChangesAsync(ct);
-            return Ok(package);
+            return Ok(_mapper.Map<PackageBookingDto>(package));
         }
         catch (Exception ex)
         {
@@ -100,29 +81,11 @@ public class PackageBookingsController : ControllerBase
             file.TotalSale += diffSale;
             file.Balance = file.TotalSale - file.TotalCost;
 
-            package.SupplierId = req.SupplierId;
-            package.PackageName = req.PackageName;
-            package.Destination = req.Destination;
-            package.StartDate = req.StartDate;
-            package.EndDate = req.EndDate;
-            package.Nights = (req.EndDate - req.StartDate).Days;
-            package.IncludesHotel = req.IncludesHotel;
-            package.IncludesFlight = req.IncludesFlight;
-            package.IncludesTransfer = req.IncludesTransfer;
-            package.IncludesExcursions = req.IncludesExcursions;
-            package.IncludesMeals = req.IncludesMeals;
-            package.Adults = req.Adults;
-            package.Children = req.Children;
-            package.Itinerary = req.Itinerary;
-            package.ConfirmationNumber = req.ConfirmationNumber;
-            package.NetCost = req.NetCost;
-            package.SalePrice = req.SalePrice;
-            package.Commission = req.Commission;
-            package.Status = req.Status;
-            package.Notes = req.Notes;
+            _mapper.Map(req, package);
+            // Nights calculated in AutoMapper
 
             await _db.SaveChangesAsync(ct);
-            return Ok(package);
+            return Ok(_mapper.Map<PackageBookingDto>(package));
         }
         catch (Exception ex)
         {
@@ -158,18 +121,4 @@ public class PackageBookingsController : ControllerBase
     }
 }
 
-public record CreatePackageRequest(
-    int SupplierId, string PackageName, string Destination,
-    DateTime StartDate, DateTime EndDate,
-    bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
-    int Adults, int Children, string? Itinerary,
-    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
-);
 
-public record UpdatePackageRequest(
-    int SupplierId, string PackageName, string Destination,
-    DateTime StartDate, DateTime EndDate,
-    bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
-    int Adults, int Children, string? Itinerary, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
-);

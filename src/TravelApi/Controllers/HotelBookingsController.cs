@@ -1,7 +1,10 @@
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
+using TravelApi.DTOs;
 using TravelApi.Models;
 
 namespace TravelApi.Controllers;
@@ -12,24 +15,21 @@ namespace TravelApi.Controllers;
 public class HotelBookingsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IMapper _mapper;
 
-    public HotelBookingsController(AppDbContext db) => _db = db;
+    public HotelBookingsController(AppDbContext db, IMapper mapper)
+    {
+        _db = db;
+        _mapper = mapper;
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
     {
         var hotels = await _db.HotelBookings
             .Where(h => h.TravelFileId == fileId)
-            .Include(h => h.Supplier)
             .OrderBy(h => h.CheckIn)
-            .Select(h => new {
-                h.Id, h.HotelName, h.StarRating, h.City, h.Country,
-                h.CheckIn, h.CheckOut, h.Nights, h.RoomType, h.MealPlan,
-                h.Adults, h.Children, h.Rooms, h.ConfirmationNumber, h.Status,
-                h.NetCost, h.SalePrice, h.Commission, h.Notes,
-                SupplierId = h.SupplierId,
-                SupplierName = h.Supplier != null ? h.Supplier.Name : null
-            })
+            .ProjectTo<HotelBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
         return Ok(hotels);
     }
@@ -39,7 +39,7 @@ public class HotelBookingsController : ControllerBase
     {
         var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
         if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
-        return Ok(hotel);
+        return Ok(_mapper.Map<HotelBookingDto>(hotel));
     }
 
     [HttpPost]
@@ -51,28 +51,9 @@ public class HotelBookingsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            var hotel = new HotelBooking
-            {
-                TravelFileId = fileId,
-                SupplierId = req.SupplierId,
-                HotelName = req.HotelName,
-                StarRating = req.StarRating,
-                City = req.City,
-                Country = req.Country,
-                CheckIn = req.CheckIn,
-                CheckOut = req.CheckOut,
-                Nights = (req.CheckOut - req.CheckIn).Days,
-                RoomType = req.RoomType,
-                MealPlan = req.MealPlan,
-                Adults = req.Adults,
-                Children = req.Children,
-                Rooms = req.Rooms,
-                ConfirmationNumber = req.ConfirmationNumber,
-                NetCost = req.NetCost,
-                SalePrice = req.SalePrice,
-                Commission = req.Commission,
-                Notes = req.Notes
-            };
+            var hotel = _mapper.Map<HotelBooking>(req);
+            hotel.TravelFileId = fileId;
+            // Nights calculated in AutoMapper
 
             _db.HotelBookings.Add(hotel);
             
@@ -82,7 +63,7 @@ public class HotelBookingsController : ControllerBase
             file.Balance = file.TotalSale - file.TotalCost;
             
             await _db.SaveChangesAsync(ct);
-            return Ok(hotel);
+            return Ok(_mapper.Map<HotelBookingDto>(hotel));
         }
         catch (Exception ex)
         {
@@ -112,28 +93,11 @@ public class HotelBookingsController : ControllerBase
             file.Balance = file.TotalSale - file.TotalCost;
 
             // Update Hotel Fields
-            hotel.SupplierId = req.SupplierId;
-            hotel.HotelName = req.HotelName;
-            hotel.StarRating = req.StarRating;
-            hotel.City = req.City;
-            hotel.Country = req.Country;
-            hotel.CheckIn = req.CheckIn;
-            hotel.CheckOut = req.CheckOut;
-            hotel.Nights = (req.CheckOut - req.CheckIn).Days;
-            hotel.RoomType = req.RoomType;
-            hotel.MealPlan = req.MealPlan;
-            hotel.Adults = req.Adults;
-            hotel.Children = req.Children;
-            hotel.Rooms = req.Rooms;
-            hotel.ConfirmationNumber = req.ConfirmationNumber;
-            hotel.NetCost = req.NetCost;
-            hotel.SalePrice = req.SalePrice;
-            hotel.Commission = req.Commission;
-            hotel.Status = req.Status;
-            hotel.Notes = req.Notes;
+            _mapper.Map(req, hotel);
+            // Nights calculated in AutoMapper
 
             await _db.SaveChangesAsync(ct);
-            return Ok(hotel);
+            return Ok(_mapper.Map<HotelBookingDto>(hotel));
         }
         catch (Exception ex)
         {
@@ -169,16 +133,4 @@ public class HotelBookingsController : ControllerBase
     }
 }
 
-public record CreateHotelRequest(
-    int SupplierId, string HotelName, int? StarRating, string City, string? Country,
-    DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
-    int Adults, int Children, int Rooms, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
-);
 
-public record UpdateHotelRequest(
-    int SupplierId, string HotelName, int? StarRating, string City, string? Country,
-    DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
-    int Adults, int Children, int Rooms, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
-);

@@ -1,7 +1,10 @@
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
+using TravelApi.DTOs;
 using TravelApi.Models;
 
 namespace TravelApi.Controllers;
@@ -12,24 +15,21 @@ namespace TravelApi.Controllers;
 public class TransferBookingsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IMapper _mapper;
 
-    public TransferBookingsController(AppDbContext db) => _db = db;
+    public TransferBookingsController(AppDbContext db, IMapper mapper)
+    {
+        _db = db;
+        _mapper = mapper;
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
     {
         var transfers = await _db.TransferBookings
             .Where(t => t.TravelFileId == fileId)
-            .Include(t => t.Supplier)
             .OrderBy(t => t.PickupDateTime)
-            .Select(t => new {
-                t.Id, t.PickupLocation, t.DropoffLocation, t.PickupDateTime,
-                t.FlightNumber, t.VehicleType, t.Passengers,
-                t.IsRoundTrip, t.ReturnDateTime, t.ConfirmationNumber, t.Status,
-                t.NetCost, t.SalePrice, t.Commission, t.Notes,
-                SupplierId = t.SupplierId,
-                SupplierName = t.Supplier != null ? t.Supplier.Name : null
-            })
+            .ProjectTo<TransferBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
         return Ok(transfers);
     }
@@ -43,23 +43,8 @@ public class TransferBookingsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            var transfer = new TransferBooking
-            {
-                TravelFileId = fileId,
-                SupplierId = req.SupplierId,
-                PickupLocation = req.PickupLocation,
-                DropoffLocation = req.DropoffLocation,
-                PickupDateTime = req.PickupDateTime,
-                FlightNumber = req.FlightNumber,
-                VehicleType = req.VehicleType,
-                Passengers = req.Passengers,
-                IsRoundTrip = req.IsRoundTrip,
-                ReturnDateTime = req.ReturnDateTime,
-                NetCost = req.NetCost,
-                SalePrice = req.SalePrice,
-                Commission = req.Commission,
-                Notes = req.Notes
-            };
+            var transfer = _mapper.Map<TransferBooking>(req);
+            transfer.TravelFileId = fileId;
 
             _db.TransferBookings.Add(transfer);
             
@@ -68,7 +53,7 @@ public class TransferBookingsController : ControllerBase
             file.Balance = file.TotalSale - file.TotalCost;
             
             await _db.SaveChangesAsync(ct);
-            return Ok(transfer);
+            return Ok(_mapper.Map<TransferBookingDto>(transfer));
         }
         catch (Exception ex)
         {
@@ -95,24 +80,10 @@ public class TransferBookingsController : ControllerBase
             file.TotalSale += diffSale;
             file.Balance = file.TotalSale - file.TotalCost;
 
-            transfer.SupplierId = req.SupplierId;
-            transfer.PickupLocation = req.PickupLocation;
-            transfer.DropoffLocation = req.DropoffLocation;
-            transfer.PickupDateTime = req.PickupDateTime;
-            transfer.FlightNumber = req.FlightNumber;
-            transfer.VehicleType = req.VehicleType;
-            transfer.Passengers = req.Passengers;
-            transfer.IsRoundTrip = req.IsRoundTrip;
-            transfer.ReturnDateTime = req.ReturnDateTime;
-            transfer.ConfirmationNumber = req.ConfirmationNumber;
-            transfer.NetCost = req.NetCost;
-            transfer.SalePrice = req.SalePrice;
-            transfer.Commission = req.Commission;
-            transfer.Status = req.Status;
-            transfer.Notes = req.Notes;
+            _mapper.Map(req, transfer);
 
             await _db.SaveChangesAsync(ct);
-            return Ok(transfer);
+            return Ok(_mapper.Map<TransferBookingDto>(transfer));
         }
         catch (Exception ex)
         {
@@ -148,17 +119,4 @@ public class TransferBookingsController : ControllerBase
     }
 }
 
-public record CreateTransferRequest(
-    int SupplierId, string PickupLocation, string DropoffLocation,
-    DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
-    bool IsRoundTrip, DateTime? ReturnDateTime,
-    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
-);
 
-public record UpdateTransferRequest(
-    int SupplierId, string PickupLocation, string DropoffLocation,
-    DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
-    bool IsRoundTrip, DateTime? ReturnDateTime,
-    string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
-);

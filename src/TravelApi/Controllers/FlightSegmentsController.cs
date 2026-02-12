@@ -1,7 +1,10 @@
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
+using TravelApi.DTOs;
 using TravelApi.Models;
 
 namespace TravelApi.Controllers;
@@ -12,25 +15,21 @@ namespace TravelApi.Controllers;
 public class FlightSegmentsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IMapper _mapper;
 
-    public FlightSegmentsController(AppDbContext db) => _db = db;
+    public FlightSegmentsController(AppDbContext db, IMapper mapper)
+    {
+        _db = db;
+        _mapper = mapper;
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
     {
         var flights = await _db.FlightSegments
             .Where(f => f.TravelFileId == fileId)
-            .Include(f => f.Supplier)
             .OrderBy(f => f.DepartureTime)
-            .Select(f => new {
-                f.Id, f.AirlineCode, f.AirlineName, f.FlightNumber,
-                f.Origin, f.OriginCity, f.Destination, f.DestinationCity,
-                f.DepartureTime, f.ArrivalTime, f.CabinClass, f.Baggage,
-                f.TicketNumber, f.FareBase, f.PNR, f.Status,
-                f.NetCost, f.SalePrice, f.Commission, f.Tax, f.Notes,
-                SupplierId = f.SupplierId,
-                SupplierName = f.Supplier != null ? f.Supplier.Name : null
-            })
+            .ProjectTo<FlightSegmentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
         return Ok(flights);
     }
@@ -44,37 +43,18 @@ public class FlightSegmentsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            var flight = new FlightSegment
-            {
-                TravelFileId = fileId,
-                SupplierId = req.SupplierId,
-                AirlineCode = req.AirlineCode,
-                AirlineName = req.AirlineName,
-                FlightNumber = req.FlightNumber,
-                Origin = req.Origin,
-                OriginCity = req.OriginCity,
-                Destination = req.Destination,
-                DestinationCity = req.DestinationCity,
-                DepartureTime = req.DepartureTime,
-                ArrivalTime = req.ArrivalTime,
-                CabinClass = req.CabinClass,
-                Baggage = req.Baggage,
-                PNR = req.PNR,
-                NetCost = req.NetCost,
-                SalePrice = req.SalePrice,
-                Commission = req.Commission,
-                Tax = req.Tax,
-                Notes = req.Notes
-            };
+            var flight = _mapper.Map<FlightSegment>(req);
+            flight.TravelFileId = fileId;
 
             _db.FlightSegments.Add(flight);
             
+            // Recalculate File Totals (Add new amounts)
             file.TotalCost += flight.NetCost + flight.Tax;
             file.TotalSale += flight.SalePrice;
             file.Balance = file.TotalSale - file.TotalCost;
             
             await _db.SaveChangesAsync(ct);
-            return Ok(flight);
+            return Ok(_mapper.Map<FlightSegmentDto>(flight));
         }
         catch (Exception ex)
         {
@@ -94,6 +74,8 @@ public class FlightSegmentsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
+            // Calculate differences for totals
+            // Note: We use the OLD values from 'flight' before mapping
             var diffCost = (req.NetCost + req.Tax) - (flight.NetCost + flight.Tax);
             var diffSale = req.SalePrice - flight.SalePrice;
 
@@ -101,29 +83,11 @@ public class FlightSegmentsController : ControllerBase
             file.TotalSale += diffSale;
             file.Balance = file.TotalSale - file.TotalCost;
 
-            flight.SupplierId = req.SupplierId;
-            flight.AirlineCode = req.AirlineCode;
-            flight.AirlineName = req.AirlineName;
-            flight.FlightNumber = req.FlightNumber;
-            flight.Origin = req.Origin;
-            flight.OriginCity = req.OriginCity;
-            flight.Destination = req.Destination;
-            flight.DestinationCity = req.DestinationCity;
-            flight.DepartureTime = req.DepartureTime;
-            flight.ArrivalTime = req.ArrivalTime;
-            flight.CabinClass = req.CabinClass;
-            flight.Baggage = req.Baggage;
-            flight.TicketNumber = req.TicketNumber;
-            flight.PNR = req.PNR;
-            flight.NetCost = req.NetCost;
-            flight.SalePrice = req.SalePrice;
-            flight.Commission = req.Commission;
-            flight.Tax = req.Tax;
-            flight.Status = req.Status;
-            flight.Notes = req.Notes;
+            // Update flight fields using Mapper
+            _mapper.Map(req, flight);
 
             await _db.SaveChangesAsync(ct);
-            return Ok(flight);
+            return Ok(_mapper.Map<FlightSegmentDto>(flight));
         }
         catch (Exception ex)
         {
@@ -159,17 +123,4 @@ public class FlightSegmentsController : ControllerBase
     }
 }
 
-public record CreateFlightRequest(
-    int SupplierId, string AirlineCode, string? AirlineName, string FlightNumber,
-    string Origin, string? OriginCity, string Destination, string? DestinationCity,
-    DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, string? PNR,
-    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes
-);
 
-public record UpdateFlightRequest(
-    int SupplierId, string AirlineCode, string? AirlineName, string FlightNumber,
-    string Origin, string? OriginCity, string Destination, string? DestinationCity,
-    DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, 
-    string? TicketNumber, string? PNR,
-    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes
-);

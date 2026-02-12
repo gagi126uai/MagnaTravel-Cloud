@@ -298,7 +298,8 @@ export default function FileDetailPage() {
                             {file.status}
                         </span>
                     </div>
-                    <p className="text-xl text-gray-600 dark:text-slate-400 mt-1">{file.name}</p>
+                    <p className="text-xl text-gray-900 dark:text-white mt-1 font-semibold">{file.customerName}</p>
+                    <p className="text-lg text-gray-600 dark:text-slate-400">{file.name}</p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">

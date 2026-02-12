@@ -1,7 +1,10 @@
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Data;
+using TravelApi.DTOs;
 using TravelApi.Models;
 using TravelApi.Services;
 
@@ -15,27 +18,28 @@ public class InvoicesController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IAfipService _afipService;
     private readonly IInvoicePdfService _pdfService;
+    private readonly IMapper _mapper;
 
-    public InvoicesController(AppDbContext context, IAfipService afipService, IInvoicePdfService pdfService)
+    public InvoicesController(AppDbContext context, IAfipService afipService, IInvoicePdfService pdfService, IMapper mapper)
     {
         _context = context;
         _afipService = afipService;
         _pdfService = pdfService;
+        _mapper = mapper;
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Invoice>>> GetInvoices()
+    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetInvoices()
     {
         var invoices = await _context.Invoices
-            .Include(i => i.TravelFile)
-            .ThenInclude(t => t.Payer)
             .OrderByDescending(i => i.CreatedAt)
+            .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
         return Ok(invoices);
     }
 
     [HttpPost]
-    public async Task<ActionResult<Invoice>> CreateInvoice([FromBody] CreateInvoiceRequest request)
+    public async Task<ActionResult<InvoiceDto>> CreateInvoice([FromBody] CreateInvoiceRequest request)
     {
         try
         {
@@ -45,7 +49,7 @@ public class InvoicesController : ControllerBase
             };
 
             var invoice = await _afipService.CreateInvoice(request.TravelFileId, invoiceData);
-            return Ok(invoice);
+            return Ok(_mapper.Map<InvoiceDto>(invoice));
         }
         catch (Exception ex)
         {
@@ -54,11 +58,12 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpGet("file/{travelFileId}")]
-    public async Task<ActionResult<IEnumerable<Invoice>>> GetByTravelFile(int travelFileId)
+    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByTravelFile(int travelFileId)
     {
         var invoices = await _context.Invoices
             .Where(i => i.TravelFileId == travelFileId)
             .OrderByDescending(i => i.CreatedAt)
+            .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
         return Ok(invoices);
     }

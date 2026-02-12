@@ -12,6 +12,7 @@ public class Payment
     public DateTime PaidAt { get; set; } = DateTime.UtcNow;
 
     public string Method { get; set; } = "Transfer"; // Cash, Transfer, Card
+    public string? Reference { get; set; } // Transaction ID, Check #, etc.
 
     public string Status { get; set; } = "Paid"; // Paid, Pending, Cancelled
 
