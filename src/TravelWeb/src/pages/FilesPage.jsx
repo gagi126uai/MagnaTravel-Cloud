@@ -32,7 +32,8 @@ export default function FilesPage() {
             const data = await api.get("/travelfiles");
             setFiles(data);
         } catch (error) {
-            // Silent fail or empty
+            console.error(error);
+            showError("Error cargando files: " + (error.response?.data?.Error || error.message));
             setFiles([]);
         } finally {
             setLoading(false);

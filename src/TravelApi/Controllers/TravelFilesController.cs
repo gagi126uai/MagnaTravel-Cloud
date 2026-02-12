@@ -27,11 +27,18 @@ public class TravelFilesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetFiles()
     {
-        var files = await _context.TravelFiles
-            .OrderByDescending(f => f.CreatedAt)
-            .ProjectTo<TravelFileDto>(_mapper.ConfigurationProvider)
-            .ToListAsync();
-        return Ok(files);
+        try
+        {
+            var files = await _context.TravelFiles
+                .OrderByDescending(f => f.CreatedAt)
+                .ProjectTo<TravelFileListDto>(_mapper.ConfigurationProvider)
+                .ToListAsync();
+            return Ok(files);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = ex.Message, Stack = ex.StackTrace, ex.InnerException?.Message });
+        }
     }
 
     [HttpGet("debug/{id}")]

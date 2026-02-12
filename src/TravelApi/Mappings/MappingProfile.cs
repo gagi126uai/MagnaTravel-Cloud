@@ -61,5 +61,8 @@ public class MappingProfile : Profile
         CreateMap<TravelFile, TravelFileDto>()
             .ForMember(dest => dest.CustomerId, opt => opt.MapFrom(src => src.PayerId))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty));
+
+        CreateMap<TravelFile, TravelFileListDto>()
+            .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty));
     }
 }
