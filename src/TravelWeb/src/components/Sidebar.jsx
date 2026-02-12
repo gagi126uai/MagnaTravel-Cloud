@@ -18,7 +18,7 @@ const menuLinks = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/files", label: "Gestión de Viajes", icon: FolderOpen },
     { to: "/customers", label: "Clientes", icon: Users },
-    { to: "/payments", label: "Administración", icon: CreditCard },
+    { to: "/payments", label: "Facturación y Caja", icon: CreditCard },
     { to: "/suppliers", label: "Proveedores", icon: Building2 },
     { to: "/rates", label: "Tarifario", icon: DollarSign },
 ];

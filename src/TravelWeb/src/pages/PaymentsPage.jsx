@@ -143,8 +143,8 @@ export default function PaymentsPage() {
     <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Consola de Administración</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Gestión centralizada de cobranzas, caja y facturación.</p>
+          <h2 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Facturación y Caja</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Gestioná tus cobros, pagos y comprobantes fiscales desde un solo lugar.</p>
         </div>
       </div>
 

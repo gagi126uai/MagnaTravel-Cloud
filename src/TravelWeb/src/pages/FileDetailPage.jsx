@@ -558,7 +558,7 @@ export default function FileDetailPage() {
                                         onClick={() => navigate("/payments")}
                                         className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
                                     >
-                                        Ir a Caja Administrativa
+                                        Ir a Facturación y Caja
                                     </button>
                                 </div>
                             </div>
@@ -603,7 +603,7 @@ export default function FileDetailPage() {
                                     onClick={() => navigate("/payments")}
                                     className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
                                 >
-                                    Ir a Caja Administrativa
+                                    Ir a Facturación y Caja
                                 </button>
                             </div>
                             <InvoicesTab
