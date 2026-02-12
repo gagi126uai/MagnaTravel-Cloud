@@ -35,7 +35,8 @@ export default function FileDetailPage() {
             setFile(res);
         } catch (error) {
             console.error(error);
-            showError("Error al cargar el expediente: " + (error.message || "Error desconocido"));
+            console.error(error);
+            showError("Error al cargar el expediente: " + (error.response?.data?.Error || error.message || "Error desconocido"));
             // Do NOT navigate away automatically, let the user see the error
             setFile(null);
         } finally {

@@ -20,6 +20,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.Amount, opt => opt.MapFrom(src => src.ImporteTotal))
             .ForMember(dest => dest.Date, opt => opt.MapFrom(src => src.CreatedAt))
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.Resultado))
+            .ForMember(dest => dest.PointOfSale, opt => opt.MapFrom(src => src.PuntoDeVenta))
+            .ForMember(dest => dest.InvoiceNumber, opt => opt.MapFrom(src => src.NumeroComprobante))
             .ForMember(dest => dest.InvoiceType, opt => opt.MapFrom(src => 
                 src.TipoComprobante == 1 ? "A" :
                 src.TipoComprobante == 6 ? "B" :

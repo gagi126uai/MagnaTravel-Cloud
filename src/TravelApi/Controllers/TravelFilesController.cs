@@ -41,12 +41,9 @@ public class TravelFilesController : ControllerBase
         }
     }
 
-    [HttpGet("debug/{id}")]
     public async Task<IActionResult> DebugFile(int id)
     {
-        // Debug endpoint remains unchanged for now, or can be removed if not needed.
-        // Keeping it brief for this refactor to avoid clutter.
-        return Ok($"Debug endpoint for {id}");
+        return Ok(new { Report = $"Debug endpoint for {id} - Pending implementation" });
     }
 
     [HttpGet("{id}")]
