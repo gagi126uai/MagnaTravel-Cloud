@@ -3,7 +3,7 @@ namespace TravelApi.DTOs;
 public class TravelFileDto
 {
     public int Id { get; set; }
-    public int FileNumber { get; set; }
+    public string FileNumber { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string Status { get; set; } = "Presupuesto";
@@ -13,6 +13,9 @@ public class TravelFileDto
     public decimal TotalSale { get; set; }
     public decimal Balance { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? StartDate { get; set; }
+    public DateTime? EndDate { get; set; }
+    public DateTime? ClosedAt { get; set; }
     
     // Collections
     public List<PassengerDto> Passengers { get; set; } = new();
