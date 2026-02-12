@@ -141,7 +141,7 @@ function RateSelector({ serviceType, supplierId, onSelect, suppliers }) {
 function FlightForm({ form, setForm, suppliers, onRateSelect }) {
     return (
         <div className="space-y-4">
-            {/* Proveedor PRIMERO */}
+            {/* Proveedor y Estado */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -150,10 +150,28 @@ function FlightForm({ form, setForm, suppliers, onRateSelect }) {
                         {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>PNR/Localizador</label>
-                    <input className={inputClass} placeholder="ABC123" value={form.pnr || ""} onChange={e => setForm({ ...form, pnr: e.target.value })} />
+                <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors w-full border border-transparent hover:border-slate-200">
+                        <input
+                            type="checkbox"
+                            checked={form.status === 'HK'}
+                            onChange={e => setForm({ ...form, status: e.target.checked ? 'HK' : 'HL' })}
+                            className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                        />
+                        <div className="flex flex-col">
+                            <span className="font-medium text-slate-900 dark:text-white">
+                                {form.status === 'HK' ? 'Confirmado (HK)' : 'Pendiente (HL)'}
+                            </span>
+                            <span className="text-xs text-slate-500">Marcar si el vuelo ya está emitido/confirmado</span>
+                        </div>
+                    </label>
                 </div>
+            </div>
+
+            {/* PNR Opcional */}
+            <div>
+                <label className={labelClass}>PNR / Localizador (Opcional)</label>
+                <input className={inputClass} placeholder="ABC123" value={form.pnr || ""} onChange={e => setForm({ ...form, pnr: e.target.value })} />
             </div>
 
             {/* Buscador de tarifas - DESPUÉS del proveedor */}
@@ -215,7 +233,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
 
     return (
         <div className="space-y-4">
-            {/* Proveedor PRIMERO */}
+            {/* Proveedor y Estado */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -224,9 +242,21 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
                         {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>Código Confirmación</label>
-                    <input className={inputClass} placeholder="CONF123" value={form.confirmationNumber || ""} onChange={e => setForm({ ...form, confirmationNumber: e.target.value })} />
+                <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors w-full border border-transparent hover:border-slate-200">
+                        <input
+                            type="checkbox"
+                            checked={form.status === 'Confirmado'}
+                            onChange={e => setForm({ ...form, status: e.target.checked ? 'Confirmado' : 'Pendiente' })}
+                            className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                        />
+                        <div className="flex flex-col">
+                            <span className={`font-medium ${form.status === 'Confirmado' ? 'text-green-600' : 'text-amber-600'}`}>
+                                {form.status === 'Confirmado' ? 'Confirmado' : 'Pendiente / Solicitado'}
+                            </span>
+                            <span className="text-xs text-slate-500">Estado de la reserva</span>
+                        </div>
+                    </label>
                 </div>
             </div>
 
@@ -272,6 +302,12 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
                     <input type="number" min="1" className={inputClass} value={form.rooms || 1} onChange={e => setForm({ ...form, rooms: parseInt(e.target.value) })} />
                 </div>
             </div>
+
+            {/* Código Confirmación (Opcional) */}
+            <div>
+                <label className={labelClass}>Código Confirmación (Opcional)</label>
+                <input className={inputClass} placeholder="Ej: CONF-998877" value={form.confirmationNumber || ""} onChange={e => setForm({ ...form, confirmationNumber: e.target.value })} />
+            </div>
         </div>
     );
 }
@@ -280,7 +316,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
 function TransferForm({ form, setForm, suppliers, onRateSelect }) {
     return (
         <div className="space-y-4">
-            {/* Proveedor PRIMERO */}
+            {/* Proveedor y Estado */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -289,9 +325,21 @@ function TransferForm({ form, setForm, suppliers, onRateSelect }) {
                         {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>Código Confirmación</label>
-                    <input className={inputClass} placeholder="TRF123" value={form.confirmationNumber || ""} onChange={e => setForm({ ...form, confirmationNumber: e.target.value })} />
+                <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors w-full border border-transparent hover:border-slate-200">
+                        <input
+                            type="checkbox"
+                            checked={form.status === 'Confirmado'}
+                            onChange={e => setForm({ ...form, status: e.target.checked ? 'Confirmado' : 'Pendiente' })}
+                            className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                        />
+                        <div className="flex flex-col">
+                            <span className={`font-medium ${form.status === 'Confirmado' ? 'text-green-600' : 'text-amber-600'}`}>
+                                {form.status === 'Confirmado' ? 'Confirmado' : 'Pendiente'}
+                            </span>
+                            <span className="text-xs text-slate-500">Estado del traslado</span>
+                        </div>
+                    </label>
                 </div>
             </div>
 
@@ -354,6 +402,12 @@ function TransferForm({ form, setForm, suppliers, onRateSelect }) {
                     </div>
                 </div>
             )}
+
+            {/* Código Confirmación (Opcional) */}
+            <div>
+                <label className={labelClass}>Código Confirmación (Opcional)</label>
+                <input className={inputClass} placeholder="ID de reserva de traslado" value={form.confirmationNumber || ""} onChange={e => setForm({ ...form, confirmationNumber: e.target.value })} />
+            </div>
         </div>
     );
 }
@@ -362,7 +416,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect }) {
 function PackageForm({ form, setForm, suppliers, onRateSelect }) {
     return (
         <div className="space-y-4">
-            {/* Proveedor PRIMERO */}
+            {/* Proveedor y Estado */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -371,9 +425,21 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
                         {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>Código Confirmación</label>
-                    <input className={inputClass} placeholder="PKG123" value={form.confirmationNumber || ""} onChange={e => setForm({ ...form, confirmationNumber: e.target.value })} />
+                <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors w-full border border-transparent hover:border-slate-200">
+                        <input
+                            type="checkbox"
+                            checked={form.status === 'Confirmado'}
+                            onChange={e => setForm({ ...form, status: e.target.checked ? 'Confirmado' : 'Pendiente' })}
+                            className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                        />
+                        <div className="flex flex-col">
+                            <span className={`font-medium ${form.status === 'Confirmado' ? 'text-green-600' : 'text-amber-600'}`}>
+                                {form.status === 'Confirmado' ? 'Confirmado' : 'Pendiente'}
+                            </span>
+                            <span className="text-xs text-slate-500">Estado del paquete</span>
+                        </div>
+                    </label>
                 </div>
             </div>
 
@@ -429,6 +495,12 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Niños</label>
                     <input type="number" min="0" className={inputClass} value={form.children || 0} onChange={e => setForm({ ...form, children: parseInt(e.target.value) })} />
                 </div>
+            </div>
+
+            {/* Código Confirmación (Opcional) */}
+            <div>
+                <label className={labelClass}>Código Confirmación (Opcional)</label>
+                <input className={inputClass} placeholder="Código del operador" value={form.confirmationNumber || ""} onChange={e => setForm({ ...form, confirmationNumber: e.target.value })} />
             </div>
         </div>
     );
@@ -499,7 +571,7 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
         if (serviceToEdit) return; // Prevent type change when editing
         setServiceType(newType);
         setSelectedRate(null);
-        setForm({ supplierId: form.supplierId, netCost: 0, salePrice: 0, rooms: 1 }); // Mantener proveedor
+        setForm({ supplierId: form.supplierId, netCost: 0, salePrice: 0, rooms: 1, status: newType === 'Aereo' ? 'HL' : 'Pendiente' }); // Mantener proveedor
     };
 
     // Obtener comisión aplicable
@@ -540,7 +612,7 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
                 setForm(formattedForm);
             } else {
                 setServiceType(initialServiceType || "Aereo");
-                setForm({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1 });
+                setForm({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1, status: initialServiceType === 'Aereo' ? 'HL' : 'Pendiente' });
             }
             setSelectedRate(null);
         }
