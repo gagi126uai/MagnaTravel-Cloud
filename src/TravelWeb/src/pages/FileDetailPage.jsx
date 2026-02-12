@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import {
-    ArrowLeft, Plus, DollarSign, Calendar, Users,
+    ArrowLeft, Plus, Calendar, Users,
     FileText, Edit2, Trash2, CheckCircle, AlertTriangle, X,
     Plane, Hotel, Car, Package, CreditCard, Archive
 } from "lucide-react";
 import Swal from "sweetalert2";
 import ServiceFormModal from "../components/ServiceFormModal";
 import PassengerFormModal from "../components/PassengerFormModal";
-import InvoicesTab from "../components/InvoicesTab";
+
 import { showError, showSuccess } from "../alerts";
 
 export default function FileDetailPage() {
@@ -24,12 +24,7 @@ export default function FileDetailPage() {
     // States for CRUD forms (Passengers, Payments)
     const [showPassengerForm, setShowPassengerForm] = useState(false);
     const [editingPassenger, setEditingPassenger] = useState(null);
-    const [showPaymentForm, setShowPaymentForm] = useState(false);
 
-    // Payment Form State
-    const [paymentForm, setPaymentForm] = useState({
-        amount: "", method: "Transferencia", notes: ""
-    });
 
     const [suppliers, setSuppliers] = useState([]);
 
@@ -107,6 +102,17 @@ export default function FileDetailPage() {
     };
 
     const handleStatusChange = async (newStatus) => {
+        if (file.status === 'Reservado' && newStatus === 'Presupuesto') {
+            if (file.payments?.length > 0) {
+                showError("No se puede volver a Presupuesto: hay pagos registrados. Elimínalos desde Facturación y Caja.");
+                return;
+            }
+            if (file.invoices?.length > 0) {
+                showError("No se puede volver a Presupuesto: hay facturas emitidas. Deben ser anuladas primero.");
+                return;
+            }
+        }
+
         try {
             await api.put(`/travelfiles/${id}/status`, { status: newStatus });
             fetchFile();
@@ -172,43 +178,7 @@ export default function FileDetailPage() {
         }
     };
 
-    // --- ACTIONS: PAYMENTS ---
-    const handlePaymentSubmit = async (e) => {
-        e.preventDefault();
-        try {
-            await api.post(`/travelfiles/${id}/payments`, {
-                ...paymentForm,
-                amount: parseFloat(paymentForm.amount)
-            });
-            setShowPaymentForm(false);
-            setPaymentForm({ amount: "", method: "Transferencia", notes: "" });
-            fetchFile();
-            showSuccess("Pago registrado correctamente");
-        } catch (error) {
-            showError(error.response?.data || "Error al registrar pago");
-        }
-    };
 
-    const handleDeletePayment = async (paymentId, amount) => {
-        const result = await Swal.fire({
-            title: '¿Eliminar Pago?',
-            text: `Se anulará el pago de $${amount} y aumentará el saldo pendiente.`,
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#d33',
-            confirmButtonText: 'Sí, eliminar'
-        });
-
-        if (result.isConfirmed) {
-            try {
-                await api.delete(`/travelfiles/${id}/payments/${paymentId}`);
-                fetchFile();
-                showSuccess("Pago eliminado");
-            } catch (error) {
-                showError("Error al eliminar pago");
-            }
-        }
-    };
 
     // --- HELPERS ---
     const confirmAction = async (title) => {
@@ -416,20 +386,8 @@ export default function FileDetailPage() {
                         >
                             <Users className="w-4 h-4" /> Pasajeros ({file.passengers?.length || 0})
                         </button>
-                        <button
-                            onClick={() => setActiveTab('payments')}
-                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
-                ${activeTab === 'payments' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
-                        >
-                            <DollarSign className="w-4 h-4" /> Pagos
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('invoices')}
-                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
-                ${activeTab === 'invoices' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
-                        >
-                            <FileText className="w-4 h-4" /> Facturación
-                        </button>
+
+
                     </nav>
                 </div>
 
@@ -548,72 +506,8 @@ export default function FileDetailPage() {
                         </div>
                     )}
 
-                    {/* --- TAB: PAYMENTS --- */}
-                    {activeTab === 'payments' && (
-                        <div>
-                            <div className="flex justify-between items-center mb-4">
-                                <h3 className="text-lg font-medium text-gray-900 dark:text-white">Registro de Pagos</h3>
-                                <div className="flex gap-3">
-                                    <button
-                                        onClick={() => navigate("/payments")}
-                                        className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
-                                    >
-                                        Ir a Facturación y Caja
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="p-4 mb-4 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 rounded-lg text-sm border border-blue-100 dark:border-blue-800">
-                                ℹ️ Los pagos y cobranzas ahora se gestionan desde la <strong>Caja Administrativa</strong>.
-                            </div>
-
-                            <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
-                                <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-                                    <thead className="bg-gray-50 dark:bg-slate-900">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Fecha</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Método</th>
-                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Monto</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
-                                        {file.payments?.map(p => (
-                                            <tr key={p.id}>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                                                    {new Date(p.paidAt).toLocaleDateString()}
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                                                    {p.method}
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600 dark:text-emerald-400">
-                                                    ${p.amount.toLocaleString()}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )}
-                    {/* --- TAB: INVOICES --- */}
-                    {activeTab === 'invoices' && (
-                        <div>
-                            <div className="flex justify-end mb-2">
-                                <button
-                                    onClick={() => navigate("/payments")}
-                                    className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
-                                >
-                                    Ir a Facturación y Caja
-                                </button>
-                            </div>
-                            <InvoicesTab
-                                fileId={parseInt(id)}
-                                balance={file.balance}
-                                onInvoiceCreated={fetchFile}
-                                readOnly={true}
-                            />
-                        </div>
-                    )}
+                    {/* --- TAB: PAYMENTS REMOVED --- */}
+                    {/* --- TAB: INVOICES REMOVED --- */}
                 </div>
             </div>
 

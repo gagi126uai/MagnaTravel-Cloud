@@ -110,6 +110,7 @@ public class TravelFilesController : ControllerBase
                 .Include(f => f.Payer)
                 .Include(f => f.Passengers)
                 .Include(f => f.Payments)
+                .Include(f => f.Invoices) // Included for status checks
                 .Include(f => f.Reservations)
                     .ThenInclude(r => r.Supplier)
                 .Include(f => f.HotelBookings)
@@ -508,6 +509,18 @@ public class TravelFilesController : ControllerBase
 
             var validStatuses = new[] { FileStatus.Budget, FileStatus.Reserved, FileStatus.Operational, FileStatus.Closed, FileStatus.Cancelled };
             if (!validStatuses.Contains(request.Status)) return BadRequest("Estado no válido");
+
+            // Validation: Cannot go back to Budget if Payments or Invoices exist
+            if (file.Status == FileStatus.Reserved && request.Status == FileStatus.Budget)
+            {
+                 // Check Payments
+                 var hasPayments = await _context.Payments.AnyAsync(p => p.TravelFileId == id);
+                 if (hasPayments) return BadRequest("No se puede volver a Presupuesto porque hay pagos registrados. Elimínalos primero.");
+
+                 // Check Invoices
+                 var hasInvoices = await _context.Invoices.AnyAsync(i => i.TravelFileId == id);
+                 if (hasInvoices) return BadRequest("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Crédito).");
+            }
 
             file.Status = request.Status;
             if (request.Status == FileStatus.Closed) file.ClosedAt = DateTime.UtcNow;
