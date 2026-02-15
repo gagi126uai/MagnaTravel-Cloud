@@ -186,164 +186,293 @@ export default function PaymentsPage() {
                 <h3 className="font-medium text-gray-900 dark:text-white">Expedientes con Saldo Pendiente</h3>
                 <div className="text-sm text-gray-500">Total: <span className="font-bold text-gray-900 dark:text-white">${receivables.reduce((acc, curr) => acc + curr.balance, 0).toLocaleString()}</span></div>
               </div>
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-                <thead className="bg-gray-50 dark:bg-slate-900">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">File</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Venta</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Saldo</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
-                  {receivables.map((file) => (
-                    <tr key={file.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
-                        {file.fileNumber}
-                        <div className="text-xs text-gray-500 font-normal">{file.name}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                        {file.payer?.fullName || "-"}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+
+              {/* Desktop Table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                  <thead className="bg-gray-50 dark:bg-slate-900">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">File</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Venta</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Saldo</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                    {receivables.map((file) => (
+                      <tr key={file.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                          {file.fileNumber}
+                          <div className="text-xs text-gray-500 font-normal">{file.name}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                          {file.payer?.fullName || "-"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium 
+                                                ${file.status === 'Reservado' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                              file.status === 'Operativo' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
+                                'bg-gray-100 text-gray-800'}`}>
+                            {file.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500 dark:text-slate-400">
+                          ${file.totalSale?.toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-red-600 dark:text-rose-400">
+                          ${file.balance?.toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium flex justify-end gap-2">
+                          <button
+                            onClick={() => handleOpenPayment(file)}
+                            className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 font-medium px-2 py-1 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
+                          >
+                            Cobrar
+                          </button>
+                          <button
+                            onClick={() => handleCreateInvoice(file)}
+                            className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium px-2 py-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded flex items-center gap-1"
+                            disabled={creatingInvoice}
+                          >
+                            {creatingInvoice ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                            Facturar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {receivables.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                          <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3 opacity-50" />
+                          <p>¡Todo al día! No hay cuentas por cobrar pendientes.</p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Cards - Receivables */}
+              <div className="md:hidden divide-y divide-gray-200 dark:divide-slate-700">
+                {receivables.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">
+                    <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3 opacity-50" />
+                    <p>¡Todo al día! No hay cuentas por cobrar pendientes.</p>
+                  </div>
+                ) : (
+                  receivables.map((file) => (
+                    <div key={file.id} className="p-4 space-y-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-bold text-lg text-primary">{file.fileNumber}</div>
+                          <div className="text-sm font-medium">{file.name}</div>
+                        </div>
                         <span className={`px-2 py-1 rounded-full text-xs font-medium 
-                                            ${file.status === 'Reservado' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                                    ${file.status === 'Reservado' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
                             file.status === 'Operativo' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
                               'bg-gray-100 text-gray-800'}`}>
                           {file.status}
                         </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500 dark:text-slate-400">
-                        ${file.totalSale?.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-red-600 dark:text-rose-400">
-                        ${file.balance?.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium flex justify-end gap-2">
-                        <button
-                          onClick={() => handleOpenPayment(file)}
-                          className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 font-medium px-2 py-1 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
-                        >
-                          Cobrar
-                        </button>
-                        <button
-                          onClick={() => handleCreateInvoice(file)}
-                          className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium px-2 py-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded flex items-center gap-1"
-                          disabled={creatingInvoice}
-                        >
-                          {creatingInvoice ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                          Facturar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {receivables.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                        <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3 opacity-50" />
-                        <p>¡Todo al día! No hay cuentas por cobrar pendientes.</p>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                      </div>
+
+                      <div className="text-sm text-gray-500">
+                        <div>Cliente: <span className="text-gray-900 dark:text-white font-medium">{file.payer?.fullName || "-"}</span></div>
+                      </div>
+
+                      <div className="flex justify-between items-end pt-2 border-t border-dashed border-gray-200 dark:border-slate-700">
+                        <div>
+                          <div className="text-xs text-gray-500">Saldo Pendiente</div>
+                          <div className="text-xl font-bold text-red-600 dark:text-rose-400">${file.balance?.toLocaleString()}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleCreateInvoice(file)}
+                            className="p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg dark:bg-indigo-900/20 dark:text-indigo-400"
+                            disabled={creatingInvoice}
+                            title="Facturar"
+                          >
+                            {creatingInvoice ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileText className="w-5 h-5" />}
+                          </button>
+                          <button
+                            onClick={() => handleOpenPayment(file)}
+                            className="px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 shadow-sm shadow-green-200 dark:shadow-none"
+                          >
+                            Cobrar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
 
           {/* --- TAB: HISTORY --- */}
           {activeTab === 'history' && (
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-                <thead className="bg-gray-50 dark:bg-slate-900">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">File / Concepto</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
-                  {payments.map((payment) => (
-                    <tr key={payment.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                        {new Date(payment.paidAt).toLocaleDateString()}
-                        <div className="text-xs text-gray-400">{new Date(payment.paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          {payment.travelFile ? `File ${payment.travelFile.fileNumber}` : "-"}
+              {/* Desktop Table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                  <thead className="bg-gray-50 dark:bg-slate-900">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">File / Concepto</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                    {payments.map((payment) => (
+                      <tr key={payment.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                          {new Date(payment.paidAt).toLocaleDateString()}
+                          <div className="text-xs text-gray-400">{new Date(payment.paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-medium text-gray-900 dark:text-white">
+                            {payment.travelFile ? `File ${payment.travelFile.fileNumber}` : "-"}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {payment.notes || "Sin notas"}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                          {payment.method}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600 dark:text-emerald-400">
+                          ${payment.amount?.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                    {payments.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-6 py-12 text-center text-gray-500">No hay pagos registrados.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Cards - History */}
+              <div className="md:hidden divide-y divide-gray-200 dark:divide-slate-700">
+                {payments.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">No hay pagos registrados.</div>
+                ) : (
+                  payments.map((payment) => (
+                    <div key={payment.id} className="p-4 flex justify-between items-center bg-white dark:bg-slate-800">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-bold text-gray-900 dark:text-white">
+                            {payment.travelFile ? `File ${payment.travelFile.fileNumber}` : "-"}
+                          </span>
+                          <span className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-slate-700 rounded-full text-gray-600 dark:text-slate-300">
+                            {payment.method}
+                          </span>
                         </div>
                         <div className="text-xs text-gray-500">
-                          {payment.notes || "Sin notas"}
+                          {new Date(payment.paidAt).toLocaleDateString()} • {new Date(payment.paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                        {payment.method}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600 dark:text-emerald-400">
-                        ${payment.amount?.toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                  {payments.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="px-6 py-12 text-center text-gray-500">No hay pagos registrados.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                        {payment.notes && <div className="text-xs text-gray-400 mt-1 italic">{payment.notes}</div>}
+                      </div>
+                      <div className="text-right font-bold text-green-600 dark:text-emerald-400">
+                        +${payment.amount?.toLocaleString()}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
 
           {/* --- TAB: INVOICES --- */}
           {activeTab === 'invoices' && (
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-                <thead className="bg-gray-50 dark:bg-slate-900">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Comprobante</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Importe</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
-                  {invoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                        {new Date(inv.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
-                        {inv.tipoComprobante === 1 ? "Factura A" : inv.tipoComprobante === 6 ? "Factura B" : "Comprobante"}
-                        <span className="ml-2 text-gray-500 font-mono">#{inv.numeroComprobante}</span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                        {inv.travelFile?.payer?.fullName || "Consumidor Final"}
-                        <div className="text-xs text-gray-400">File {inv.travelFile?.fileNumber}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900 dark:text-white">
-                        ${inv.importeTotal?.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                        <button
-                          onClick={() => handleDownloadPdf(inv)}
-                          className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center justify-end gap-1 w-full"
-                        >
-                          <Download className="w-4 h-4" /> PDF
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {invoices.length === 0 && (
+              {/* Desktop Table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                  <thead className="bg-gray-50 dark:bg-slate-900">
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">No hay facturas emitidas.</td>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Comprobante</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Importe</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                    {invoices.map((inv) => (
+                      <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                          {new Date(inv.createdAt).toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                          {inv.tipoComprobante === 1 ? "Factura A" : inv.tipoComprobante === 6 ? "Factura B" : "Comprobante"}
+                          <span className="ml-2 text-gray-500 font-mono">#{inv.numeroComprobante}</span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                          {inv.travelFile?.payer?.fullName || "Consumidor Final"}
+                          <div className="text-xs text-gray-400">File {inv.travelFile?.fileNumber}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900 dark:text-white">
+                          ${inv.importeTotal?.toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                          <button
+                            onClick={() => handleDownloadPdf(inv)}
+                            className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center justify-end gap-1 w-full"
+                          >
+                            <Download className="w-4 h-4" /> PDF
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {invoices.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-gray-500">No hay facturas emitidas.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Cards - Invoices */}
+              <div className="md:hidden divide-y divide-gray-200 dark:divide-slate-700">
+                {invoices.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">No hay facturas emitidas.</div>
+                ) : (
+                  invoices.map((inv) => (
+                    <div key={inv.id} className="p-4 space-y-2">
+                      <div className="flex justify-between items-start">
+                        <div className="font-medium text-gray-900 dark:text-white">
+                          {inv.tipoComprobante === 1 ? "Factura A" : inv.tipoComprobante === 6 ? "Factura B" : "Comprobante"}
+                          <span className="ml-1 text-gray-500 font-mono">#{inv.numeroComprobante}</span>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {new Date(inv.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <div className="text-sm flex justify-between items-center">
+                        <div>
+                          <div className="font-medium text-gray-700 dark:text-slate-300">{inv.travelFile?.payer?.fullName || "Consumidor Final"}</div>
+                          <div className="text-xs text-gray-500">File {inv.travelFile?.fileNumber}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-gray-900 dark:text-white">${inv.importeTotal?.toLocaleString()}</div>
+                          <button
+                            onClick={() => handleDownloadPdf(inv)}
+                            className="text-xs text-indigo-600 font-medium flex items-center gap-1 justify-end mt-1"
+                          >
+                            <Download className="w-3 h-3" /> Descargar PDF
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </>

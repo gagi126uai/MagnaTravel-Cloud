@@ -231,8 +231,8 @@ export default function CustomerAccountPage() {
                 </div>
             </div>
 
-            {/* Files Table */}
-            <div className="rounded-xl border overflow-hidden">
+            {/* Files Table / Cards */}
+            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
                 <div className="bg-muted/50 px-6 py-4 border-b">
                     <h3 className="font-semibold flex items-center gap-2">
                         <FileText className="h-5 w-5 text-primary" />
@@ -240,54 +240,91 @@ export default function CustomerAccountPage() {
                     </h3>
                 </div>
                 {files.length > 0 ? (
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead className="bg-muted/30 text-sm">
-                                <tr>
-                                    <th className="text-left px-6 py-3 font-medium">Expediente</th>
-                                    <th className="text-left px-6 py-3 font-medium">Nombre</th>
-                                    <th className="text-center px-6 py-3 font-medium">Estado</th>
-                                    <th className="text-right px-6 py-3 font-medium">Venta</th>
-                                    <th className="text-right px-6 py-3 font-medium">Pagado</th>
-                                    <th className="text-right px-6 py-3 font-medium">Saldo</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y">
-                                {files.map((file) => (
-                                    <tr key={file.id} className="hover:bg-muted/30 transition-colors">
-                                        <td className="px-6 py-4">
-                                            <Link to={`/files/${file.id}`} className="text-primary hover:underline font-medium">
-                                                {file.fileNumber}
-                                            </Link>
-                                        </td>
-                                        <td className="px-6 py-4">{file.name}</td>
-                                        <td className="px-6 py-4 text-center">
-                                            <StatusBadge status={file.status} />
-                                        </td>
-                                        <td className="px-6 py-4 text-right font-medium">
-                                            {formatCurrency(file.totalSale)}
-                                        </td>
-                                        <td className="px-6 py-4 text-right text-green-600 dark:text-green-400">
-                                            {formatCurrency(file.paid)}
-                                        </td>
-                                        <td className={`px-6 py-4 text-right font-semibold ${file.balance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
-                                            {formatCurrency(file.balance)}
+                    <>
+                        {/* Desktop Table */}
+                        <div className="hidden md:block overflow-x-auto">
+                            <table className="w-full">
+                                <thead className="bg-muted/30 text-sm">
+                                    <tr>
+                                        <th className="text-left px-6 py-3 font-medium">Expediente</th>
+                                        <th className="text-left px-6 py-3 font-medium">Nombre</th>
+                                        <th className="text-center px-6 py-3 font-medium">Estado</th>
+                                        <th className="text-right px-6 py-3 font-medium">Venta</th>
+                                        <th className="text-right px-6 py-3 font-medium">Pagado</th>
+                                        <th className="text-right px-6 py-3 font-medium">Saldo</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {files.map((file) => (
+                                        <tr key={file.id} className="hover:bg-muted/30 transition-colors">
+                                            <td className="px-6 py-4">
+                                                <Link to={`/files/${file.id}`} className="text-primary hover:underline font-medium">
+                                                    {file.fileNumber}
+                                                </Link>
+                                            </td>
+                                            <td className="px-6 py-4">{file.name}</td>
+                                            <td className="px-6 py-4 text-center">
+                                                <StatusBadge status={file.status} />
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-medium">
+                                                {formatCurrency(file.totalSale)}
+                                            </td>
+                                            <td className="px-6 py-4 text-right text-green-600 dark:text-green-400">
+                                                {formatCurrency(file.paid)}
+                                            </td>
+                                            <td className={`px-6 py-4 text-right font-semibold ${file.balance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
+                                                {formatCurrency(file.balance)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot className="bg-muted/50 font-semibold">
+                                    <tr>
+                                        <td colSpan="3" className="px-6 py-3 text-right">Totales:</td>
+                                        <td className="px-6 py-3 text-right">{formatCurrency(summary.totalSales)}</td>
+                                        <td className="px-6 py-3 text-right text-green-600 dark:text-green-400">{formatCurrency(summary.totalPaid)}</td>
+                                        <td className={`px-6 py-3 text-right ${summary.totalBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
+                                            {formatCurrency(summary.totalBalance)}
                                         </td>
                                     </tr>
-                                ))}
-                            </tbody>
-                            <tfoot className="bg-muted/50 font-semibold">
-                                <tr>
-                                    <td colSpan="3" className="px-6 py-3 text-right">Totales:</td>
-                                    <td className="px-6 py-3 text-right">{formatCurrency(summary.totalSales)}</td>
-                                    <td className="px-6 py-3 text-right text-green-600 dark:text-green-400">{formatCurrency(summary.totalPaid)}</td>
-                                    <td className={`px-6 py-3 text-right ${summary.totalBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
-                                        {formatCurrency(summary.totalBalance)}
-                                    </td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
+                                </tfoot>
+                            </table>
+                        </div>
+
+                        {/* Mobile Cards */}
+                        <div className="md:hidden divide-y">
+                            {files.map((file) => (
+                                <div key={file.id} className="p-4 space-y-3">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <Link to={`/files/${file.id}`} className="text-primary font-bold hover:underline">
+                                                {file.fileNumber}
+                                            </Link>
+                                            <div className="text-sm font-medium text-gray-900 dark:text-white mt-0.5">{file.name}</div>
+                                        </div>
+                                        <StatusBadge status={file.status} />
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-2 text-sm">
+                                        <div>
+                                            <div className="text-xs text-muted-foreground">Venta</div>
+                                            <div className="font-medium">{formatCurrency(file.totalSale)}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-xs text-muted-foreground">Pagado</div>
+                                            <div className="font-medium text-green-600 dark:text-green-400">{formatCurrency(file.paid)}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-xs text-muted-foreground">Saldo</div>
+                                            <div className={`font-bold ${file.balance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
+                                                {formatCurrency(file.balance)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </>
                 ) : (
                     <div className="px-6 py-12 text-center text-muted-foreground">
                         Este cliente no tiene expedientes registrados.
@@ -306,13 +343,13 @@ export default function CustomerAccountPage() {
                 {payments.length > 0 ? (
                     <div className="divide-y max-h-96 overflow-y-auto">
                         {payments.map((payment) => (
-                            <div key={payment.id} className="flex items-center justify-between px-6 py-4 hover:bg-muted/30 transition-colors">
-                                <div className="flex items-center gap-4">
-                                    <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
+                            <div key={payment.id} className="flex flex-col sm:flex-row sm:items-center justify-between px-4 sm:px-6 py-4 hover:bg-muted/30 transition-colors gap-3 sm:gap-0">
+                                <div className="flex items-start sm:items-center gap-3">
+                                    <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30 mt-1 sm:mt-0">
                                         <CreditCard className="h-4 w-4 text-green-600 dark:text-green-400" />
                                     </div>
                                     <div>
-                                        <div className="font-medium text-green-600 dark:text-green-400">
+                                        <div className="font-medium text-green-600 dark:text-green-400 text-lg sm:text-base">
                                             +{formatCurrency(payment.amount)}
                                         </div>
                                         <div className="text-sm text-muted-foreground">
@@ -320,17 +357,19 @@ export default function CustomerAccountPage() {
                                         </div>
                                     </div>
                                 </div>
-                                <div className="text-right">
-                                    <div className="flex items-center gap-1 text-sm text-muted-foreground justify-end">
-                                        <Calendar className="h-3 w-3" />
-                                        {formatDate(payment.paymentDate)}
-                                    </div>
-                                    {payment.notes && (
-                                        <div className="text-xs text-muted-foreground truncate max-w-48 mb-1">
-                                            {payment.notes}
+                                <div className="text-right flex flex-row sm:flex-col justify-between items-end sm:items-end w-full sm:w-auto pl-10 sm:pl-0">
+                                    <div className="text-left sm:text-right">
+                                        <div className="flex items-center gap-1 text-sm text-muted-foreground sm:justify-end">
+                                            <Calendar className="h-3 w-3" />
+                                            {formatDate(payment.paymentDate)}
                                         </div>
-                                    )}
-                                    <div className="flex items-center gap-1 justify-end">
+                                        {payment.notes && (
+                                            <div className="text-xs text-muted-foreground truncate max-w-48 mb-1">
+                                                {payment.notes}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-1 justify-end mt-2 sm:mt-0">
                                         <button onClick={() => handleOpenModal(payment)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Editar">
                                             <Pencil className="h-3.5 w-3.5" />
                                         </button>

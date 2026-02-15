@@ -528,169 +528,295 @@ export default function RatesPage() {
                 )}
             </div>
 
-            {/* Table */}
+            {/* Table / Cards Container */}
             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden dark:border-slate-700 dark:bg-slate-800">
-                <table className="w-full text-sm">
-                    <thead className="bg-slate-50 dark:bg-slate-700">
-                        <tr>
-                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Producto / Hotel</th>
-                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Tipo</th>
-                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Proveedor</th>
-                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Detalles</th>
-                            <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Vigencia</th>
-                            <th className="px-4 py-3 text-center font-medium text-slate-600 dark:text-slate-300">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                        {loading ? (
-                            <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">Cargando...</td></tr>
-                        ) : (filteredRates.length === 0) ? (
-                            <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
-                                {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas. Cree una nueva para comenzar."}
-                            </td></tr>
-                        ) : (
-                            <>
-                                {/* 1. Render Hotel Groups */}
-                                {(!filterType || filterType === "Hotel") && hotelGroups.map(group => {
-                                    const isExpanded = expandedHotels[group.key];
-                                    const minPrice = Math.min(...group.items.map(i => i.salePrice));
-                                    const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
 
-                                    return (
-                                        <div key={group.key} className="contents">
-                                            {/* Parent Row */}
-                                            <tr
-                                                onClick={() => toggleHotel(group.key)}
-                                                className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 ${hasExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : 'bg-slate-50/50 dark:bg-slate-800/50'}`}
-                                            >
-                                                <td className="px-4 py-3">
-                                                    <div className="flex items-center gap-2">
-                                                        {isExpanded ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
-                                                        <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                                                            <Hotel className="h-4 w-4 text-amber-500" />
-                                                            {group.name}
+                {/* Desktop Table View */}
+                <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead className="bg-slate-50 dark:bg-slate-700">
+                            <tr>
+                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Producto / Hotel</th>
+                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Tipo</th>
+                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Proveedor</th>
+                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Detalles</th>
+                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Vigencia</th>
+                                <th className="px-4 py-3 text-center font-medium text-slate-600 dark:text-slate-300">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                            {loading ? (
+                                <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">Cargando...</td></tr>
+                            ) : (filteredRates.length === 0) ? (
+                                <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                                    {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas. Cree una nueva para comenzar."}
+                                </td></tr>
+                            ) : (
+                                <>
+                                    {/* 1. Render Hotel Groups */}
+                                    {(!filterType || filterType === "Hotel") && hotelGroups.map(group => {
+                                        const isExpanded = expandedHotels[group.key];
+                                        const minPrice = Math.min(...group.items.map(i => i.salePrice));
+                                        const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
+
+                                        return (
+                                            <div key={group.key} className="contents">
+                                                {/* Parent Row */}
+                                                <tr
+                                                    onClick={() => toggleHotel(group.key)}
+                                                    className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 ${hasExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : 'bg-slate-50/50 dark:bg-slate-800/50'}`}
+                                                >
+                                                    <td className="px-4 py-3">
+                                                        <div className="flex items-center gap-2">
+                                                            {isExpanded ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+                                                            <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                                                                <Hotel className="h-4 w-4 text-amber-500" />
+                                                                {group.name}
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                    <div className="text-xs text-slate-500 pl-6">{group.city} {group.starRating ? `• ${group.starRating} Estrellas` : ""}</div>
+                                                        <div className="text-xs text-slate-500 pl-6">{group.city} {group.starRating ? `• ${group.starRating} Estrellas` : ""}</div>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                                            Hotel • {group.items.length} Habitaciones
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{group.supplierName}</td>
+                                                    <td className="px-4 py-3 text-slate-500 text-xs">
+                                                        Desde <span className="font-semibold text-slate-700 dark:text-slate-300">${minPrice}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        {hasExpired && <span className="text-xs font-bold text-red-600">⚠ Contiene tarifas vencidas</span>}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center text-xs text-slate-400">
+                                                        Click para ver detalles
+                                                    </td>
+                                                </tr>
+
+                                                {/* Child Rows (Expanded) */}
+                                                {isExpanded && group.items.map(rate => {
+                                                    const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                                                    return (
+                                                        <tr key={rate.id} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-indigo-400'} animate-in fade-in slide-in-from-top-1 duration-200`}>
+                                                            <td className="px-4 py-2 pl-8">
+                                                                <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                                                    <BedDouble className="h-3 w-3 text-slate-400" />
+                                                                    {rate.roomType} <span className="text-slate-400 ml-1 font-normal">{rate.roomCategory}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-2"></td>
+                                                            <td className="px-4 py-2"></td>
+                                                            <td className="px-4 py-2">
+                                                                <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded inline-block">
+                                                                    {rate.mealPlan} • {rate.hotelPriceType === 'por_persona' ? 'Por Persona' : 'Base Doble'}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-2 text-xs">
+                                                                <div className={`flex flex-col ${isExpired ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
+                                                                    <span>{new Date(rate.validFrom).toLocaleDateString()} - {new Date(rate.validTo).toLocaleDateString()}</span>
+                                                                    {isExpired && <span>Vencida</span>}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-2 text-center">
+                                                                <div className="flex justify-center gap-1">
+                                                                    <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg"><Pencil className="h-4 w-4" /></button>
+                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(rate.id); }} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg"><Trash2 className="h-4 w-4" /></button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })}
+
+                                    {/* 2. Render Other Rates (Flat) */}
+                                    {(!filterType || filterType !== "Hotel") && otherRates.map(rate => {
+                                        const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                                        return (
+                                            <tr key={rate.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
+                                                <td className="px-4 py-3">
+                                                    <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
+                                                    <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
                                                 </td>
                                                 <td className="px-4 py-3">
-                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                                                        Hotel • {group.items.length} Habitaciones
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
+                                                        rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                                                            rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
+                                                                "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
+                                                        }`}>
+                                                        {rate.serviceType}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{group.supplierName}</td>
-                                                <td className="px-4 py-3 text-slate-500 text-xs">
-                                                    Desde <span className="font-semibold text-slate-700 dark:text-slate-300">${minPrice}</span>
+                                                <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
+                                                <td className="px-4 py-3">
+                                                    <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
+                                                        {rate.serviceType === "Aereo" && (
+                                                            <div className="flex flex-col">
+                                                                <span>{rate.airline} ({rate.airlineCode})</span>
+                                                                <span className="text-xs text-slate-500">{rate.cabinClass}</span>
+                                                            </div>
+                                                        )}
+                                                        {rate.serviceType === "Traslado" && (
+                                                            <div className="flex flex-col">
+                                                                <span>{rate.vehicleType}</span>
+                                                                <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
+                                                            </div>
+                                                        )}
+                                                        {rate.serviceType === "Paquete" && (
+                                                            <div className="flex flex-col">
+                                                                <span>{rate.destination}</span>
+                                                                <span className="text-xs text-slate-500">{rate.durationDays} días</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </td>
                                                 <td className="px-4 py-3">
-                                                    {hasExpired && <span className="text-xs font-bold text-red-600">⚠ Contiene tarifas vencidas</span>}
+                                                    <div className="flex flex-col text-xs">
+                                                        <span className="text-slate-700 dark:text-slate-300">
+                                                            Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
+                                                        </span>
+                                                        <span className="text-slate-500 dark:text-slate-400">
+                                                            Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
+                                                        </span>
+                                                    </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-center text-xs text-slate-400">
-                                                    Click para ver detalles
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex justify-center gap-2">
+                                                        <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
+                                                        <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
+                                                    </div>
                                                 </td>
                                             </tr>
+                                        );
+                                    })}
+                                </>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
 
-                                            {/* Child Rows (Expanded) */}
-                                            {isExpanded && group.items.map(rate => {
-                                                const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
-                                                return (
-                                                    <tr key={rate.id} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-indigo-400'} animate-in fade-in slide-in-from-top-1 duration-200`}>
-                                                        <td className="px-4 py-2 pl-8">
-                                                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
-                                                                <BedDouble className="h-3 w-3 text-slate-400" />
-                                                                {rate.roomType} <span className="text-slate-400 ml-1 font-normal">{rate.roomCategory}</span>
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-4 py-2"></td>
-                                                        <td className="px-4 py-2"></td>
-                                                        <td className="px-4 py-2">
-                                                            <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded inline-block">
-                                                                {rate.mealPlan} • {rate.hotelPriceType === 'por_persona' ? 'Por Persona' : 'Base Doble'}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-4 py-2 text-xs">
-                                                            <div className={`flex flex-col ${isExpired ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
-                                                                <span>{new Date(rate.validFrom).toLocaleDateString()} - {new Date(rate.validTo).toLocaleDateString()}</span>
-                                                                {isExpired && <span>Vencida</span>}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-4 py-2 text-center">
-                                                            <div className="flex justify-center gap-1">
-                                                                <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg"><Pencil className="h-4 w-4" /></button>
-                                                                <button onClick={(e) => { e.stopPropagation(); deleteRate(rate.id); }} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg"><Trash2 className="h-4 w-4" /></button>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
+                {/* Mobile Cards View */}
+                <div className="md:hidden divide-y divide-gray-200 dark:divide-slate-700">
+                    {loading ? (
+                        <div className="p-8 text-center text-slate-500">Cargando...</div>
+                    ) : (filteredRates.length === 0) ? (
+                        <div className="p-8 text-center text-slate-500">
+                            {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas."}
+                        </div>
+                    ) : (
+                        <>
+                            {/* Mobile: Hotel Groups */}
+                            {(!filterType || filterType === "Hotel") && hotelGroups.map(group => {
+                                const isExpanded = expandedHotels[group.key];
+                                const minPrice = Math.min(...group.items.map(i => i.salePrice));
+                                const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
+
+                                return (
+                                    <div key={group.key} className={`bg-white dark:bg-slate-800 ${hasExpired ? 'bg-red-50/20' : ''}`}>
+                                        <div
+                                            onClick={() => toggleHotel(group.key)}
+                                            className="p-4 cursor-pointer"
+                                        >
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex items-center gap-2">
+                                                    <Hotel className="h-5 w-5 text-amber-500" />
+                                                    <div>
+                                                        <div className="font-semibold text-slate-900 dark:text-white">{group.name}</div>
+                                                        <div className="text-xs text-slate-500">{group.city} • {group.starRating}★</div>
+                                                    </div>
+                                                </div>
+                                                {isExpanded ? <ChevronDown className="h-5 w-5 text-slate-400" /> : <ChevronRight className="h-5 w-5 text-slate-400" />}
+                                            </div>
+                                            <div className="mt-2 flex justify-between items-center text-sm">
+                                                <span className="text-slate-600 dark:text-slate-400">{group.items.length} Habitaciones</span>
+                                                <div className="font-medium text-slate-900 dark:text-white">Desde ${minPrice}</div>
+                                            </div>
                                         </div>
-                                    );
-                                })}
 
-                                {/* 2. Render Other Rates (Flat) */}
-                                {(!filterType || filterType !== "Hotel") && otherRates.map(rate => {
-                                    const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
-                                    return (
-                                        <tr key={rate.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
-                                            <td className="px-4 py-3">
-                                                <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
-                                                <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
+                                        {isExpanded && (
+                                            <div className="bg-slate-50 dark:bg-slate-900/50 divide-y divide-slate-100 dark:divide-slate-700 border-t border-slate-100 dark:border-slate-800">
+                                                {group.items.map(rate => {
+                                                    const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                                                    return (
+                                                        <div key={rate.id} className="p-4 pl-8 relative">
+                                                            {isExpired && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />}
+                                                            <div className="flex justify-between items-start">
+                                                                <div>
+                                                                    <div className="font-medium text-slate-800 dark:text-slate-200">
+                                                                        {rate.roomType} <span className="text-slate-500 font-normal">{rate.roomCategory}</span>
+                                                                    </div>
+                                                                    <div className="text-xs text-slate-500 mt-0.5">{rate.mealPlan}</div>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <div className="font-bold text-slate-900 dark:text-white">${rate.salePrice}</div>
+                                                                    <div className="text-xs text-slate-400">{rate.hotelPriceType === 'por_persona' ? 'p/pax' : 'base dbl'}</div>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex justify-between items-center mt-3 pt-2 border-t border-slate-200 dark:border-slate-700 border-dashed">
+                                                                <div className={`text-xs ${isExpired ? 'text-red-500 font-medium' : 'text-slate-400'}`}>
+                                                                    {isExpired ? 'Vencida: ' : 'Vence: '}{new Date(rate.validTo).toLocaleDateString()}
+                                                                </div>
+                                                                <div className="flex gap-2">
+                                                                    <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1 text-indigo-600 bg-indigo-50 rounded dark:bg-indigo-900/30 dark:text-indigo-400"><Pencil className="h-4 w-4" /></button>
+                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(rate.id); }} className="p-1 text-rose-600 bg-rose-50 rounded dark:bg-rose-900/30 dark:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+
+                            {/* Mobile: Other Rates */}
+                            {(!filterType || filterType !== "Hotel") && otherRates.map(rate => {
+                                const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                                return (
+                                    <div key={rate.id} className="p-4 bg-white dark:bg-slate-800 space-y-3">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase mb-1 ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
                                                     rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
                                                         rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
                                                             "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
                                                     }`}>
                                                     {rate.serviceType}
                                                 </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
-                                            <td className="px-4 py-3">
-                                                <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
-                                                    {rate.serviceType === "Aereo" && (
-                                                        <div className="flex flex-col">
-                                                            <span>{rate.airline} ({rate.airlineCode})</span>
-                                                            <span className="text-xs text-slate-500">{rate.cabinClass}</span>
-                                                        </div>
-                                                    )}
-                                                    {rate.serviceType === "Traslado" && (
-                                                        <div className="flex flex-col">
-                                                            <span>{rate.vehicleType}</span>
-                                                            <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
-                                                        </div>
-                                                    )}
-                                                    {rate.serviceType === "Paquete" && (
-                                                        <div className="flex flex-col">
-                                                            <span>{rate.destination}</span>
-                                                            <span className="text-xs text-slate-500">{rate.durationDays} días</span>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <div className="flex flex-col text-xs">
-                                                    <span className="text-slate-700 dark:text-slate-300">
-                                                        Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
-                                                    </span>
-                                                    <span className="text-slate-500 dark:text-slate-400">
-                                                        Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
-                                                    </span>
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-center">
-                                                <div className="flex justify-center gap-2">
-                                                    <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
-                                                    <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </>
-                        )}
-                    </tbody>
-                </table>
+                                                <div className="font-bold text-slate-900 dark:text-white">{rate.productName}</div>
+                                            </div>
+                                            <div className="font-bold text-lg text-slate-900 dark:text-white">${rate.salePrice}</div>
+                                        </div>
+
+                                        <div className="text-sm text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg">
+                                            {getTypeDescription(rate)}
+                                        </div>
+
+                                        <div className="flex justify-between items-center text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-700">
+                                            <div>
+                                                Prov: <span className="font-medium text-slate-700 dark:text-slate-300">{rate.supplierName || "-"}</span>
+                                            </div>
+                                            <div className={`${isExpired ? 'text-red-500 font-bold' : ''}`}>
+                                                {isExpired ? 'Vencida' : `Vence: ${new Date(rate.validTo).toLocaleDateString()}`}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-end gap-3 pt-2">
+                                            <button onClick={() => editRate(rate)} className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg dark:bg-indigo-900/20 dark:text-indigo-400">
+                                                <Pencil className="h-3.5 w-3.5" /> Editar
+                                            </button>
+                                            <button onClick={() => deleteRate(rate.id)} className="flex items-center gap-1 text-xs font-medium text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg dark:bg-rose-900/20 dark:text-rose-400">
+                                                <Trash2 className="h-3.5 w-3.5" /> Eliminar
+                                            </button>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </>
+                    )}
+                </div>
             </div>
 
             {/* Modal */}
