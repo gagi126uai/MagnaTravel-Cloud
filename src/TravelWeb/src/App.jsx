@@ -15,7 +15,7 @@ import SuppliersPage from "./pages/SuppliersPage";
 import SupplierAccountPage from "./pages/SupplierAccountPage";
 import ReportsPage from "./pages/ReportsPage";
 import RatesPage from "./pages/RatesPage";
-import RatesPage from "./pages/RatesPage";
+
 import PaymentsTrashPage from "./pages/PaymentsTrashPage";
 import AlertsPage from "./pages/AlertsPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
