@@ -47,11 +47,15 @@ public class FlightSegmentsController : ControllerBase
             flight.TravelFileId = fileId;
 
             _db.FlightSegments.Add(flight);
-            
-            // Recalculate File Totals (Add new amounts)
-            file.TotalCost += flight.NetCost + flight.Tax;
-            file.TotalSale += flight.SalePrice;
-            file.Balance = file.TotalSale - file.TotalCost;
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Actualizar saldo del proveedor
+            if (flight.SupplierId > 0)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { flight.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += flight.NetCost;
+            }
             
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<FlightSegmentDto>(flight));
@@ -74,17 +78,20 @@ public class FlightSegmentsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            // Calculate differences for totals
-            // Note: We use the OLD values from 'flight' before mapping
-            var diffCost = (req.NetCost + req.Tax) - (flight.NetCost + flight.Tax);
-            var diffSale = req.SalePrice - flight.SalePrice;
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
 
-            file.TotalCost += diffCost;
-            file.TotalSale += diffSale;
-            file.Balance = file.TotalSale - file.TotalCost;
+            // Fix 3: Actualizar saldo del proveedor si cambió el costo
+            var oldSupplierId = flight.SupplierId;
+            var oldNetCost = flight.NetCost;
 
-            // Update flight fields using Mapper
             _mapper.Map(req, flight);
+
+            // Fix 3: Ajustar saldo del proveedor
+            if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { flight.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += (flight.NetCost - oldNetCost);
+            }
 
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<FlightSegmentDto>(flight));
@@ -105,11 +112,14 @@ public class FlightSegmentsController : ControllerBase
             if (flight == null || flight.TravelFileId != fileId) return NotFound();
 
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file != null)
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Restar del saldo del proveedor
+            if (flight.SupplierId > 0)
             {
-                file.TotalCost -= (flight.NetCost + flight.Tax);
-                file.TotalSale -= flight.SalePrice;
-                file.Balance = file.TotalSale - file.TotalCost;
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { flight.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance -= flight.NetCost;
             }
 
             _db.FlightSegments.Remove(flight);

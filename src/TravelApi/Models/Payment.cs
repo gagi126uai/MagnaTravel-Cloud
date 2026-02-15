@@ -18,6 +18,10 @@ public class Payment
 
     public string? Notes { get; set; }
 
+    // Soft Delete
+    public bool IsDeleted { get; set; } = false;
+    public DateTime? DeletedAt { get; set; }
+
     // Direct link to TravelFile (preferred)
     public int? TravelFileId { get; set; }
     public TravelFile? TravelFile { get; set; }

@@ -76,11 +76,7 @@ public class PaymentsController : ControllerBase
 
         _dbContext.Payments.Add(payment);
 
-        // Update TravelFile balance if linked
-        if (reservation.TravelFile is not null)
-        {
-            reservation.TravelFile.Balance -= payment.Amount;
-        }
+        // Fix 2: No manipular Balance manualmente, se recalcula al leer el File
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 

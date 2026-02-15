@@ -47,10 +47,15 @@ public class TransferBookingsController : ControllerBase
             transfer.TravelFileId = fileId;
 
             _db.TransferBookings.Add(transfer);
-            
-            file.TotalCost += transfer.NetCost;
-            file.TotalSale += transfer.SalePrice;
-            file.Balance = file.TotalSale - file.TotalCost;
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Actualizar saldo del proveedor
+            if (transfer.SupplierId > 0)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { transfer.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += transfer.NetCost;
+            }
             
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<TransferBookingDto>(transfer));
@@ -73,14 +78,18 @@ public class TransferBookingsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            var diffCost = req.NetCost - transfer.NetCost;
-            var diffSale = req.SalePrice - transfer.SalePrice;
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
 
-            file.TotalCost += diffCost;
-            file.TotalSale += diffSale;
-            file.Balance = file.TotalSale - file.TotalCost;
+            // Fix 3: Actualizar saldo del proveedor si cambió el costo
+            var oldNetCost = transfer.NetCost;
 
             _mapper.Map(req, transfer);
+
+            if (transfer.SupplierId > 0)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { transfer.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += (transfer.NetCost - oldNetCost);
+            }
 
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<TransferBookingDto>(transfer));
@@ -101,11 +110,14 @@ public class TransferBookingsController : ControllerBase
             if (transfer == null || transfer.TravelFileId != fileId) return NotFound();
 
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file != null)
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Restar del saldo del proveedor
+            if (transfer.SupplierId > 0)
             {
-                file.TotalCost -= transfer.NetCost;
-                file.TotalSale -= transfer.SalePrice;
-                file.Balance = file.TotalSale - file.TotalCost;
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { transfer.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance -= transfer.NetCost;
             }
 
             _db.TransferBookings.Remove(transfer);

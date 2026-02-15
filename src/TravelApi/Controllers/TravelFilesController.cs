@@ -68,12 +68,26 @@ public class TravelFilesController : ControllerBase
                 return NotFound($"File with ID {id} not found locally");
             }
 
-            // Recalculate Balance Logic (Business Logic should ideally be in a Service)
-            if (file.Payments != null)
-            {
-                var totalPaid = file.Payments.Where(p => p.Status != "Cancelled").Sum(p => p.Amount);
-                file.Balance = file.TotalSale - totalPaid;
-            }
+            // Fix 2: Recalcular totales desde los datos reales (no confiar en campos almacenados)
+            var totalSale = 
+                (file.FlightSegments?.Sum(f => f.SalePrice) ?? 0) +
+                (file.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
+                (file.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
+                (file.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
+                (file.Reservations?.Sum(r => r.SalePrice) ?? 0);
+
+            var totalCost = 
+                (file.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
+                (file.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
+                (file.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
+                (file.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
+                (file.Reservations?.Sum(r => r.NetCost) ?? 0);
+
+            var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled").Sum(p => p.Amount) ?? 0;
+
+            file.TotalSale = totalSale;
+            file.TotalCost = totalCost;
+            file.Balance = totalSale - totalPaid;
 
             var dto = _mapper.Map<TravelFileDto>(file);
             return Ok(dto);
@@ -157,10 +171,7 @@ public class TravelFilesController : ControllerBase
                 CreatedAt = DateTime.UtcNow
             };
 
-            // Update File Totals
-            file.TotalSale += reservation.SalePrice;
-            file.TotalCost += reservation.NetCost;
-            file.Balance += reservation.SalePrice; 
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
 
             _context.Reservations.Add(reservation);
             await _context.SaveChangesAsync();
@@ -191,13 +202,7 @@ public class TravelFilesController : ControllerBase
             if (string.IsNullOrWhiteSpace(request.ServiceType)) return BadRequest("Debe seleccionar un tipo de servicio");
             if (request.SalePrice <= 0) return BadRequest("El precio de venta debe ser mayor a 0");
 
-            // Revert old amounts
-            if (service.TravelFile != null)
-            {
-                service.TravelFile.TotalSale -= service.SalePrice;
-                service.TravelFile.TotalCost -= service.NetCost;
-                service.TravelFile.Balance -= service.SalePrice;
-            }
+            // Fix 2: No revertir manualmente, los totales se recalculan al leer
 
             // Update service
             service.ServiceType = request.ServiceType;
@@ -211,13 +216,7 @@ public class TravelFilesController : ControllerBase
             service.NetCost = request.NetCost;
             service.Commission = request.SalePrice - request.NetCost;
 
-            // Apply new amounts
-            if (service.TravelFile != null)
-            {
-                service.TravelFile.TotalSale += service.SalePrice;
-                service.TravelFile.TotalCost += service.NetCost;
-                service.TravelFile.Balance += service.SalePrice;
-            }
+            // Fix 2: No aplicar manualmente, los totales se recalculan al leer
 
             await _context.SaveChangesAsync();
             return Ok(service);
@@ -239,13 +238,7 @@ public class TravelFilesController : ControllerBase
                 
             if (service == null) return NotFound();
 
-            // Revert Totals based on what was saved
-            if (service.TravelFile != null)
-            {
-                service.TravelFile.TotalSale -= service.SalePrice;
-                service.TravelFile.TotalCost -= service.NetCost;
-                service.TravelFile.Balance -= service.SalePrice;
-            }
+            // Fix 2: No revertir manualmente, los totales se recalculan al leer
 
             _context.Reservations.Remove(service);
             await _context.SaveChangesAsync();
@@ -365,13 +358,11 @@ public class TravelFilesController : ControllerBase
 
             if (payment.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
             if (string.IsNullOrWhiteSpace(payment.Method)) return BadRequest("Debe seleccionar un método de pago");
-            if (payment.Amount > file.Balance) return BadRequest($"El pago de ${payment.Amount:N2} excede el saldo pendiente (${file.Balance:N2}).");
-
             payment.TravelFileId = id;
             payment.PaidAt = DateTime.UtcNow;
             payment.Status = "Paid";
 
-            file.Balance -= payment.Amount;
+            // Fix 2: No manipular Balance manualmente, se recalcula al leer
 
             _context.Payments.Add(payment);
             await _context.SaveChangesAsync();
@@ -397,9 +388,6 @@ public class TravelFilesController : ControllerBase
             var file = await _context.TravelFiles.FindAsync(id);
             if (file == null) return NotFound("File no encontrado");
 
-            // Revert old amount
-            file.Balance += payment.Amount;
-
             // Update fields
             if (updatedPayment.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
             
@@ -408,8 +396,7 @@ public class TravelFilesController : ControllerBase
             payment.PaidAt = updatedPayment.PaidAt.ToUniversalTime();
             payment.Notes = updatedPayment.Notes;
 
-            // Apply new amount
-            file.Balance -= payment.Amount;
+            // Fix 2: No manipular Balance manualmente, se recalcula al leer
 
             await _context.SaveChangesAsync();
 
@@ -434,9 +421,11 @@ public class TravelFilesController : ControllerBase
             var file = await _context.TravelFiles.FindAsync(id);
             if (file == null) return NotFound("File no encontrado");
 
-            file.Balance += payment.Amount;
+            // Fix 1: Borrado lógico en vez de físico
+            payment.IsDeleted = true;
+            payment.DeletedAt = DateTime.UtcNow;
 
-            _context.Payments.Remove(payment);
+            // Fix 2: No manipular Balance manualmente, se recalcula al leer
             await _context.SaveChangesAsync();
 
             return Ok();

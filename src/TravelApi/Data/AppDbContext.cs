@@ -126,6 +126,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Method).HasMaxLength(50).IsRequired();
             entity.Property(p => p.Status).HasMaxLength(50).IsRequired();
 
+            // Filtro global: excluir pagos borrados de todas las consultas
+            entity.HasQueryFilter(p => !p.IsDeleted);
+
             entity.HasOne(p => p.Reservation)
                   .WithMany(r => r.Payments)
                   .HasForeignKey(p => p.ReservationId)

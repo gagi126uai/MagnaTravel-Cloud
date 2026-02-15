@@ -56,11 +56,15 @@ public class HotelBookingsController : ControllerBase
             // Nights calculated in AutoMapper
 
             _db.HotelBookings.Add(hotel);
-            
-            // Actualizar totales del File
-            file.TotalCost += hotel.NetCost;
-            file.TotalSale += hotel.SalePrice;
-            file.Balance = file.TotalSale - file.TotalCost;
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Actualizar saldo del proveedor
+            if (hotel.SupplierId > 0)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { hotel.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += hotel.NetCost;
+            }
             
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<HotelBookingDto>(hotel));
@@ -83,18 +87,20 @@ public class HotelBookingsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            // Calculate differences for totals
-            var diffCost = req.NetCost - hotel.NetCost;
-            var diffSale = req.SalePrice - hotel.SalePrice;
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
 
-            // Update File Totals
-            file.TotalCost += diffCost;
-            file.TotalSale += diffSale;
-            file.Balance = file.TotalSale - file.TotalCost;
+            // Fix 3: Actualizar saldo del proveedor si cambió el costo
+            var oldNetCost = hotel.NetCost;
 
             // Update Hotel Fields
             _mapper.Map(req, hotel);
             // Nights calculated in AutoMapper
+
+            if (hotel.SupplierId > 0)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { hotel.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += (hotel.NetCost - oldNetCost);
+            }
 
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<HotelBookingDto>(hotel));
@@ -115,11 +121,14 @@ public class HotelBookingsController : ControllerBase
             if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
 
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file != null)
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Restar del saldo del proveedor
+            if (hotel.SupplierId > 0)
             {
-                file.TotalCost -= hotel.NetCost;
-                file.TotalSale -= hotel.SalePrice;
-                file.Balance = file.TotalSale - file.TotalCost;
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { hotel.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance -= hotel.NetCost;
             }
 
             _db.HotelBookings.Remove(hotel);

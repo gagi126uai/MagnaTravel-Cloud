@@ -48,10 +48,15 @@ public class PackageBookingsController : ControllerBase
             // Nights calculated in AutoMapper
 
             _db.PackageBookings.Add(package);
-            
-            file.TotalCost += package.NetCost;
-            file.TotalSale += package.SalePrice;
-            file.Balance = file.TotalSale - file.TotalCost;
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Actualizar saldo del proveedor
+            if (package.SupplierId > 0)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { package.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += package.NetCost;
+            }
             
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<PackageBookingDto>(package));
@@ -74,15 +79,19 @@ public class PackageBookingsController : ControllerBase
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
             if (file == null) return NotFound("File no encontrado");
 
-            var diffCost = req.NetCost - package.NetCost;
-            var diffSale = req.SalePrice - package.SalePrice;
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
 
-            file.TotalCost += diffCost;
-            file.TotalSale += diffSale;
-            file.Balance = file.TotalSale - file.TotalCost;
+            // Fix 3: Actualizar saldo del proveedor si cambió el costo
+            var oldNetCost = package.NetCost;
 
             _mapper.Map(req, package);
             // Nights calculated in AutoMapper
+
+            if (package.SupplierId > 0)
+            {
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { package.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance += (package.NetCost - oldNetCost);
+            }
 
             await _db.SaveChangesAsync(ct);
             return Ok(_mapper.Map<PackageBookingDto>(package));
@@ -103,11 +112,14 @@ public class PackageBookingsController : ControllerBase
             if (package == null || package.TravelFileId != fileId) return NotFound();
 
             var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file != null)
+
+            // Fix 2: No manipular totales manualmente, se recalculan al leer
+
+            // Fix 3: Restar del saldo del proveedor
+            if (package.SupplierId > 0)
             {
-                file.TotalCost -= package.NetCost;
-                file.TotalSale -= package.SalePrice;
-                file.Balance = file.TotalSale - file.TotalCost;
+                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { package.SupplierId }, ct);
+                if (supplier != null) supplier.CurrentBalance -= package.NetCost;
             }
 
             _db.PackageBookings.Remove(package);

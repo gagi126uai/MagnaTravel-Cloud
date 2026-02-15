@@ -22,78 +22,32 @@ public class SuppliersController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Supplier>>> GetSuppliers(CancellationToken cancellationToken)
     {
+        // Fix 3: Usar CurrentBalance cacheado en vez de 6 queries pesadas
         var suppliers = await _dbContext.Suppliers
             .AsNoTracking()
             .OrderBy(s => s.Name)
             .ToListAsync(cancellationToken);
 
-        var validStatuses = new[] { "Reservado", "Operativo", "Cerrado" };
-        var supplierIds = suppliers.Select(s => s.Id).ToList();
+        return Ok(suppliers);
+    }
 
-        // 1. Costos de Vuelos
-        var flightCosts = await _dbContext.FlightSegments
-            .Include(f => f.TravelFile)
-            .Where(f => supplierIds.Contains(f.SupplierId) && validStatuses.Contains(f.TravelFile!.Status))
-            .GroupBy(f => f.SupplierId)
-            .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
-            .ToListAsync(cancellationToken);
+    /// <summary>
+    /// Recalcular saldos de TODOS los proveedores desde los datos reales.
+    /// Útil para corregir inconsistencias o después de importar datos.
+    /// </summary>
+    [HttpPost("recalculate-all")]
+    public async Task<ActionResult> RecalculateAllBalances(CancellationToken cancellationToken)
+    {
+        var suppliers = await _dbContext.Suppliers.ToListAsync(cancellationToken);
 
-        // 2. Costos de Hoteles
-        var hotelCosts = await _dbContext.HotelBookings
-            .Include(h => h.TravelFile)
-            .Where(h => supplierIds.Contains(h.SupplierId) && validStatuses.Contains(h.TravelFile!.Status))
-            .GroupBy(h => h.SupplierId)
-            .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
-            .ToListAsync(cancellationToken);
-
-        // 3. Costos de Traslados
-        var transferCosts = await _dbContext.TransferBookings
-            .Include(t => t.TravelFile)
-            .Where(t => supplierIds.Contains(t.SupplierId) && validStatuses.Contains(t.TravelFile!.Status))
-            .GroupBy(t => t.SupplierId)
-            .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
-            .ToListAsync(cancellationToken);
-
-        // 4. Costos de Paquetes
-        var packageCosts = await _dbContext.PackageBookings
-            .Include(p => p.TravelFile)
-            .Where(p => supplierIds.Contains(p.SupplierId) && validStatuses.Contains(p.TravelFile!.Status))
-            .GroupBy(p => p.SupplierId)
-            .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
-            .ToListAsync(cancellationToken);
-
-        // 5. Costos de Reservas Genéricas
-        var reservationCosts = await _dbContext.Reservations
-            .Include(r => r.TravelFile)
-            .Where(r => r.SupplierId.HasValue && supplierIds.Contains(r.SupplierId.Value) && validStatuses.Contains(r.TravelFile!.Status))
-            .GroupBy(r => r.SupplierId!.Value)
-            .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.NetCost) })
-            .ToListAsync(cancellationToken);
-
-        // 6. Pagos Realizados
-        var payments = await _dbContext.SupplierPayments
-            .Where(p => supplierIds.Contains(p.SupplierId))
-            .GroupBy(p => p.SupplierId)
-            .Select(g => new { SupplierId = g.Key, Total = g.Sum(x => x.Amount) })
-            .ToListAsync(cancellationToken);
-
-        // Calcular saldo para cada proveedor en memoria
         foreach (var supplier in suppliers)
         {
-            decimal totalCost = 0;
-            totalCost += flightCosts.FirstOrDefault(x => x.SupplierId == supplier.Id)?.Total ?? 0;
-            totalCost += hotelCosts.FirstOrDefault(x => x.SupplierId == supplier.Id)?.Total ?? 0;
-            totalCost += transferCosts.FirstOrDefault(x => x.SupplierId == supplier.Id)?.Total ?? 0;
-            totalCost += packageCosts.FirstOrDefault(x => x.SupplierId == supplier.Id)?.Total ?? 0;
-            totalCost += reservationCosts.FirstOrDefault(x => x.SupplierId == supplier.Id)?.Total ?? 0;
-
-            decimal totalPaid = payments.FirstOrDefault(x => x.SupplierId == supplier.Id)?.Total ?? 0;
-
-            // Actualizamos la propiedad solo para la respuesta (no se guarda en DB aquí)
-            supplier.CurrentBalance = totalCost - totalPaid;
+            supplier.CurrentBalance = await CalculateSupplierDebt(supplier.Id, cancellationToken);
         }
 
-        return Ok(suppliers);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { Message = $"Saldos recalculados para {suppliers.Count} proveedores" });
     }
 
     [HttpGet("{id:int}")]
