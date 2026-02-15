@@ -86,27 +86,32 @@ export default function SearchPalette({ isOpen, onClose }) {
             />
 
             {/* Modal */}
-            <div className="relative flex items-start justify-center pt-[15vh]">
-                <div className="w-full max-w-lg mx-4 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="relative flex items-start justify-center pt-4 sm:pt-[15vh] h-full sm:h-auto">
+                <div className="w-full max-w-lg mx-2 sm:mx-4 bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[80vh] sm:max-h-auto">
                     {/* Search Input */}
-                    <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
                         <Search className="h-5 w-5 text-slate-400 shrink-0" />
                         <input
                             ref={inputRef}
                             type="text"
-                            placeholder="Buscar expedientes, clientes, pagos..."
+                            placeholder="Buscar expedientes, clientes..."
                             value={query}
                             onChange={(e) => handleSearch(e.target.value)}
-                            className="flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400 text-slate-900 dark:text-white"
+                            className="flex-1 bg-transparent text-base sm:text-sm outline-none placeholder:text-slate-400 text-slate-900 dark:text-white"
+                            autoFocus
                         />
                         {loading && <Loader2 className="h-4 w-4 animate-spin text-indigo-500 shrink-0" />}
+                        {/* Close button for mobile */}
+                        <button onClick={onClose} className="sm:hidden text-slate-400">
+                            <X className="h-5 w-5" />
+                        </button>
                         <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">
                             ESC
                         </kbd>
                     </div>
 
                     {/* Results */}
-                    <div className="max-h-[50vh] overflow-y-auto">
+                    <div className="overflow-y-auto overscroll-contain">
                         {/* Files */}
                         {results?.files?.length > 0 && (
                             <div className="p-2">
@@ -117,7 +122,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                     <button
                                         key={`file-${file.id}`}
                                         onClick={() => handleSelect("file", file.id)}
-                                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors text-left group"
+                                        className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors text-left group"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center shrink-0">
                                             <FolderOpen className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
@@ -126,12 +131,12 @@ export default function SearchPalette({ isOpen, onClose }) {
                                             <div className="text-sm font-medium text-slate-900 dark:text-white truncate">{file.name}</div>
                                             <div className="flex items-center gap-2 text-xs text-slate-500">
                                                 <span className="font-mono">{file.fileNumber}</span>
-                                                {file.payerName && <span>· {file.payerName}</span>}
+                                                {file.payerName && <span className="truncate">· {file.payerName}</span>}
                                             </div>
                                         </div>
-                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${file.status === 'Operativo' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                                                file.status === 'Reservado' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
-                                                    'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${file.status === 'Operativo' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                                            file.status === 'Reservado' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                                'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                                             }`}>
                                             {file.status}
                                         </span>
@@ -150,7 +155,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                     <button
                                         key={`cust-${cust.id}`}
                                         onClick={() => handleSelect("customer", cust.id)}
-                                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-left"
+                                        className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-left"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
                                             <User className="h-4 w-4 text-blue-600 dark:text-blue-400" />
@@ -175,7 +180,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                 {results.payments.map((pay) => (
                                     <div
                                         key={`pay-${pay.id}`}
-                                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                                        className="flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
                                             <CreditCard className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
@@ -209,8 +214,8 @@ export default function SearchPalette({ isOpen, onClose }) {
                         )}
                     </div>
 
-                    {/* Footer */}
-                    <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center gap-4 text-[10px] text-slate-400">
+                    {/* Footer - Hidden on Mobile */}
+                    <div className="hidden sm:flex px-4 py-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 items-center gap-4 text-[10px] text-slate-400 shrink-0">
                         <span className="flex items-center gap-1">
                             <kbd className="px-1 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 font-mono">↑↓</kbd>
                             navegar
