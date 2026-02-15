@@ -4,13 +4,12 @@ import { api } from "../api";
 import {
     ArrowLeft, Plus, Calendar, Users,
     FileText, Edit2, Trash2, CheckCircle, AlertTriangle, X,
-    Plane, Hotel, Car, Package, CreditCard, Archive
+    Plane, Hotel, Car, Package, CreditCard, Archive, Clock
 } from "lucide-react";
-import Swal from "sweetalert2";
 import ServiceFormModal from "../components/ServiceFormModal";
 import PassengerFormModal from "../components/PassengerFormModal";
 
-import { showError, showSuccess } from "../alerts";
+import { showError, showSuccess, showConfirm } from "../alerts";
 import AuditTimeline from "../components/AuditTimeline";
 
 export default function FileDetailPage() {
@@ -61,16 +60,13 @@ export default function FileDetailPage() {
 
     // --- ACTIONS: FILE ---
     const handleArchiveFile = async () => {
-        const result = await Swal.fire({
-            title: '¿Archivar File?',
-            text: "El file pasará a estado 'Archivado' y no será visible en la lista activa.",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Sí, archivar',
-            cancelButtonText: 'Cancelar'
-        });
+        const confirmed = await showConfirm(
+            '¿Archivar File?',
+            "El file pasará a estado 'Archivado' y no será visible en la lista activa.",
+            'Sí, archivar'
+        );
 
-        if (result.isConfirmed) {
+        if (confirmed) {
             try {
                 await api.put(`/travelfiles/${id}/archive`);
                 showSuccess("File archivado correctamente");
@@ -82,17 +78,14 @@ export default function FileDetailPage() {
     };
 
     const handleDeleteFile = async () => {
-        const result = await Swal.fire({
-            title: '¿Eliminar File?',
-            text: "Esta acción no se puede deshacer. Solo permitido si es un Presupuesto sin pagos.",
-            icon: 'error',
-            showCancelButton: true,
-            confirmButtonColor: '#d33',
-            confirmButtonText: 'Sí, eliminar',
-            cancelButtonText: 'Cancelar'
-        });
+        const confirmed = await showConfirm(
+            '¿Eliminar File?',
+            "Esta acción no se puede deshacer. Solo permitido si es un Presupuesto sin pagos.",
+            'Sí, eliminar',
+            'red'
+        );
 
-        if (result.isConfirmed) {
+        if (confirmed) {
             try {
                 await api.delete(`/travelfiles/${id}`);
                 showSuccess("File eliminado correctamente");
@@ -131,16 +124,14 @@ export default function FileDetailPage() {
     };
 
     const handleDeleteService = async (service) => {
-        const result = await Swal.fire({
-            title: '¿Eliminar Servicio?',
-            text: "Se revertirá el costo y venta del total del file.",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#d33',
-            confirmButtonText: 'Sí, eliminar'
-        });
+        const confirmed = await showConfirm(
+            '¿Eliminar Servicio?',
+            "Se revertirá el costo y venta del total del file.",
+            'Sí, eliminar',
+            'red'
+        );
 
-        if (result.isConfirmed) {
+        if (confirmed) {
             try {
                 // Build endpoint based on type (Logic matches backend controllers)
                 // flightSegments, hotelBookings, transferBookings, packageBookings
@@ -183,15 +174,9 @@ export default function FileDetailPage() {
 
 
     // --- HELPERS ---
+    // --- HELPERS ---
     const confirmAction = async (title) => {
-        const result = await Swal.fire({
-            title,
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Sí',
-            cancelButtonText: 'No'
-        });
-        return result.isConfirmed;
+        return await showConfirm(title, "¿Está seguro?", "Sí", "indigo");
     };
 
     // --- RENDER HELPERS ---
