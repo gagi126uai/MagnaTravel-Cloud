@@ -131,7 +131,13 @@ public class TravelFilesController : ControllerBase
             if (request.DepartureDate == default) return BadRequest("La fecha de salida es obligatoria");
             if (request.SalePrice <= 0) return BadRequest("El precio de venta debe ser mayor a 0");
             if (request.NetCost < 0) return BadRequest("El costo neto no puede ser negativo");
-            if (request.NetCost > request.SalePrice) return BadRequest("El costo neto no puede ser mayor al precio de venta");
+
+            // Warning instead of blocking when selling at a loss
+            string? warning = null;
+            if (request.NetCost > request.SalePrice)
+            {
+                warning = $"Atención: el costo ({request.NetCost:C}) supera el precio de venta ({request.SalePrice:C}). Se está vendiendo a pérdida.";
+            }
 
             var reservation = new Reservation
             {
@@ -158,6 +164,9 @@ public class TravelFilesController : ControllerBase
 
             _context.Reservations.Add(reservation);
             await _context.SaveChangesAsync();
+
+            if (warning != null)
+                return Ok(new { reservation, Warning = warning });
 
             return Ok(reservation);
         }

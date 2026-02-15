@@ -465,7 +465,7 @@ export default function RatesPage() {
                         <div className="rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 p-2.5 text-white shadow-lg shadow-emerald-500/20">
                             <DollarSign className="h-6 w-6" />
                         </div>
-                        Tarifario Profesional
+                        Tarifario
                     </h1>
                     <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                         Gestione las tarifas y precios de sus proveedores
@@ -497,14 +497,27 @@ export default function RatesPage() {
                     <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Total</div>
                     <div className="text-2xl font-bold mt-1 text-slate-900 dark:text-white">{rates.length}</div>
                 </div>
-                {["Aereo", "Hotel", "Traslado", "Paquete"].map(type => (
+                {["Aereo", "Traslado", "Paquete"].map(type => (
                     <div key={type} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-                        <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">{type}</div>
-                        <div className={`text-2xl font-bold mt-1 ${type === "Aereo" ? "text-sky-600" : type === "Hotel" ? "text-amber-600" : type === "Traslado" ? "text-green-600" : "text-violet-600"}`}>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">{type === "Aereo" ? "Aéreo" : type}</div>
+                        <div className={`text-2xl font-bold mt-1 ${type === "Aereo" ? "text-sky-600" : type === "Traslado" ? "text-green-600" : "text-violet-600"}`}>
                             {rates.filter(r => r.serviceType === type).length}
                         </div>
                     </div>
                 ))}
+                {/* Hotel stat: count unique hotels, not individual room rates */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                    <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Hoteles</div>
+                    <div className="text-2xl font-bold mt-1 text-amber-600">
+                        {(() => {
+                            const hotelSet = new Set(rates.filter(r => r.serviceType === "Hotel").map(r => `${r.hotelName || ''}_${r.city || ''}`));
+                            return hotelSet.size;
+                        })()}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                        {rates.filter(r => r.serviceType === "Hotel").length} hab.
+                    </div>
+                </div>
                 {rates.some(r => r.validTo && new Date(r.validTo) < new Date()) && (
                     <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/30 dark:bg-red-900/10">
                         <div className="text-xs text-red-600 dark:text-red-400 uppercase font-bold">Vencidas</div>
@@ -625,9 +638,9 @@ export default function RatesPage() {
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
-                                                        rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                                                            rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
-                                                                "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
+                                                    rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                                                        rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
+                                                            "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
                                                     }`}>
                                                     {rate.serviceType}
                                                 </span>
