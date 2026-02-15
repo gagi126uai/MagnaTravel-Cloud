@@ -358,43 +358,41 @@ export default function FileDetailPage() {
 
             {/* TABS */}
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden min-h-[500px]">
-                <div className="border-b border-gray-200 dark:border-slate-700">
-                    <nav className="flex -mb-px">
+                <div className="border-b border-gray-200 dark:border-slate-700 overflow-x-auto">
+                    <nav className="flex -mb-px min-w-max sm:min-w-0">
                         <button
                             onClick={() => setActiveTab('services')}
-                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
                 ${activeTab === 'services' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <FileText className="w-4 h-4" /> Servicios
                         </button>
                         <button
                             onClick={() => setActiveTab('passengers')}
-                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
                 ${activeTab === 'passengers' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <Users className="w-4 h-4" /> Pasajeros ({file.passengers?.length || 0})
                         </button>
                         <button
                             onClick={() => setActiveTab('history')}
-                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
                 ${activeTab === 'history' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <Clock className="w-4 h-4" /> Historial
                         </button>
-
-
                     </nav>
                 </div>
 
-                <div className="p-6">
+                <div className="p-4 sm:p-6">
                     {/* --- TAB: SERVICES --- */}
                     {activeTab === 'services' && (
                         <div>
-                            <div className="flex justify-between items-center mb-4">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios Contratados</h3>
                                 <button
                                     onClick={() => { setServiceToEdit(null); setShowServiceModal(true); }}
-                                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
                                 >
                                     <Plus className="w-4 h-4" /> Agregar Servicio
                                 </button>
@@ -406,71 +404,129 @@ export default function FileDetailPage() {
                                     <p className="text-gray-500 dark:text-slate-400">No hay servicios cargados en este file.</p>
                                 </div>
                             ) : (
-                                <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
-                                    <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-                                        <thead className="bg-gray-50 dark:bg-slate-900 text-gray-500 dark:text-slate-400">
-                                            <tr>
-                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Tipo</th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Descripción</th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Estado</th>
-                                                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Venta</th>
-                                                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Acciones</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
-                                            {allServices.map((svc, idx) => (
-                                                <tr key={`${svc._type}-${svc.id}`} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div className="flex items-center">
-                                                            {svc._type === 'Flight' && <Plane className="w-5 h-5 text-blue-500 mr-2" />}
-                                                            {svc._type === 'Hotel' && <Hotel className="w-5 h-5 text-indigo-500 mr-2" />}
-                                                            {svc._type === 'Transfer' && <Car className="w-5 h-5 text-yellow-500 mr-2" />}
-                                                            {svc._type === 'Package' && <Package className="w-5 h-5 text-purple-500 mr-2" />}
-                                                            <span className="font-medium text-gray-900 dark:text-white">{svc._type === 'Flight' ? 'Aéreo' : svc._type}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        <div className="text-sm text-gray-900 dark:text-white font-medium">{svc.name}</div>
-                                                        <div className="text-xs text-gray-500 dark:text-slate-400">{svc.notes || svc.description}</div>
-                                                        {svc.confirmationNumber && (
-                                                            <div className="text-xs text-indigo-500 mt-1 font-mono">Ref: {svc.confirmationNumber}</div>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                                                        {new Date(svc.date).toLocaleDateString()}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        {/* Status Badge Logic */}
-                                                        {(() => {
-                                                            const isConfirmed = svc.status === 'Confirmado' || svc.status === 'HK';
-                                                            return (
-                                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                                                                    ${isConfirmed
-                                                                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                                                                        : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
-                                                                    }`}>
-                                                                    {isConfirmed ? 'Confirmado' : 'Pendiente'}
-                                                                </span>
-                                                            );
-                                                        })()}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900 dark:text-white">
-                                                        ${svc.salePrice?.toLocaleString()}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                        <button onClick={() => handleEditService(svc)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 mr-3">
-                                                            <Edit2 className="w-4 h-4" />
-                                                        </button>
-                                                        <button onClick={() => handleDeleteService(svc)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    </td>
+                                <>
+                                    {/* Desktop Table View */}
+                                    <div className="hidden md:block overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
+                                        <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                                            <thead className="bg-gray-50 dark:bg-slate-900 text-gray-500 dark:text-slate-400">
+                                                <tr>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Tipo</th>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Descripción</th>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Estado</th>
+                                                    <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Venta</th>
+                                                    <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Acciones</th>
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                            </thead>
+                                            <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                                                {allServices.map((svc, idx) => (
+                                                    <tr key={`${svc._type}-${svc.id}`} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <div className="flex items-center">
+                                                                {svc._type === 'Flight' && <Plane className="w-5 h-5 text-blue-500 mr-2" />}
+                                                                {svc._type === 'Hotel' && <Hotel className="w-5 h-5 text-indigo-500 mr-2" />}
+                                                                {svc._type === 'Transfer' && <Car className="w-5 h-5 text-yellow-500 mr-2" />}
+                                                                {svc._type === 'Package' && <Package className="w-5 h-5 text-purple-500 mr-2" />}
+                                                                <span className="font-medium text-gray-900 dark:text-white">{svc._type === 'Flight' ? 'Aéreo' : svc._type}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="text-sm text-gray-900 dark:text-white font-medium">{svc.name}</div>
+                                                            <div className="text-xs text-gray-500 dark:text-slate-400">{svc.notes || svc.description}</div>
+                                                            {svc.confirmationNumber && (
+                                                                <div className="text-xs text-indigo-500 mt-1 font-mono">Ref: {svc.confirmationNumber}</div>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                                                            {new Date(svc.date).toLocaleDateString()}
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            {(() => {
+                                                                const isConfirmed = svc.status === 'Confirmado' || svc.status === 'HK';
+                                                                return (
+                                                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                                                        ${isConfirmed
+                                                                            ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                                                                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
+                                                                        }`}>
+                                                                        {isConfirmed ? 'Confirmado' : 'Pendiente'}
+                                                                    </span>
+                                                                );
+                                                            })()}
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900 dark:text-white">
+                                                            ${svc.salePrice?.toLocaleString()}
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                            <button onClick={() => handleEditService(svc)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 mr-3">
+                                                                <Edit2 className="w-4 h-4" />
+                                                            </button>
+                                                            <button onClick={() => handleDeleteService(svc)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    {/* Mobile Card View */}
+                                    <div className="md:hidden space-y-3">
+                                        {allServices.map((svc) => (
+                                            <div key={`${svc._type}-${svc.id}`} className="bg-white dark:bg-slate-800 rounded-lg p-4 border border-gray-200 dark:border-slate-700 shadow-sm">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <div className="flex items-center gap-2">
+                                                        {svc._type === 'Flight' && <Plane className="w-4 h-4 text-blue-500" />}
+                                                        {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-indigo-500" />}
+                                                        {svc._type === 'Transfer' && <Car className="w-4 h-4 text-yellow-500" />}
+                                                        {svc._type === 'Package' && <Package className="w-4 h-4 text-purple-500" />}
+                                                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                                                            {svc._type === 'Flight' ? 'Aéreo' : svc._type}
+                                                        </span>
+                                                    </div>
+                                                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full
+                                                        ${(svc.status === 'Confirmado' || svc.status === 'HK')
+                                                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                                            : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+                                                        }`}>
+                                                        {svc.status === 'HK' ? 'Confirmado' : svc.status}
+                                                    </span>
+                                                </div>
+
+                                                <h4 className="font-medium text-slate-900 dark:text-white mb-0.5">{svc.name}</h4>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 line-clamp-2">{svc.notes || svc.description}</p>
+
+                                                {svc.confirmationNumber && (
+                                                    <div className="text-xs bg-slate-100 dark:bg-slate-900 inline-block px-2 py-1 rounded mb-3 font-mono text-slate-600 dark:text-slate-300">
+                                                        REF: {svc.confirmationNumber}
+                                                    </div>
+                                                )}
+
+                                                <div className="flex justify-between items-end border-t border-slate-100 dark:border-slate-700 pt-3 mt-1">
+                                                    <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                                                        <Calendar className="w-3 h-3" />
+                                                        {new Date(svc.date).toLocaleDateString()}
+                                                    </div>
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="text-right">
+                                                            <div className="text-xs text-slate-400">Venta</div>
+                                                            <div className="font-bold text-slate-900 dark:text-white">${svc.salePrice?.toLocaleString()}</div>
+                                                        </div>
+                                                        <div className="flex gap-1 pl-3 border-l border-slate-200 dark:border-slate-700">
+                                                            <button onClick={() => handleEditService(svc)} className="p-1.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 dark:bg-slate-700 dark:text-blue-400">
+                                                                <Edit2 className="w-4 h-4" />
+                                                            </button>
+                                                            <button onClick={() => handleDeleteService(svc)} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-100 dark:bg-slate-700 dark:text-red-400">
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
                             )}
                         </div>
                     )}
@@ -494,9 +550,9 @@ export default function FileDetailPage() {
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {file.passengers?.map(p => (
                                     <div key={p.id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 flex justify-between items-start hover:shadow-md transition-shadow">
-                                        <div>
-                                            <div className="font-medium text-gray-900 dark:text-white">{p.fullName}</div>
-                                            <div className="text-sm text-gray-500 dark:text-slate-400">{p.documentType}: {p.documentNumber}</div>
+                                        <div className="min-w-0 pr-2">
+                                            <div className="font-medium text-gray-900 dark:text-white truncate" title={p.fullName}>{p.fullName}</div>
+                                            <div className="text-sm text-gray-500 dark:text-slate-400 truncate">{p.documentType}: {p.documentNumber}</div>
                                             {p.birthDate && <div className="text-xs text-gray-400 mt-1">Nac: {new Date(p.birthDate).toLocaleDateString()}</div>}
                                         </div>
                                         <div className="flex gap-1">

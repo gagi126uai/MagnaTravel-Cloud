@@ -142,7 +142,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect }) {
     return (
         <div className="space-y-4">
             {/* Proveedor y Estado */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
@@ -177,7 +177,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect }) {
             {/* Buscador de tarifas - DESPUÉS del proveedor */}
             <RateSelector serviceType="Aereo" supplierId={form.supplierId} onSelect={onRateSelect} suppliers={suppliers} />
 
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div>
                     <label className={labelClass}>Aerolínea *</label>
                     <input className={inputClass} placeholder="AA" maxLength={3} value={form.airlineCode || ""} onChange={e => setForm({ ...form, airlineCode: e.target.value.toUpperCase() })} required />
@@ -197,7 +197,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect }) {
             </div>
 
             {/* Fechas SIMPLES - sin hora */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Fecha Salida *</label>
                     <input type="date" className={inputClass} value={form.departureDate || ""} onChange={e => setForm({ ...form, departureDate: e.target.value })} required />
@@ -417,7 +417,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
     return (
         <div className="space-y-4">
             {/* Proveedor y Estado */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
@@ -446,7 +446,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
             {/* Buscador de tarifas */}
             <RateSelector serviceType="Paquete" supplierId={form.supplierId} onSelect={onRateSelect} suppliers={suppliers} />
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Nombre Paquete *</label>
                     <input className={inputClass} placeholder="Cancún All Inclusive 7 noches" value={form.packageName || ""} onChange={e => setForm({ ...form, packageName: e.target.value })} required />
@@ -457,7 +457,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Fecha Inicio *</label>
                     <input type="date" className={inputClass} value={form.startDate || ""} onChange={e => setForm({ ...form, startDate: e.target.value })} required />
@@ -470,7 +470,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
 
             <div>
                 <label className={labelClass}>¿Qué incluye?</label>
-                <div className="grid grid-cols-3 gap-2 mt-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
                     {[
                         { key: "includesHotel", label: "Hotel" },
                         { key: "includesFlight", label: "Vuelo" },
