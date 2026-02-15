@@ -179,7 +179,7 @@ export default function SuppliersPage() {
       </div>
 
       {/* Main Table */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="hidden md:block rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="relative w-full overflow-auto">
           <table className="w-full table-fixed caption-bottom text-sm text-left">
             <thead className="[&_tr]:border-b">
@@ -274,6 +274,65 @@ export default function SuppliersPage() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Mobile Card View */}
+      <div className="md:hidden space-y-3">
+        {filteredSuppliers.length === 0 && (
+          <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl border-slate-300 dark:border-slate-700">
+            <p>No se encontraron proveedores</p>
+          </div>
+        )}
+        {filteredSuppliers.map((supplier) => (
+          <div key={supplier.id} className={`bg-white dark:bg-slate-900 rounded-xl p-4 border shadow-sm ${!supplier.isActive ? 'opacity-70 border-slate-200 dark:border-slate-800' : 'border-slate-200 dark:border-slate-800'}`}>
+            <div className="flex justify-between items-start mb-3">
+              <div className="flex items-center gap-3">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm shrink-0 ${getRandomColor(supplier.name)}`}>
+                  {getInitials(supplier.name)}
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900 dark:text-white leading-tight">{supplier.name}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{supplier.taxId || "Sin CUIT"}</div>
+                </div>
+              </div>
+              <Badge variant={supplier.isActive ? "success" : "secondary"} className="text-[10px] px-1.5 py-0.5">
+                {supplier.isActive ? "Activo" : "Inactivo"}
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 text-sm mb-3">
+              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                <Building2 className="h-3.5 w-3.5 opacity-70" />
+                <span className="truncate">{supplier.contactName || "-"}</span>
+              </div>
+              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                <Mail className="h-3.5 w-3.5 opacity-70" />
+                <span className="truncate">{supplier.email || "-"}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className={`font-mono font-medium ${(supplier.currentBalance || 0) > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {formatCurrency(supplier.currentBalance || 0)}
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => navigate(`/suppliers/${supplier.id}/account`)}
+                  className="h-8 w-8 flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                >
+                  <Wallet className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => handleOpenModal(supplier)}
+                  className="h-8 w-8 flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Modal */}
