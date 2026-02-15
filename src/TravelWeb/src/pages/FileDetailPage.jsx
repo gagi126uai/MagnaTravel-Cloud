@@ -11,13 +11,14 @@ import ServiceFormModal from "../components/ServiceFormModal";
 import PassengerFormModal from "../components/PassengerFormModal";
 
 import { showError, showSuccess } from "../alerts";
+import AuditTimeline from "../components/AuditTimeline";
 
 export default function FileDetailPage() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState("services"); // services, passengers, payments, notes
+    const [activeTab, setActiveTab] = useState("services"); // services, passengers, payments, notes, history
     const [showServiceModal, setShowServiceModal] = useState(false);
     const [serviceToEdit, setServiceToEdit] = useState(null);
 
@@ -388,6 +389,13 @@ export default function FileDetailPage() {
                         >
                             <Users className="w-4 h-4" /> Pasajeros ({file.passengers?.length || 0})
                         </button>
+                        <button
+                            onClick={() => setActiveTab('history')}
+                            className={`flex-1 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2
+                ${activeTab === 'history' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                        >
+                            <Clock className="w-4 h-4" /> Historial
+                        </button>
 
 
                     </nav>
@@ -520,8 +528,17 @@ export default function FileDetailPage() {
                         </div>
                     )}
 
+
                     {/* --- TAB: PAYMENTS REMOVED --- */}
                     {/* --- TAB: INVOICES REMOVED --- */}
+
+                    {/* --- TAB: HISTORY --- */}
+                    {activeTab === 'history' && (
+                        <div>
+                            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Historial de Cambios</h3>
+                            <AuditTimeline entityName="TravelFile" entityId={file.id} />
+                        </div>
+                    )}
                 </div>
             </div>
 

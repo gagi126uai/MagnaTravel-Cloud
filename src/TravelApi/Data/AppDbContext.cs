@@ -1,15 +1,175 @@
+using System.Security.Claims;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using TravelApi.Models;
 
 namespace TravelApi.Data;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options)
+    private readonly IHttpContextAccessor? _httpContextAccessor;
+
+    public AppDbContext(DbContextOptions<AppDbContext> options, IHttpContextAccessor? httpContextAccessor = null)
         : base(options)
     {
+        _httpContextAccessor = httpContextAccessor;
     }
+
+    public override int SaveChanges()
+    {
+        var auditEntries = OnBeforeSaveChanges();
+        var result = base.SaveChanges();
+        OnAfterSaveChanges(auditEntries);
+        return result;
+    }
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var auditEntries = OnBeforeSaveChanges();
+        var result = await base.SaveChangesAsync(cancellationToken);
+        await OnAfterSaveChangesAsync(auditEntries, cancellationToken);
+        return result;
+    }
+
+    private class AuditEntry
+    {
+        public EntityEntry Entry { get; set; } = null!;
+        public AuditLog AuditLog { get; set; } = null!;
+    }
+
+    private List<AuditEntry> OnBeforeSaveChanges()
+    {
+        ChangeTracker.DetectChanges();
+        var auditEntries = new List<AuditEntry>();
+        
+        var user = _httpContextAccessor?.HttpContext?.User;
+        var userId = user?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = user?.FindFirst(ClaimTypes.Name)?.Value ?? "System";
+        var timestamp = DateTime.UtcNow;
+
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            if (entry.Entity is AuditLog || entry.State == EntityState.Detached || entry.State == EntityState.Unchanged)
+                continue;
+
+            var auditLog = new AuditLog
+            {
+                UserId = userId,
+                UserName = userName,
+                EntityName = entry.Entity.GetType().Name,
+                Timestamp = timestamp,
+                Action = entry.State.ToString()
+            };
+
+            var changes = new Dictionary<string, object>();
+            
+            // For Added entities, ID is temp/unknown yet.
+            var keyName = entry.Metadata.FindPrimaryKey()?.Properties.Select(p => p.Name).FirstOrDefault();
+            var primaryKey = keyName != null ? entry.Property(keyName).CurrentValue : null;
+            auditLog.EntityId = primaryKey?.ToString() ?? "0";
+
+            if (entry.State == EntityState.Added)
+            {
+                auditLog.Action = "Create";
+                foreach (var property in entry.Properties)
+                {
+                    if (property.Metadata.IsPrimaryKey()) continue;
+                    if (property.CurrentValue != null)
+                    {
+                        changes[property.Metadata.Name] = property.CurrentValue;
+                    }
+                }
+            }
+            else if (entry.State == EntityState.Deleted)
+            {
+                auditLog.Action = "Delete";
+                foreach (var property in entry.Properties)
+                {
+                    if (property.Metadata.IsPrimaryKey()) continue;
+                    changes[property.Metadata.Name] = property.OriginalValue;
+                }
+            }
+            else if (entry.State == EntityState.Modified)
+            {
+                 var isDeletedProp = entry.Properties.FirstOrDefault(p => p.Metadata.Name == "IsDeleted");
+                 if (isDeletedProp != null && isDeletedProp.CurrentValue is bool isDeleted && isDeleted)
+                 {
+                     auditLog.Action = "SoftDelete";
+                 }
+                 else
+                 {
+                     auditLog.Action = "Update";
+                 }
+
+                foreach (var property in entry.Properties)
+                {
+                    if (property.IsModified)
+                    {
+                        changes[property.Metadata.Name] = new
+                        {
+                            Old = property.OriginalValue,
+                            New = property.CurrentValue
+                        };
+                    }
+                }
+            }
+
+            auditLog.Changes = JsonSerializer.Serialize(changes);
+            auditEntries.Add(new AuditEntry { Entry = entry, AuditLog = auditLog });
+        }
+        
+        return auditEntries;
+    }
+
+    private void OnAfterSaveChanges(List<AuditEntry> auditEntries)
+    {
+        if (auditEntries == null || auditEntries.Count == 0) return;
+
+        foreach (var auditEntry in auditEntries)
+        {
+            if (auditEntry.AuditLog.EntityId == "0" || auditEntry.AuditLog.EntityId == null)
+            {
+                // Update PK for new entities
+                var keyName = auditEntry.Entry.Metadata.FindPrimaryKey()?.Properties.Select(p => p.Name).FirstOrDefault();
+                var primaryKey = keyName != null ? auditEntry.Entry.Property(keyName).CurrentValue : null;
+                auditEntry.AuditLog.EntityId = primaryKey?.ToString() ?? "0";
+            }
+            AuditLogs.Add(auditEntry.AuditLog);
+        }
+
+        if (AuditLogs.Local.Any())
+        {
+            base.SaveChanges(); // Save the logs
+        }
+    }
+
+    private async Task OnAfterSaveChangesAsync(List<AuditEntry> auditEntries, CancellationToken cancellationToken)
+    {
+        if (auditEntries == null || auditEntries.Count == 0) return;
+
+        foreach (var auditEntry in auditEntries)
+        {
+            if (auditEntry.AuditLog.EntityId == "0" || auditEntry.AuditLog.EntityId == null)
+            {
+                // Update PK for new entities
+                var keyName = auditEntry.Entry.Metadata.FindPrimaryKey()?.Properties.Select(p => p.Name).FirstOrDefault();
+                var primaryKey = keyName != null ? auditEntry.Entry.Property(keyName).CurrentValue : null;
+                auditEntry.AuditLog.EntityId = primaryKey?.ToString() ?? "0";
+            }
+            AuditLogs.Add(auditEntry.AuditLog);
+        }
+
+        if (AuditLogs.Local.Any())
+        {
+             await base.SaveChangesAsync(cancellationToken); // Save the logs
+        }
+    }
+    
+    // I need to correct this. I will put the full logic in the replacement content properly.
+
 
     // Core Entities - Retail ERP
     public DbSet<Customer> Customers => Set<Customer>();
@@ -34,6 +194,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Sprint 5: AFIP / Facturación
     public DbSet<AfipSettings> AfipSettings => Set<AfipSettings>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

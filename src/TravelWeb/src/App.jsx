@@ -15,6 +15,11 @@ import SuppliersPage from "./pages/SuppliersPage";
 import SupplierAccountPage from "./pages/SupplierAccountPage";
 import ReportsPage from "./pages/ReportsPage";
 import RatesPage from "./pages/RatesPage";
+import RatesPage from "./pages/RatesPage";
+import PaymentsTrashPage from "./pages/PaymentsTrashPage";
+import AlertsPage from "./pages/AlertsPage";
+import { AlertsProvider } from "./contexts/AlertsContext";
+import { Toaster } from "sonner";
 
 // LEGACY REMOVED: Cupos, Quotes, Tariffs, Agencies
 
@@ -63,36 +68,47 @@ export default function App() {
         path="/*"
         element={
           <PrivateRoute>
-            <Layout onLogout={handleLogout} isAdmin={adminUser}>
-              <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
+            <Toaster richColors position="top-right" />
+            <AlertsProvider>
+              <Layout onLogout={handleLogout} isAdmin={adminUser}>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
 
-                {/* Core ERP Modules */}
-                <Route path="/files" element={<FilesPage />} />
-                <Route path="/files/:id" element={<FileDetailPage />} />
+                  {/* Core ERP Modules */}
+                  <Route path="/files" element={<FilesPage />} />
+                  <Route path="/files/:id" element={<FileDetailPage />} />
 
-                <Route path="/customers" element={<CustomersPage />} />
-                <Route path="/customers/:id/account" element={<CustomerAccountPage />} />
+                  <Route path="/customers" element={<CustomersPage />} />
+                  <Route path="/customers/:id/account" element={<CustomerAccountPage />} />
 
-                <Route path="/suppliers" element={<SuppliersPage />} />
-                <Route path="/suppliers/:id/account" element={<SupplierAccountPage />} />
+                  <Route path="/suppliers" element={<SuppliersPage />} />
+                  <Route path="/suppliers/:id/account" element={<SupplierAccountPage />} />
 
-                {/* Treasury */}
-                <Route path="/payments" element={<PaymentsPage />} />
-                <Route path="/rates" element={<RatesPage />} />
+                  {/* Treasury */}
+                  <Route path="/payments" element={<PaymentsPage />} />
+                  <Route path="/rates" element={<RatesPage />} />
 
-                {/* Admin */}
-                <Route
-                  path="/reports"
-                  element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
-                />
-                <Route
-                  path="/settings"
-                  element={adminUser ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
-                />
-              </Routes>
-            </Layout>
+                  {/* Admin */}
+                  <Route
+                    path="/reports"
+                    element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
+                  />
+                  <Route
+                    path="/settings"
+                    element={adminUser ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
+                  />
+                  <Route
+                    path="/payments/trash"
+                    element={adminUser ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
+                  />
+                  <Route
+                    path="/alerts"
+                    element={adminUser ? <AlertsPage /> : <Navigate to="/dashboard" replace />}
+                  />
+                </Routes>
+              </Layout>
+            </AlertsProvider>
           </PrivateRoute>
         }
       />

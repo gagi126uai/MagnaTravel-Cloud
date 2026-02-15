@@ -6,15 +6,23 @@ import {
     Search,
     FolderOpen,
     User,
-    Archive
+    Archive,
+    Calendar,
+    DollarSign,
+    AlertCircle,
+    CheckCircle2,
+    Plane,
+    TrendingUp
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useNavigate } from "react-router-dom";
 import CreateFileModal from "../components/CreateFileModal";
+import { formatCurrency, formatDate } from "../lib/utils";
+import { FilesPageSkeleton } from "../components/ui/skeleton";
 
 export default function FilesPage() {
     const [files, setFiles] = useState([]);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [viewFilter, setViewFilter] = useState("all"); // all, Presupuesto, Reservado, Operativo, archived
     const navigate = useNavigate();
@@ -45,17 +53,19 @@ export default function FilesPage() {
         loadFiles();
     };
 
-    // Status Helpers
+    // Status config
+    const statusConfig = {
+        'Presupuesto': { color: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800', icon: '📋' },
+        'Reservado': { color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800', icon: '📌' },
+        'Operativo': { color: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800', icon: '✈️' },
+        'Cerrado': { color: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700', icon: '✅' },
+        'Cancelado': { color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800', icon: '❌' },
+    };
+
     const getStatusBadge = (status) => {
-        const styles = {
-            'Presupuesto': 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
-            'Reservado': 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
-            'Operativo': 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
-            'Cerrado': 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
-            'Cancelado': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800',
-        };
+        const cfg = statusConfig[status] || statusConfig['Presupuesto'];
         return (
-            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status] || styles['Presupuesto']}`}>
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>
                 {status}
             </span>
         );
@@ -69,7 +79,7 @@ export default function FilesPage() {
         try {
             await api.put(`/travelfiles/${id}/archive`);
             showSuccess("Expediente archivado");
-            loadFiles(); // Refresh list to remove it from current view (unless view is 'archived')
+            loadFiles();
         } catch (error) {
             showError(error.message || "Error al archivar");
         }
@@ -95,8 +105,27 @@ export default function FilesPage() {
         return searchMatch && viewMatch;
     });
 
+    // KPI summary
+    const activeFiles = files.filter(f => !['Cerrado', 'Cancelado', 'Archived'].includes(f.status));
+    const totalSaleActive = activeFiles.reduce((sum, f) => sum + (f.totalSale || 0), 0);
+    const totalPendingBalance = activeFiles.reduce((sum, f) => sum + (f.balance > 0 ? f.balance : 0), 0);
+    const operativeCount = files.filter(f => f.status === 'Operativo').length;
+
+    // Filter tab counts
+    const tabCounts = {
+        all: files.filter(f => !['Cerrado', 'Cancelado', 'Archived'].includes(f.status)).length,
+        Presupuesto: files.filter(f => f.status === 'Presupuesto').length,
+        Reservado: files.filter(f => f.status === 'Reservado').length,
+        Operativo: files.filter(f => f.status === 'Operativo').length,
+        archived: files.filter(f => ['Cerrado', 'Cancelado', 'Archived'].includes(f.status)).length,
+    };
+
+    if (loading && files.length === 0) {
+        return <FilesPageSkeleton />;
+    }
+
     return (
-        <div className="space-y-4 md:space-y-6">
+        <div className="space-y-4 md:space-y-6 animate-in fade-in duration-500">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <div>
                     <h2 className="text-xl md:text-2xl font-bold tracking-tight">Gestión de Viajes</h2>
@@ -107,6 +136,40 @@ export default function FilesPage() {
                 </Button>
             </div>
 
+            {/* Quick KPI Strip */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
+                        <FolderOpen className="h-3.5 w-3.5" />
+                        Expedientes Activos
+                    </div>
+                    <div className="text-xl font-bold text-slate-900 dark:text-white">{activeFiles.length}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
+                        <Plane className="h-3.5 w-3.5" />
+                        Operativos
+                    </div>
+                    <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{operativeCount}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        Venta Total
+                    </div>
+                    <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(totalSaleActive)}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        Por Cobrar
+                    </div>
+                    <div className={`text-xl font-bold ${totalPendingBalance > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {formatCurrency(totalPendingBalance)}
+                    </div>
+                </div>
+            </div>
+
             {/* Toolbar */}
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 {/* Status Filter Tabs */}
@@ -115,9 +178,12 @@ export default function FilesPage() {
                         <button
                             key={filter}
                             onClick={() => setViewFilter(filter)}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${viewFilter === filter ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap flex items-center gap-1.5 ${viewFilter === filter ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                         >
-                            {filter === "all" ? "Todos" : filter === "archived" ? "Cerrados" : filter + "s"}
+                            {filter === "all" ? "Activos" : filter === "archived" ? "Cerrados" : filter + "s"}
+                            <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${viewFilter === filter ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'}`}>
+                                {tabCounts[filter] || 0}
+                            </span>
                         </button>
                     ))}
                 </div>
@@ -144,61 +210,101 @@ export default function FilesPage() {
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Cliente</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Inicio Viaje</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Estado</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Venta</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Saldo</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 w-[50px]"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {filteredFiles.map((file) => (
-                                <tr
-                                    key={file.id}
-                                    onClick={() => navigate(`/files/${file.id}`)}
-                                    className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
-                                >
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="h-9 w-9 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 dark:bg-indigo-900/20 dark:text-indigo-400">
-                                                <FolderOpen className="h-4 w-4" />
+                            {filteredFiles.map((file) => {
+                                const hasPendingBalance = file.balance > 0;
+                                const isPaid = file.totalSale > 0 && file.balance <= 0;
+
+                                return (
+                                    <tr
+                                        key={file.id}
+                                        onClick={() => navigate(`/files/${file.id}`)}
+                                        className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
+                                    >
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${hasPendingBalance
+                                                    ? 'bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400'
+                                                    : isPaid
+                                                        ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
+                                                        : 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400'
+                                                    }`}>
+                                                    {hasPendingBalance
+                                                        ? <AlertCircle className="h-4 w-4" />
+                                                        : isPaid
+                                                            ? <CheckCircle2 className="h-4 w-4" />
+                                                            : <FolderOpen className="h-4 w-4" />
+                                                    }
+                                                </div>
+                                                <div>
+                                                    <div className="font-semibold text-slate-900 dark:text-slate-100">{file.name}</div>
+                                                    <div className="text-xs text-slate-500 font-mono">{file.fileNumber}</div>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <div className="font-semibold text-slate-900 dark:text-slate-100">{file.name}</div>
-                                                <div className="text-xs text-slate-500 font-mono">{file.fileNumber}</div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                                                <User className="h-3.5 w-3.5 opacity-70" />
+                                                {file.customerName || "Sin Asignar"}
                                             </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                                            <User className="h-3.5 w-3.5 opacity-70" />
-                                            {file.customerName || "Sin Asignar"}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
-                                        {file.startDate ? new Date(file.startDate).toLocaleDateString() : "-"}
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        {getStatusBadge(file.status)}
-                                    </td>
-                                    <td className="px-6 py-4 text-right">
-                                        <div className={`font-mono font-medium ${file.balance > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-600 dark:text-slate-400'}`}>
-                                            ${file.balance?.toLocaleString()}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-right">
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                            onClick={(e) => handleArchive(e, file.id)}
-                                            title="Archivar Expediente"
-                                        >
-                                            <Archive className="h-4 w-4 text-slate-400 hover:text-slate-600" />
-                                        </Button>
-                                    </td>
-                                </tr>
-                            ))}
+                                        </td>
+                                        <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
+                                            {file.startDate ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <Calendar className="h-3.5 w-3.5 opacity-50" />
+                                                    {formatDate(file.startDate)}
+                                                </div>
+                                            ) : (
+                                                <span className="text-slate-400">-</span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            {getStatusBadge(file.status)}
+                                        </td>
+                                        <td className="px-6 py-4 text-right">
+                                            <div className="font-mono font-medium text-slate-700 dark:text-slate-300">
+                                                {formatCurrency(file.totalSale)}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-right">
+                                            {hasPendingBalance ? (
+                                                <div className="flex flex-col items-end">
+                                                    <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
+                                                        {formatCurrency(file.balance)}
+                                                    </span>
+                                                    <span className="text-[10px] text-rose-500 font-semibold uppercase">Pendiente</span>
+                                                </div>
+                                            ) : isPaid ? (
+                                                <div className="flex items-center justify-end gap-1 text-emerald-600 dark:text-emerald-400">
+                                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                                    <span className="text-xs font-semibold">Pagado</span>
+                                                </div>
+                                            ) : (
+                                                <span className="text-sm text-slate-400">-</span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 text-right">
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                                onClick={(e) => handleArchive(e, file.id)}
+                                                title="Archivar Expediente"
+                                            >
+                                                <Archive className="h-4 w-4 text-slate-400 hover:text-slate-600" />
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                             {filteredFiles.length === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                                    <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                                         <div className="mx-auto h-12 w-12 rounded-full bg-slate-50 flex items-center justify-center mb-3 dark:bg-slate-900">
                                             <Search className="h-6 w-6 opacity-50" />
                                         </div>

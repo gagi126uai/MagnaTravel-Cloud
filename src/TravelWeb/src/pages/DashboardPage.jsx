@@ -38,6 +38,8 @@ import {
     Legend
 } from "recharts";
 
+import { DashboardSkeleton } from "../components/ui/skeleton";
+
 export default function DashboardPage() {
     const [dashboard, setDashboard] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -59,14 +61,7 @@ export default function DashboardPage() {
     };
 
     if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <div className="flex flex-col items-center gap-4">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
-                    <p className="text-sm text-muted-foreground animate-pulse">Cargando métricas...</p>
-                </div>
-            </div>
-        );
+        return <DashboardSkeleton />;
     }
 
     if (!dashboard) {

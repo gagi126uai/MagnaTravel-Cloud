@@ -20,6 +20,7 @@ import {
 import CustomerPaymentModal from "../components/CustomerPaymentModal";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
+import { AccountPageSkeleton } from "../components/ui/skeleton";
 
 const StatusBadge = ({ status }) => {
     const colors = {
@@ -109,11 +110,7 @@ export default function CustomerAccountPage() {
     };
 
     if (loading) {
-        return (
-            <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            </div>
-        );
+        return <AccountPageSkeleton />;
     }
 
     if (!data) {

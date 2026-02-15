@@ -5,6 +5,7 @@ import { api } from "../api";
 import { formatCurrency, formatDate } from "../lib/utils";
 import Swal from "sweetalert2";
 import SupplierPaymentModal from "../components/SupplierPaymentModal"; // Import New Modal
+import { AccountPageSkeleton } from "../components/ui/skeleton";
 
 export default function SupplierAccountPage() {
     const { id } = useParams();
@@ -65,11 +66,7 @@ export default function SupplierAccountPage() {
     };
 
     if (loading) {
-        return (
-            <div className="flex items-center justify-center h-full">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            </div>
-        );
+        return <AccountPageSkeleton />;
     }
 
     if (!data) {

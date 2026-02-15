@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { Moon, Sun, Menu } from "lucide-react";
+import { Moon, Sun, Menu, Search } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import Sidebar from "./Sidebar";
 import { Button } from "./ui/button";
 import ChangePasswordModal from "./ChangePasswordModal";
+import SearchPalette from "./SearchPalette";
 
 export default function Layout({ children, onLogout, isAdmin }) {
     const { theme, setTheme } = useTheme();
@@ -32,6 +33,19 @@ export default function Layout({ children, onLogout, isAdmin }) {
 
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [userMenuOpen, setUserMenuOpen] = useState(false);
+    const [searchOpen, setSearchOpen] = useState(false);
+
+    // Global Ctrl+K handler
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+                e.preventDefault();
+                setSearchOpen(prev => !prev);
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, []);
 
     return (
         <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
@@ -96,6 +110,24 @@ export default function Layout({ children, onLogout, isAdmin }) {
                         <h1 className="text-lg font-semibold hidden md:block">MagnaTravel ERP</h1>
                     </div>
                     <div className="flex items-center gap-2">
+                        {/* Global Search Button */}
+                        <button
+                            onClick={() => setSearchOpen(true)}
+                            className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700"
+                        >
+                            <Search className="h-3.5 w-3.5" />
+                            <span className="text-xs">Buscar...</span>
+                            <kbd className="ml-2 text-[10px] font-mono px-1.5 py-0.5 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-600">Ctrl+K</kbd>
+                        </button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setSearchOpen(true)}
+                            className="sm:hidden h-9 w-9"
+                            title="Buscar"
+                        >
+                            <Search className="h-4 w-4" />
+                        </Button>
                         <Button
                             variant="ghost"
                             size="icon"
@@ -165,6 +197,14 @@ export default function Layout({ children, onLogout, isAdmin }) {
             <ChangePasswordModal
                 isOpen={showPasswordModal}
                 onClose={() => setShowPasswordModal(false)}
+            />
+
+            <SearchPalette
+                isOpen={searchOpen}
+                onClose={(toggle) => {
+                    if (toggle === true) setSearchOpen(true);
+                    else setSearchOpen(false);
+                }}
             />
         </div>
     );

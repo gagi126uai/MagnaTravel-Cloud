@@ -175,6 +175,93 @@ public class ReportsController : ControllerBase
             grossMargin));
     }
 
+    [HttpGet("detailed")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetDetailedReport(
+        [FromQuery] DateTime? from, 
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
+
+        // 1. Ventas del período (expedientes creados en el rango, estados confirmados)
+        var filesInPeriod = await _dbContext.TravelFiles
+            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
+                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+            .Select(f => new { f.TotalSale, f.TotalCost, f.Balance, f.Status })
+            .ToListAsync(cancellationToken);
+
+        var totalSales = filesInPeriod.Sum(f => f.TotalSale);
+        var totalCosts = filesInPeriod.Sum(f => f.TotalCost);
+        var grossMargin = totalSales - totalCosts;
+        var marginPercent = totalSales > 0 ? Math.Round((grossMargin / totalSales) * 100, 1) : 0;
+
+        // 2. Cobros de clientes en el período
+        var customerPayments = await _dbContext.Payments
+            .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo)
+            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+
+        // 3. Pagos a proveedores en el período
+        var supplierPayments = await _dbContext.SupplierPayments
+            .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo)
+            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+
+        // 4. Deuda actual por proveedor (sin filtro de fecha, es saldo vivo)
+        var supplierDebts = await _dbContext.Suppliers
+            .Where(s => s.IsActive && s.CurrentBalance != 0)
+            .OrderByDescending(s => s.CurrentBalance)
+            .Select(s => new { s.Id, s.Name, s.CurrentBalance })
+            .ToListAsync(cancellationToken);
+
+        // 5. Top 10 clientes por venta en el período
+        var topCustomers = await _dbContext.TravelFiles
+            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
+                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled
+                && f.PayerId != null)
+            .GroupBy(f => new { f.PayerId, f.Payer!.FullName })
+            .Select(g => new { 
+                Name = g.Key.FullName, 
+                TotalSale = g.Sum(f => f.TotalSale),
+                FileCount = g.Count(),
+                PendingBalance = g.Sum(f => f.Balance)
+            })
+            .OrderByDescending(x => x.TotalSale)
+            .Take(10)
+            .ToListAsync(cancellationToken);
+
+        // 6. Ventas por mes (para gráfico dentro del rango)
+        var monthlyBreakdown = await _dbContext.TravelFiles
+            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
+                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+            .GroupBy(f => new { f.CreatedAt.Year, f.CreatedAt.Month })
+            .Select(g => new {
+                Year = g.Key.Year,
+                Month = g.Key.Month,
+                Sales = g.Sum(f => f.TotalSale),
+                Costs = g.Sum(f => f.TotalCost),
+                FileCount = g.Count()
+            })
+            .OrderBy(x => x.Year).ThenBy(x => x.Month)
+            .ToListAsync(cancellationToken);
+
+        var monthlyData = monthlyBreakdown.Select(m => new {
+            Month = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(m.Month) + " " + m.Year,
+            m.Sales,
+            m.Costs,
+            Margin = m.Sales - m.Costs,
+            m.FileCount
+        });
+
+        return Ok(new {
+            Period = new { From = dateFrom, To = dateTo },
+            Summary = new { TotalSales = totalSales, TotalCosts = totalCosts, GrossMargin = grossMargin, MarginPercent = marginPercent, CustomerPayments = customerPayments, SupplierPayments = supplierPayments, FilesCount = filesInPeriod.Count },
+            SupplierDebts = supplierDebts,
+            TopCustomers = topCustomers,
+            MonthlyBreakdown = monthlyData
+        });
+    }
+
     /// <summary>
     /// Obtener configuración de la agencia
     /// </summary>

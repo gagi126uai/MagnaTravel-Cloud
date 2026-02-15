@@ -82,6 +82,61 @@ public class PaymentsController : ControllerBase
 
         return CreatedAtAction(nameof(GetPaymentsForReservation), new { reservationId = payment.ReservationId }, _mapper.Map<PaymentDto>(payment));
     }
+
+    /// <summary>
+    /// Listar pagos eliminados (papelera) - Solo Admin
+    /// </summary>
+    [HttpGet("trash")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetDeletedPayments(CancellationToken cancellationToken)
+    {
+        var deletedPayments = await _dbContext.Payments
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(p => p.IsDeleted)
+            .OrderByDescending(p => p.DeletedAt)
+            .Select(p => new {
+                p.Id,
+                p.Amount,
+                p.Method,
+                p.Reference,
+                p.Status,
+                p.PaidAt,
+                p.DeletedAt,
+                p.TravelFileId,
+                FileNumber = p.Reservation != null && p.Reservation.TravelFile != null 
+                    ? p.Reservation.TravelFile.FileNumber : null,
+                FileName = p.Reservation != null && p.Reservation.TravelFile != null 
+                    ? p.Reservation.TravelFile.Name : null,
+                CustomerName = p.Reservation != null && p.Reservation.TravelFile != null && p.Reservation.TravelFile.Payer != null
+                    ? p.Reservation.TravelFile.Payer.FullName : null
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(deletedPayments);
+    }
+
+    /// <summary>
+    /// Restaurar un pago eliminado - Solo Admin
+    /// </summary>
+    [HttpPut("{id:int}/restore")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> RestorePayment(int id, CancellationToken cancellationToken)
+    {
+        var payment = await _dbContext.Payments
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == id && p.IsDeleted, cancellationToken);
+
+        if (payment == null)
+            return NotFound("Pago eliminado no encontrado.");
+
+        payment.IsDeleted = false;
+        payment.DeletedAt = null;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = "Pago restaurado correctamente.", paymentId = payment.Id });
+    }
 }
 
 public class CreatePaymentRequest

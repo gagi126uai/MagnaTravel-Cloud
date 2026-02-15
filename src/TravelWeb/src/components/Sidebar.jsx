@@ -9,9 +9,12 @@ import {
     LogOut,
     BarChart3,
     X,
-    DollarSign
+    DollarSign,
+    Trash2,
+    Bell
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { useAlerts } from "../contexts/AlertsContext";
 
 // Clean Menu - Retail ERP Loop
 const menuLinks = [
@@ -24,8 +27,16 @@ const menuLinks = [
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onToggleCollapse, onCloseMobile }) {
+    const { alerts } = useAlerts() || { alerts: { TotalCount: 0 } }; // Safety check if context missing
+
     const finalLinks = isAdmin
-        ? [...menuLinks, { to: "/reports", label: "Reportes", icon: BarChart3 }, { to: "/settings", label: "Configuración", icon: Settings }]
+        ? [
+            ...menuLinks,
+            { to: "/reports", label: "Reportes", icon: BarChart3 },
+            { to: "/settings", label: "Configuración", icon: Settings },
+            { to: "/payments/trash", label: "Papelera", icon: Trash2 },
+            { to: "/alerts", label: "Alertas", icon: Bell, badge: alerts?.TotalCount }
+        ]
         : menuLinks;
 
     return (
@@ -84,7 +95,15 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onTog
                             }
                         >
                             <link.icon className={cn("flex-shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
-                            {!collapsed && <span className="truncate">{link.label}</span>}
+                            {!collapsed && <span className="truncate flex-1">{link.label}</span>}
+                            {!collapsed && link.badge > 0 && (
+                                <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                                    {link.badge > 99 ? '99+' : link.badge}
+                                </span>
+                            )}
+                            {collapsed && link.badge > 0 && (
+                                <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-red-500 border border-white dark:border-slate-900" />
+                            )}
                         </NavLink>
                     ))}
                 </div>

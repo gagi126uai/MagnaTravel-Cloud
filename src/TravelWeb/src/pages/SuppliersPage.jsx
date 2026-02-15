@@ -181,12 +181,12 @@ export default function SuppliersPage() {
       {/* Main Table */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="relative w-full overflow-auto">
-          <table className="w-full caption-bottom text-sm text-left">
+          <table className="w-full table-fixed caption-bottom text-sm text-left">
             <thead className="[&_tr]:border-b">
               <tr className="border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
-                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400">Proveedor</th>
-                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400">Contacto</th>
-                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right">
+                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 w-[30%]">Proveedor</th>
+                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 w-[25%]">Contacto</th>
+                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right w-[18%]">
                   <div className="flex items-center justify-end gap-1 cursor-help group relative">
                     Saldo (Deuda)
                     <Info className="h-3 w-3 text-slate-400" />
@@ -195,8 +195,8 @@ export default function SuppliersPage() {
                     </div>
                   </div>
                 </th>
-                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-center">Estado</th>
-                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right">Acciones</th>
+                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-center w-[12%]">Estado</th>
+                <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right w-[15%]">Acciones</th>
               </tr>
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
