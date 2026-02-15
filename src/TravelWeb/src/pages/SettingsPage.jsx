@@ -444,79 +444,85 @@ export default function SettingsPage() {
             <div className="lg:col-span-2 space-y-6">
               <form onSubmit={saveAgencySettings} className="space-y-6">
                 {/* Identity Section */}
-                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center gap-3">
+                {/* Agency Settings Card */}
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
                     <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
                       <Building2 className="h-5 w-5" />
                     </div>
-                    <h3 className="font-semibold text-slate-900 dark:text-white">Identidad Comercial</h3>
-                  </div>
-                  <div className="p-6 grid gap-6 sm:grid-cols-2">
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Nombre de Fantasía</label>
-                      <input type="text" required className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                        placeholder="Ej: Magna Travel"
-                        value={agencyForm.agencyName} onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })} />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Razón Social</label>
-                      <input type="text" className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                        placeholder="Ej: Magna Travel S.A."
-                        value={agencyForm.legalName} onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })} />
-                    </div>
                     <div>
-                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">CUIT</label>
-                      <input type="text" className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                        placeholder="XX-XXXXXXXX-X"
-                        value={agencyForm.taxId} onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Condición IVA</label>
-                      <select className="form-select w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                        value={agencyForm.taxCondition} onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}>
-                        <option value="Responsable Inscripto">Responsable Inscripto</option>
-                        <option value="Monotributo">Monotributo</option>
-                        <option value="Exento">Exento</option>
-                      </select>
+                      <h3 className="font-semibold text-slate-900 dark:text-white">Datos de la Agencia</h3>
+                      <p className="text-xs text-slate-500">Información legal y de contacto</p>
                     </div>
                   </div>
-                </div>
 
-                {/* Contact Section */}
-                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center gap-3">
-                    <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-600 dark:text-emerald-400">
-                      <MapPin className="h-5 w-5" />
+                  <div className="p-6 space-y-8">
+                    {/* Identidad */}
+                    <div className="space-y-4">
+                      <h4 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">Identidad Comercial</h4>
+                      <div className="grid gap-5 md:grid-cols-2">
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nombre de Fantasía (Visible al cliente)</label>
+                          <input type="text" required className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                            placeholder="Ej: Magna Travel"
+                            value={agencyForm.agencyName} onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })} />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Razón Social</label>
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                            placeholder="Ej: Magna Travel S.A."
+                            value={agencyForm.legalName} onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CUIT</label>
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                            placeholder="XX-XXXXXXXX-X"
+                            value={agencyForm.taxId} onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Condición IVA</label>
+                          <select className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                            value={agencyForm.taxCondition} onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}>
+                            <option value="Responsable Inscripto">Responsable Inscripto</option>
+                            <option value="Monotributo">Monotributo</option>
+                            <option value="Exento">Exento</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
-                    <h3 className="font-semibold text-slate-900 dark:text-white">Contacto y Ubicación</h3>
-                  </div>
-                  <div className="p-6 grid gap-6 sm:grid-cols-2">
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Dirección</label>
-                      <input type="text" className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                        value={agencyForm.address} onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Teléfono</label>
-                      <input type="text" className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                        value={agencyForm.phone} onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Email</label>
-                      <input type="email" className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                        value={agencyForm.email} onChange={e => setAgencyForm({ ...agencyForm, email: e.target.value })} />
-                    </div>
-                  </div>
-                </div>
 
-                <div className="flex justify-end pt-4">
-                  <Button
-                    type="submit"
-                    disabled={savingAgency}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-8 shadow-lg shadow-indigo-500/20"
-                  >
-                    {savingAgency ? "Guardando..." : "Guardar Cambios"}
-                  </Button>
+                    {/* Contacto */}
+                    <div className="space-y-4">
+                      <h4 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">Ubicación y Contacto</h4>
+                      <div className="grid gap-5 md:grid-cols-2">
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Dirección</label>
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                            value={agencyForm.address} onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Teléfono</label>
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                            value={agencyForm.phone} onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
+                          <input type="email" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                            value={agencyForm.email} onChange={e => setAgencyForm({ ...agencyForm, email: e.target.value })} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                    <Button
+                      type="submit"
+                      disabled={savingAgency}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-6"
+                    >
+                      {savingAgency ? "Guardando..." : "Guardar Cambios"}
+                    </Button>
+                  </div>
                 </div>
               </form>
             </div>

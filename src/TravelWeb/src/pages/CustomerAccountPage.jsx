@@ -15,7 +15,9 @@ import {
     Building,
     Plus,
     Pencil,
-    Trash2
+    Trash2,
+    ArrowDownLeft,
+    ArrowUpRight
 } from "lucide-react";
 import CustomerPaymentModal from "../components/CustomerPaymentModal";
 import Swal from "sweetalert2";
@@ -60,7 +62,6 @@ export default function CustomerAccountPage() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [data, setData] = useState(null);
-
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [paymentToEdit, setPaymentToEdit] = useState(null);
@@ -123,8 +124,50 @@ export default function CustomerAccountPage() {
 
     const { customer, files, payments, summary } = data;
 
+    // --- Unified Ledger Logic (Cuenta Corriente Real) ---
+    // 1. Map Files (Ventas) -> DEBITS
+    // 2. Map Payments (Cobros) -> CREDITS
+    // 3. Sort Chronologically
+    // 4. Calculate Running Balance
+
+    const debitMovements = (files || []).map(f => ({
+        id: f.id,
+        type: 'FILE',
+        date: f.startDate || f.createdAt, // Use startDate as fallback for transaction date
+        concept: `File ${f.fileNumber} - ${f.name}`,
+        debit: f.totalSale,
+        credit: 0,
+        originalData: f
+    }));
+
+    const creditMovements = (payments || []).map(p => ({
+        id: p.id,
+        type: 'PAYMENT',
+        date: p.paymentDate,
+        concept: `Pago (${methodLabels[p.method] || p.method})`,
+        debit: 0,
+        credit: p.amount,
+        originalData: p
+    }));
+
+    // Merge and Sort Oldest to Newest to calculate balance
+    const allMovements = [...debitMovements, ...creditMovements].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Calculate Running Balance
+    let runningBalance = 0;
+    const ledger = allMovements.map(m => {
+        runningBalance += (m.debit - m.credit);
+        return { ...m, balance: runningBalance };
+    });
+
+    // Reverse for UI (Newest First) if preferred, or keep Oldest First.
+    // For "Statement" view, usually Oldest First is better to read the story.
+    // For "Quick Check", Newest First is better.
+    // Let's do Newest First but display it clearly.
+    const displayLedger = [...ledger].reverse();
+
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-in fade-in duration-500">
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
@@ -132,193 +175,168 @@ export default function CustomerAccountPage() {
                         <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div>
-                        <h1 className="text-2xl font-bold">Cuenta Corriente</h1>
+                        <h1 className="text-2xl font-bold tracking-tight">Cuenta Corriente</h1>
                         <p className="text-muted-foreground">{customer.fullName}</p>
                     </div>
                 </div>
-                <Button onClick={() => handleOpenModal(null)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
+                <Button onClick={() => handleOpenModal(null)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-500/20">
                     <Plus className="h-4 w-4" />
                     Nueva Cobranza
                 </Button>
             </div>
 
-            {/* Customer Info Card */}
-            <div className="rounded-xl border bg-gradient-to-r from-indigo-500/10 to-purple-500/10 p-6">
-                <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-4">
-                        <div className="h-16 w-16 rounded-full bg-indigo-600 flex items-center justify-center text-white text-2xl font-bold">
-                            {customer.fullName?.charAt(0)?.toUpperCase() || "?"}
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-semibold">{customer.fullName}</h2>
-                            <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
-                                {customer.email && (
-                                    <span className="flex items-center gap-1">
-                                        <Mail className="h-4 w-4" /> {customer.email}
-                                    </span>
-                                )}
-                                {customer.phone && (
-                                    <span className="flex items-center gap-1">
-                                        <Phone className="h-4 w-4" /> {customer.phone}
-                                    </span>
-                                )}
-                                {customer.taxId && (
-                                    <span className="flex items-center gap-1">
-                                        <Building className="h-4 w-4" /> CUIT: {customer.taxId}
-                                    </span>
-                                )}
+            {/* Customer Info Card & Summary */}
+            <div className="grid gap-4 md:grid-cols-3">
+                <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white dark:bg-slate-900/50 p-6 shadow-sm">
+                    <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="h-16 w-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold shadow-md">
+                                {customer.fullName?.charAt(0)?.toUpperCase() || "?"}
+                            </div>
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-900 dark:text-white">{customer.fullName}</h2>
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm text-slate-500">
+                                    {customer.email && (
+                                        <span className="flex items-center gap-1">
+                                            <Mail className="h-3.5 w-3.5" /> {customer.email}
+                                        </span>
+                                    )}
+                                    {customer.phone && (
+                                        <span className="flex items-center gap-1">
+                                            <Phone className="h-3.5 w-3.5" /> {customer.phone}
+                                        </span>
+                                    )}
+                                    {customer.taxId && (
+                                        <span className="flex items-center gap-1">
+                                            <Building className="h-3.5 w-3.5" /> {customer.taxId}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
-                    {customer.creditLimit > 0 && (
-                        <div className="text-right">
-                            <div className="text-sm text-muted-foreground">Límite de Crédito</div>
-                            <div className="text-lg font-semibold text-green-600">
-                                {formatCurrency(customer.creditLimit)}
-                            </div>
-                        </div>
-                    )}
                 </div>
-            </div>
 
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="rounded-xl border bg-card p-5">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2.5 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                            <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                        </div>
-                        <div>
-                            <div className="text-sm text-muted-foreground">Expedientes</div>
-                            <div className="text-2xl font-bold">{summary.fileCount}</div>
-                        </div>
+                <div className={`rounded-xl border p-6 shadow-sm flex flex-col justify-center ${summary.totalBalance > 0 ? "bg-rose-50 border-rose-100 dark:bg-rose-900/10 dark:border-rose-900/30" : "bg-emerald-50 border-emerald-100 dark:bg-emerald-900/10 dark:border-emerald-900/30"}`}>
+                    <div className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">Saldo Actual</div>
+                    <div className={`text-3xl font-bold ${summary.totalBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                        {formatCurrency(summary.totalBalance)}
                     </div>
-                </div>
-                <div className="rounded-xl border bg-card p-5">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2.5 rounded-lg bg-green-100 dark:bg-green-900/30">
-                            <TrendingUp className="h-5 w-5 text-green-600 dark:text-green-400" />
-                        </div>
-                        <div>
-                            <div className="text-sm text-muted-foreground">Total Vendido</div>
-                            <div className="text-xl font-bold">{formatCurrency(summary.totalSales)}</div>
-                        </div>
-                    </div>
-                </div>
-                <div className="rounded-xl border bg-card p-5">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
-                            <CreditCard className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-                        </div>
-                        <div>
-                            <div className="text-sm text-muted-foreground">Total Cobrado</div>
-                            <div className="text-xl font-bold">{formatCurrency(summary.totalPaid)}</div>
-                        </div>
-                    </div>
-                </div>
-                <div className={`rounded-xl border p-5 ${summary.totalBalance > 0 ? "bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800" : "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"}`}>
-                    <div className="flex items-center gap-3">
-                        <div className={`p-2.5 rounded-lg ${summary.totalBalance > 0 ? "bg-rose-100 dark:bg-rose-900/30" : "bg-green-100 dark:bg-green-900/30"}`}>
-                            <DollarSign className={`h-5 w-5 ${summary.totalBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`} />
-                        </div>
-                        <div>
-                            <div className="text-sm text-muted-foreground">Saldo Pendiente</div>
-                            <div className={`text-xl font-bold ${summary.totalBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
-                                {formatCurrency(summary.totalBalance)}
-                            </div>
-                        </div>
+                    <div className="text-xs text-slate-400 mt-2">
+                        {summary.totalBalance > 0 ? "Deuda Pendiente" : "Al día / A favor"}
                     </div>
                 </div>
             </div>
 
-            {/* Files Table / Cards */}
-            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-                <div className="bg-muted/50 px-6 py-4 border-b">
-                    <h3 className="font-semibold flex items-center gap-2">
-                        <FileText className="h-5 w-5 text-primary" />
-                        Expedientes ({files.length})
+            {/* Unified Ledger Table */}
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+                <div className="bg-slate-50/50 px-6 py-4 border-b border-slate-200 dark:bg-slate-800/20 dark:border-slate-800">
+                    <h3 className="font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
+                        <FileText className="h-5 w-5 text-indigo-500" />
+                        Movimientos (Cuenta Corriente)
                     </h3>
                 </div>
-                {files.length > 0 ? (
+
+                {displayLedger.length > 0 ? (
                     <>
                         {/* Desktop Table */}
                         <div className="hidden md:block overflow-x-auto">
-                            <table className="w-full">
-                                <thead className="bg-muted/30 text-sm">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400">
                                     <tr>
-                                        <th className="text-left px-6 py-3 font-medium">Expediente</th>
-                                        <th className="text-left px-6 py-3 font-medium">Nombre</th>
-                                        <th className="text-center px-6 py-3 font-medium">Estado</th>
-                                        <th className="text-right px-6 py-3 font-medium">Venta</th>
-                                        <th className="text-right px-6 py-3 font-medium">Pagado</th>
-                                        <th className="text-right px-6 py-3 font-medium">Saldo</th>
+                                        <th className="px-6 py-3 font-medium w-[120px]">Fecha</th>
+                                        <th className="px-6 py-3 font-medium">Concepto</th>
+                                        <th className="px-6 py-3 font-medium text-right w-[150px]">Debe (Venta)</th>
+                                        <th className="px-6 py-3 font-medium text-right w-[150px]">Haber (Pago)</th>
+                                        <th className="px-6 py-3 font-medium text-right w-[150px]">Saldo Parcial</th>
+                                        <th className="px-6 py-3 w-[50px]"></th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y">
-                                    {files.map((file) => (
-                                        <tr key={file.id} className="hover:bg-muted/30 transition-colors">
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    {displayLedger.map((move) => (
+                                        <tr key={`${move.type}-${move.id}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
+                                                {formatDate(move.date)}
+                                            </td>
                                             <td className="px-6 py-4">
-                                                <Link to={`/files/${file.id}`} className="text-primary hover:underline font-medium">
-                                                    {file.fileNumber}
-                                                </Link>
+                                                <div className="font-medium text-slate-900 dark:text-slate-200">
+                                                    {move.concept}
+                                                </div>
+                                                <div className="text-xs text-slate-500 mt-0.5">
+                                                    {move.type === 'FILE' ? (
+                                                        <span className="inline-flex items-center gap-1 text-rose-500/80">
+                                                            <ArrowUpRight className="h-3 w-3" /> Nuevo Cargo
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 text-emerald-500/80">
+                                                            <ArrowDownLeft className="h-3 w-3" /> Pago Recibido
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
-                                            <td className="px-6 py-4">{file.name}</td>
-                                            <td className="px-6 py-4 text-center">
-                                                <StatusBadge status={file.status} />
+                                            <td className="px-6 py-4 text-right font-medium text-rose-600/90 dark:text-rose-400/90">
+                                                {move.debit > 0 ? formatCurrency(move.debit) : "-"}
                                             </td>
-                                            <td className="px-6 py-4 text-right font-medium">
-                                                {formatCurrency(file.totalSale)}
+                                            <td className="px-6 py-4 text-right font-medium text-emerald-600/90 dark:text-emerald-400/90">
+                                                {move.credit > 0 ? formatCurrency(move.credit) : "-"}
                                             </td>
-                                            <td className="px-6 py-4 text-right text-green-600 dark:text-green-400">
-                                                {formatCurrency(file.paid)}
+                                            <td className="px-6 py-4 text-right font-bold text-slate-700 dark:text-slate-300">
+                                                {formatCurrency(move.balance)}
                                             </td>
-                                            <td className={`px-6 py-4 text-right font-semibold ${file.balance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
-                                                {formatCurrency(file.balance)}
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="flex justify-end gap-1">
+                                                    {move.type === 'PAYMENT' && (
+                                                        <>
+                                                            <button onClick={() => handleOpenModal(move.originalData)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors" title="Editar">
+                                                                <Pencil className="h-3.5 w-3.5" />
+                                                            </button>
+                                                            <button onClick={() => handleDeletePayment(move.originalData)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-rose-600 transition-colors" title="Eliminar">
+                                                                <Trash2 className="h-3.5 w-3.5" />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {move.type === 'FILE' && (
+                                                        <Link to={`/files/${move.originalData.id}`} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Expediente">
+                                                            <FileText className="h-3.5 w-3.5" />
+                                                        </Link>
+                                                    )}
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}
                                 </tbody>
-                                <tfoot className="bg-muted/50 font-semibold">
-                                    <tr>
-                                        <td colSpan="3" className="px-6 py-3 text-right">Totales:</td>
-                                        <td className="px-6 py-3 text-right">{formatCurrency(summary.totalSales)}</td>
-                                        <td className="px-6 py-3 text-right text-green-600 dark:text-green-400">{formatCurrency(summary.totalPaid)}</td>
-                                        <td className={`px-6 py-3 text-right ${summary.totalBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
-                                            {formatCurrency(summary.totalBalance)}
-                                        </td>
-                                    </tr>
-                                </tfoot>
                             </table>
                         </div>
 
                         {/* Mobile Cards */}
-                        <div className="md:hidden divide-y">
-                            {files.map((file) => (
-                                <div key={file.id} className="p-4 space-y-3">
+                        <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+                            {displayLedger.map((move) => (
+                                <div key={`${move.type}-${move.id}`} className="p-4 space-y-2">
                                     <div className="flex justify-between items-start">
-                                        <div>
-                                            <Link to={`/files/${file.id}`} className="text-primary font-bold hover:underline">
-                                                {file.fileNumber}
-                                            </Link>
-                                            <div className="text-sm font-medium text-gray-900 dark:text-white mt-0.5">{file.name}</div>
-                                        </div>
-                                        <StatusBadge status={file.status} />
+                                        <div className="text-sm text-slate-500">{formatDate(move.date)}</div>
+                                        <div className="font-bold text-slate-900 dark:text-white">{formatCurrency(move.balance)}</div>
                                     </div>
-
-                                    <div className="grid grid-cols-3 gap-2 text-sm">
-                                        <div>
-                                            <div className="text-xs text-muted-foreground">Venta</div>
-                                            <div className="font-medium">{formatCurrency(file.totalSale)}</div>
+                                    <div className="font-medium text-slate-800 dark:text-slate-200 leading-snug">
+                                        {move.concept}
+                                    </div>
+                                    <div className="flex justify-between items-center pt-1">
+                                        <div className={`text-sm font-semibold flex items-center gap-1 ${move.debit > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                            {move.debit > 0 ? (
+                                                <>Cargo: {formatCurrency(move.debit)}</>
+                                            ) : (
+                                                <>Pago: {formatCurrency(move.credit)}</>
+                                            )}
                                         </div>
-                                        <div>
-                                            <div className="text-xs text-muted-foreground">Pagado</div>
-                                            <div className="font-medium text-green-600 dark:text-green-400">{formatCurrency(file.paid)}</div>
-                                        </div>
-                                        <div>
-                                            <div className="text-xs text-muted-foreground">Saldo</div>
-                                            <div className={`font-bold ${file.balance > 0 ? "text-rose-600 dark:text-rose-400" : "text-green-600 dark:text-green-400"}`}>
-                                                {formatCurrency(file.balance)}
-                                            </div>
+                                        <div className="flex gap-2">
+                                            {move.type === 'FILE' ? (
+                                                <Link to={`/files/${move.originalData.id}`} className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600">
+                                                    Ver File
+                                                </Link>
+                                            ) : (
+                                                <button onClick={() => handleOpenModal(move.originalData)} className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600">
+                                                    Editar
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -327,67 +345,13 @@ export default function CustomerAccountPage() {
                     </>
                 ) : (
                     <div className="px-6 py-12 text-center text-muted-foreground">
-                        Este cliente no tiene expedientes registrados.
+                        <div className="mx-auto h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
+                            <FileText className="h-6 w-6 opacity-30" />
+                        </div>
+                        <p>No hay movimientos registrados.</p>
                     </div>
                 )}
             </div>
-
-            {/* Payments History */}
-            <div className="rounded-xl border overflow-hidden">
-                <div className="bg-muted/50 px-6 py-4 border-b">
-                    <h3 className="font-semibold flex items-center gap-2">
-                        <CreditCard className="h-5 w-5 text-primary" />
-                        Historial de Pagos ({payments.length})
-                    </h3>
-                </div>
-                {payments.length > 0 ? (
-                    <div className="divide-y max-h-96 overflow-y-auto">
-                        {payments.map((payment) => (
-                            <div key={payment.id} className="flex flex-col sm:flex-row sm:items-center justify-between px-4 sm:px-6 py-4 hover:bg-muted/30 transition-colors gap-3 sm:gap-0">
-                                <div className="flex items-start sm:items-center gap-3">
-                                    <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30 mt-1 sm:mt-0">
-                                        <CreditCard className="h-4 w-4 text-green-600 dark:text-green-400" />
-                                    </div>
-                                    <div>
-                                        <div className="font-medium text-green-600 dark:text-green-400 text-lg sm:text-base">
-                                            +{formatCurrency(payment.amount)}
-                                        </div>
-                                        <div className="text-sm text-muted-foreground">
-                                            {methodLabels[payment.method] || payment.method} • {payment.fileNumber}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="text-right flex flex-row sm:flex-col justify-between items-end sm:items-end w-full sm:w-auto pl-10 sm:pl-0">
-                                    <div className="text-left sm:text-right">
-                                        <div className="flex items-center gap-1 text-sm text-muted-foreground sm:justify-end">
-                                            <Calendar className="h-3 w-3" />
-                                            {formatDate(payment.paymentDate)}
-                                        </div>
-                                        {payment.notes && (
-                                            <div className="text-xs text-muted-foreground truncate max-w-48 mb-1">
-                                                {payment.notes}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-1 justify-end mt-2 sm:mt-0">
-                                        <button onClick={() => handleOpenModal(payment)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Editar">
-                                            <Pencil className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button onClick={() => handleDeletePayment(payment)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Eliminar">
-                                            <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="px-6 py-12 text-center text-muted-foreground">
-                        No hay pagos registrados para este cliente.
-                    </div>
-                )}
-            </div>
-
 
             <CustomerPaymentModal
                 isOpen={isModalOpen}
@@ -397,6 +361,6 @@ export default function CustomerAccountPage() {
                 availableFiles={files.filter(f => f.status !== "Cancelado")}
                 onSave={loadAccount}
             />
-        </div >
+        </div>
     );
 }

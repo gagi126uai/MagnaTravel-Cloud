@@ -174,13 +174,13 @@ export default function FilesPage() {
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 {/* Status Filter Tabs */}
                 <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start sm:self-auto overflow-x-auto">
-                    {["all", "Presupuesto", "Reservado", "Operativo", "archived"].map((filter) => (
+                    {["all", "Presupuesto", "Reservado", "Operativo"].map((filter) => (
                         <button
                             key={filter}
                             onClick={() => setViewFilter(filter)}
                             className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap flex items-center gap-1.5 ${viewFilter === filter ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                         >
-                            {filter === "all" ? "Activos" : filter === "archived" ? "Cerrados" : filter + "s"}
+                            {filter === "all" ? "Activos" : filter + "s"}
                             <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${viewFilter === filter ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400'}`}>
                                 {tabCounts[filter] || 0}
                             </span>
@@ -212,7 +212,6 @@ export default function FilesPage() {
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Estado</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Venta</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Saldo</th>
-                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 w-[50px]"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -253,6 +252,17 @@ export default function FilesPage() {
                                                 {file.customerName || "Sin Asignar"}
                                             </div>
                                         </td>
+                                        <td className="px-6 py-4 text-right">
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
+                                                onClick={(e) => handleArchive(e, file.id)}
+                                                title="Archivar Expediente"
+                                            >
+                                                <Archive className="h-4 w-4" />
+                                            </Button>
+                                        </td>
                                         <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
                                             {file.startDate ? (
                                                 <div className="flex items-center gap-1.5">
@@ -287,17 +297,6 @@ export default function FilesPage() {
                                             ) : (
                                                 <span className="text-sm text-slate-400">-</span>
                                             )}
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                                onClick={(e) => handleArchive(e, file.id)}
-                                                title="Archivar Expediente"
-                                            >
-                                                <Archive className="h-4 w-4 text-slate-400 hover:text-slate-600" />
-                                            </Button>
                                         </td>
                                     </tr>
                                 );
