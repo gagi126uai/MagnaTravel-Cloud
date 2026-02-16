@@ -8,8 +8,18 @@ using TravelApi.Models;
 using TravelApi.Options;
 using TravelApi.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog;
 
-var builder = WebApplication.CreateBuilder(args);
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .WriteTo.File("logs/log-.txt", rollingInterval: RollingInterval.Day)
+    .CreateLogger();
+
+try
+{
+    var builder = WebApplication.CreateBuilder(args);
+    builder.Host.UseSerilog(); // Use Serilog for logging
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -369,6 +379,15 @@ using (var scope = app.Services.CreateScope())
 
 app.MapControllers();
 
-app.Run();
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application start-up failed");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
 
 public partial class Program { }

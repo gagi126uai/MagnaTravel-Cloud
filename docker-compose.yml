@@ -9,6 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travelpass}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./logs:/var/lib/postgresql/logs # Optional db logs
     ports:
       - "5432:5432"
 
@@ -20,6 +21,9 @@ services:
     restart: unless-stopped
     depends_on:
       - db
+    volumes:
+      - ./uploads:/app/Uploads
+      - ./logs:/app/logs
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
