@@ -68,11 +68,7 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
 
         try {
             setUploading(true);
-            await api.post(`/attachments/upload/${travelFileId}`, formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data',
-                },
-            });
+            await api.post(`/attachments/upload/${travelFileId}`, formData);
             toast.success("Archivo subido correctamente.");
             fetchAttachments();
         } catch (error) {
