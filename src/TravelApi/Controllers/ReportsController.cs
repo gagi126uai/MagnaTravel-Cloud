@@ -292,7 +292,10 @@ public class ReportsController : ControllerBase
     public async Task<ActionResult> ExportReport(
         [FromQuery] DateTime? from, 
         [FromQuery] DateTime? to,
-        CancellationToken cancellationToken)
+        [FromQuery] bool includeSales = true,
+        [FromQuery] bool includeReceivables = true,
+        [FromQuery] bool includePayables = true,
+        CancellationToken cancellationToken = default)
     {
         var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
@@ -300,46 +303,104 @@ public class ReportsController : ControllerBase
         using var workbook = new ClosedXML.Excel.XLWorkbook();
 
         // 1. Hoja de Ventas
-        var salesSheet = workbook.Worksheets.Add("Ventas");
-        salesSheet.Cell(1, 1).Value = "Expediente";
-        salesSheet.Cell(1, 2).Value = "Cliente";
-        salesSheet.Cell(1, 3).Value = "Fecha";
-        salesSheet.Cell(1, 4).Value = "Estado";
-        salesSheet.Cell(1, 5).Value = "Venta";
-        salesSheet.Cell(1, 6).Value = "Costo";
-        salesSheet.Cell(1, 7).Value = "Margen";
-
-        var files = await _dbContext.TravelFiles
-            .Include(f => f.Payer)
-            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
-                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
-            .OrderByDescending(f => f.CreatedAt)
-            .ToListAsync(cancellationToken);
-
-        int row = 2;
-        foreach (var file in files)
+        if (includeSales)
         {
-            salesSheet.Cell(row, 1).Value = file.FileNumber;
-            salesSheet.Cell(row, 2).Value = file.Payer?.FullName ?? "Cliente Ocasional";
-            salesSheet.Cell(row, 3).Value = file.CreatedAt;
-            salesSheet.Cell(row, 4).Value = file.Status.ToString();
-            salesSheet.Cell(row, 5).Value = file.TotalSale;
-            salesSheet.Cell(row, 6).Value = file.TotalCost;
-            salesSheet.Cell(row, 7).Value = file.TotalSale - file.TotalCost;
-            row++;
+            var salesSheet = workbook.Worksheets.Add("Ventas");
+            salesSheet.Cell(1, 1).Value = "Expediente";
+            salesSheet.Cell(1, 2).Value = "Cliente";
+            salesSheet.Cell(1, 3).Value = "Fecha";
+            salesSheet.Cell(1, 4).Value = "Estado";
+            salesSheet.Cell(1, 5).Value = "Venta";
+            salesSheet.Cell(1, 6).Value = "Costo";
+            salesSheet.Cell(1, 7).Value = "Margen";
+
+            var files = await _dbContext.TravelFiles
+                .Include(f => f.Payer)
+                .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
+                    && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+                .OrderByDescending(f => f.CreatedAt)
+                .ToListAsync(cancellationToken);
+
+            int row = 2;
+            foreach (var file in files)
+            {
+                salesSheet.Cell(row, 1).Value = file.FileNumber;
+                salesSheet.Cell(row, 2).Value = file.Payer?.FullName ?? "Cliente Ocasional";
+                salesSheet.Cell(row, 3).Value = file.CreatedAt;
+                salesSheet.Cell(row, 4).Value = file.Status.ToString();
+                salesSheet.Cell(row, 5).Value = file.TotalSale;
+                salesSheet.Cell(row, 6).Value = file.TotalCost;
+                salesSheet.Cell(row, 7).Value = file.TotalSale - file.TotalCost;
+                row++;
+            }
+            
+            // Formato moneda
+            salesSheet.Range(2, 5, row - 1, 7).Style.NumberFormat.Format = "$ #,##0.00";
+            salesSheet.Columns().AdjustToContents();
         }
-        
-        // Formato moneda
-        salesSheet.Range(2, 5, row - 1, 7).Style.NumberFormat.Format = "$ #,##0.00";
-        salesSheet.Columns().AdjustToContents();
 
         // 2. Hoja de Deudas (Cuentas por Cobrar)
-        var debtSheet = workbook.Worksheets.Add("Cuentas por Cobrar");
-        debtSheet.Cell(1, 1).Value = "Cliente";
-        debtSheet.Cell(1, 2).Value = "Documento";
-        debtSheet.Cell(1, 3).Value = "Saldo Deudor";
-        
-        var debtors = await _dbContext.Customers
+        if (includeReceivables)
+        {
+            var debtSheet = workbook.Worksheets.Add("Cuentas por Cobrar");
+            debtSheet.Cell(1, 1).Value = "Cliente";
+            debtSheet.Cell(1, 2).Value = "Documento";
+            debtSheet.Cell(1, 3).Value = "Saldo Deudor";
+            
+            var debtors = await _dbContext.Customers
+                .Where(c => c.CurrentBalance > 0)
+                .OrderByDescending(c => c.CurrentBalance)
+                .ToListAsync(cancellationToken);
+
+            int row = 2;
+            foreach (var debtor in debtors)
+            {
+                debtSheet.Cell(row, 1).Value = debtor.FullName;
+                debtSheet.Cell(row, 2).Value = debtor.DocumentNumber;
+                debtSheet.Cell(row, 3).Value = debtor.CurrentBalance;
+                row++;
+            }
+
+            debtSheet.Range(2, 3, row - 1, 3).Style.NumberFormat.Format = "$ #,##0.00";
+            debtSheet.Columns().AdjustToContents();
+        }
+
+        // 3. Hoja de Pagos (Cuentas por Pagar)
+        if (includePayables)
+        {
+            var payableSheet = workbook.Worksheets.Add("Cuentas por Pagar");
+            payableSheet.Cell(1, 1).Value = "Proveedor";
+            payableSheet.Cell(1, 2).Value = "Saldo a Favor";
+
+            var creditors = await _dbContext.Suppliers
+                .Where(s => s.CurrentBalance > 0)
+                .OrderByDescending(s => s.CurrentBalance)
+                .ToListAsync(cancellationToken);
+
+            int row = 2;
+            foreach (var creditor in creditors)
+            {
+                payableSheet.Cell(row, 1).Value = creditor.Name;
+                payableSheet.Cell(row, 2).Value = creditor.CurrentBalance;
+                row++;
+            }
+
+            payableSheet.Range(2, 2, row - 1, 2).Style.NumberFormat.Format = "$ #,##0.00";
+            payableSheet.Columns().AdjustToContents();
+        }
+
+        if (!workbook.Worksheets.Any())
+        {
+            var sheet = workbook.Worksheets.Add("Info");
+            sheet.Cell(1, 1).Value = "No se seleccionaron reportes para exportar.";
+        }
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        var content = stream.ToArray();
+
+        return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Reporte_{DateTime.Now:yyyyMMdd}.xlsx");
+    }
             .Where(c => c.CurrentBalance > 0 && c.IsActive)
             .OrderByDescending(c => c.CurrentBalance)
             .ToListAsync(cancellationToken);

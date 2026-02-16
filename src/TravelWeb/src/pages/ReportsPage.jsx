@@ -19,7 +19,8 @@ import {
   CreditCard,
   AlertCircle,
   Loader2,
-  PieChart
+  PieChart,
+  X
 } from "lucide-react";
 import {
   BarChart,
@@ -43,6 +44,7 @@ import {
 import { ReportsSkeleton } from "../components/ui/skeleton";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import Swal from "sweetalert2";
 
 export default function ReportsPage() {
   const [report, setReport] = useState(null);
@@ -116,14 +118,77 @@ export default function ReportsPage() {
     }
   };
 
-  const handleExport = async () => {
+  const openExportModal = () => {
+    Swal.fire({
+      title: 'Exportar Reporte',
+      html: `
+        <div class="text-left space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Rango de Fechas</label>
+            <div class="flex gap-2">
+              <input type="date" id="exportFrom" class="swal2-input m-0 w-full text-sm" value="${dateFrom}">
+              <input type="date" id="exportTo" class="swal2-input m-0 w-full text-sm" value="${dateTo}">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">Incluir Información</label>
+            <div class="space-y-2">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="incSales" checked class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
+                <span class="text-sm text-gray-900">Ventas y Margen</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="incReceivables" checked class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
+                <span class="text-sm text-gray-900">Cuentas por Cobrar (Deudores)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="incPayables" checked class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
+                <span class="text-sm text-gray-900">Cuentas por Pagar (Acreedores)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Descargar Excel',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#4f46e5',
+      preConfirm: () => {
+        return {
+          from: document.getElementById('exportFrom').value,
+          to: document.getElementById('exportTo').value,
+          includeSales: document.getElementById('incSales').checked,
+          includeReceivables: document.getElementById('incReceivables').checked,
+          includePayables: document.getElementById('incPayables').checked,
+        }
+      }
+    }).then((result) => {
+      if (result.isConfirmed) {
+        handleExport(result.value);
+      }
+    });
+  };
+
+  const handleExport = async (config) => {
     try {
+      if (!config.includeSales && !config.includeReceivables && !config.includePayables) {
+        showError("Debes seleccionar al menos un tipo de reporte.");
+        return;
+      }
+
       setIsExporting(true);
-      const response = await api.get(`/reports/export?from=${dateFrom}&to=${dateTo}`, {
+      const query = new URLSearchParams({
+        from: config.from,
+        to: config.to,
+        includeSales: config.includeSales,
+        includeReceivables: config.includeReceivables,
+        includePayables: config.includePayables
+      }).toString();
+
+      const response = await api.get(`/reports/export?${query}`, {
         responseType: 'blob'
       });
 
-      // Create blob link to download
       const url = window.URL.createObjectURL(new Blob([response]));
       const link = document.createElement('a');
       link.href = url;
@@ -168,7 +233,7 @@ export default function ReportsPage() {
         </div>
         <Button
           variant="outline"
-          onClick={handleExport}
+          onClick={openExportModal}
           disabled={isExporting}
           className="flex items-center gap-2"
         >
