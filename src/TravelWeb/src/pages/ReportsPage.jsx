@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { showError } from "../alerts";
 import { formatCurrency, formatDate } from "../lib/utils";
+import { useNavigate } from "react-router-dom";
 import {
   TrendingUp,
   DollarSign,
@@ -48,6 +49,7 @@ export default function ReportsPage() {
   const [receivables, setReceivables] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
+  const navigate = useNavigate();
 
   // Date range — default: first day of current month to today
   const today = new Date();
@@ -305,7 +307,11 @@ export default function ReportsPage() {
                 {report.topCustomers?.length > 0 ? (
                   <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
                     {report.topCustomers.map((cust, i) => (
-                      <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                      <div
+                        key={i}
+                        onClick={() => navigate(`/customers/${cust.payerId || cust.id}/account`)}
+                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-all"
+                      >
                         <div className="flex items-center gap-3">
                           <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold shadow-sm ${i === 0 ? 'bg-amber-100 text-amber-700 border border-amber-200' :
                             i === 1 ? 'bg-slate-200 text-slate-600 border border-slate-300' :
@@ -315,7 +321,7 @@ export default function ReportsPage() {
                             {i + 1}
                           </div>
                           <div>
-                            <span className="font-semibold text-sm text-slate-900 dark:text-slate-200">{cust.name}</span>
+                            <span className="font-semibold text-sm text-slate-900 dark:text-slate-200 hover:underline">{cust.name}</span>
                             <div className="text-xs text-slate-500">{cust.fileCount} viajes</div>
                           </div>
                         </div>
@@ -383,9 +389,13 @@ export default function ReportsPage() {
                 {receivables?.length > 0 ? (
                   <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                     {receivables.map((debtor) => (
-                      <div key={debtor.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
+                      <div
+                        key={debtor.id}
+                        onClick={() => navigate(`/customers/${debtor.id}/account`)}
+                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-purple-200 dark:hover:border-purple-800 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 cursor-pointer transition-all"
+                      >
                         <div className="flex flex-col">
-                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300">{debtor.fullName}</span>
+                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300 hover:text-purple-700 dark:hover:text-purple-400 transition-colors">{debtor.fullName}</span>
                           <span className="text-[10px] text-slate-500">Ult. mov: {debtor.lastMovementDate ? formatDate(debtor.lastMovementDate) : '-'}</span>
                         </div>
                         <span className="font-mono font-bold text-purple-600 dark:text-purple-400 text-sm">
@@ -419,12 +429,16 @@ export default function ReportsPage() {
                 {report.supplierDebts?.length > 0 ? (
                   <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                     {report.supplierDebts.map((sup) => (
-                      <div key={sup.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
+                      <div
+                        key={sup.id}
+                        onClick={() => navigate(`/suppliers/${sup.id}/account`)}
+                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-rose-200 dark:hover:border-rose-800 hover:bg-rose-50/50 dark:hover:bg-rose-900/10 cursor-pointer transition-all"
+                      >
                         <div className="flex items-center gap-3">
                           <div className="h-8 w-8 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
                             <Building2 className="h-4 w-4 text-rose-600 dark:text-rose-400" />
                           </div>
-                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300">{sup.name}</span>
+                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300 hover:text-rose-700 dark:hover:text-rose-400 transition-colors">{sup.name}</span>
                         </div>
                         <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-sm">
                           {formatCurrency(sup.currentBalance)}
