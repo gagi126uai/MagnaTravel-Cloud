@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api } from '../services/api';
+import { api } from '../api';
 import { FileText, Image as ImageIcon, Trash2, Download, UploadCloud, X, Loader2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { toast } from 'sonner';
