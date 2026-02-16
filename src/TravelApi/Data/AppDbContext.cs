@@ -195,6 +195,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AfipSettings> AfipSettings => Set<AfipSettings>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<TravelFileAttachment> TravelFileAttachments => Set<TravelFileAttachment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

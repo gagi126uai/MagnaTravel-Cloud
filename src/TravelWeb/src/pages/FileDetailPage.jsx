@@ -4,13 +4,14 @@ import { api } from "../api";
 import {
     ArrowLeft, Plus, Calendar, Users,
     FileText, Edit2, Trash2, CheckCircle, AlertTriangle, X,
-    Plane, Hotel, Car, Package, CreditCard, Archive, Clock
+    Plane, Hotel, Car, Package, CreditCard, Archive, Clock, Paperclip
 } from "lucide-react";
 import ServiceFormModal from "../components/ServiceFormModal";
 import PassengerFormModal from "../components/PassengerFormModal";
 
 import { showError, showSuccess, showConfirm } from "../alerts";
 import AuditTimeline from "../components/AuditTimeline";
+import { FileAttachmentsTab } from "../components/FileAttachmentsTab";
 
 export default function FileDetailPage() {
     const { id } = useParams();
@@ -381,6 +382,13 @@ export default function FileDetailPage() {
                         >
                             <Clock className="w-4 h-4" /> Historial
                         </button>
+                        <button
+                            onClick={() => setActiveTab('attachments')}
+                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
+                ${activeTab === 'attachments' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                        >
+                            <Paperclip className="w-4 h-4" /> Documentos
+                        </button>
                     </nav>
                 </div>
 
@@ -579,6 +587,11 @@ export default function FileDetailPage() {
                             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Historial de Cambios</h3>
                             <AuditTimeline entityName="TravelFile" entityId={file.id} />
                         </div>
+                    )}
+
+                    {/* --- TAB: ATTACHMENTS --- */}
+                    {activeTab === 'attachments' && (
+                        <FileAttachmentsTab travelFileId={file.id} />
                     )}
                 </div>
             </div>
