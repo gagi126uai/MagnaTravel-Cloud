@@ -401,47 +401,6 @@ public class ReportsController : ControllerBase
 
         return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Reporte_{DateTime.Now:yyyyMMdd}.xlsx");
     }
-            .Where(c => c.CurrentBalance > 0 && c.IsActive)
-            .OrderByDescending(c => c.CurrentBalance)
-            .ToListAsync(cancellationToken);
-
-        row = 2;
-        foreach (var debtor in debtors)
-        {
-            debtSheet.Cell(row, 1).Value = debtor.FullName;
-            debtSheet.Cell(row, 2).Value = debtor.DocumentNumber;
-            debtSheet.Cell(row, 3).Value = debtor.CurrentBalance;
-            row++;
-        }
-        debtSheet.Range(2, 3, row - 1, 3).Style.NumberFormat.Format = "$ #,##0.00";
-        debtSheet.Columns().AdjustToContents();
-
-        // 3. Hoja de Proveedores (Cuentas por Pagar)
-        var supplierSheet = workbook.Worksheets.Add("Cuentas por Pagar");
-        supplierSheet.Cell(1, 1).Value = "Proveedor";
-        supplierSheet.Cell(1, 2).Value = "Saldo a Favor";
-
-        var suppliers = await _dbContext.Suppliers
-            .Where(s => s.CurrentBalance != 0 && s.IsActive)
-            .OrderByDescending(s => s.CurrentBalance)
-            .ToListAsync(cancellationToken);
-
-        row = 2;
-        foreach (var sup in suppliers)
-        {
-            supplierSheet.Cell(row, 1).Value = sup.Name;
-            supplierSheet.Cell(row, 2).Value = sup.CurrentBalance;
-            row++;
-        }
-        supplierSheet.Range(2, 2, row - 1, 2).Style.NumberFormat.Format = "$ #,##0.00";
-        supplierSheet.Columns().AdjustToContents();
-
-        using var stream = new MemoryStream();
-        workbook.SaveAs(stream);
-        var content = stream.ToArray();
-
-        return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Reporte_MagnaTravel_{DateTime.Now:yyyyMMdd}.xlsx");
-    }
 
     /// <summary>
     /// Obtener configuración de la agencia
@@ -518,5 +477,3 @@ public record ReportsSummaryResponse(
     decimal TotalSupplierPayments,
     decimal TotalSales,
     decimal GrossMargin);
-
-
