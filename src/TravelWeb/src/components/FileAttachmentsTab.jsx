@@ -14,7 +14,7 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
         try {
             setLoading(true);
             const response = await api.get(`/attachments/file/${travelFileId}`);
-            setAttachments(response.data);
+            setAttachments(Array.isArray(response.data) ? response.data : []);
         } catch (error) {
             console.error("Error loading attachments:", error);
             toast.error("No se pudieron cargar los adjuntos.");
@@ -174,13 +174,13 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
 
             {/* Attachments List */}
             <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">Documentos ({attachments.length})</h3>
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">Documentos ({attachments?.length || 0})</h3>
 
                 {loading ? (
                     <div className="flex justify-center p-4">
                         <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
                     </div>
-                ) : attachments.length === 0 ? (
+                ) : (attachments?.length || 0) === 0 ? (
                     <div className="text-center py-8 text-gray-500 text-sm bg-white rounded-lg border border-gray-100">
                         No hay documentos cargados aún.
                     </div>
