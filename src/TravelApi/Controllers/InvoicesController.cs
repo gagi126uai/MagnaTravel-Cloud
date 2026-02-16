@@ -43,12 +43,7 @@ public class InvoicesController : ControllerBase
     {
         try
         {
-            var invoiceData = new Invoice
-            {
-                ImporteTotal = request.Amount
-            };
-
-            var invoice = await _afipService.CreateInvoice(request.TravelFileId, invoiceData);
+            var invoice = await _afipService.CreateInvoice(request.TravelFileId, request);
             return Ok(_mapper.Map<InvoiceDto>(invoice));
         }
         catch (Exception ex)
@@ -97,8 +92,4 @@ public class InvoicesController : ControllerBase
     }
 }
 
-public class CreateInvoiceRequest
-{
-    public int TravelFileId { get; set; }
-    public decimal Amount { get; set; }
-}
+

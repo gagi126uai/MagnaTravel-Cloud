@@ -38,6 +38,12 @@ public class Invoice
     public int? TravelFileId { get; set; }
     public TravelFile? TravelFile { get; set; }
 
-    // Optional: Link to specific payments if we bill per payment
-    // For now, let's assume we bill an amount linked to a File.
+    // Navigation for Items/Tributes
+    public ICollection<InvoiceItem> Items { get; set; } = new List<InvoiceItem>();
+    public ICollection<InvoiceTribute> Tributes { get; set; } = new List<InvoiceTribute>();
+
+    // Self-Referencing for Credit/Debit Notes
+    public int? OriginalInvoiceId { get; set; }
+    [ForeignKey("OriginalInvoiceId")]
+    public Invoice? OriginalInvoice { get; set; }
 }

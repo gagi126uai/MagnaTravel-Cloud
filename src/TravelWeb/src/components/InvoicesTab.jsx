@@ -3,11 +3,12 @@ import { api } from "../api";
 import { FileText, Plus, CheckCircle, XCircle, AlertTriangle, Eye, RefreshCw } from "lucide-react";
 import Swal from "sweetalert2";
 import { showError, showSuccess } from "../alerts";
+import CreateInvoiceModal from "./CreateInvoiceModal";
 
 export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnly = false }) {
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [creating, setCreating] = useState(false);
+    const [showCreateModal, setShowCreateModal] = useState(false);
 
     const fetchInvoices = useCallback(async () => {
         try {
@@ -25,54 +26,13 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
         fetchInvoices();
     }, [fetchInvoices]);
 
-    const handleCreateInvoice = async () => {
-        // If balance <= 0, warn but allow?
-        if (balance <= 0) {
-            const result = await Swal.fire({
-                title: 'Saldo en cero o negativo',
-                text: "El expediente no tiene saldo pendiente. ¿Deseas facturar de todos modos?",
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: 'Sí, facturar',
-                cancelButtonText: 'Cancelar'
-            });
-            if (!result.isConfirmed) return;
-        }
+    const handleCreateInvoice = () => {
+        setShowCreateModal(true);
+    };
 
-        const { value: amount } = await Swal.fire({
-            title: 'Emitir Factura',
-            input: 'number',
-            inputLabel: 'Monto a Facturar',
-            inputValue: balance > 0 ? balance : 0,
-            showCancelButton: true,
-            confirmButtonText: 'Facturar',
-            cancelButtonText: 'Cancelar',
-            showLoaderOnConfirm: true,
-            preConfirm: (value) => {
-                if (!value || value <= 0) {
-                    Swal.showValidationMessage('El monto debe ser mayor a 0');
-                }
-                return value;
-            }
-        });
-
-        if (amount) {
-            try {
-                setCreating(true);
-                await api.post('/invoices', {
-                    travelFileId: fileId,
-                    amount: parseFloat(amount)
-                });
-                showSuccess("Factura creada y autorizada por AFIP");
-                fetchInvoices();
-                if (onInvoiceCreated) onInvoiceCreated();
-            } catch (error) {
-                console.error(error);
-                showError(error.response?.data?.message || "Error al crear factura");
-            } finally {
-                setCreating(false);
-            }
-        }
+    const handleInvoiceCreated = () => {
+        fetchInvoices();
+        if (onInvoiceCreated) onInvoiceCreated();
     };
 
     const handleDownloadPdf = async (invoice) => {
@@ -175,6 +135,14 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
                     </table>
                 </div>
             )}
+
+            <CreateInvoiceModal
+                isOpen={showCreateModal}
+                onClose={() => setShowCreateModal(false)}
+                onSuccess={handleInvoiceCreated}
+                fileId={fileId}
+                initialAmount={balance}
+            />
         </div>
     );
 }

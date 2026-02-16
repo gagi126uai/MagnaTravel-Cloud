@@ -174,8 +174,11 @@ public class InvoicePdfService : IInvoicePdfService
                 row.RelativeItem().AlignRight().Column(c =>
                 {
                     c.Item().Text($"CUIT/DNI: {customerDoc}");
-                    // Payment Condition could be here
                     c.Item().Text("Condición de Venta: Contado");
+                    if (invoice.OriginalInvoiceId.HasValue)
+                    {
+                        c.Item().Text($"Ref. Orig.: {invoice.OriginalInvoice?.NumeroComprobante:00000000}").Bold();
+                    }
                 });
             });
             
@@ -191,7 +194,7 @@ public class InvoicePdfService : IInvoicePdfService
                     columns.ConstantColumn(80);
                 });
 
-                // Header
+                // Headers
                 table.Header(header =>
                 {
                     header.Cell().Element(CellStyle).Text("#");
@@ -204,20 +207,29 @@ public class InvoicePdfService : IInvoicePdfService
                         container.DefaultTextStyle(x => x.SemiBold()).PaddingVertical(5).BorderBottom(1).BorderColor(Colors.Black);
                 });
 
-                // Item (Single item for the whole file for now, or get details if available)
-                // Assuming Invoice logic just took the file total. 
-                // We'll show "Servicios Turísticos - Exp: {FileNumber}"
-                
-                table.Cell().Element(CellStyle).Text("1");
-                table.Cell().Element(CellStyle).Text($"Servicios Turísticos - Expediente {travelFile.FileNumber} - {travelFile.Name}");
-                table.Cell().Element(CellStyle).AlignRight().Text("1");
-                                
-                // Determine logic for Net vs Total based on Invoice Type
-                var isA = invoice.TipoComprobante == 1 || invoice.TipoComprobante == 2; // Factura A/Nota Debito A
-                var unitPrice = isA ? invoice.ImporteNeto : invoice.ImporteTotal;
-                
-                table.Cell().Element(CellStyle).AlignRight().Text($"$ {unitPrice:N2}");
-                table.Cell().Element(CellStyle).AlignRight().Text($"$ {unitPrice:N2}");
+                // Items Loop
+                var index = 1;
+                foreach (var item in invoice.Items)
+                {
+                    table.Cell().Element(CellStyle).Text(index.ToString());
+                    table.Cell().Element(CellStyle).Text(item.Description);
+                    table.Cell().Element(CellStyle).AlignRight().Text(item.Quantity.ToString("0.##"));
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {item.UnitPrice:N2}");
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {item.Total:N2}");
+                    index++;
+                }
+
+                // Fallback for legacy invoices without items
+                if (!invoice.Items.Any())
+                {
+                    table.Cell().Element(CellStyle).Text("1");
+                    table.Cell().Element(CellStyle).Text($"Servicios Turísticos - Exp {travelFile.FileNumber}");
+                    table.Cell().Element(CellStyle).AlignRight().Text("1");
+                    var isA = invoice.TipoComprobante == 1 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3;
+                    var unitPrice = isA ? invoice.ImporteNeto : invoice.ImporteTotal;
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {unitPrice:N2}");
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {unitPrice:N2}");
+                }
 
                 static IContainer CellStyle(IContainer container) => 
                     container.BorderBottom(1).BorderColor(Colors.Grey.Lighten2).PaddingVertical(5);
@@ -234,15 +246,18 @@ public class InvoicePdfService : IInvoicePdfService
                 
                 c.Item().Row(r =>
                 {
-                    r.RelativeItem().Text("IVA (21%):").AlignRight();
+                    r.RelativeItem().Text("IVA:").AlignRight();
                     r.ConstantItem(100).Text($"$ {invoice.ImporteIva:N2}").AlignRight();
                 });
                 
-                c.Item().Row(r =>
+                foreach(var t in invoice.Tributes)
                 {
-                    r.RelativeItem().Text("Otros Tributos:").AlignRight();
-                    r.ConstantItem(100).Text($"$ 0.00").AlignRight();
-                });
+                    c.Item().Row(r =>
+                    {
+                        r.RelativeItem().Text($"{t.Description}:").AlignRight();
+                        r.ConstantItem(100).Text($"$ {t.Importe:N2}").AlignRight();
+                    });
+                }
 
                 c.Item().PaddingTop(5).Row(r =>
                 {
@@ -312,6 +327,31 @@ public class InvoicePdfService : IInvoicePdfService
         // AFIP QR JSON Structure v1
         long cuit = settings.Cuit;
         long.TryParse(invoice.CAE, out long cae);
+
+        // Determine Receiver Doc Type from Snapshot or guessing
+        int tipoDocRec = 99; // Consumidor Final
+        long nroDocRec = 0;
+
+        if (!string.IsNullOrEmpty(invoice.CustomerSnapshot))
+        {
+             try 
+             {
+                 var snap = JsonSerializer.Deserialize<Customer>(invoice.CustomerSnapshot);
+                 if (snap != null)
+                 {
+                     if (!string.IsNullOrEmpty(snap.TaxId))
+                     {
+                         var clean = snap.TaxId.Replace("-", "").Replace(".", "").Trim();
+                         if (long.TryParse(clean, out long val)) { tipoDocRec = 80; nroDocRec = val; }
+                     }
+                     else if (!string.IsNullOrEmpty(snap.DocumentNumber))
+                     {
+                         if (long.TryParse(snap.DocumentNumber, out long val)) { tipoDocRec = 96; nroDocRec = val; }
+                     }
+                 }
+             }
+             catch {}
+        }
         
         return new
         {
@@ -324,8 +364,8 @@ public class InvoicePdfService : IInvoicePdfService
             importe = invoice.ImporteTotal,
             moneda = "PES",
             ctz = 1,
-            tipoDocRec = 80, // CUIT (Update dynamically if needed, 96 for DNI, 99 for Cons Final)
-            nroDocRec = 0, // Should be Payer CUIT/DNI. 
+            tipoDocRec = tipoDocRec, 
+            nroDocRec = nroDocRec, 
             tipoCodAut = "E",
             codAut = cae
         };
