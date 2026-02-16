@@ -14,6 +14,7 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
         try {
             setLoading(true);
             const response = await api.get(`/attachments/file/${travelFileId}`);
+            console.log("Attachments Data:", response.data); // Debugging
             setAttachments(Array.isArray(response.data) ? response.data : []);
         } catch (error) {
             console.error("Error loading attachments:", error);
@@ -182,40 +183,50 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {attachments.map((file) => (
-                            <div key={file.id} className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow flex items-start space-x-3 group">
-                                <div className="flex-shrink-0">
-                                    {getFileIcon(file.contentType)}
+                        {attachments.map((file) => {
+                            // Handle both camelCase and PascalCase
+                            const id = file.id || file.Id;
+                            const fileName = file.fileName || file.FileName;
+                            const fileSize = file.fileSize || file.FileSize;
+                            const contentType = file.contentType || file.ContentType;
+                            const uploadedBy = file.uploadedBy || file.UploadedBy;
+                            const uploadedAt = file.uploadedAt || file.UploadedAt;
+
+                            return (
+                                <div key={id} className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow flex items-start space-x-3 group">
+                                    <div className="flex-shrink-0">
+                                        {getFileIcon(contentType)}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate" title={fileName}>
+                                            {fileName}
+                                        </p>
+                                        <p className="text-xs text-gray-500 flex items-center mt-1">
+                                            {formatFileSize(fileSize)} • {new Date(uploadedAt).toLocaleDateString()}
+                                        </p>
+                                        <p className="text-xs text-gray-400 mt-0.5">
+                                            Por: {uploadedBy}
+                                        </p>
+                                    </div>
+                                    <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleDownload(id, fileName); }}
+                                            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                            title="Descargar"
+                                        >
+                                            <Download className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleDelete(id, fileName); }}
+                                            className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
+                                            title="Eliminar"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-gray-900 truncate" title={file.fileName}>
-                                        {file.fileName}
-                                    </p>
-                                    <p className="text-xs text-gray-500 flex items-center mt-1">
-                                        {formatFileSize(file.fileSize)} • {new Date(file.uploadedAt).toLocaleDateString()}
-                                    </p>
-                                    <p className="text-xs text-gray-400 mt-0.5">
-                                        Por: {file.uploadedBy}
-                                    </p>
-                                </div>
-                                <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); handleDownload(file.id, file.fileName); }}
-                                        className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
-                                        title="Descargar"
-                                    >
-                                        <Download className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); handleDelete(file.id, file.fileName); }}
-                                        className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
-                                        title="Eliminar"
-                                    >
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
+                            )
+                        })}
                     </div>
                 )}
             </div>
