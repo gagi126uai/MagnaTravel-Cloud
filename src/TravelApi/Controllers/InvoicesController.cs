@@ -90,6 +90,51 @@ public class InvoicesController : ControllerBase
             return StatusCode(500, new { message = $"Error generando PDF: {ex.Message}" });
         }
     }
+    [HttpPost("{id}/annul")]
+    public async Task<ActionResult<InvoiceDto>> AnnulInvoice(int id)
+    {
+        try
+        {
+            var original = await _context.Invoices
+                .Include(i => i.Items)
+                .Include(i => i.Tributes)
+                .FirstOrDefaultAsync(i => i.Id == id);
+
+            if (original == null) return NotFound("Comprobante no encontrado");
+            if (original.TipoComprobante == 3 || original.TipoComprobante == 8 || original.TipoComprobante == 13)
+                return BadRequest("No se puede anular una Nota de Crédito");
+
+            var request = new CreateInvoiceRequest
+            {
+                TravelFileId = original.TravelFileId ?? 0,
+                OriginalInvoiceId = original.Id,
+                IsCreditNote = true,
+                Items = original.Items.Select(i => new InvoiceItemDto 
+                { 
+                    Description = i.Description,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    Total = i.Total,
+                    AlicuotaIvaId = i.AlicuotaIvaId
+                }).ToList(),
+                Tributes = original.Tributes.Select(t => new InvoiceTributeDto
+                {
+                    TributeId = t.TributeId,
+                    Description = t.Description,
+                    BaseImponible = t.BaseImponible,
+                    Alicuota = t.Alicuota,
+                    Importe = t.Importe
+                }).ToList()
+            };
+
+            var invoice = await _afipService.CreateInvoice(request.TravelFileId, request);
+            return Ok(_mapper.Map<InvoiceDto>(invoice));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 }
 
 
