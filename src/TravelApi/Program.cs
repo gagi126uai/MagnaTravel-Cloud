@@ -122,11 +122,24 @@ builder.Services.AddAuthorization();
 builder.Services.AddHttpClient<IAfipService, AfipService>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 
+// Load allowed origins from configuration (appsettings.json or ENV)
+var allowedOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
+
+if (allowedOrigins.Length == 0)
+{
+    Log.Warning("No CORS origins configured. API might be inaccessible from browser clients.");
+}
+else
+{
+    Log.Information("Allowed CORS Origins: {Origins}", string.Join(", ", allowedOrigins));
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("web", policy =>
     {
-        policy.SetIsOriginAllowed(_ => true)
+        policy.WithOrigins(allowedOrigins)
+              .SetIsOriginAllowedToAllowWildcardSubdomains()
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -154,9 +167,21 @@ app.Use(async (context, next) =>
 });
 
 app.UseRouting();
+
+// 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy)
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+});
+
+// 2. CORS (Explicitly permissive for known origins + wildcard fallback if needed)
 app.UseCors("web");
+
 app.UseAuthentication();
 app.UseAuthorization();
+
+// 3. Health Check
+app.MapGet("/health", () => Results.Ok("Healthy")).AllowAnonymous();
 
 using (var scope = app.Services.CreateScope())
 {
