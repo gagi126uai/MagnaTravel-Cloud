@@ -13,9 +13,9 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
     const fetchAttachments = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await api.get(`/attachments/file/${travelFileId}`);
-            console.log("Attachments Data:", response.data); // Debugging
-            setAttachments(Array.isArray(response.data) ? response.data : []);
+            const data = await api.get(`/attachments/file/${travelFileId}`);
+            console.log("Attachments Data:", data); // Debugging
+            setAttachments(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error("Error loading attachments:", error);
             toast.error("No se pudieron cargar los adjuntos.");
@@ -105,11 +105,11 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
 
     const handleDownload = async (id, fileName) => {
         try {
-            const response = await api.get(`/attachments/${id}/download`, {
+            const blob = await api.get(`/attachments/${id}/download`, {
                 responseType: 'blob',
             });
 
-            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
             link.setAttribute('download', fileName);
