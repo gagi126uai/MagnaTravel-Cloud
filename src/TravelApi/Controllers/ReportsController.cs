@@ -320,7 +320,7 @@ public class ReportsController : ControllerBase
         foreach (var file in files)
         {
             salesSheet.Cell(row, 1).Value = file.FileNumber;
-            salesSheet.Cell(row, 2).Value = file.Payer?.FullName ?? file.CustomerName;
+            salesSheet.Cell(row, 2).Value = file.Payer?.FullName ?? "Cliente Ocasional";
             salesSheet.Cell(row, 3).Value = file.CreatedAt;
             salesSheet.Cell(row, 4).Value = file.Status.ToString();
             salesSheet.Cell(row, 5).Value = file.TotalSale;
