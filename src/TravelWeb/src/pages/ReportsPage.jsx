@@ -17,7 +17,8 @@ import {
   Wallet,
   CreditCard,
   AlertCircle,
-  Loader2
+  Loader2,
+  PieChart
 } from "lucide-react";
 import {
   BarChart,
@@ -27,7 +28,9 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend
+  Legend,
+  AreaChart,
+  Area
 } from "recharts";
 import {
   Card,
@@ -37,10 +40,14 @@ import {
   CardTitle
 } from "../components/ui/card";
 import { ReportsSkeleton } from "../components/ui/skeleton";
+import { Button } from "../components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 
 export default function ReportsPage() {
   const [report, setReport] = useState(null);
+  const [receivables, setReceivables] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Date range — default: first day of current month to today
   const today = new Date();
@@ -93,13 +100,39 @@ export default function ReportsPage() {
   const loadReport = async () => {
     try {
       setLoading(true);
-      const data = await api.get(`/reports/detailed?from=${dateFrom}&to=${dateTo}`);
-      setReport(data);
+      const [reportData, receivablesData] = await Promise.all([
+        api.get(`/reports/detailed?from=${dateFrom}&to=${dateTo}`),
+        api.get('/reports/detailed-receivables')
+      ]);
+      setReport(reportData);
+      setReceivables(receivablesData);
     } catch (error) {
       console.error("Error loading report:", error);
       showError("No se pudieron cargar los reportes.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      setIsExporting(true);
+      const response = await api.get(`/reports/export?from=${dateFrom}&to=${dateTo}`, {
+        responseType: 'blob'
+      });
+
+      // Create blob link to download
+      const url = window.URL.createObjectURL(new Blob([response]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Reporte_MagnaTravel_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+    } catch (error) {
+      showError("Error al exportar Excel.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -131,6 +164,15 @@ export default function ReportsPage() {
             Análisis financiero y operativo de tu agencia
           </p>
         </div>
+        <Button
+          variant="outline"
+          onClick={handleExport}
+          disabled={isExporting}
+          className="flex items-center gap-2"
+        >
+          {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Exportar Excel
+        </Button>
       </div>
 
       {/* Date Filter Bar */}
@@ -174,186 +216,236 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard
-          title="Ventas"
-          value={formatCurrency(s.totalSales)}
-          subtitle={`${s.filesCount} expedientes`}
-          icon={TrendingUp}
-          color="indigo"
-        />
-        <KpiCard
-          title="Margen Bruto"
-          value={formatCurrency(s.grossMargin)}
-          subtitle={`${s.marginPercent}% margen`}
-          icon={Percent}
-          color="emerald"
-        />
-        <KpiCard
-          title="Cobros Clientes"
-          value={formatCurrency(s.customerPayments)}
-          subtitle="Ingresos de caja"
-          icon={Wallet}
-          color="blue"
-        />
-        <KpiCard
-          title="Flujo de Caja"
-          value={formatCurrency(cashFlow)}
-          subtitle={cashFlow >= 0 ? "Superávit" : "Déficit"}
-          icon={cashFlow >= 0 ? ArrowUpRight : ArrowDownRight}
-          color={cashFlow >= 0 ? "emerald" : "rose"}
-        />
-      </div>
+      <Tabs defaultValue="sales" className="space-y-6">
+        <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+          <TabsTrigger value="sales" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Ventas y Margen</TabsTrigger>
+          <TabsTrigger value="finance" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Finanzas y Deudas</TabsTrigger>
+        </TabsList>
 
-      {/* Secondary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-          <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
-            <DollarSign className="h-3.5 w-3.5" />
-            Costos Totales
+        <TabsContent value="sales" className="space-y-6">
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <KpiCard
+              title="Ventas Totales"
+              value={formatCurrency(s.totalSales)}
+              subtitle={`${s.filesCount} expedientes`}
+              icon={TrendingUp}
+              color="indigo"
+            />
+            <KpiCard
+              title="Margen Bruto"
+              value={formatCurrency(s.grossMargin)}
+              subtitle={`${s.marginPercent}% ganancia`}
+              icon={Percent}
+              color="emerald"
+            />
+            <KpiCard
+              title="Promedio Venta"
+              value={s.filesCount > 0 ? formatCurrency(s.totalSales / s.filesCount) : '$0'}
+              subtitle="por expediente"
+              icon={BarChart3}
+              color="blue"
+            />
+            <KpiCard
+              title="Promedio Costo"
+              value={s.filesCount > 0 ? formatCurrency(s.totalCosts / s.filesCount) : '$0'}
+              subtitle="por expediente"
+              icon={CreditCard}
+              color="rose"
+            />
           </div>
-          <div className="text-lg font-bold text-slate-700 dark:text-slate-300">{formatCurrency(s.totalCosts)}</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-          <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
-            <CreditCard className="h-3.5 w-3.5" />
-            Pagos a Proveedores
-          </div>
-          <div className="text-lg font-bold text-slate-700 dark:text-slate-300">{formatCurrency(s.supplierPayments)}</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50 col-span-2 md:col-span-1">
-          <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
-            <FileText className="h-3.5 w-3.5" />
-            Expedientes del Período
-          </div>
-          <div className="text-lg font-bold text-slate-700 dark:text-slate-300">{s.filesCount}</div>
-        </div>
-      </div>
 
-      {/* Monthly Chart */}
-      {report.monthlyBreakdown?.length > 0 && (
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-slate-500" />
-              Evolución Mensual
-            </CardTitle>
-            <CardDescription>Ventas vs Costos por mes en el período seleccionado</CardDescription>
-          </CardHeader>
-          <CardContent className="pl-0">
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={report.monthlyBreakdown} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="month" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false}
-                    tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
-                  <Tooltip
-                    cursor={{ fill: '#f1f5f9' }}
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    formatter={(value) => [formatCurrency(value), undefined]}
-                  />
-                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                  <Bar dataKey="sales" name="Ventas" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={30} />
-                  <Bar dataKey="costs" name="Costos" fill="#94a3b8" radius={[4, 4, 0, 0]} barSize={30} />
-                  <Bar dataKey="margin" name="Margen" fill="#10b981" radius={[4, 4, 0, 0]} barSize={30} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Tables Section */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Supplier Debts */}
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-              <Building2 className="h-5 w-5" />
-              Deuda con Proveedores
-            </CardTitle>
-            <CardDescription>Saldo actual por proveedor (en tiempo real)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {report.supplierDebts?.length > 0 ? (
-              <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
-                {report.supplierDebts.map((sup) => (
-                  <div key={sup.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
-                        <Building2 className="h-4 w-4 text-rose-600 dark:text-rose-400" />
-                      </div>
-                      <span className="font-medium text-sm text-slate-700 dark:text-slate-300">{sup.name}</span>
-                    </div>
-                    <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-sm">
-                      {formatCurrency(sup.currentBalance)}
-                    </span>
-                  </div>
-                ))}
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between px-3">
-                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-400">Total</span>
-                  <span className="font-mono font-bold text-rose-700 dark:text-rose-400">
-                    {formatCurrency(report.supplierDebts.reduce((sum, s) => sum + s.currentBalance, 0))}
-                  </span>
-                </div>
+          {/* Monthly Chart */}
+          <Card className="shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-slate-500" />
+                Evolución de Ventas
+              </CardTitle>
+              <CardDescription>Comparativa mensual de ingresos vs egresos</CardDescription>
+            </CardHeader>
+            <CardContent className="pl-0">
+              <div className="h-[350px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={report.monthlyBreakdown} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.1} />
+                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="month" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false}
+                      tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                      formatter={(value) => [formatCurrency(value), undefined]}
+                    />
+                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                    <Area type="monotone" dataKey="sales" name="Ventas" stroke="#6366f1" fillOpacity={1} fill="url(#colorSales)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="costs" name="Costos" stroke="#94a3b8" fill="transparent" strokeDasharray="5 5" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
-            ) : (
-              <EmptyState message="Sin deuda con proveedores" />
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        {/* Top Customers */}
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
-              <Users className="h-5 w-5" />
-              Top Clientes
-            </CardTitle>
-            <CardDescription>Ranking por volumen de ventas en el período</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {report.topCustomers?.length > 0 ? (
-              <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
-                {report.topCustomers.map((cust, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold ${i === 0 ? 'bg-amber-100 text-amber-700' :
-                        i === 1 ? 'bg-slate-200 text-slate-600' :
-                          i === 2 ? 'bg-orange-100 text-orange-700' :
-                            'bg-slate-100 text-slate-500'
-                        }`}>
-                        {i + 1}
-                      </div>
-                      <div>
-                        <span className="font-medium text-sm text-slate-700 dark:text-slate-300">{cust.name}</span>
-                        <div className="text-[10px] text-slate-400">{cust.fileCount} exp.</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono font-bold text-sm text-indigo-600 dark:text-indigo-400">
-                        {formatCurrency(cust.totalSale)}
-                      </div>
-                      {cust.pendingBalance > 0 && (
-                        <div className="flex items-center gap-1 justify-end">
-                          <AlertCircle className="h-3 w-3 text-rose-500" />
-                          <span className="text-[10px] text-rose-500 font-medium">
-                            Debe {formatCurrency(cust.pendingBalance)}
-                          </span>
+          {/* Top Customers & Recent Files */}
+          <div className="grid gap-6 md:grid-cols-2">
+            <Card className="shadow-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                  <Users className="h-5 w-5" />
+                  Top Clientes
+                </CardTitle>
+                <CardDescription>Clientes con mayor volumen de compra</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {report.topCustomers?.length > 0 ? (
+                  <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+                    {report.topCustomers.map((cust, i) => (
+                      <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                        <div className="flex items-center gap-3">
+                          <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold shadow-sm ${i === 0 ? 'bg-amber-100 text-amber-700 border border-amber-200' :
+                            i === 1 ? 'bg-slate-200 text-slate-600 border border-slate-300' :
+                              i === 2 ? 'bg-orange-100 text-orange-700 border border-orange-200' :
+                                'bg-white text-slate-500 border border-slate-200'
+                            }`}>
+                            {i + 1}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-sm text-slate-900 dark:text-slate-200">{cust.name}</span>
+                            <div className="text-xs text-slate-500">{cust.fileCount} viajes</div>
+                          </div>
                         </div>
-                      )}
+                        <div className="text-right">
+                          <div className="font-bold text-sm text-indigo-600 dark:text-indigo-400">
+                            {formatCurrency(cust.totalSale)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState message="Sin datos de clientes en este período" />
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Additional chart or list could go here */}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="finance" className="space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <KpiCard
+              title="Cobros (Entradas)"
+              value={formatCurrency(s.customerPayments)}
+              subtitle="En este período"
+              icon={Wallet}
+              color="emerald"
+            />
+            <KpiCard
+              title="Pagos (Salidas)"
+              value={formatCurrency(s.supplierPayments)}
+              subtitle="En este período"
+              icon={CreditCard}
+              color="rose"
+            />
+            <KpiCard
+              title="Flujo Neto"
+              value={formatCurrency(cashFlow)}
+              subtitle="Resultado de caja"
+              icon={cashFlow >= 0 ? ArrowUpRight : ArrowDownRight}
+              color={cashFlow >= 0 ? "blue" : "orange"}
+            />
+            <KpiCard
+              title="Deuda Clientes"
+              value={formatCurrency(receivables.reduce((acc, curr) => acc + curr.currentBalance, 0))}
+              subtitle="Total por cobrar"
+              icon={AlertCircle}
+              color="purple"
+            />
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Accounts Receivable (Deuda Clientes) */}
+            <Card className="shadow-sm border-l-4 border-l-purple-500">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-purple-700 dark:text-purple-400">
+                  <Users className="h-5 w-5" />
+                  Cuentas por Cobrar
+                </CardTitle>
+                <CardDescription>Clientes que deben dinero a la agencia</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {receivables?.length > 0 ? (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                    {receivables.map((debtor) => (
+                      <div key={debtor.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
+                        <div className="flex flex-col">
+                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300">{debtor.fullName}</span>
+                          <span className="text-[10px] text-slate-500">Ult. mov: {debtor.lastMovementDate ? formatDate(debtor.lastMovementDate) : '-'}</span>
+                        </div>
+                        <span className="font-mono font-bold text-purple-600 dark:text-purple-400 text-sm">
+                          {formatCurrency(debtor.currentBalance)}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="pt-3 mt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between px-2">
+                      <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total a Cobrar</span>
+                      <span className="font-bold text-purple-700 dark:text-purple-400">
+                        {formatCurrency(receivables.reduce((sum, r) => sum + r.currentBalance, 0))}
+                      </span>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState message="Sin datos de clientes en este período" />
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                ) : (
+                  <EmptyState message="¡Excelente! No hay clientes con deuda." />
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Accounts Payable (Deuda Proveedores) */}
+            <Card className="shadow-sm border-l-4 border-l-rose-500">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                  <Building2 className="h-5 w-5" />
+                  Cuentas por Pagar
+                </CardTitle>
+                <CardDescription>Saldo a favor de proveedores</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {report.supplierDebts?.length > 0 ? (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                    {report.supplierDebts.map((sup) => (
+                      <div key={sup.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
+                            <Building2 className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                          </div>
+                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300">{sup.name}</span>
+                        </div>
+                        <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-sm">
+                          {formatCurrency(sup.currentBalance)}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="pt-3 mt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between px-2">
+                      <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total a Pagar</span>
+                      <span className="font-bold text-rose-700 dark:text-rose-400">
+                        {formatCurrency(report.supplierDebts.reduce((sum, s) => sum + s.currentBalance, 0))}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState message="Sin deuda con proveedores" />
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -364,6 +456,8 @@ function KpiCard({ title, value, subtitle, icon: Icon, color }) {
     emerald: { bg: 'bg-emerald-50 dark:bg-emerald-900/10', text: 'text-emerald-600 dark:text-emerald-400' },
     blue: { bg: 'bg-blue-50 dark:bg-blue-900/10', text: 'text-blue-600 dark:text-blue-400' },
     rose: { bg: 'bg-rose-50 dark:bg-rose-900/10', text: 'text-rose-600 dark:text-rose-400' },
+    purple: { bg: 'bg-purple-50 dark:bg-purple-900/10', text: 'text-purple-600 dark:text-purple-400' },
+    orange: { bg: 'bg-orange-50 dark:bg-orange-900/10', text: 'text-orange-600 dark:text-orange-400' },
   };
   const c = colorMap[color] || colorMap.indigo;
 

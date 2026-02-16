@@ -262,6 +262,126 @@ public class ReportsController : ControllerBase
         });
     }
 
+    [HttpGet("detailed-receivables")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetDetailedReceivables(CancellationToken cancellationToken)
+    {
+        // Clientes con saldo positivo (nos deben)
+        var debtors = await _dbContext.Customers
+            .Where(c => c.CurrentBalance > 0 && c.IsActive)
+            .OrderByDescending(c => c.CurrentBalance)
+            .Select(c => new 
+            {
+                c.Id,
+                c.FullName,
+                c.DocumentNumber,
+                c.CurrentBalance,
+                LastMovementDate = _dbContext.TravelFiles
+                    .Where(f => f.PayerId == c.Id)
+                    .OrderByDescending(f => f.CreatedAt)
+                    .Select(f => f.CreatedAt)
+                    .FirstOrDefault()
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(debtors);
+    }
+
+    [HttpGet("export")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> ExportReport(
+        [FromQuery] DateTime? from, 
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
+
+        using var workbook = new ClosedXML.Excel.XLWorkbook();
+
+        // 1. Hoja de Ventas
+        var salesSheet = workbook.Worksheets.Add("Ventas");
+        salesSheet.Cell(1, 1).Value = "Expediente";
+        salesSheet.Cell(1, 2).Value = "Cliente";
+        salesSheet.Cell(1, 3).Value = "Fecha";
+        salesSheet.Cell(1, 4).Value = "Estado";
+        salesSheet.Cell(1, 5).Value = "Venta";
+        salesSheet.Cell(1, 6).Value = "Costo";
+        salesSheet.Cell(1, 7).Value = "Margen";
+
+        var files = await _dbContext.TravelFiles
+            .Include(f => f.Payer)
+            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
+                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+            .OrderByDescending(f => f.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        int row = 2;
+        foreach (var file in files)
+        {
+            salesSheet.Cell(row, 1).Value = file.FileNumber;
+            salesSheet.Cell(row, 2).Value = file.Payer?.FullName ?? file.CustomerName;
+            salesSheet.Cell(row, 3).Value = file.CreatedAt;
+            salesSheet.Cell(row, 4).Value = file.Status.ToString();
+            salesSheet.Cell(row, 5).Value = file.TotalSale;
+            salesSheet.Cell(row, 6).Value = file.TotalCost;
+            salesSheet.Cell(row, 7).Value = file.TotalSale - file.TotalCost;
+            row++;
+        }
+        
+        // Formato moneda
+        salesSheet.Range(2, 5, row - 1, 7).Style.NumberFormat.Format = "$ #,##0.00";
+        salesSheet.Columns().AdjustToContents();
+
+        // 2. Hoja de Deudas (Cuentas por Cobrar)
+        var debtSheet = workbook.Worksheets.Add("Cuentas por Cobrar");
+        debtSheet.Cell(1, 1).Value = "Cliente";
+        debtSheet.Cell(1, 2).Value = "Documento";
+        debtSheet.Cell(1, 3).Value = "Saldo Deudor";
+        
+        var debtors = await _dbContext.Customers
+            .Where(c => c.CurrentBalance > 0 && c.IsActive)
+            .OrderByDescending(c => c.CurrentBalance)
+            .ToListAsync(cancellationToken);
+
+        row = 2;
+        foreach (var debtor in debtors)
+        {
+            debtSheet.Cell(row, 1).Value = debtor.FullName;
+            debtSheet.Cell(row, 2).Value = debtor.DocumentNumber;
+            debtSheet.Cell(row, 3).Value = debtor.CurrentBalance;
+            row++;
+        }
+        debtSheet.Range(2, 3, row - 1, 3).Style.NumberFormat.Format = "$ #,##0.00";
+        debtSheet.Columns().AdjustToContents();
+
+        // 3. Hoja de Proveedores (Cuentas por Pagar)
+        var supplierSheet = workbook.Worksheets.Add("Cuentas por Pagar");
+        supplierSheet.Cell(1, 1).Value = "Proveedor";
+        supplierSheet.Cell(1, 2).Value = "Saldo a Favor";
+
+        var suppliers = await _dbContext.Suppliers
+            .Where(s => s.CurrentBalance != 0 && s.IsActive)
+            .OrderByDescending(s => s.CurrentBalance)
+            .ToListAsync(cancellationToken);
+
+        row = 2;
+        foreach (var sup in suppliers)
+        {
+            supplierSheet.Cell(row, 1).Value = sup.Name;
+            supplierSheet.Cell(row, 2).Value = sup.CurrentBalance;
+            row++;
+        }
+        supplierSheet.Range(2, 2, row - 1, 2).Style.NumberFormat.Format = "$ #,##0.00";
+        supplierSheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        var content = stream.ToArray();
+
+        return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Reporte_MagnaTravel_{DateTime.Now:yyyyMMdd}.xlsx");
+    }
+
     /// <summary>
     /// Obtener configuración de la agencia
     /// </summary>
