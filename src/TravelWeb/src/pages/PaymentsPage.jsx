@@ -16,7 +16,8 @@ import {
   CheckCircle,
   Download,
   Plus,
-  Loader2
+  Loader2,
+  XCircle
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import PaymentModal from "../components/PaymentModal";
@@ -136,6 +137,34 @@ export default function PaymentsPage() {
       link.remove();
     } catch (error) {
       showError("Error al descargar PDF");
+    }
+  };
+
+  const handleAnnulInvoice = async (invoice) => {
+    const result = await Swal.fire({
+      title: '¿Anular Factura?',
+      text: `Se generará una Nota de Crédito idéntica para la Factura ${invoice.puntoDeVenta}-${invoice.numeroComprobante}. ¿Continuar?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, anular',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#ef4444',
+      showLoaderOnConfirm: true,
+      preConfirm: async () => {
+        try {
+          await api.post(`/invoices/${invoice.id}/annul`);
+          return true;
+        } catch (error) {
+          Swal.showValidationMessage(
+            `Error: ${error.response?.data?.message || 'No se pudo anular'}`
+          );
+        }
+      }
+    });
+
+    if (result.isConfirmed) {
+      showSuccess("Nota de Crédito generada exitosamente");
+      loadData();
     }
   };
 
@@ -420,12 +449,24 @@ export default function PaymentsPage() {
                           ${inv.importeTotal?.toLocaleString()}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                          <button
-                            onClick={() => handleDownloadPdf(inv)}
-                            className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center justify-end gap-1 w-full"
-                          >
-                            <Download className="w-4 h-4" /> PDF
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleDownloadPdf(inv)}
+                              className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center justify-end gap-1"
+                            >
+                              <Download className="w-4 h-4" /> PDF
+                            </button>
+
+                            {(inv.tipoComprobante === 1 || inv.tipoComprobante === 6 || inv.tipoComprobante === 11) && (
+                              <button
+                                onClick={() => handleAnnulInvoice(inv)}
+                                className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 ml-2"
+                                title="Anular (Nota de Crédito)"
+                              >
+                                <XCircle className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}

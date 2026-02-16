@@ -8,7 +8,9 @@ public class TravelFileDto
     public string? Description { get; set; }
     public string Status { get; set; } = "Presupuesto";
     public int? CustomerId { get; set; }
+
     public string? CustomerName { get; set; } // Flattened
+    public CustomerDto? Payer { get; set; } // Nested for frontend convenience
     public decimal TotalCost { get; set; }
     public decimal TotalSale { get; set; }
     public decimal Balance { get; set; }
