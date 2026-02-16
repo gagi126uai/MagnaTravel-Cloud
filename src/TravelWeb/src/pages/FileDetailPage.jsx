@@ -359,7 +359,7 @@ export default function FileDetailPage() {
 
             {/* TABS */}
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden min-h-[500px]">
-                <div className="border-b border-gray-200 dark:border-slate-700 overflow-x-auto">
+                <div className="border-b border-gray-200 dark:border-slate-700 overflow-x-auto scrollbar-hide">
                     <nav className="flex -mb-px min-w-max sm:min-w-0">
                         <button
                             onClick={() => setActiveTab('services')}

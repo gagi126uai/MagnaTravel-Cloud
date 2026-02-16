@@ -17,6 +17,9 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
 
+builder.Services.AddExceptionHandler<TravelApi.Middleware.GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddAutoMapper(typeof(Program));
 builder.Services.AddEndpointsApiExplorer();
@@ -120,6 +123,8 @@ var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+
+app.UseExceptionHandler(opt => { }); // Use GlobalExceptionHandler
 
 app.Use(async (context, next) =>
 {

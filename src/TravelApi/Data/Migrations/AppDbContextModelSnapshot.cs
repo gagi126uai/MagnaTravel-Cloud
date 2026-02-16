@@ -1415,6 +1415,46 @@ namespace TravelApi.Data.Migrations
                     b.ToTable("TravelFiles");
                 });
 
+            modelBuilder.Entity("TravelApi.Models.TravelFileAttachment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("TravelFileId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UploadedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TravelFileId");
+
+                    b.ToTable("TravelFileAttachments");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
@@ -1661,6 +1701,17 @@ namespace TravelApi.Data.Migrations
                     b.Navigation("Payer");
                 });
 
+            modelBuilder.Entity("TravelApi.Models.TravelFileAttachment", b =>
+                {
+                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                        .WithMany("Attachments")
+                        .HasForeignKey("TravelFileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("TravelFile");
+                });
+
             modelBuilder.Entity("TravelApi.Models.Customer", b =>
                 {
                     b.Navigation("Reservations");
@@ -1677,6 +1728,8 @@ namespace TravelApi.Data.Migrations
 
             modelBuilder.Entity("TravelApi.Models.TravelFile", b =>
                 {
+                    b.Navigation("Attachments");
+
                     b.Navigation("FlightSegments");
 
                     b.Navigation("HotelBookings");
