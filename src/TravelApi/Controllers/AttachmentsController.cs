@@ -14,29 +14,35 @@ public class AttachmentsController : ControllerBase
 {
     private readonly AppDbContext _dbContext;
     private readonly IWebHostEnvironment _environment;
+    private readonly ILogger<AttachmentsController> _logger;
 
-    public AttachmentsController(AppDbContext dbContext, IWebHostEnvironment environment)
+    public AttachmentsController(AppDbContext dbContext, IWebHostEnvironment environment, ILogger<AttachmentsController> logger)
     {
         _dbContext = dbContext;
         _environment = environment;
+        _logger = logger;
     }
 
     [HttpGet("file/{travelFileId}")]
     public async Task<ActionResult> GetAttachments(int travelFileId, CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Getting attachments for TravelFileId: {TravelFileId}", travelFileId);
+
         var attachments = await _dbContext.TravelFileAttachments
             .Where(a => a.TravelFileId == travelFileId)
             .OrderByDescending(a => a.UploadedAt)
-            .Select(a => new
+            .Select(a => new TravelApi.DTOs.AttachmentDto
             {
-                a.Id,
-                a.FileName,
-                a.FileSize,
-                a.ContentType,
-                a.UploadedBy,
-                a.UploadedAt
+                Id = a.Id,
+                FileName = a.FileName,
+                FileSize = a.FileSize,
+                ContentType = a.ContentType,
+                UploadedBy = a.UploadedBy,
+                UploadedAt = a.UploadedAt
             })
             .ToListAsync(cancellationToken);
+
+        _logger.LogInformation("Found {Count} attachments for TravelFileId: {TravelFileId}", attachments.Count, travelFileId);
 
         return Ok(attachments);
     }
@@ -78,12 +84,16 @@ public class AttachmentsController : ControllerBase
         _dbContext.TravelFileAttachments.Add(attachment);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        return Ok(new
+        _logger.LogInformation("Uploaded attachment {Id} for TravelFileId: {TravelFileId}", attachment.Id, travelFileId);
+
+        return Ok(new TravelApi.DTOs.AttachmentDto
         {
-            attachment.Id,
-            attachment.FileName,
-            attachment.FileSize,
-            attachment.UploadedAt
+            Id = attachment.Id,
+            FileName = attachment.FileName,
+            FileSize = attachment.FileSize,
+            ContentType = attachment.ContentType,
+            UploadedBy = attachment.UploadedBy,
+            UploadedAt = attachment.UploadedAt
         });
     }
 
