@@ -13,6 +13,7 @@ using TravelApi.Models;
 using TravelApi.Models.Afip;
 using System.Text.Json;
 using TravelApi.DTOs;
+using Hangfire;
 
 
 namespace TravelApi.Services;
