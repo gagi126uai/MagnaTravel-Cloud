@@ -9,10 +9,8 @@ import {
 import ServiceFormModal from "../components/ServiceFormModal";
 import PassengerFormModal from "../components/PassengerFormModal";
 
-import { showError, showSuccess, showConfirm } from "../alerts";
 import AuditTimeline from "../components/AuditTimeline";
 import { FileAttachmentsTab } from "../components/FileAttachmentsTab";
-import InvoicesTab from "../components/InvoicesTab";
 
 export default function FileDetailPage() {
     const { id } = useParams();
@@ -383,13 +381,6 @@ export default function FileDetailPage() {
                 ${activeTab === 'history' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <Clock className="w-4 h-4" /> Historial
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('invoices')}
-                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
-                ${activeTab === 'invoices' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
-                        >
-                            <CreditCard className="w-4 h-4" /> Facturación
                         </button>
                         <button
                             onClick={() => setActiveTab('attachments')}
