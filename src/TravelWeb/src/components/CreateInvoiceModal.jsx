@@ -122,7 +122,7 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
             };
 
             await api.post('/invoices', payload);
-            showSuccess("Factura creada exitosamente");
+            showSuccess("Factura encolada. Se procesará en breve.");
             onSuccess();
             onClose();
         } catch (error) {

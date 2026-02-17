@@ -122,6 +122,16 @@ export default function PaymentsPage() {
     }
   };
 
+  const handleRetryInvoice = async (invoice) => {
+    try {
+      await api.post(`/invoices/${invoice.id}/retry`);
+      showSuccess("Reintento encolado. Esperá unos segundos.");
+      loadData();
+    } catch (error) {
+      showError("Error al reintentar.");
+    }
+  };
+
   const handleAnnulInvoice = async (invoice) => {
     // ... (Keep existing logic) ...
     const result = await Swal.fire({
@@ -370,12 +380,40 @@ export default function PaymentsPage() {
               {invoices.map(i => (
                 <tr key={i.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(i.createdAt).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-mono">{getInvoiceLabel(i.tipoComprobante)} - {i.numeroComprobante}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-mono">
+                    {i.resultado === 'A' ? (
+                      <span className="text-green-600 font-bold flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3" /> {getInvoiceLabel(i.tipoComprobante)} - {i.numeroComprobante}
+                      </span>
+                    ) : i.resultado === 'PENDING' ? (
+                      <span className="text-yellow-600 font-bold flex items-center gap-1 animate-pulse">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Procesando...
+                      </span>
+                    ) : (
+                      <div className="flex flex-col">
+                        <span className="text-red-600 font-bold flex items-center gap-1">
+                          <XCircle className="w-3 h-3" /> Error (Rechazado)
+                        </span>
+                        <span className="text-[10px] text-red-500 max-w-[200px] truncate" title={i.observaciones}>
+                          {i.observaciones || "Error desconocido"}
+                        </span>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{i.travelFile?.payer?.fullName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold">${i.importeTotal?.toLocaleString()}</td>
                   <td className="px-6 py-4 text-right">
-                    <button onClick={() => handleDownloadPdf(i)} className="text-indigo-600 hover:text-indigo-800 mr-2"><Download className="w-4 h-4" /></button>
-                    <button onClick={() => handleAnnulInvoice(i)} className="text-red-500 hover:text-red-700"><XCircle className="w-4 h-4" /></button>
+                    {i.resultado === 'A' && (
+                      <>
+                        <button onClick={() => handleDownloadPdf(i)} className="text-indigo-600 hover:text-indigo-800 mr-2" title="Descargar"><Download className="w-4 h-4" /></button>
+                        <button onClick={() => handleAnnulInvoice(i)} className="text-red-500 hover:text-red-700" title="Anular"><XCircle className="w-4 h-4" /></button>
+                      </>
+                    )}
+                    {i.resultado === 'R' && (
+                      <button onClick={() => handleRetryInvoice(i)} className="text-orange-600 hover:text-orange-800 font-bold text-xs border border-orange-200 bg-orange-50 px-2 py-1 rounded" title="Reintentar">
+                        Reintentar
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

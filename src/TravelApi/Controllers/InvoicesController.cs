@@ -47,13 +47,36 @@ public class InvoicesController : ControllerBase
     {
         try
         {
-            var invoice = await _afipService.CreateInvoice(request.TravelFileId, request);
-            return Ok(_mapper.Map<InvoiceDto>(invoice));
+            // 1. Create Pending in DB
+            var invoice = await _afipService.CreatePendingInvoice(request.TravelFileId, request);
+            
+            // 2. Enqueue Job
+            _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(invoice.Id));
+
+            // return Accepted (Processing)
+            return Accepted(_mapper.Map<InvoiceDto>(invoice));
         }
         catch (Exception ex)
         {
             return BadRequest(new { message = ex.Message });
         }
+    }
+
+    [HttpPost("{id}/retry")]
+    public async Task<IActionResult> RetryInvoice(int id)
+    {
+        var invoice = await _context.Invoices.FindAsync(id);
+        if (invoice == null) return NotFound();
+        if (invoice.Resultado == "A") return BadRequest("La factura ya está aprobada.");
+
+        // Reset to PENDING so UI shows yellow
+        invoice.Resultado = "PENDING";
+        invoice.Observaciones = null;
+        await _context.SaveChangesAsync();
+
+        _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(id));
+        
+        return Accepted(new { message = "Reintento encolado." });
     }
 
     [HttpGet("file/{travelFileId}")]

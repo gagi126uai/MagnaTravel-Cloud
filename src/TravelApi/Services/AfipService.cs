@@ -24,7 +24,9 @@ public interface IAfipService
     Task<string> GetStatus();
 
     // Core
-    Task<Invoice> CreateInvoice(int travelFileId, CreateInvoiceRequest request);
+    // Core
+    Task<Invoice> CreatePendingInvoice(int travelFileId, CreateInvoiceRequest request);
+    Task ProcessInvoiceJob(int invoiceId);
     Task<AfipVoucherDetails?> GetVoucherDetails(int cbteTipo, int ptoVta, long cbteNro);
 }
 
@@ -340,39 +342,33 @@ public class AfipService : IAfipService
         }
     }
 
-    public async Task<Invoice> CreateInvoice(int travelFileId, CreateInvoiceRequest request)
+    public async Task<Invoice> CreatePendingInvoice(int travelFileId, CreateInvoiceRequest request)
     {
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
         if (settings == null) throw new Exception("AFIP no configurado");
 
-        await EnsureAuth(settings);
-
         // 1. Get TravelFile & Customer
         var travelFile = await _context.TravelFiles
             .Include(f => f.Payer)
-            .Include(f => f.Reservations)
             .FirstOrDefaultAsync(f => f.Id == travelFileId);
 
         if (travelFile == null) throw new Exception("Expediente no encontrado");
         
         var customer = travelFile.Payer;
-        if (customer == null) throw new Exception("El expediente no tiene cliente asignado");
-        
-        // 2. Load Original Invoice (if Annulment/Note) BEFORE determining type
+        if (customer == null) throw new Exception("El expediente no tiene cliente asignado"); // Allow Consumer Final?
+
+        // 2. Load Original Invoice (if Annulment/Note)
         Invoice? originalInvoice = null;
         if (request.OriginalInvoiceId.HasValue)
         {
             originalInvoice = await _context.Invoices.FindAsync(request.OriginalInvoiceId.Value);
-            if (originalInvoice == null) throw new Exception("Comprobante original no encontrado para anulación.");
+            if (originalInvoice == null) throw new Exception("Comprobante original no encontrado");
         }
 
-        // 3. Determine Invoice Type
-        int baseType = 6; // Default B
-        
-        // If we simply create a fresh invoice, use Client Status
+        // 3. Determine Type (Logic kept same)
+        int baseType = 6; // B
         if (settings.TaxCondition == "Responsable Inscripto")
         {
-            // Case-insensitive check
             if (customer.TaxCondition != null && customer.TaxCondition.Equals("Responsable Inscripto", StringComparison.OrdinalIgnoreCase)) 
                 baseType = 1; // A
             else 
@@ -384,38 +380,26 @@ public class AfipService : IAfipService
         }
 
         int cbteTipo = baseType;
-
-        // Override if it's a Note related to an Original Invoice
         if (originalInvoice != null)
         {
              var t = originalInvoice.TipoComprobante;
-             
              if (request.IsCreditNote)
              {
-                 // A (1, 2) -> 3
                  if (t == 1 || t == 2) cbteTipo = 3;
-                 // B (6, 7) -> 8
                  else if (t == 6 || t == 7) cbteTipo = 8;
-                 // C (11, 12) -> 13
                  else if (t == 11 || t == 12) cbteTipo = 13;
-                 // M (51, 52) -> 53
                  else if (t == 51 || t == 52) cbteTipo = 53;
              }
              else if (request.IsDebitNote)
              {
-                 // NC A (3) -> 2
                  if (t == 3) cbteTipo = 2;
-                 // NC B (8) -> 7
                  else if (t == 8) cbteTipo = 7;
-                 // NC C (13) -> 12
                  else if (t == 13) cbteTipo = 12;
-                 // NC M (53) -> 52
                  else if (t == 53) cbteTipo = 52;
              }
         }
         else 
         {
-            // Fallback for Standalone Notes (Legacy logic)
             if (request.IsCreditNote)
             {
                 if (baseType == 1) cbteTipo = 3;
@@ -430,213 +414,29 @@ public class AfipService : IAfipService
             }
         }
 
-        // 4. Calculate Totals & VAT Groups
-        // ARCA requires grouping items by VAT Rate (Alicuota)
+        // 4. Calculate Totals
+        // (Logic kept same)
         var ivaGroups = request.Items
             .GroupBy(i => i.AlicuotaIvaId)
             .Select(g => new 
             {
                 Id = g.Key,
-                BaseImp = g.Sum(x => x.Total), // Assuming Total in Item is Net if A, or Gross if B? 
-                                               // Let's assume input is NET for A, and GROSS for B to be safe? 
-                                               // Or better: Input is always NET + Rate.
+                BaseImp = g.Sum(x => x.Total), 
                 Importe = g.Sum(x => x.Total * GetVatMultiplier(g.Key))
             })
             .ToList();
             
-        // Helper to get multiplier
-        decimal GetVatMultiplier(int id) => id switch 
-        {
-            3 => 0m,     // 0%
-            4 => 0.105m, // 10.5%
-            5 => 0.21m,  // 21%
-            6 => 0.27m,  // 27%
-            8 => 0.05m,  // 5%
-            9 => 0.025m, // 2.5%
-            _ => 0m
-        };
-
         decimal net = request.Items.Sum(i => i.Total);
         decimal iva = ivaGroups.Sum(g => g.Importe);
         decimal tributosTotal = request.Tributes.Sum(t => t.Importe);
         decimal total = net + iva + tributosTotal;
 
-        // Rounding to 2 decimal places to avoid AFIP errors
         net = Math.Round(net, 2);
         iva = Math.Round(iva, 2);
         tributosTotal = Math.Round(tributosTotal, 2);
         total = Math.Round(total, 2);
 
-        // 5. Get Next Number
-        int cbteNro = await GetNextVoucherNumber(settings, cbteTipo);
-
-        // 6. Doc Data
-        int docTipo = 99;
-        long docNro = 0;
-        if (!string.IsNullOrEmpty(customer.TaxId))
-        {
-            var clean = customer.TaxId.Replace("-", "").Replace(".", "").Trim();
-            if (long.TryParse(clean, out long val)) { docTipo = 80; docNro = val; }
-        }
-        else if (!string.IsNullOrEmpty(customer.DocumentNumber))
-        {
-            if (long.TryParse(customer.DocumentNumber, out long val)) { docTipo = 96; docNro = val; }
-        }
-
-        // 7. XML Generation
-        var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
-        var action = "http://ar.gov.afip.dif.FEV1/FECAESolicitar";
-
-        // IVA Block
-        var sbIva = new StringBuilder();
-        if (ivaGroups.Any() && (baseType == 1 || baseType == 6)) // Only for A/B (C doesn't report VAT breakdown)
-        {
-            sbIva.Append("<Iva>");
-            foreach(var g in ivaGroups)
-            {
-                sbIva.Append($@"<AlicIva>
-                    <Id>{g.Id}</Id>
-                    <BaseImp>{g.BaseImp.ToString("0.00", CultureInfo.InvariantCulture)}</BaseImp>
-                    <Importe>{g.Importe.ToString("0.00", CultureInfo.InvariantCulture)}</Importe>
-                </AlicIva>");
-            }
-            sbIva.Append("</Iva>");
-        }
-
-        // Tributes Block
-        var sbTrib = new StringBuilder();
-        if (request.Tributes.Any())
-        {
-            sbTrib.Append("<Tributos>");
-            foreach(var t in request.Tributes)
-            {
-                sbTrib.Append($@"<Tributo>
-                    <Id>{t.TributeId}</Id>
-                    <Desc>{t.Description}</Desc>
-                    <BaseImp>{t.BaseImponible.ToString("0.00", CultureInfo.InvariantCulture)}</BaseImp>
-                    <Alic>{t.Alicuota.ToString("0.00", CultureInfo.InvariantCulture)}</Alic>
-                    <Importe>{t.Importe.ToString("0.00", CultureInfo.InvariantCulture)}</Importe>
-                </Tributo>");
-            }
-            sbTrib.Append("</Tributos>");
-        }
-
-        // Associated Vouchers (CbtesAsoc) for Credit Notes
-        var sbCbtesAsoc = new StringBuilder();
-        if ((request.IsCreditNote || request.IsDebitNote) && originalInvoice != null)
-        {
-            sbCbtesAsoc.Append($@"<CbtesAsoc>
-                <CbteAsoc>
-                    <Tipo>{originalInvoice.TipoComprobante}</Tipo>
-                    <PtoVta>{originalInvoice.PuntoDeVenta}</PtoVta>
-                    <Nro>{originalInvoice.NumeroComprobante}</Nro>
-                    <Cuit>{settings.Cuit}</Cuit>  
-                </CbteAsoc>
-            </CbtesAsoc>");
-             // Note: Cuit in CbteAsoc is the issuer's CUIT (us), usually optional if same, 
-             // but required by some WSDL versions.
-        }
-
-        var today = DateTime.Now.ToString("yyyyMMdd");
-        
-        var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
-  <soap:Body>
-    <FECAESolicitar xmlns=""http://ar.gov.afip.dif.FEV1/"">
-      <Auth>
-        <Token>{settings.Token}</Token>
-        <Sign>{settings.Sign}</Sign>
-        <Cuit>{settings.Cuit}</Cuit>
-      </Auth>
-      <FeCAEReq>
-        <FeCabReq>
-            <CantReg>1</CantReg>
-            <PtoVta>{settings.PuntoDeVenta}</PtoVta>
-            <CbteTipo>{cbteTipo}</CbteTipo>
-        </FeCabReq>
-        <FeDetReq>
-            <FECAEDetRequest>
-                <Concepto>2</Concepto>
-                <DocTipo>{docTipo}</DocTipo>
-                <DocNro>{docNro}</DocNro>
-                <CbteDesde>{cbteNro}</CbteDesde>
-                <CbteHasta>{cbteNro}</CbteHasta>
-                <CbteFch>{today}</CbteFch>
-                <ImpTotal>{total.ToString("0.00", CultureInfo.InvariantCulture)}</ImpTotal>
-                <ImpTotConc>0</ImpTotConc>
-                <ImpNeto>{net.ToString("0.00", CultureInfo.InvariantCulture)}</ImpNeto>
-                <ImpOpEx>0</ImpOpEx>
-                <ImpTrib>{tributosTotal.ToString("0.00", CultureInfo.InvariantCulture)}</ImpTrib>
-                <ImpIVA>{iva.ToString("0.00", CultureInfo.InvariantCulture)}</ImpIVA>
-                <FchServDesde>{today}</FchServDesde>
-                <FchServHasta>{today}</FchServHasta>
-                <FchVtoPago>{DateTime.Now.AddDays(10).ToString("yyyyMMdd")}</FchVtoPago>
-                <MonId>PES</MonId>
-                <MonCotiz>1</MonCotiz>
-                <CondicionIVAReceptorId>{GetConditionIvaId(customer.TaxCondition, docTipo)}</CondicionIVAReceptorId>
-                {sbCbtesAsoc}
-                {sbTrib}
-                {sbIva}
-            </FECAEDetRequest>
-        </FeDetReq>
-      </FeCAEReq>
-    </FECAESolicitar>
-  </soap:Body>
-</soap:Envelope>";
-
-        var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
-        httpRequest.Headers.Add("SOAPAction", action);
-        httpRequest.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
-
-        var response = await _httpClient.SendAsync(httpRequest);
-        var responseXml = await response.Content.ReadAsStringAsync();
-        
-        // Parse & Handle (Simplified for brevity, use same error handling logic as before)
-        var doc = XDocument.Parse(responseXml);
-        var resultNode = doc.Descendants(XName.Get("FECAESolicitarResult", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
-        if (resultNode == null) throw new Exception("AFIP Empty Result");
-
-        var cabResult = resultNode.Element(XName.Get("FeCabResp", "http://ar.gov.afip.dif.FEV1/"))?.Element(XName.Get("Resultado", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-
-
-        if (cabResult == "R")
-        {
-             var errors = resultNode.Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
-             var sbErr = new StringBuilder();
-             foreach(var e in errors) 
-             {
-                var msg = e.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-                var code = e.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-                sbErr.AppendLine($"[{code}] {msg}");
-             }
-
-             // If no global errors, check for Observations in Detail
-             if (sbErr.Length == 0)
-             {
-                var obs = resultNode.Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
-                foreach(var o in obs)
-                {
-                    var msg = o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-                    var code = o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-                    sbErr.AppendLine($"[Obs {code}] {msg}");
-                }
-             }
-
-             // If still empty, dump the raw XML to debug
-             if (sbErr.Length == 0)
-             {
-                 sbErr.AppendLine("No parsing errors found. Raw Response:");
-                 sbErr.AppendLine(responseXml);
-             }
-
-             throw new Exception("AFIP RECHAZADO: " + sbErr.ToString());
-        }
-
-        var detResp = resultNode.Descendants(XName.Get("FECAEDetResponse", "http://ar.gov.afip.dif.FEV1/")).First();
-        var cae = detResp.Element(XName.Get("CAE", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-        var caeVto = detResp.Element(XName.Get("CAEFchVto", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-
-        // Save to DB
+        // 5. Create PENDING Invoice
         var agencySettings = await _context.AgencySettings.FirstOrDefaultAsync();
 
         var invoice = new Invoice
@@ -645,10 +445,10 @@ public class AfipService : IAfipService
              OriginalInvoiceId = request.OriginalInvoiceId,
              TipoComprobante = cbteTipo,
              PuntoDeVenta = settings.PuntoDeVenta,
-             NumeroComprobante = cbteNro,
-             CAE = cae,
-             VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null),
-             Resultado = cabResult,
+             NumeroComprobante = 0, // Placeholder
+             CAE = null,
+             VencimientoCAE = null,
+             Resultado = "PENDING", // <--- NEW STATE
              ImporteTotal = total,
              ImporteNeto = net,
              ImporteIva = iva,
@@ -678,6 +478,237 @@ public class AfipService : IAfipService
         await _context.SaveChangesAsync();
         
         return invoice;
+    }
+
+    // Helper functions need to be static or duplicated if used in ProcessInvoiceJob? 
+    // No, ProcessInvoiceJob is in same class.
+    private decimal GetVatMultiplier(int id) => id switch 
+    {
+        3 => 0m,     // 0%
+        4 => 0.105m, // 10.5%
+        5 => 0.21m,  // 21%
+        6 => 0.27m,  // 27%
+        8 => 0.05m,  // 5%
+        9 => 0.025m, // 2.5%
+        _ => 0m
+    };
+
+    [AutomaticRetry(Attempts = 0)] // Don't auto-retry AFIP calls blindly
+    public async Task ProcessInvoiceJob(int invoiceId)
+    {
+        var invoice = await _context.Invoices
+            .Include(i => i.Items)
+            .Include(i => i.Tributes)
+            .Include(i => i.OriginalInvoice)
+            .FirstOrDefaultAsync(i => i.Id == invoiceId);
+
+        if (invoice == null) throw new Exception("Invoice not found");
+        if (invoice.Resultado == "A") return; // Already approved
+
+        try 
+        {
+            var settings = await _context.AfipSettings.FirstOrDefaultAsync();
+            if (settings == null) throw new Exception("AFIP Not Configured");
+
+            await EnsureAuth(settings);
+
+            // Re-construct data needed for AFIP from the Invoice entity
+            // 1. Next Number
+            int cbteNro = await GetNextVoucherNumber(settings, invoice.TipoComprobante);
+            
+            // 2. Doc Details from Snapshot or Relation? 
+            // Better to parse from Snapshot to ensure immutability, but for now use relation or fallback
+            // Parsing CustomerSnapshot is safer.
+            long docNro = 0;
+            int docTipo = 99;
+            
+            // Try parse customer snapshot
+            if (!string.IsNullOrEmpty(invoice.CustomerSnapshot))
+            {
+                 var cust = System.Text.Json.JsonSerializer.Deserialize<Customer>(invoice.CustomerSnapshot);
+                 if (cust != null)
+                 {
+                     if (!string.IsNullOrEmpty(cust.TaxId))
+                     {
+                        var clean = cust.TaxId.Replace("-", "").Replace(".", "").Trim();
+                        if (long.TryParse(clean, out long val)) { docTipo = 80; docNro = val; }
+                     }
+                     else if (!string.IsNullOrEmpty(cust.DocumentNumber))
+                     {
+                        if (long.TryParse(cust.DocumentNumber, out long val)) { docTipo = 96; docNro = val; }
+                     }
+                 }
+            }
+
+            // 3. Re-Calculate IVA Groups (AFIP Needs breakdown)
+            var ivaGroups = invoice.Items
+                .GroupBy(i => i.AlicuotaIvaId)
+                .Select(g => new 
+                {
+                    Id = g.Key,
+                    BaseImp = g.Sum(x => x.Total), 
+                    Importe = g.Sum(x => x.ImporteIva)
+                })
+                .ToList();
+
+            // 4. Construct XML (Reuse logic)
+            // ... (Copy-paste XML construction from previous CreateInvoice) ...
+            // We need to DRY this up, but for now, let's inline it to avoid breaking changes.
+            
+            var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
+            var action = "http://ar.gov.afip.dif.FEV1/FECAESolicitar";
+
+             // IVA Block
+            var sbIva = new StringBuilder();
+            if (ivaGroups.Any() && (invoice.TipoComprobante == 1 || invoice.TipoComprobante == 6 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3 || invoice.TipoComprobante == 7 || invoice.TipoComprobante == 8)) 
+            {
+                sbIva.Append("<Iva>");
+                foreach(var g in ivaGroups)
+                {
+                    sbIva.Append($@"<AlicIva>
+                        <Id>{g.Id}</Id>
+                        <BaseImp>{g.BaseImp.ToString("0.00", CultureInfo.InvariantCulture)}</BaseImp>
+                        <Importe>{g.Importe.ToString("0.00", CultureInfo.InvariantCulture)}</Importe>
+                    </AlicIva>");
+                }
+                sbIva.Append("</Iva>");
+            }
+
+            // Tributes Block
+            var sbTrib = new StringBuilder();
+            if (invoice.Tributes.Any())
+            {
+                sbTrib.Append("<Tributos>");
+                foreach(var t in invoice.Tributes)
+                {
+                    sbTrib.Append($@"<Tributo>
+                        <Id>{t.TributeId}</Id>
+                        <Desc>{t.Description}</Desc>
+                        <BaseImp>{t.BaseImponible.ToString("0.00", CultureInfo.InvariantCulture)}</BaseImp>
+                        <Alic>{t.Alicuota.ToString("0.00", CultureInfo.InvariantCulture)}</Alic>
+                        <Importe>{t.Importe.ToString("0.00", CultureInfo.InvariantCulture)}</Importe>
+                    </Tributo>");
+                }
+                sbTrib.Append("</Tributos>");
+            }
+
+            // Associated
+            var sbCbtesAsoc = new StringBuilder();
+            if (invoice.OriginalInvoiceId.HasValue && invoice.OriginalInvoice != null)
+            {
+                sbCbtesAsoc.Append($@"<CbtesAsoc>
+                    <CbteAsoc>
+                        <Tipo>{invoice.OriginalInvoice.TipoComprobante}</Tipo>
+                        <PtoVta>{invoice.OriginalInvoice.PuntoDeVenta}</PtoVta>
+                        <Nro>{invoice.OriginalInvoice.NumeroComprobante}</Nro>
+                        <Cuit>{settings.Cuit}</Cuit>  
+                    </CbteAsoc>
+                </CbtesAsoc>");
+            }
+            
+            var today = DateTime.Now.ToString("yyyyMMdd");
+             var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+    <soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+      <soap:Body>
+        <FECAESolicitar xmlns=""http://ar.gov.afip.dif.FEV1/"">
+          <Auth>
+            <Token>{settings.Token}</Token>
+            <Sign>{settings.Sign}</Sign>
+            <Cuit>{settings.Cuit}</Cuit>
+          </Auth>
+          <FeCAEReq>
+            <FeCabReq>
+                <CantReg>1</CantReg>
+                <PtoVta>{settings.PuntoDeVenta}</PtoVta>
+                <CbteTipo>{invoice.TipoComprobante}</CbteTipo>
+            </FeCabReq>
+            <FeDetReq>
+                <FECAEDetRequest>
+                    <Concepto>2</Concepto>
+                    <DocTipo>{docTipo}</DocTipo>
+                    <DocNro>{docNro}</DocNro>
+                    <CbteDesde>{cbteNro}</CbteDesde>
+                    <CbteHasta>{cbteNro}</CbteHasta>
+                    <CbteFch>{today}</CbteFch>
+                    <ImpTotal>{invoice.ImporteTotal.ToString("0.00", CultureInfo.InvariantCulture)}</ImpTotal>
+                    <ImpTotConc>0</ImpTotConc>
+                    <ImpNeto>{invoice.ImporteNeto.ToString("0.00", CultureInfo.InvariantCulture)}</ImpNeto>
+                    <ImpOpEx>0</ImpOpEx>
+                    <ImpTrib>{invoice.Tributes.Sum(t=>t.Importe).ToString("0.00", CultureInfo.InvariantCulture)}</ImpTrib>
+                    <ImpIVA>{invoice.ImporteIva.ToString("0.00", CultureInfo.InvariantCulture)}</ImpIVA>
+                    <FchServDesde>{today}</FchServDesde>
+                    <FchServHasta>{today}</FchServHasta>
+                    <FchVtoPago>{DateTime.Now.AddDays(10).ToString("yyyyMMdd")}</FchVtoPago>
+                    <MonId>PES</MonId>
+                    <MonCotiz>1</MonCotiz>
+                    <CondicionIVAReceptorId>{GetConditionIvaId(null, docTipo)}</CondicionIVAReceptorId>
+                    {sbCbtesAsoc}
+                    {sbTrib}
+                    {sbIva}
+                </FECAEDetRequest>
+            </FeDetReq>
+          </FeCAEReq>
+        </FECAESolicitar>
+      </soap:Body>
+    </soap:Envelope>";
+
+            var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
+            httpRequest.Headers.Add("SOAPAction", action);
+            httpRequest.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+            var response = await _httpClient.SendAsync(httpRequest);
+            var responseXml = await response.Content.ReadAsStringAsync();
+
+             // Parse Response
+            var doc = XDocument.Parse(responseXml);
+            var resultNode = doc.Descendants(XName.Get("FECAESolicitarResult", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
+            
+            if (resultNode == null) 
+            {
+                invoice.Resultado = "R";
+                invoice.Observaciones = "AFIP Empty Result or XML Error: " + responseXml;
+                await _context.SaveChangesAsync();
+                return;
+            }
+
+            var cabResult = resultNode.Element(XName.Get("FeCabResp", "http://ar.gov.afip.dif.FEV1/"))?.Element(XName.Get("Resultado", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+
+            if (cabResult == "R")
+            {
+                 var sbErr = new StringBuilder();
+                 // Capture Errors and Observations
+                 var errors = resultNode.Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
+                 foreach(var e in errors) sbErr.AppendLine($"[{e.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}] {e.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+                 
+                 var obs = resultNode.Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
+                 foreach(var o in obs) sbErr.AppendLine($"[Obs {o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}] {o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+
+                 invoice.Resultado = "R";
+                 invoice.Observaciones = sbErr.ToString();
+                 await _context.SaveChangesAsync();
+                 return;
+            }
+
+            // Success
+            var detResp = resultNode.Descendants(XName.Get("FECAEDetResponse", "http://ar.gov.afip.dif.FEV1/")).First();
+            var cae = detResp.Element(XName.Get("CAE", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+            var caeVto = detResp.Element(XName.Get("CAEFchVto", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+
+            invoice.Resultado = "A";
+            invoice.CAE = cae;
+            invoice.VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null);
+            invoice.NumeroComprobante = cbteNro; // Assign actual number used
+            invoice.Observaciones = null;
+            
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            invoice.Resultado = "R";
+            invoice.Observaciones = $"Exception: {ex.Message}";
+            await _context.SaveChangesAsync();
+            throw; // Let Hangfire know it failed (so it shows in dashboard too, even if user retries manual)
+        }
     }
 
     private async Task<int> GetNextVoucherNumber(AfipSettings settings, int cbteTipo)
