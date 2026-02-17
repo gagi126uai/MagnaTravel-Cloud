@@ -152,8 +152,8 @@ export default function PaymentsPage() {
       showLoaderOnConfirm: true,
       preConfirm: async () => {
         try {
-          await api.post(`/invoices/${invoice.id}/annul`);
-          return true;
+          const res = await api.post(`/invoices/${invoice.id}/annul`);
+          return res.data;
         } catch (error) {
           Swal.showValidationMessage(
             `Error: ${error.response?.data?.message || 'No se pudo anular'}`
@@ -162,9 +162,24 @@ export default function PaymentsPage() {
       }
     });
 
-    if (result.isConfirmed) {
-      showSuccess("Nota de Crédito generada exitosamente");
+    if (result.isConfirmed && result.value) {
+      const newInvoice = result.value;
+      showSuccess(`Nota generada: ${newInvoice.puntoDeVenta}-${newInvoice.numeroComprobante}`);
       loadData();
+
+      // Offer automatic download
+      const download = await Swal.fire({
+        title: 'Descargar Comprobante',
+        text: '¿Querés descargar el PDF de la anulación ahora?',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, descargar',
+        cancelButtonText: 'No por ahora'
+      });
+
+      if (download.isConfirmed) {
+        handleDownloadPdf(newInvoice);
+      }
     }
   };
 
