@@ -597,11 +597,37 @@ public class AfipService : IAfipService
 
         var cabResult = resultNode.Element(XName.Get("FeCabResp", "http://ar.gov.afip.dif.FEV1/"))?.Element(XName.Get("Resultado", "http://ar.gov.afip.dif.FEV1/"))?.Value;
 
+
         if (cabResult == "R")
         {
              var errors = resultNode.Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
              var sbErr = new StringBuilder();
-             foreach(var e in errors) sbErr.AppendLine(e.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value);
+             foreach(var e in errors) 
+             {
+                var msg = e.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                var code = e.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                sbErr.AppendLine($"[{code}] {msg}");
+             }
+
+             // If no global errors, check for Observations in Detail
+             if (sbErr.Length == 0)
+             {
+                var obs = resultNode.Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
+                foreach(var o in obs)
+                {
+                    var msg = o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                    var code = o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                    sbErr.AppendLine($"[Obs {code}] {msg}");
+                }
+             }
+
+             // If still empty, dump the raw XML to debug
+             if (sbErr.Length == 0)
+             {
+                 sbErr.AppendLine("No parsing errors found. Raw Response:");
+                 sbErr.AppendLine(responseXml);
+             }
+
              throw new Exception("AFIP RECHAZADO: " + sbErr.ToString());
         }
 

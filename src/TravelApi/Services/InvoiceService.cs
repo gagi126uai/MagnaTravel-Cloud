@@ -186,8 +186,17 @@ public class InvoiceService : IInvoiceService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error crítico en Job de Anulación");
-            await CreateNotification(userId, $"Error al procesar anulación: {ex.Message}", "Error", invoiceId);
-            throw; // Retry job
+            
+            var errorMsg = ex.Message;
+            if (errorMsg.Contains("AFIP RECHAZADO"))
+            {
+                 // Permanent error (Validation), do not retry
+                 await CreateNotification(userId, $"La anulación fue rechazada por AFIP: {errorMsg.Replace("AFIP RECHAZADO: ", "")}", "Error", invoiceId);
+                 return; // Job finishes effectively "Failed" but successfully handled
+            }
+
+            await CreateNotification(userId, $"Error técnico al anular: {errorMsg}. Se reintentará automáticamente.", "Error", invoiceId);
+            throw; // Retry job for network/transient errors
         }
     }
 
