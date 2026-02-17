@@ -320,6 +320,50 @@ using (var scope = app.Services.CreateScope())
         );
         """);
 
+    // Sprint 8: Invoice Enhancements & Detailed Items
+    // 1. Update Invoices Table
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Invoices\" ADD COLUMN IF NOT EXISTS \"OriginalInvoiceId\" integer REFERENCES \"Invoices\"(\"Id\");");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Invoices\" ADD COLUMN IF NOT EXISTS \"AgencySnapshot\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Invoices\" ADD COLUMN IF NOT EXISTS \"CustomerSnapshot\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Invoices\" ADD COLUMN IF NOT EXISTS \"ImporteNeto\" numeric(18,2) DEFAULT 0;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Invoices\" ADD COLUMN IF NOT EXISTS \"ImporteIva\" numeric(18,2) DEFAULT 0;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"Invoices\" ADD COLUMN IF NOT EXISTS \"ImporteTotal\" numeric(18,2) DEFAULT 0;");
+
+    // 2. InvoiceItem (Singular because no DbSet)
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "InvoiceItem" (
+            "Id" SERIAL PRIMARY KEY,
+            "InvoiceId" integer NOT NULL REFERENCES "Invoices"("Id") ON DELETE CASCADE,
+            "Description" character varying(200) NOT NULL,
+            "Quantity" numeric(18,2) NOT NULL DEFAULT 1,
+            "UnitPrice" numeric(18,2) NOT NULL DEFAULT 0,
+            "Total" numeric(18,2) NOT NULL DEFAULT 0,
+            "AlicuotaIvaId" integer NOT NULL DEFAULT 6,
+            "ImporteIva" numeric(18,2) NOT NULL DEFAULT 0
+        );
+        """);
+
+    // 3. InvoiceTribute (Singular because no DbSet)
+    await dbContext.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "InvoiceTribute" (
+            "Id" SERIAL PRIMARY KEY,
+            "InvoiceId" integer NOT NULL REFERENCES "Invoices"("Id") ON DELETE CASCADE,
+            "TributeId" integer NOT NULL,
+            "Description" character varying(200) NOT NULL,
+            "BaseImponible" numeric(18,2) NOT NULL DEFAULT 0,
+            "Alicuota" numeric(18,2) NOT NULL DEFAULT 0,
+            "Importe" numeric(18,2) NOT NULL DEFAULT 0
+        );
+        """);
+
     // Sprint 4: AgencySettings
     await dbContext.Database.ExecuteSqlRawAsync(
         """
