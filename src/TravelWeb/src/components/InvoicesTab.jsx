@@ -5,7 +5,7 @@ import Swal from "sweetalert2";
 import { showError, showSuccess } from "../alerts";
 import CreateInvoiceModal from "./CreateInvoiceModal";
 
-export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnly = false }) {
+export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnly = false, clientName, clientCuit }) {
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -213,6 +213,8 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
                 onSuccess={handleInvoiceCreated}
                 fileId={fileId}
                 initialAmount={balance}
+                clientName={clientName}
+                clientCuit={clientCuit}
             />
         </div>
     );

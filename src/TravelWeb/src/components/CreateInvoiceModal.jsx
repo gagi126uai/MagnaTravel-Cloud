@@ -20,7 +20,7 @@ const TRIBUTE_TYPES = [
     { id: 4, label: 'Impuestos Internos' }
 ];
 
-export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId, initialAmount }) {
+export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId, initialAmount, clientName, clientCuit }) {
     const [loading, setLoading] = useState(false);
     const [items, setItems] = useState([]);
     const [tributes, setTributes] = useState([]);
@@ -137,16 +137,31 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-            <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-                {/* Header */}
-                <div className="px-6 py-4 border-b border-gray-200 dark:border-slate-700 flex justify-between items-center bg-gray-50 dark:bg-slate-800">
-                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                        <Calculator className="w-5 h-5 text-indigo-500" />
-                        Nueva Factura
-                    </h2>
-                    <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200">
-                        <X className="w-6 h-6" />
-                    </button>
+            <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl max-h-[95vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-700">
+                {/* Header Premium */}
+                <div className="px-8 py-6 bg-gradient-to-r from-gray-50 to-white dark:from-slate-800 dark:to-slate-900 border-b border-gray-200 dark:border-slate-700 flex justify-between items-start">
+                    <div>
+                        <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+                            <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
+                                <Calculator className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+                            </div>
+                            Nueva Factura
+                        </h2>
+                        <div className="mt-4 flex flex-col gap-1">
+                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Cliente</span>
+                            <div className="text-lg font-medium text-gray-900 dark:text-white">{clientName || 'Consumidor Final'}</div>
+                            <div className="text-sm text-gray-500 font-mono">{clientCuit ? `CUIT: ${clientCuit}` : 'Sin CUIT registrado'}</div>
+                        </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-3">
+                        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
+                            <X className="w-6 h-6" />
+                        </button>
+                        <div className="text-right">
+                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Fecha</span>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white">{new Date().toLocaleDateString()}</span>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Body */}
