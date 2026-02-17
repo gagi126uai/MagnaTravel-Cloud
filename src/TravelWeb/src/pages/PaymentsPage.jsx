@@ -168,6 +168,24 @@ export default function PaymentsPage() {
     }
   };
 
+  const getInvoiceLabel = (type) => {
+    switch (type) {
+      case 1: return "Factura A";
+      case 2: return "Nota de Débito A";
+      case 3: return "Nota de Crédito A";
+      case 6: return "Factura B";
+      case 7: return "Nota de Débito B";
+      case 8: return "Nota de Crédito B";
+      case 11: return "Factura C";
+      case 12: return "Nota de Débito C";
+      case 13: return "Nota de Crédito C";
+      case 51: return "Factura M";
+      case 52: return "Nota de Débito M";
+      case 53: return "Nota de Crédito M";
+      default: return `Comprobante (${type})`;
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -438,7 +456,7 @@ export default function PaymentsPage() {
                           {new Date(inv.createdAt).toLocaleDateString()}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
-                          {inv.tipoComprobante === 1 ? "Factura A" : inv.tipoComprobante === 6 ? "Factura B" : "Comprobante"}
+                          {getInvoiceLabel(inv.tipoComprobante)}
                           <span className="ml-2 text-gray-500 font-mono">#{inv.numeroComprobante}</span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
@@ -457,15 +475,16 @@ export default function PaymentsPage() {
                               <Download className="w-4 h-4" /> PDF
                             </button>
 
-                            {(inv.tipoComprobante === 1 || inv.tipoComprobante === 6 || inv.tipoComprobante === 11) && (
-                              <button
-                                onClick={() => handleAnnulInvoice(inv)}
-                                className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 ml-2"
-                                title="Anular (Nota de Crédito)"
-                              >
-                                <XCircle className="w-4 h-4" />
-                              </button>
-                            )}
+                            {(inv.tipoComprobante === 1 || inv.tipoComprobante === 6 || inv.tipoComprobante === 11 ||
+                              inv.tipoComprobante === 3 || inv.tipoComprobante === 8 || inv.tipoComprobante === 13) && (
+                                <button
+                                  onClick={() => handleAnnulInvoice(inv)}
+                                  className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 ml-2"
+                                  title="Anular (Nota de Crédito/Débito)"
+                                >
+                                  <XCircle className="w-4 h-4" />
+                                </button>
+                              )}
                           </div>
                         </td>
                       </tr>
@@ -488,7 +507,7 @@ export default function PaymentsPage() {
                     <div key={inv.id} className="p-4 space-y-2">
                       <div className="flex justify-between items-start">
                         <div className="font-medium text-gray-900 dark:text-white">
-                          {inv.tipoComprobante === 1 ? "Factura A" : inv.tipoComprobante === 6 ? "Factura B" : "Comprobante"}
+                          {getInvoiceLabel(inv.tipoComprobante)}
                           <span className="ml-1 text-gray-500 font-mono">#{inv.numeroComprobante}</span>
                         </div>
                         <div className="text-xs text-gray-500">

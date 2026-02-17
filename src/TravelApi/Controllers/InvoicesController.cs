@@ -101,14 +101,31 @@ public class InvoicesController : ControllerBase
                 .FirstOrDefaultAsync(i => i.Id == id);
 
             if (original == null) return NotFound("Comprobante no encontrado");
-            if (original.TipoComprobante == 3 || original.TipoComprobante == 8 || original.TipoComprobante == 13)
-                return BadRequest("No se puede anular una Nota de Crédito");
+            // Determine if we need a Credit Note or Debit Note
+            bool isCreditNote = false;
+            bool isDebitNote = false;
+
+            // If Original is Invoice (1, 6, 11) or Debit Note (2, 7, 12) -> Credit Note to cancel
+            if (new[] { 1, 6, 11, 2, 7, 12 }.Contains(original.TipoComprobante))
+            {
+                isCreditNote = true;
+            }
+            // If Original is Credit Note (3, 8, 13) -> Debit Note to cancel (re-debit)
+            else if (new[] { 3, 8, 13 }.Contains(original.TipoComprobante))
+            {
+                isDebitNote = true;
+            }
+            else 
+            {
+                return BadRequest($"Tipo de comprobante no soportado para anulación: {original.TipoComprobante}");
+            }
 
             var request = new CreateInvoiceRequest
             {
                 TravelFileId = original.TravelFileId ?? 0,
                 OriginalInvoiceId = original.Id,
-                IsCreditNote = true,
+                IsCreditNote = isCreditNote,
+                IsDebitNote = isDebitNote,
                 Items = original.Items.Select(i => new InvoiceItemDto 
                 { 
                     Description = i.Description,

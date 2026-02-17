@@ -19,9 +19,9 @@ public class MappingProfile : Profile
         CreateMap<Invoice, InvoiceDto>()
             .ForMember(dest => dest.TravelFile, opt => opt.MapFrom(src => src.TravelFile))
             .ForMember(dest => dest.InvoiceType, opt => opt.MapFrom(src => 
-                src.TipoComprobante == 1 ? "A" :
-                src.TipoComprobante == 6 ? "B" :
-                src.TipoComprobante == 11 ? "C" : 
+                src.TipoComprobante == 1 || src.TipoComprobante == 2 || src.TipoComprobante == 3 ? "A" :
+                src.TipoComprobante == 6 || src.TipoComprobante == 7 || src.TipoComprobante == 8 ? "B" :
+                src.TipoComprobante == 11 || src.TipoComprobante == 12 || src.TipoComprobante == 13 ? "C" : 
                 src.TipoComprobante == 51 ? "M" : 
                 "UNK"));
 

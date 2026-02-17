@@ -9,4 +9,5 @@ public class CreateInvoiceRequest
     public List<InvoiceTributeDto> Tributes { get; set; } = new();
     public int? OriginalInvoiceId { get; set; } // If present, this is a Credit/Debit Note
     public bool IsCreditNote { get; set; } // Explicit flag for NC
+    public bool IsDebitNote { get; set; } // Explicit flag for ND
 }

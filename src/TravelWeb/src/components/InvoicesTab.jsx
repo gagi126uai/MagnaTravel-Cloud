@@ -79,6 +79,24 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
         }
     };
 
+    const getInvoiceLabel = (type) => {
+        switch (type) {
+            case 1: return "Factura A";
+            case 2: return "Nota de Débito A";
+            case 3: return "Nota de Crédito A";
+            case 6: return "Factura B";
+            case 7: return "Nota de Débito B";
+            case 8: return "Nota de Crédito B";
+            case 11: return "Factura C";
+            case 12: return "Nota de Débito C";
+            case 13: return "Nota de Crédito C";
+            case 51: return "Factura M";
+            case 52: return "Nota de Débito M";
+            case 53: return "Nota de Crédito M";
+            default: return `Comprobante (${type})`;
+        }
+    };
+
     return (
         <div>
             <div className="flex justify-between items-center mb-4">
@@ -122,12 +140,7 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
                                         {new Date(inv.createdAt).toLocaleDateString()}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
-                                        {inv.tipoComprobante === 1 ? 'Factura A' :
-                                            inv.tipoComprobante === 6 ? 'Factura B' :
-                                                inv.tipoComprobante === 11 ? 'Factura C' :
-                                                    inv.tipoComprobante === 3 ? 'Nota Crédito A' :
-                                                        inv.tipoComprobante === 8 ? 'Nota Crédito B' :
-                                                            inv.tipoComprobante === 13 ? 'Nota Crédito C' : inv.tipoComprobante}
+                                        {getInvoiceLabel(inv.tipoComprobante)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
                                         {inv.puntoDeVenta}-{inv.numeroComprobante}
@@ -153,16 +166,17 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
                                                         <FileText className="w-4 h-4" />
                                                     </button>
 
-                                                    {/* Annul Button only for Invoices (1,6,11) */}
-                                                    {(inv.tipoComprobante === 1 || inv.tipoComprobante === 6 || inv.tipoComprobante === 11) && !readOnly && (
-                                                        <button
-                                                            onClick={() => handleAnnulInvoice(inv)}
-                                                            className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                                                            title="Anular (Nota de Crédito)"
-                                                        >
-                                                            <XCircle className="w-4 h-4" />
-                                                        </button>
-                                                    )}
+                                                    {/* Annul Button for Invoices (1,6,11) and Credit Notes (3,8,13) */}
+                                                    {(inv.tipoComprobante === 1 || inv.tipoComprobante === 6 || inv.tipoComprobante === 11 ||
+                                                        inv.tipoComprobante === 3 || inv.tipoComprobante === 8 || inv.tipoComprobante === 13) && !readOnly && (
+                                                            <button
+                                                                onClick={() => handleAnnulInvoice(inv)}
+                                                                className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                                                                title="Anular (Nota de Crédito/Débito)"
+                                                            >
+                                                                <XCircle className="w-4 h-4" />
+                                                            </button>
+                                                        )}
                                                 </>
                                             ) : (
                                                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">

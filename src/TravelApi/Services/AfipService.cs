@@ -356,6 +356,13 @@ public class AfipService : IAfipService
             else if (baseType == 6) cbteTipo = 8;
             else if (baseType == 11) cbteTipo = 13;
         }
+        else if (request.IsDebitNote)
+        {
+             // A -> 2, B -> 7, C -> 12
+             if (baseType == 1) cbteTipo = 2;
+             else if (baseType == 6) cbteTipo = 7;
+             else if (baseType == 11) cbteTipo = 12;
+        }
 
         // 3. Validation for Credit Note
         Invoice? originalInvoice = null;
@@ -459,7 +466,7 @@ public class AfipService : IAfipService
 
         // Associated Vouchers (CbtesAsoc) for Credit Notes
         var sbCbtesAsoc = new StringBuilder();
-        if (request.IsCreditNote && originalInvoice != null)
+        if ((request.IsCreditNote || request.IsDebitNote) && originalInvoice != null)
         {
             sbCbtesAsoc.Append($@"<CbtesAsoc>
                 <CbteAsoc>
