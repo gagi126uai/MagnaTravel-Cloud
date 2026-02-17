@@ -573,6 +573,7 @@ public class AfipService : IAfipService
                 <FchVtoPago>{DateTime.Now.AddDays(10).ToString("yyyyMMdd")}</FchVtoPago>
                 <MonId>PES</MonId>
                 <MonCotiz>1</MonCotiz>
+                <CondicionIVAReceptorId>{GetConditionIvaId(customer.TaxCondition, docTipo)}</CondicionIVAReceptorId>
                 {sbCbtesAsoc}
                 {sbTrib}
                 {sbIva}
@@ -798,6 +799,34 @@ public class AfipService : IAfipService
     }
 
 
+
+    private int GetConditionIvaId(string? taxCondition, int docTipo)
+    {
+        // 1: IVA Responsable Inscripto
+        // 4: IVA Sujeto Exento
+        // 5: Consumidor Final
+        // 6: Responsable Monotributo
+        // 8: Proveedor del Exterior
+        // 9: Cliente del Exterior
+        // 10: IVA Liberado - Ley Nº 19.640
+        // 11: IVA Responsable Inscripto - Agente de Percepción
+        // 13: Monotributista Social
+        // 15: IVA No Alcanzado
+
+        if (docTipo == 99) return 5; // Final Consumer
+        if (docTipo == 80) // CUIT
+        {
+            if (string.IsNullOrEmpty(taxCondition)) return 5; // Default
+
+            var tc = taxCondition.ToLower();
+            if (tc.Contains("inscripto") && !tc.Contains("monotributo")) return 1;
+            if (tc.Contains("monotributo")) return 6;
+            if (tc.Contains("exento")) return 4;
+            if (tc.Contains("consumidor")) return 5;
+        }
+        
+        return 5; // Default to Final Consumer
+    }
 
     private decimal ParseDecimal(string? val)
     {
