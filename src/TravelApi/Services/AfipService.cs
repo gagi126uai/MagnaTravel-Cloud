@@ -330,47 +330,76 @@ public class AfipService : IAfipService
         var customer = travelFile.Payer;
         if (customer == null) throw new Exception("El expediente no tiene cliente asignado");
         
-        // 2. Determine Invoice Type (A, B, C, or NC/ND)
-        // Logic:
-        // RI -> RI = A (1)
-        // RI -> Monotributo/Final/Exento = B (6)
-        // Mono/Exento -> Cualquiera = C (11)
-        
+        // 2. Load Original Invoice (if Annulment/Note) BEFORE determining type
+        Invoice? originalInvoice = null;
+        if (request.OriginalInvoiceId.HasValue)
+        {
+            originalInvoice = await _context.Invoices.FindAsync(request.OriginalInvoiceId.Value);
+            if (originalInvoice == null) throw new Exception("Comprobante original no encontrado para anulación.");
+        }
+
+        // 3. Determine Invoice Type
         int baseType = 6; // Default B
+        
+        // If we simply create a fresh invoice, use Client Status
         if (settings.TaxCondition == "Responsable Inscripto")
         {
-            if (customer.TaxCondition == "Responsable Inscripto") baseType = 1; // A
-            else baseType = 6; // B
+            // Case-insensitive check
+            if (customer.TaxCondition != null && customer.TaxCondition.Equals("Responsable Inscripto", StringComparison.OrdinalIgnoreCase)) 
+                baseType = 1; // A
+            else 
+                baseType = 6; // B
         }
         else // Monotributo/Exento
         {
             baseType = 11; // C
         }
 
-        // Adjust for Credit/Debit Note
         int cbteTipo = baseType;
-        if (request.IsCreditNote)
-        {
-            // A -> 3, B -> 8, C -> 13
-            if (baseType == 1) cbteTipo = 3;
-            else if (baseType == 6) cbteTipo = 8;
-            else if (baseType == 11) cbteTipo = 13;
-        }
-        else if (request.IsDebitNote)
-        {
-             // A -> 2, B -> 7, C -> 12
-             if (baseType == 1) cbteTipo = 2;
-             else if (baseType == 6) cbteTipo = 7;
-             else if (baseType == 11) cbteTipo = 12;
-        }
 
-        // 3. Validation for Credit Note
-        Invoice? originalInvoice = null;
-        if (request.OriginalInvoiceId.HasValue)
+        // Override if it's a Note related to an Original Invoice
+        if (originalInvoice != null)
         {
-            originalInvoice = await _context.Invoices.FindAsync(request.OriginalInvoiceId.Value);
-            if (originalInvoice == null) throw new Exception("Comprobante original no encontrado para anulación.");
-            // Optional: Check if tax ID matches, etc.
+             var t = originalInvoice.TipoComprobante;
+             
+             if (request.IsCreditNote)
+             {
+                 // A (1, 2) -> 3
+                 if (t == 1 || t == 2) cbteTipo = 3;
+                 // B (6, 7) -> 8
+                 else if (t == 6 || t == 7) cbteTipo = 8;
+                 // C (11, 12) -> 13
+                 else if (t == 11 || t == 12) cbteTipo = 13;
+                 // M (51, 52) -> 53
+                 else if (t == 51 || t == 52) cbteTipo = 53;
+             }
+             else if (request.IsDebitNote)
+             {
+                 // NC A (3) -> 2
+                 if (t == 3) cbteTipo = 2;
+                 // NC B (8) -> 7
+                 else if (t == 8) cbteTipo = 7;
+                 // NC C (13) -> 12
+                 else if (t == 13) cbteTipo = 12;
+                 // NC M (53) -> 52
+                 else if (t == 53) cbteTipo = 52;
+             }
+        }
+        else 
+        {
+            // Fallback for Standalone Notes (Legacy logic)
+            if (request.IsCreditNote)
+            {
+                if (baseType == 1) cbteTipo = 3;
+                else if (baseType == 6) cbteTipo = 8;
+                else if (baseType == 11) cbteTipo = 13;
+            }
+            else if (request.IsDebitNote)
+            {
+                 if (baseType == 1) cbteTipo = 2;
+                 else if (baseType == 6) cbteTipo = 7;
+                 else if (baseType == 11) cbteTipo = 12;
+            }
         }
 
         // 4. Calculate Totals & VAT Groups
