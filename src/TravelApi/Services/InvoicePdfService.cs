@@ -105,7 +105,8 @@ public class InvoicePdfService : IInvoicePdfService
                 // Right: Invoice Details
                 row.RelativeItem().AlignRight().Column(column =>
                 {
-                    column.Item().Text("FACTURA").FontSize(22).Bold().FontColor(Colors.Black);
+                    var title = GetInvoiceTitle(invoice.TipoComprobante);
+                    column.Item().Text(title).FontSize(22).Bold().FontColor(Colors.Black);
                     
                     column.Item().PaddingTop(10).Row(r => 
                     {
@@ -314,9 +315,29 @@ public class InvoicePdfService : IInvoicePdfService
         return type switch
         {
             1 => "A", // Factura A
+            2 => "A", // Nota Debito A
+            3 => "A", // Nota Credito A
             6 => "B", // Factura B
-            11 => "C", // Factura C (Monotributo)
+            7 => "B", // Nota Debito B
+            8 => "B", // Nota Credito B
+            11 => "C", // Factura C
+            12 => "C", // Nota Debito C
+            13 => "C", // Nota Credito C
+            51 => "M", // Factura M
+            52 => "M", // Nota Debito M
+            53 => "M", // Nota Credito M
             _ => "?"
+        };
+    }
+
+    private string GetInvoiceTitle(int type)
+    {
+        return type switch
+        {
+            1 or 6 or 11 or 51 => "FACTURA",
+            2 or 7 or 12 or 52 => "NOTA DE DÉBITO",
+            3 or 8 or 13 or 53 => "NOTA DE CRÉDITO",
+            _ => "COMPROBANTE"
         };
     }
     
