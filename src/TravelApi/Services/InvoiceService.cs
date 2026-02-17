@@ -58,7 +58,9 @@ public class InvoiceService : IInvoiceService
                 Concepto = 3, // Productos y Servicios (default)
                 DocTipo = 99, // Sin info
                 DocNro = 0,
-                OriginalInvoiceId = invoiceId
+                OriginalInvoiceId = invoiceId,
+                IsCreditNote = cbteTipo == 3 || cbteTipo == 8 || cbteTipo == 13 || cbteTipo == 53,
+                IsDebitNote = cbteTipo == 2 || cbteTipo == 7 || cbteTipo == 12 || cbteTipo == 52
             };
 
             // Use Snapshots if available
