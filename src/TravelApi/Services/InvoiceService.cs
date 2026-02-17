@@ -173,8 +173,14 @@ public class InvoiceService : IInvoiceService
                  }
             }
 
-            // Execute AFIP Call
-            var newInvoice = await _afipService.CreateInvoice(request.TravelFileId, request);
+            // Execute AFIP Call (Chain the pending creation and the processing)
+            var newInvoice = await _afipService.CreatePendingInvoice(request.TravelFileId, request);
+            
+            // Since we are already in a background job, we can process it immediately
+            await _afipService.ProcessInvoiceJob(newInvoice.Id);
+            
+            // Reload to get the result updated by ProcessInvoiceJob
+            await _context.Entry(newInvoice).ReloadAsync();
 
             if (newInvoice.Resultado == "A")
             {
