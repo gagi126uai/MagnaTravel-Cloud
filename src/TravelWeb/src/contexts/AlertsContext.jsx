@@ -6,29 +6,55 @@ const AlertsContext = createContext();
 
 export function AlertsProvider({ children }) {
     const [alerts, setAlerts] = useState({ UrgentTrips: [], SupplierDebts: [], TotalCount: 0 });
+    const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
 
     const fetchAlerts = async () => {
-        if (!isAdmin()) return; // Only admins see alerts
-        try {
-            const res = await api.get("/alerts");
-            setAlerts(res || { UrgentTrips: [], SupplierDebts: [], TotalCount: 0 });
-        } catch (error) {
-            console.error("Error al cargar alertas:", error);
-        } finally {
-            setLoading(false);
+        if (isAdmin()) {
+            try {
+                const res = await api.get("/alerts");
+                setAlerts(res || { UrgentTrips: [], SupplierDebts: [], TotalCount: 0 });
+            } catch (error) {
+                console.error("Error al cargar alertas:", error);
+            }
         }
     };
 
+    const fetchNotifications = async () => {
+        try {
+            const res = await api.get("/notifications");
+            setNotifications(res || []);
+        } catch (error) {
+            console.error("Error al cargar notificaciones:", error);
+        }
+    };
+
+    const markAsRead = async (id) => {
+        try {
+            await api.post(`/notifications/${id}/read`);
+            setNotifications(prev => prev.filter(n => n.id !== id));
+        } catch (error) {
+            console.error("Error al marcar como leída:", error);
+        }
+    };
+
+    const refreshAll = () => {
+        setLoading(true);
+        Promise.all([fetchAlerts(), fetchNotifications()]).finally(() => setLoading(false));
+    };
+
     useEffect(() => {
-        fetchAlerts();
-        // Optional: Poll every 5 minutes
-        const interval = setInterval(fetchAlerts, 5 * 60 * 1000);
+        refreshAll();
+        // Poll every 30 seconds for notifications (faster than alerts)
+        const interval = setInterval(() => {
+            fetchNotifications();
+            if (isAdmin()) fetchAlerts();
+        }, 30 * 1000);
         return () => clearInterval(interval);
     }, []);
 
     return (
-        <AlertsContext.Provider value={{ alerts, loading, refreshAlerts: fetchAlerts }}>
+        <AlertsContext.Provider value={{ alerts, notifications, loading, refreshAlerts: refreshAll, markAsRead }}>
             {children}
         </AlertsContext.Provider>
     );

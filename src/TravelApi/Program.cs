@@ -9,11 +9,13 @@ using TravelApi.Options;
 using TravelApi.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
+using Hangfire;
+using Hangfire.PostgreSql;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning) // Hide EF Core SQL & ASP.NET noise
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
     .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
@@ -121,6 +123,7 @@ builder.Services.AddAuthorization();
 
 builder.Services.AddHttpClient<IAfipService, AfipService>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
+builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 
 // Load allowed origins from configuration (appsettings.json or ENV)
 var allowedOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
@@ -138,13 +141,17 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("web", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
-              .SetIsOriginAllowedToAllowWildcardSubdomains()
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
     });
 });
+
+// Hangfire Configuration (PostgreSQL)
+builder.Services.AddHangfire(configuration => configuration
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_170)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("DefaultConnection"))));
+
+builder.Services.AddHangfireServer();
 
 var app = builder.Build();
 
@@ -176,6 +183,8 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 
 // 2. CORS (Explicitly permissive for known origins + wildcard fallback if needed)
 app.UseCors("web");
+
+app.UseHangfireDashboard(); // Optional: Map to /hangfire, pending auth filter
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -380,13 +389,22 @@ using (var scope = app.Services.CreateScope())
         );
         """);
 
-    // Seed default agency settings if not exists
+    // Sprint 9: Notifications & Background Jobs
     await dbContext.Database.ExecuteSqlRawAsync(
         """
-        INSERT INTO "AgencySettings" ("AgencyName", "DefaultCommissionPercent")
-        SELECT 'Mi Agencia de Viajes', 10
-        WHERE NOT EXISTS (SELECT 1 FROM "AgencySettings");
+        CREATE TABLE IF NOT EXISTS "Notifications" (
+            "Id" SERIAL PRIMARY KEY,
+            "UserId" character varying(200) NOT NULL,
+            "Message" text NOT NULL,
+            "Type" character varying(50) DEFAULT 'Info',
+            "IsRead" boolean DEFAULT FALSE,
+            "CreatedAt" timestamp with time zone DEFAULT NOW(),
+            "RelatedEntityId" integer,
+            "RelatedEntityType" character varying(50)
+        );
         """);
+
+    // Sprint 4: AgencySettings
 
     // Supplier new columns + fix existing data
     await dbContext.Database.ExecuteSqlRawAsync(

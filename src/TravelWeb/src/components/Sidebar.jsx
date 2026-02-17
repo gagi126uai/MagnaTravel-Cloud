@@ -11,7 +11,8 @@ import {
     X,
     DollarSign,
     Trash2,
-    Bell
+    Bell,
+    Inbox
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -27,17 +28,22 @@ const menuLinks = [
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onToggleCollapse, onCloseMobile }) {
-    const { alerts } = useAlerts() || { alerts: { TotalCount: 0 } }; // Safety check if context missing
+    const { alerts, notifications } = useAlerts() || { alerts: { TotalCount: 0 }, notifications: [] };
+
+    const commonLinks = [
+        ...menuLinks,
+        { to: "/notifications", label: "Notificaciones", icon: Inbox, badge: notifications?.length || 0 }
+    ];
 
     const finalLinks = isAdmin
         ? [
-            ...menuLinks,
+            ...commonLinks,
             { to: "/reports", label: "Reportes", icon: BarChart3 },
             { to: "/settings", label: "Configuración", icon: Settings },
             { to: "/payments/trash", label: "Papelera", icon: Trash2 },
             { to: "/alerts", label: "Alertas", icon: Bell, badge: alerts?.TotalCount }
         ]
-        : menuLinks;
+        : commonLinks;
 
     return (
         <aside className={cn("flex flex-col border-r bg-card text-card-foreground", className)}>

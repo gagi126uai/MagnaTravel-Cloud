@@ -12,6 +12,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
     private readonly IHttpContextAccessor? _httpContextAccessor;
 
+    public DbSet<Notification> Notifications => Set<Notification>();
+
     public AppDbContext(DbContextOptions<AppDbContext> options, IHttpContextAccessor? httpContextAccessor = null)
         : base(options)
     {

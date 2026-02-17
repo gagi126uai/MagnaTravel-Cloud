@@ -18,6 +18,7 @@ import RatesPage from "./pages/RatesPage";
 
 import PaymentsTrashPage from "./pages/PaymentsTrashPage";
 import AlertsPage from "./pages/AlertsPage";
+import NotificationsPage from "./pages/NotificationsPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
 
@@ -105,6 +106,10 @@ export default function App() {
                   <Route
                     path="/alerts"
                     element={adminUser ? <AlertsPage /> : <Navigate to="/dashboard" replace />}
+                  />
+                  <Route
+                    path="/notifications"
+                    element={<NotificationsPage />}
                   />
                 </Routes>
               </Layout>
