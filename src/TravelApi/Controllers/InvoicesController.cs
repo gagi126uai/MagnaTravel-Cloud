@@ -144,6 +144,56 @@ public class InvoicesController : ControllerBase
                 }).ToList()
             };
 
+            // Fallback for Legacy Invoices (No local items)
+            if (!request.Items.Any())
+            {
+                 // Try to fetch from AFIP
+                 var details = await _afipService.GetVoucherDetails(original.TipoComprobante, original.PuntoDeVenta, original.NumeroComprobante);
+                 
+                 if (details != null)
+                 {
+                     // Reconstruct Items from AFIP VAT Details
+                     foreach (var vat in details.VatDetails)
+                     {
+                         request.Items.Add(new InvoiceItemDto
+                         {
+                             Description = $"Anulación Comp. {original.NumeroComprobante}",
+                             Quantity = 1,
+                             UnitPrice = vat.BaseImp, // Net Amount 
+                             Total = vat.BaseImp,
+                             AlicuotaIvaId = vat.Id
+                         });
+                     }
+
+                     // If no VAT details (e.g. C invoices), use Total/Net
+                     if (!request.Items.Any() && details.ImporteTotal > 0)
+                     {
+                          request.Items.Add(new InvoiceItemDto
+                          {
+                              Description = $"Anulación Comp. {original.NumeroComprobante}",
+                              Quantity = 1,
+                              UnitPrice = details.ImporteNeto > 0 ? details.ImporteNeto : details.ImporteTotal,
+                              Total = details.ImporteNeto > 0 ? details.ImporteNeto : details.ImporteTotal,
+                              AlicuotaIvaId = 3 // 0% default or 6/11 logic?
+                              // For C (11), VAT is 0 usually.
+                          });
+                     }
+
+                     // Reconstruct Tributes
+                     foreach (var trib in details.TributeDetails)
+                     {
+                         request.Tributes.Add(new InvoiceTributeDto
+                         {
+                             TributeId = trib.Id,
+                             Description = trib.Desc,
+                             BaseImponible = trib.BaseImp,
+                             Alicuota = trib.Alic,
+                             Importe = trib.Importe
+                         });
+                     }
+                 }
+            }
+
             var invoice = await _afipService.CreateInvoice(request.TravelFileId, request);
             return Ok(_mapper.Map<InvoiceDto>(invoice));
         }

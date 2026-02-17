@@ -25,6 +25,34 @@ public interface IAfipService
 
     // Core
     Task<Invoice> CreateInvoice(int travelFileId, CreateInvoiceRequest request);
+    Task<AfipVoucherDetails?> GetVoucherDetails(int cbteTipo, int ptoVta, long cbteNro);
+}
+
+public class AfipVoucherDetails
+{
+    public decimal ImporteTotal { get; set; }
+    public decimal ImporteNeto { get; set; }
+    public decimal ImporteIva { get; set; }
+    public decimal ImporteTrib { get; set; }
+    public List<VatDetail> VatDetails { get; set; } = new();
+    public List<TributeDetail> TributeDetails { get; set; } = new();
+}
+
+public class VatDetail
+{
+    public int Id { get; set; }
+    public decimal BaseImp { get; set; }
+    public decimal Importe { get; set; }
+}
+
+public class TributeDetail
+{
+    public int Id { get; set; }
+    public string Desc { get; set; } = string.Empty;
+    public decimal BaseImp { get; set; }
+    public decimal Alic { get; set; }
+    public decimal Importe { get; set; }
+
 }
 
 public class AfipService : IAfipService
@@ -667,28 +695,88 @@ public class AfipService : IAfipService
         return 1; 
     }
 
-    private int GetTaxConditionId(Customer payer)
+
+    public async Task<AfipVoucherDetails?> GetVoucherDetails(int cbteTipo, int ptoVta, long cbteNro)
     {
-        // 1 = IVA Responsable Inscripto
-        // 4 = IVA Sujeto Exento
-        // 5 = Consumidor Final
-        // 6 = Responsable Monotributo
-        // 8 = Proveedor del Exterior
-        // 9 = Cliente del Exterior
-        // 10 = IVA Liberado - Ley Nº 19.640
-        // 11 = IVA Responsable Inscripto - Agente de Percepción
-        // 13 = Monotributista Social
-        // 15 = IVA No Alcanzado
+        var settings = await _context.AfipSettings.FirstOrDefaultAsync();
+        if (settings == null) return null;
 
-        if (payer.TaxConditionId.HasValue) return payer.TaxConditionId.Value;
+        await EnsureAuth(settings);
 
-        // Fallback by String
-        var condition = payer.TaxCondition?.ToLower() ?? "";
-        
-        if (condition.Contains("inscripto")) return 1;
-        if (condition.Contains("exento")) return 4;
-        if (condition.Contains("monotributo")) return 6;
-        
-        return 5; // Default: Consumidor Final
+        var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
+        var action = "http://ar.gov.afip.dif.FEV1/FECompConsultar";
+
+        var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+  <soap:Body>
+    <FECompConsultar xmlns=""http://ar.gov.afip.dif.FEV1/"">
+      <Auth>
+        <Token>{settings.Token}</Token>
+        <Sign>{settings.Sign}</Sign>
+        <Cuit>{settings.Cuit}</Cuit>
+      </Auth>
+      <FeCompConsReq>
+        <CbteTipo>{cbteTipo}</CbteTipo>
+        <CbteNro>{cbteNro}</CbteNro>
+        <PtoVta>{ptoVta}</PtoVta>
+      </FeCompConsReq>
+    </FECompConsultar>
+  </soap:Body>
+</soap:Envelope>";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("SOAPAction", action);
+        request.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseXml = await response.Content.ReadAsStringAsync();
+
+        var doc = XDocument.Parse(responseXml);
+        var result = doc.Descendants(XName.Get("ResultGet", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
+
+        if (result == null) return null;
+
+        var details = new AfipVoucherDetails
+        {
+            ImporteTotal = ParseDecimal(result.Element(XName.Get("ImpTotal", "http://ar.gov.afip.dif.FEV1/"))?.Value),
+            ImporteNeto = ParseDecimal(result.Element(XName.Get("ImpNeto", "http://ar.gov.afip.dif.FEV1/"))?.Value),
+            ImporteIva = ParseDecimal(result.Element(XName.Get("ImpIVA", "http://ar.gov.afip.dif.FEV1/"))?.Value),
+            ImporteTrib = ParseDecimal(result.Element(XName.Get("ImpTrib", "http://ar.gov.afip.dif.FEV1/"))?.Value)
+        };
+
+        var ivaArray = result.Descendants(XName.Get("AlicIva", "http://ar.gov.afip.dif.FEV1/"));
+        foreach (var item in ivaArray)
+        {
+            details.VatDetails.Add(new VatDetail
+            {
+                Id = int.Parse(item.Element(XName.Get("Id", "http://ar.gov.afip.dif.FEV1/"))?.Value ?? "0"),
+                BaseImp = ParseDecimal(item.Element(XName.Get("BaseImp", "http://ar.gov.afip.dif.FEV1/"))?.Value),
+                Importe = ParseDecimal(item.Element(XName.Get("Importe", "http://ar.gov.afip.dif.FEV1/"))?.Value)
+            });
+        }
+
+        var tribArray = result.Descendants(XName.Get("Tributo", "http://ar.gov.afip.dif.FEV1/"));
+        foreach (var item in tribArray)
+        {
+            details.TributeDetails.Add(new TributeDetail
+            {
+                Id = int.Parse(item.Element(XName.Get("Id", "http://ar.gov.afip.dif.FEV1/"))?.Value ?? "0"),
+                Desc = item.Element(XName.Get("Desc", "http://ar.gov.afip.dif.FEV1/"))?.Value ?? "",
+                BaseImp = ParseDecimal(item.Element(XName.Get("BaseImp", "http://ar.gov.afip.dif.FEV1/"))?.Value),
+                Alic = ParseDecimal(item.Element(XName.Get("Alic", "http://ar.gov.afip.dif.FEV1/"))?.Value),
+                Importe = ParseDecimal(item.Element(XName.Get("Importe", "http://ar.gov.afip.dif.FEV1/"))?.Value)
+            });
+        }
+
+        return details;
+    }
+
+
+
+    private decimal ParseDecimal(string? val)
+    {
+        if (string.IsNullOrEmpty(val)) return 0;
+        if (decimal.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal d)) return d;
+        return 0;
     }
 }
