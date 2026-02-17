@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using Hangfire;
 using Hangfire.PostgreSql;
+using TravelApi.Filters;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -189,7 +190,60 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 // 2. CORS (Explicitly permissive for known origins + wildcard fallback if needed)
 app.UseCors("web");
 
-app.UseHangfireDashboard(); // Optional: Map to /hangfire, pending auth filter
+
+// Hangfire Dashboard Secure Access
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/hangfire"))
+    {
+        if (context.Request.Cookies.TryGetValue("hangfire_auth", out var token))
+        {
+            var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+            var jwtOptions = builder.Configuration.GetSection(TravelApi.Options.JwtOptions.SectionName).Get<TravelApi.Options.JwtOptions>();
+            
+            if (jwtOptions != null && handler.CanReadToken(token))
+            {
+                 try 
+                 {
+                     var principal = handler.ValidateToken(token, new TokenValidationParameters
+                     {
+                        ValidateIssuer = true,
+                        ValidateAudience = true,
+                        ValidateLifetime = true,
+                        ValidateIssuerSigningKey = true,
+                        ValidIssuer = jwtOptions.Issuer,
+                        ValidAudience = jwtOptions.Audience,
+                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key))
+                     }, out var validatedToken);
+
+                     context.User = principal;
+                 }
+                 catch 
+                 { 
+                     // Invalid token, ignore
+                 }
+            }
+        }
+    }
+    await next();
+});
+
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new TravelApi.Filters.HangfireAuthorizationFilter() } 
+});
+
+app.MapGet("/api/auth/hangfire-login", (string token, HttpContext context) => 
+{
+    context.Response.Cookies.Append("hangfire_auth", token, new CookieOptions 
+    { 
+        HttpOnly = true, 
+        Secure = true, 
+        SameSite = SameSiteMode.Lax,
+        Expires = DateTime.UtcNow.AddHours(1) 
+    });
+    return Results.Redirect("/hangfire");
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
