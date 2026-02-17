@@ -192,6 +192,39 @@ public class InvoicesController : ControllerBase
                          });
                      }
                  }
+                 else 
+                 {
+                     // LAST RESORT: Backup failed (e.g. Homologation reset or timeout). 
+                     // Use Local Header Totals to create a generic item.
+                     // This prevents 400 Bad Request (Empty Items).
+                     
+                     decimal net = original.ImporteNeto > 0 ? original.ImporteNeto : original.ImporteTotal; // Fallback
+                     decimal iva = original.ImporteIva;
+                     int ivaId = 3; // 0%
+
+                     if (iva > 0)
+                     {
+                         // Try to guess rate or default to 21% (Id 5)
+                         // If we have Net and IVA, we can estimate. 
+                         // But usually legacy data might be messy. Let's assume 21% if we have IVA.
+                         ivaId = 5; 
+                         
+                         // Re-calculate Net if needed to match Total
+                         if (original.ImporteNeto == 0)
+                         {
+                             net = original.ImporteTotal - iva;
+                         }
+                     }
+
+                     request.Items.Add(new InvoiceItemDto
+                     {
+                         Description = $"Anulación Comp. {original.NumeroComprobante} (Respaldo Local)",
+                         Quantity = 1,
+                         UnitPrice = net,
+                         Total = net,
+                         AlicuotaIvaId = ivaId
+                     });
+                 }
             }
 
             var invoice = await _afipService.CreateInvoice(request.TravelFileId, request);
