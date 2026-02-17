@@ -141,6 +141,11 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("web", policy =>
     {
+        policy.WithOrigins(allowedOrigins)
+              .SetIsOriginAllowedToAllowWildcardSubdomains()
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
     });
 });
 
