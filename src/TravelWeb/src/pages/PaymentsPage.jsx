@@ -46,16 +46,24 @@ export default function PaymentsPage() {
     setLoading(true);
     try {
       // 1. Fetch EVERYTHING needed for the Control Tower
-      const filesRes = await api.get("/travelfiles");
+      const [filesRes, invoicesRes] = await Promise.all([
+        api.get("/travelfiles"),
+        api.get("/invoices")
+      ]);
 
       // Enhance files with calculated fields for the "Control Tower"
       const enhancedFiles = filesRes.map(f => {
+        // Filter invoices for this file
+        const fileInvoices = invoicesRes.filter(i => i.travelFileId === f.id);
+
+        // Attach to file for downstream logic
+        f.invoices = fileInvoices;
+
         const totalSale = f.totalSale || 0;
         const totalPaid = f.payments?.filter(p => p.status !== 'Cancelled').reduce((acc, p) => acc + p.amount, 0) || 0;
-        // Hack: If backend doesn't return invoices in file object yet, we might miss this. 
-        // Assuming backend includes them or we fetch them separately.
-        // Let's assume f.invoices exists for now based on Controller code.
-        const totalInvoiced = f.invoices?.filter(i => i.status !== 'Annulled').reduce((acc, i) => acc + i.importeTotal, 0) || 0;
+
+        // Calculate invoiced amount from ACTUAL invoices
+        const totalInvoiced = fileInvoices.filter(i => i.status !== 'Annulled').reduce((acc, i) => acc + i.importeTotal, 0) || 0;
 
         return {
           ...f,
@@ -74,7 +82,10 @@ export default function PaymentsPage() {
         allPayments.sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
         setPayments(allPayments);
       } else if (activeTab === 'invoices') {
-        const allInvoices = enhancedFiles.flatMap(f => f.invoices?.map(i => ({ ...i, travelFile: f })) || []);
+        const allInvoices = invoicesRes.map(i => ({
+          ...i,
+          travelFile: enhancedFiles.find(f => f.id === i.travelFileId) || i.travelFile // Enrich with full file context if needed
+        }));
         allInvoices.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         setInvoices(allInvoices);
       }
