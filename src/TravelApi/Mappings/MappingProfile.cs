@@ -64,6 +64,22 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer));
 
         CreateMap<TravelFile, TravelFileListDto>()
-            .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty));
+            .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
+            .ForMember(dest => dest.TotalSale, opt => opt.MapFrom(src => 
+                (src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
+                (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +
+                (src.TransferBookings.Sum(t => (decimal?)t.SalePrice) ?? 0) +
+                (src.PackageBookings.Sum(p => (decimal?)p.SalePrice) ?? 0) +
+                (src.Reservations.Sum(r => (decimal?)r.SalePrice) ?? 0)
+            ))
+            .ForMember(dest => dest.Balance, opt => opt.MapFrom(src => 
+                ((src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
+                 (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +
+                 (src.TransferBookings.Sum(t => (decimal?)t.SalePrice) ?? 0) +
+                 (src.PackageBookings.Sum(p => (decimal?)p.SalePrice) ?? 0) +
+                 (src.Reservations.Sum(r => (decimal?)r.SalePrice) ?? 0)) 
+                - 
+                (src.Payments.Where(p => p.Status != "Cancelled" &&  !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
+            ));
     }
 }
