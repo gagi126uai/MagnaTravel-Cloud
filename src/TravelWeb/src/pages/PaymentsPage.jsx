@@ -63,7 +63,15 @@ export default function PaymentsPage() {
         const totalPaid = f.payments?.filter(p => p.status !== 'Cancelled').reduce((acc, p) => acc + p.amount, 0) || 0;
 
         // Calculate invoiced amount from ACTUAL invoices
-        const totalInvoiced = fileInvoices.filter(i => i.status !== 'Annulled').reduce((acc, i) => acc + i.importeTotal, 0) || 0;
+        const totalInvoiced = fileInvoices.reduce((acc, i) => {
+          if (i.resultado !== 'A') return acc; // Ignore Rejected/Pending for "Fiscal" total? Or include Pending? Let's include only Approved for strict fiscal.
+
+          // Credit Notes (3, 8, 13) should SUBTRACT
+          const isCreditNote = [3, 8, 13, 53].includes(i.tipoComprobante);
+          if (isCreditNote) return acc - i.importeTotal;
+
+          return acc + i.importeTotal;
+        }, 0);
 
         return {
           ...f,
