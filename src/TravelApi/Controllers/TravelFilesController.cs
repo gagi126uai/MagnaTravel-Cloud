@@ -31,20 +31,37 @@ public class TravelFilesController : ControllerBase
         {
             var files = await _context.TravelFiles
                 .OrderByDescending(f => f.CreatedAt)
-                .ProjectTo<TravelFileListDto>(_mapper.ConfigurationProvider)
+                .Select(f => new TravelFileListDto 
+                {
+                    Id = f.Id,
+                    FileNumber = f.FileNumber,
+                    Name = f.Name,
+                    Status = f.Status,
+                    CustomerName = f.Payer != null ? f.Payer.FullName : "",
+                    CreatedAt = f.CreatedAt,
+                    StartDate = f.StartDate,
+                    TotalSale = (f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                                (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                                (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                                (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                                (f.Reservations.Sum(x => (decimal?)x.SalePrice) ?? 0),
+                    Balance = ((f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                               (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                               (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                               (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
+                               (f.Reservations.Sum(x => (decimal?)x.SalePrice) ?? 0)) -
+                               (f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
+                })
                 .ToListAsync();
             return Ok(files);
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { Error = ex.Message, Stack = ex.StackTrace, ex.InnerException?.Message });
+            return StatusCode(500, new { Error = ex.Message, Stack = ex.ToString() });
         }
     }
 
-    public async Task<IActionResult> DebugFile(int id)
-    {
-        return Ok(new { Report = $"Debug endpoint for {id} - Pending implementation" });
-    }
+
 
     [HttpGet("{id}")]
     public async Task<IActionResult> GetFile(int id)
