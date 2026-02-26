@@ -339,7 +339,9 @@ export default function FileDetailPage() {
                 </div>
                 <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
                     <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Cobrado</p>
-                    <p className="text-2xl font-bold text-green-600 dark:text-emerald-400">${(file.totalSale - file.balance)?.toLocaleString()}</p>
+                    <p className="text-2xl font-bold text-green-600 dark:text-emerald-400">
+                        ${(file.payments?.filter(p => p.status !== 'Cancelled').reduce((acc, p) => acc + p.amount, 0) || 0).toLocaleString()}
+                    </p>
                 </div>
                 <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border-l-4 ${file.balance > 0 ? 'border-red-500' : 'border-green-500'}`}>
                     <div className="flex justify-between items-start">
@@ -381,6 +383,13 @@ export default function FileDetailPage() {
                 ${activeTab === 'history' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
                         >
                             <Clock className="w-4 h-4" /> Historial
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('account')}
+                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
+                ${activeTab === 'account' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                        >
+                            <CreditCard className="w-4 h-4" /> Estado de Cuenta
                         </button>
                         <button
                             onClick={() => setActiveTab('attachments')}
@@ -578,8 +587,90 @@ export default function FileDetailPage() {
                     )}
 
 
-                    {/* --- TAB: PAYMENTS REMOVED --- */}
-                    {/* --- TAB: INVOICES REMOVED --- */}
+                    {/* --- TAB: ESTADO DE CUENTA (Sólo Lectura) --- */}
+                    {activeTab === 'account' && (
+                        <div>
+                            <div className="flex justify-between items-center mb-6">
+                                <div>
+                                    <h3 className="text-lg font-medium text-gray-900 dark:text-white">Estado de Cuenta y Comprobantes</h3>
+                                    <p className="text-sm text-gray-500 dark:text-slate-400">Resumen de cobranzas e historial fiscal de este expediente.</p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                {/* MOVIMIENTOS DE CAJA */}
+                                <div>
+                                    <h4 className="font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
+                                        <CreditCard className="w-5 h-5 text-green-500" /> Historial de Pagos (Caja)
+                                    </h4>
+
+                                    {!file.payments || file.payments.length === 0 ? (
+                                        <div className="text-center py-8 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
+                                            <p className="text-sm text-gray-500">Aún no se han registrado cobros.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {file.payments.map(payment => (
+                                                <div key={payment.id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 flex justify-between items-center">
+                                                    <div>
+                                                        <div className="text-sm font-medium text-slate-900 dark:text-white">Recibo de Cobro</div>
+                                                        <div className="text-xs text-slate-500">{new Date(payment.paidAt).toLocaleDateString()} • {payment.method}</div>
+                                                        {payment.notes && <div className="text-xs text-slate-400 mt-1 italic">"{payment.notes}"</div>}
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-lg font-bold text-green-600">+${payment.amount?.toLocaleString()}</div>
+                                                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${payment.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                            {payment.status === 'Completed' ? 'Aplicado' : payment.status}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* COMPROBANTES FISCALES */}
+                                <div>
+                                    <h4 className="font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
+                                        <FileText className="w-5 h-5 text-indigo-500" /> Facturación AFIP
+                                    </h4>
+
+                                    {!file.invoices || file.invoices.length === 0 ? (
+                                        <div className="text-center py-8 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
+                                            <p className="text-sm text-gray-500">No hay comprobantes fiscales emitidos.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {file.invoices.map(invoice => (
+                                                <div key={invoice.id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 flex justify-between items-center">
+                                                    <div>
+                                                        <div className="text-sm font-medium text-slate-900 dark:text-white flex items-center gap-1">
+                                                            {invoice.resultado === 'A' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                                                            {invoice.resultado === 'R' && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                                                            Factura {invoice.resultado === 'A' ? `${invoice.puntoDeVenta}-${invoice.numeroComprobante}` : '(Rechazada)'}
+                                                        </div>
+                                                        <div className="text-xs text-slate-500">{new Date(invoice.createdAt).toLocaleDateString()}</div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-sm font-bold text-slate-900 border border-slate-200 px-2 py-1 rounded bg-slate-50">
+                                                            ${invoice.importeTotal?.toLocaleString()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="mt-8 bg-blue-50 dark:bg-slate-800/80 p-4 rounded-lg flex items-start gap-3 border border-blue-100 dark:border-slate-700">
+                                <AlertTriangle className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                                <div className="text-sm text-blue-800 dark:text-blue-300">
+                                    <strong>Gestión Administrativa:</strong> La registración de nuevos cobros en sistema, envíos de links de pago y emisión de facturas fiscales se realiza exclusivamente desde el módulo de <b>Control de Facturación</b> por el equipo contable.
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* --- TAB: HISTORY --- */}
                     {activeTab === 'history' && (
