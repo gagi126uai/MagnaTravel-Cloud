@@ -327,76 +327,74 @@ export default function FileDetailPage() {
                 </div>
             </div>
 
-            {/* SUMMARY CARDS */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
-                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Total Venta</p>
-                    <p className="text-2xl font-bold text-gray-900 dark:text-white">${file.totalSale?.toLocaleString()}</p>
+            {/* MINIMALIST SUMMARY */}
+            <div className="flex flex-wrap gap-8 md:gap-16 mb-10 pb-6 border-b border-slate-100 dark:border-slate-800/50">
+                <div>
+                    <p className="text-xs uppercase tracking-wider font-semibold text-slate-400 mb-1">Total Venta</p>
+                    <p className="text-3xl font-light text-slate-900 dark:text-white">${file.totalSale?.toLocaleString()}</p>
                 </div>
-                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
-                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Total Costo</p>
-                    <p className="text-2xl font-bold text-gray-900 dark:text-white">${file.totalCost?.toLocaleString()}</p>
+                <div>
+                    <p className="text-xs uppercase tracking-wider font-semibold text-slate-400 mb-1">Total Costo</p>
+                    <p className="text-3xl font-light text-slate-400 dark:text-slate-500">${file.totalCost?.toLocaleString()}</p>
                 </div>
-                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
-                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Cobrado</p>
-                    <p className="text-2xl font-bold text-green-600 dark:text-emerald-400">
+                <div>
+                    <p className="text-xs uppercase tracking-wider font-semibold text-slate-400 mb-1">Cobrado</p>
+                    <p className="text-3xl font-light text-slate-900 dark:text-white">
                         ${(file.payments?.filter(p => p.status !== 'Cancelled').reduce((acc, p) => acc + p.amount, 0) || 0).toLocaleString()}
                     </p>
                 </div>
-                <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border-l-4 ${file.balance > 0 ? 'border-red-500' : 'border-green-500'}`}>
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">Saldo Pendiente</p>
-                            <p className={`text-2xl font-bold ${file.balance > 0 ? 'text-red-600 dark:text-rose-400' : 'text-green-600 dark:text-emerald-400'}`}>
-                                ${file.balance?.toLocaleString()}
-                            </p>
-                        </div>
-                        {file.balance > 0 && <AlertTriangle className="w-6 h-6 text-red-500" />}
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        <p className="text-xs uppercase tracking-wider font-semibold text-slate-400">Saldo Pendiente</p>
+                        {file.balance > 0 && <span className="w-2 h-2 rounded-full bg-red-500"></span>}
                     </div>
+                    <p className={`text-3xl font-light ${file.balance > 0 ? 'text-red-500' : 'text-slate-400'}`}>
+                        ${file.balance?.toLocaleString()}
+                    </p>
                 </div>
             </div>
 
             {/* CAPACITY WARNING */}
             {getCapacityWarning()}
 
-            {/* TABS */}
-            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden min-h-[500px]">
-                <div className="border-b border-gray-200 dark:border-slate-700 overflow-x-auto scrollbar-hide">
-                    <nav className="flex -mb-px min-w-max sm:min-w-0">
+            {/* SUBTLE TABS */}
+            <div className="mb-8">
+                <div className="border-b border-slate-100 dark:border-slate-800 overflow-x-auto scrollbar-hide">
+                    <nav className="flex gap-6 min-w-max">
                         <button
                             onClick={() => setActiveTab('services')}
-                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
-                ${activeTab === 'services' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                            className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === 'services' ? 'text-slate-900 dark:text-white' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                            <FileText className="w-4 h-4" /> Servicios
+                            <div className="flex items-center gap-2"><FileText className="w-4 h-4" /> Servicios</div>
+                            {activeTab === 'services' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 dark:bg-white rounded-t-full" />}
                         </button>
                         <button
                             onClick={() => setActiveTab('passengers')}
-                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
-                ${activeTab === 'passengers' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                            className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === 'passengers' ? 'text-slate-900 dark:text-white' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                            <Users className="w-4 h-4" /> Pasajeros ({file.passengers?.length || 0})
+                            <div className="flex items-center gap-2"><Users className="w-4 h-4" /> Pasajeros ({file.passengers?.length || 0})</div>
+                            {activeTab === 'passengers' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 dark:bg-white rounded-t-full" />}
                         </button>
                         <button
                             onClick={() => setActiveTab('history')}
-                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
-                ${activeTab === 'history' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                            className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === 'history' ? 'text-slate-900 dark:text-white' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                            <Clock className="w-4 h-4" /> Historial
+                            <div className="flex items-center gap-2"><Clock className="w-4 h-4" /> Historial</div>
+                            {activeTab === 'history' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 dark:bg-white rounded-t-full" />}
                         </button>
                         <button
                             onClick={() => setActiveTab('account')}
-                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
-                ${activeTab === 'account' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                            className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === 'account' ? 'text-slate-900 dark:text-white' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                            <CreditCard className="w-4 h-4" /> Estado de Cuenta
+                            <div className="flex items-center gap-2"><CreditCard className="w-4 h-4" /> Estado de Cuenta</div>
+                            {activeTab === 'account' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 dark:bg-white rounded-t-full" />}
                         </button>
                         <button
                             onClick={() => setActiveTab('attachments')}
-                            className={`flex-1 min-w-[120px] py-4 px-4 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-2 whitespace-nowrap
-                ${activeTab === 'attachments' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-slate-800' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-300'}`}
+                            className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === 'attachments' ? 'text-slate-900 dark:text-white' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                            <Paperclip className="w-4 h-4" /> Documentos
+                            <div className="flex items-center gap-2"><Paperclip className="w-4 h-4" /> Documentos</div>
+                            {activeTab === 'attachments' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 dark:bg-white rounded-t-full" />}
                         </button>
                     </nav>
                 </div>
@@ -423,64 +421,65 @@ export default function FileDetailPage() {
                             ) : (
                                 <>
                                     {/* Desktop Table View */}
-                                    <div className="hidden md:block overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
-                                        <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-                                            <thead className="bg-gray-50 dark:bg-slate-900 text-gray-500 dark:text-slate-400">
-                                                <tr>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Tipo</th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Descripción</th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Estado</th>
-                                                    <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Venta</th>
-                                                    <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider">Acciones</th>
+                                    <div className="hidden md:block overflow-hidden">
+                                        <table className="min-w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="border-b border-slate-100 dark:border-slate-800">
+                                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Tipo</th>
+                                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Descripción</th>
+                                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha</th>
+                                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
+                                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right">Venta</th>
+                                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Acciones</th>
                                                 </tr>
                                             </thead>
-                                            <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
+                                            <tbody>
                                                 {allServices.map((svc, idx) => (
-                                                    <tr key={`${svc._type}-${svc.id}`} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
-                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                    <tr key={`${svc._type}-${svc.id}`} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                                                        <td className="py-4 align-middle whitespace-nowrap pr-4">
                                                             <div className="flex items-center">
-                                                                {svc._type === 'Flight' && <Plane className="w-5 h-5 text-blue-500 mr-2" />}
-                                                                {svc._type === 'Hotel' && <Hotel className="w-5 h-5 text-indigo-500 mr-2" />}
-                                                                {svc._type === 'Transfer' && <Car className="w-5 h-5 text-yellow-500 mr-2" />}
-                                                                {svc._type === 'Package' && <Package className="w-5 h-5 text-purple-500 mr-2" />}
+                                                                {svc._type === 'Flight' && <Plane className="w-4 h-4 text-slate-400 mr-2" />}
+                                                                {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-slate-400 mr-2" />}
+                                                                {svc._type === 'Transfer' && <Car className="w-4 h-4 text-slate-400 mr-2" />}
+                                                                {svc._type === 'Package' && <Package className="w-4 h-4 text-slate-400 mr-2" />}
                                                                 <span className="font-medium text-gray-900 dark:text-white">{svc._type === 'Flight' ? 'Aéreo' : svc._type}</span>
                                                             </div>
                                                         </td>
-                                                        <td className="px-6 py-4">
+                                                        <td className="py-4 align-middle pr-4">
                                                             <div className="text-sm text-gray-900 dark:text-white font-medium">{svc.name}</div>
                                                             <div className="text-xs text-gray-500 dark:text-slate-400">{svc.notes || svc.description}</div>
                                                             {svc.confirmationNumber && (
-                                                                <div className="text-xs text-indigo-500 mt-1 font-mono">Ref: {svc.confirmationNumber}</div>
+                                                                <div className="text-xs text-slate-500 mt-1 font-mono">Ref: {svc.confirmationNumber}</div>
                                                             )}
                                                         </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
+                                                        <td className="py-4 align-middle whitespace-nowrap text-sm text-gray-500 dark:text-slate-400 pr-4">
                                                             {new Date(svc.date).toLocaleDateString()}
                                                         </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                        <td className="py-4 align-middle whitespace-nowrap pr-4">
                                                             {(() => {
                                                                 const isConfirmed = svc.status === 'Confirmado' || svc.status === 'HK';
                                                                 return (
-                                                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                                                                        ${isConfirmed
-                                                                            ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                                                                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
-                                                                        }`}>
-                                                                        {isConfirmed ? 'Confirmado' : 'Pendiente'}
-                                                                    </span>
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <div className={`w-1.5 h-1.5 rounded-full ${isConfirmed ? 'bg-green-400' : 'bg-yellow-400'}`}></div>
+                                                                        <span className="text-sm text-slate-600 dark:text-slate-300">
+                                                                            {isConfirmed ? 'Confirmado' : 'Pendiente'}
+                                                                        </span>
+                                                                    </div>
                                                                 );
                                                             })()}
                                                         </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900 dark:text-white">
+                                                        <td className="py-4 align-middle whitespace-nowrap text-right font-medium text-gray-900 dark:text-white pr-4">
                                                             ${svc.salePrice?.toLocaleString()}
                                                         </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                            <button onClick={() => handleEditService(svc)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 mr-3">
-                                                                <Edit2 className="w-4 h-4" />
-                                                            </button>
-                                                            <button onClick={() => handleDeleteService(svc)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">
-                                                                <Trash2 className="w-4 h-4" />
-                                                            </button>
+                                                        <td className="py-4 align-middle whitespace-nowrap text-right pr-4">
+                                                            <div className="opacity-0 group-hover:opacity-100 transition-opacity flex justify-end gap-2">
+                                                                <button onClick={() => handleEditService(svc)} className="p-1.5 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded" title="Editar">
+                                                                    <Edit2 className="w-4 h-4" />
+                                                                </button>
+                                                                <button onClick={() => handleDeleteService(svc)} className="p-1.5 text-slate-400 hover:text-red-600 bg-slate-50 hover:bg-red-50 rounded" title="Eliminar">
+                                                                    <Trash2 className="w-4 h-4" />
+                                                                </button>
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -564,20 +563,20 @@ export default function FileDetailPage() {
                             {/* Modal is rendered at bottom */}
 
                             {/* List of Passengers */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                 {file.passengers?.map(p => (
-                                    <div key={p.id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 flex justify-between items-start hover:shadow-md transition-shadow">
+                                    <div key={p.id} className="group flex justify-between items-start border-b border-slate-100 dark:border-slate-800/50 pb-4">
                                         <div className="min-w-0 pr-2">
-                                            <div className="font-medium text-gray-900 dark:text-white truncate" title={p.fullName}>{p.fullName}</div>
-                                            <div className="text-sm text-gray-500 dark:text-slate-400 truncate">{p.documentType}: {p.documentNumber}</div>
-                                            {p.birthDate && <div className="text-xs text-gray-400 mt-1">Nac: {new Date(p.birthDate).toLocaleDateString()}</div>}
+                                            <div className="font-medium text-slate-900 dark:text-white truncate" title={p.fullName}>{p.fullName}</div>
+                                            <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{p.documentType}: {p.documentNumber}</div>
+                                            {p.birthDate && <div className="text-xs text-slate-400 mt-0.5">Nac: {new Date(p.birthDate).toLocaleDateString()}</div>}
                                         </div>
-                                        <div className="flex gap-1">
-                                            <button onClick={() => { setEditingPassenger(p); setShowPassengerForm(true); }} className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400">
-                                                <Edit2 className="w-4 h-4" />
+                                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 bg-white dark:bg-slate-900 pl-2">
+                                            <button onClick={() => { setEditingPassenger(p); setShowPassengerForm(true); }} className="p-1.5 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded">
+                                                <Edit2 className="w-3.5 h-3.5" />
                                             </button>
-                                            <button onClick={() => handleDeletePassenger(p.id)} className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400">
-                                                <Trash2 className="w-4 h-4" />
+                                            <button onClick={() => handleDeletePassenger(p.id)} className="p-1.5 text-slate-400 hover:text-red-600 bg-slate-50 hover:bg-red-50 rounded">
+                                                <Trash2 className="w-3.5 h-3.5" />
                                             </button>
                                         </div>
                                     </div>
@@ -601,25 +600,23 @@ export default function FileDetailPage() {
                                 {/* MOVIMIENTOS DE CAJA */}
                                 <div>
                                     <h4 className="font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
-                                        <CreditCard className="w-5 h-5 text-green-500" /> Historial de Pagos (Caja)
+                                        <div className="w-2 h-2 rounded-full bg-green-500"></div> Historial de Pagos (Caja)
                                     </h4>
 
                                     {!file.payments || file.payments.length === 0 ? (
-                                        <div className="text-center py-8 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
-                                            <p className="text-sm text-gray-500">Aún no se han registrado cobros.</p>
-                                        </div>
+                                        <div className="text-sm text-slate-500 py-4">Aún no se han registrado cobros.</div>
                                     ) : (
-                                        <div className="space-y-3">
+                                        <div className="space-y-4">
                                             {file.payments.map(payment => (
-                                                <div key={payment.id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 flex justify-between items-center">
+                                                <div key={payment.id} className="flex justify-between items-start border-b border-slate-50 dark:border-slate-800/50 pb-4">
                                                     <div>
                                                         <div className="text-sm font-medium text-slate-900 dark:text-white">Recibo de Cobro</div>
                                                         <div className="text-xs text-slate-500">{new Date(payment.paidAt).toLocaleDateString()} • {payment.method}</div>
                                                         {payment.notes && <div className="text-xs text-slate-400 mt-1 italic">"{payment.notes}"</div>}
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className="text-lg font-bold text-green-600">+${payment.amount?.toLocaleString()}</div>
-                                                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${payment.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                        <div className="text-lg font-bold text-slate-900 dark:text-white">+${payment.amount?.toLocaleString()}</div>
+                                                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${payment.status === 'Completed' ? 'bg-green-100/50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
                                                             {payment.status === 'Completed' ? 'Aplicado' : payment.status}
                                                         </span>
                                                     </div>
@@ -632,27 +629,25 @@ export default function FileDetailPage() {
                                 {/* COMPROBANTES FISCALES */}
                                 <div>
                                     <h4 className="font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
-                                        <FileText className="w-5 h-5 text-indigo-500" /> Facturación AFIP
+                                        <div className="w-2 h-2 rounded-full bg-indigo-500"></div> Facturación AFIP
                                     </h4>
 
                                     {!file.invoices || file.invoices.length === 0 ? (
-                                        <div className="text-center py-8 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
-                                            <p className="text-sm text-gray-500">No hay comprobantes fiscales emitidos.</p>
-                                        </div>
+                                        <div className="text-sm text-slate-500 py-4">No hay comprobantes fiscales emitidos.</div>
                                     ) : (
-                                        <div className="space-y-3">
+                                        <div className="space-y-4">
                                             {file.invoices.map(invoice => (
-                                                <div key={invoice.id} className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 flex justify-between items-center">
+                                                <div key={invoice.id} className="flex justify-between items-start border-b border-slate-50 dark:border-slate-800/50 pb-4">
                                                     <div>
-                                                        <div className="text-sm font-medium text-slate-900 dark:text-white flex items-center gap-1">
-                                                            {invoice.resultado === 'A' && <CheckCircle className="w-4 h-4 text-green-500" />}
-                                                            {invoice.resultado === 'R' && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                                                        <div className="text-sm font-medium text-slate-900 dark:text-white flex items-center gap-1.5">
+                                                            {invoice.resultado === 'A' && <CheckCircle className="w-3.5 h-3.5 text-green-500" />}
+                                                            {invoice.resultado === 'R' && <AlertTriangle className="w-3.5 h-3.5 text-red-500" />}
                                                             Factura {invoice.resultado === 'A' ? `${invoice.puntoDeVenta}-${invoice.numeroComprobante}` : '(Rechazada)'}
                                                         </div>
-                                                        <div className="text-xs text-slate-500">{new Date(invoice.createdAt).toLocaleDateString()}</div>
+                                                        <div className="text-xs text-slate-500 mt-0.5">{new Date(invoice.createdAt).toLocaleDateString()}</div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className="text-sm font-bold text-slate-900 border border-slate-200 px-2 py-1 rounded bg-slate-50">
+                                                        <div className="text-sm font-bold text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded">
                                                             ${invoice.importeTotal?.toLocaleString()}
                                                         </div>
                                                     </div>
@@ -663,10 +658,10 @@ export default function FileDetailPage() {
                                 </div>
                             </div>
 
-                            <div className="mt-8 bg-blue-50 dark:bg-slate-800/80 p-4 rounded-lg flex items-start gap-3 border border-blue-100 dark:border-slate-700">
-                                <AlertTriangle className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-                                <div className="text-sm text-blue-800 dark:text-blue-300">
-                                    <strong>Gestión Administrativa:</strong> La registración de nuevos cobros en sistema, envíos de links de pago y emisión de facturas fiscales se realiza exclusivamente desde el módulo de <b>Control de Facturación</b> por el equipo contable.
+                            <div className="mt-8 bg-slate-50 dark:bg-slate-800/30 p-4 rounded flex items-start gap-3 border border-slate-100 dark:border-slate-700/50">
+                                <div className="w-1.5 h-1.5 rounded-full bg-slate-400 mt-1.5 flex-shrink-0"></div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">
+                                    <strong>Nota:</strong> La registración de nuevos cobros en sistema, envíos de links de pago y emisión de facturas fiscales se realiza exclusivamente desde el módulo de <b>Bandejas de Administración</b> por el equipo contable.
                                 </div>
                             </div>
                         </div>
