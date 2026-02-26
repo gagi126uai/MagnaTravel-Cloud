@@ -308,7 +308,8 @@ public class TravelFilesController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error agregando pasajero: {ex.Message}");
+            var innerMsg = ex.InnerException?.Message;
+            return StatusCode(500, $"Error agregando pasajero: {ex.Message} | Inner: {innerMsg}");
         }
     }
 
