@@ -212,6 +212,7 @@ export default function FilesPage() {
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Estado</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Venta</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Saldo</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -252,17 +253,6 @@ export default function FilesPage() {
                                                 {file.customerName || "Sin Asignar"}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
-                                                onClick={(e) => handleArchive(e, file.id)}
-                                                title="Archivar Expediente"
-                                            >
-                                                <Archive className="h-4 w-4" />
-                                            </Button>
-                                        </td>
                                         <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
                                             {file.startDate ? (
                                                 <div className="flex items-center gap-1.5">
@@ -297,6 +287,17 @@ export default function FilesPage() {
                                             ) : (
                                                 <span className="text-sm text-slate-400">-</span>
                                             )}
+                                        </td>
+                                        <td className="px-6 py-4 text-right">
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
+                                                onClick={(e) => handleArchive(e, file.id)}
+                                                title="Archivar Expediente"
+                                            >
+                                                <Archive className="h-4 w-4" />
+                                            </Button>
                                         </td>
                                     </tr>
                                 );
