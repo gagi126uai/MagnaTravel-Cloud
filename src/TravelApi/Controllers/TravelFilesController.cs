@@ -298,6 +298,12 @@ public class TravelFilesController : ControllerBase
             if (string.IsNullOrWhiteSpace(passenger.FullName)) return BadRequest("El nombre del pasajero es obligatorio");
             if (passenger.FullName.Length < 3) return BadRequest("El nombre debe tener al menos 3 caracteres");
 
+            // PostgreSQL requirement: All DateTimes must be UTC Kind
+            if (passenger.BirthDate.HasValue)
+            {
+                passenger.BirthDate = DateTime.SpecifyKind(passenger.BirthDate.Value, DateTimeKind.Utc);
+            }
+
             passenger.TravelFileId = id;
             passenger.CreatedAt = DateTime.UtcNow;
 
@@ -327,7 +333,16 @@ public class TravelFilesController : ControllerBase
             passenger.FullName = updated.FullName;
             passenger.DocumentType = updated.DocumentType;
             passenger.DocumentNumber = updated.DocumentNumber;
-            passenger.BirthDate = updated.BirthDate;
+            
+            if (updated.BirthDate.HasValue)
+            {
+                passenger.BirthDate = DateTime.SpecifyKind(updated.BirthDate.Value, DateTimeKind.Utc);
+            }
+            else 
+            {
+                passenger.BirthDate = null;
+            }
+
             passenger.Nationality = updated.Nationality;
             passenger.Phone = updated.Phone;
             passenger.Email = updated.Email;
