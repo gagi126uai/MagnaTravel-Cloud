@@ -40,6 +40,13 @@ public class TravelFilesController : ControllerBase
                     CustomerName = f.Payer != null ? f.Payer.FullName : "",
                     CreatedAt = f.CreatedAt,
                     StartDate = f.StartDate,
+                    EndDate = f.EndDate,
+                    PassengerCount = f.Passengers.Count,
+                    TotalCost = (f.FlightSegments.Sum(x => (decimal?)x.NetCost) ?? 0) +
+                                (f.HotelBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
+                                (f.TransferBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
+                                (f.PackageBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
+                                (f.Reservations.Sum(x => (decimal?)x.NetCost) ?? 0),
                     TotalSale = (f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                                 (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                                 (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +

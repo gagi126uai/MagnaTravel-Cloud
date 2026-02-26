@@ -6,13 +6,17 @@ import {
     Search,
     FolderOpen,
     User,
+    Users,
     Archive,
     Calendar,
     DollarSign,
     AlertCircle,
     CheckCircle2,
     Plane,
-    TrendingUp
+    TrendingUp,
+    Wallet,
+    CreditCard,
+    MessageCircle
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useNavigate } from "react-router-dom";
@@ -108,8 +112,18 @@ export default function FilesPage() {
     // KPI summary
     const activeFiles = files.filter(f => !['Cerrado', 'Cancelado', 'Archived'].includes(f.status));
     const totalSaleActive = activeFiles.reduce((sum, f) => sum + (f.totalSale || 0), 0);
+    const totalCostActive = activeFiles.reduce((sum, f) => sum + (f.totalCost || 0), 0);
+    const grossProfit = totalSaleActive - totalCostActive;
     const totalPendingBalance = activeFiles.reduce((sum, f) => sum + (f.balance > 0 ? f.balance : 0), 0);
     const operativeCount = files.filter(f => f.status === 'Operativo').length;
+
+    // Sort matching files by nearest trip date
+    const sortedFiles = [...filteredFiles].sort((a, b) => {
+        if (!a.startDate && !b.startDate) return new Date(b.createdAt) - new Date(a.createdAt); // newest first if no date
+        if (!a.startDate) return 1; // nulls at the bottom
+        if (!b.startDate) return -1;
+        return new Date(a.startDate) - new Date(b.startDate);
+    });
 
     // Filter tab counts
     const tabCounts = {
@@ -137,7 +151,7 @@ export default function FilesPage() {
             </div>
 
             {/* Quick KPI Strip */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
                     <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
                         <FolderOpen className="h-3.5 w-3.5" />
@@ -158,6 +172,13 @@ export default function FilesPage() {
                         Venta Total
                     </div>
                     <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(totalSaleActive)}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
+                        <Wallet className="h-3.5 w-3.5" />
+                        Rentabilidad Est.
+                    </div>
+                    <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{formatCurrency(grossProfit)}</div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
                     <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
@@ -207,16 +228,16 @@ export default function FilesPage() {
                         <thead className="bg-slate-50 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800">
                             <tr>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Expediente</th>
-                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Cliente</th>
-                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Inicio Viaje</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Cliente Titular</th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Fechas</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400">Estado</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Venta</th>
                                 <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Saldo</th>
-                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right"></th>
+                                <th className="px-6 py-3 font-medium text-slate-500 dark:text-slate-400 text-right">Acciones</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {filteredFiles.map((file) => {
+                            {sortedFiles.map((file) => {
                                 const hasPendingBalance = file.balance > 0;
                                 const isPaid = file.totalSale > 0 && file.balance <= 0;
 
@@ -242,25 +263,41 @@ export default function FilesPage() {
                                                     }
                                                 </div>
                                                 <div>
-                                                    <div className="font-semibold text-slate-900 dark:text-slate-100">{file.name}</div>
-                                                    <div className="text-xs text-slate-500 font-mono">{file.fileNumber}</div>
+                                                    <div className="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                                                        {file.name}
+                                                    </div>
+                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                        <span className="text-xs text-slate-500 font-mono">{file.fileNumber}</span>
+                                                        <span className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                                            <Users className="h-3 w-3" /> {file.passengerCount} Pax
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4">
-                                            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                                            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 font-medium">
                                                 <User className="h-3.5 w-3.5 opacity-70" />
                                                 {file.customerName || "Sin Asignar"}
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
                                             {file.startDate ? (
-                                                <div className="flex items-center gap-1.5">
-                                                    <Calendar className="h-3.5 w-3.5 opacity-50" />
-                                                    {formatDate(file.startDate)}
+                                                <div className="flex flex-col gap-0.5">
+                                                    <div className="flex items-center gap-1.5 text-sm font-medium">
+                                                        <Calendar className="h-3.5 w-3.5 opacity-60 text-indigo-500" />
+                                                        {formatDate(file.startDate)}
+                                                    </div>
+                                                    {file.endDate && (
+                                                        <div className="pl-5 text-xs text-slate-400 flex items-center gap-1">
+                                                            <span>al {formatDate(file.endDate)}</span>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ) : (
-                                                <span className="text-slate-400">-</span>
+                                                <span className="inline-flex items-center justify-center px-2 py-1 rounded-md bg-slate-100 text-slate-500 text-xs font-medium dark:bg-slate-800">
+                                                    Sin Fechas
+                                                </span>
                                             )}
                                         </td>
                                         <td className="px-6 py-4">
@@ -277,32 +314,60 @@ export default function FilesPage() {
                                                     <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
                                                         {formatCurrency(file.balance)}
                                                     </span>
-                                                    <span className="text-[10px] text-rose-500 font-semibold uppercase">Pendiente</span>
+                                                    <span className="text-[10px] text-rose-500 font-semibold uppercase tracking-wider">Pendiente</span>
                                                 </div>
                                             ) : isPaid ? (
-                                                <div className="flex items-center justify-end gap-1 text-emerald-600 dark:text-emerald-400">
-                                                    <CheckCircle2 className="h-3.5 w-3.5" />
-                                                    <span className="text-xs font-semibold">Pagado</span>
+                                                <div className="flex flex-col items-end">
+                                                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                                                        <CheckCircle2 className="h-3.5 w-3.5" /> Pagado
+                                                    </span>
+                                                    <span className="text-[10px] text-emerald-500 font-semibold uppercase tracking-wider mt-0.5">Al Día</span>
                                                 </div>
                                             ) : (
                                                 <span className="text-sm text-slate-400">-</span>
                                             )}
                                         </td>
                                         <td className="px-6 py-4 text-right">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
-                                                onClick={(e) => handleArchive(e, file.id)}
-                                                title="Archivar Expediente"
-                                            >
-                                                <Archive className="h-4 w-4" />
-                                            </Button>
+                                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        window.open(`https://wa.me/?text=Hola ${file.customerName}, te hablo por el viaje ${file.name}.`, '_blank');
+                                                    }}
+                                                    title="Contactar Titular"
+                                                >
+                                                    <MessageCircle className="h-4 w-4" />
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        navigate(`/files/${file.id}`);
+                                                    }}
+                                                    title="Ir a Caja"
+                                                >
+                                                    <CreditCard className="h-4 w-4" />
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                                                    onClick={(e) => handleArchive(e, file.id)}
+                                                    title="Archivar"
+                                                >
+                                                    <Archive className="h-4 w-4" />
+                                                </Button>
+                                            </div>
                                         </td>
                                     </tr>
                                 );
                             })}
-                            {filteredFiles.length === 0 && (
+                            {sortedFiles.length === 0 && (
                                 <tr>
                                     <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                                         <div className="mx-auto h-12 w-12 rounded-full bg-slate-50 flex items-center justify-center mb-3 dark:bg-slate-900">
@@ -319,7 +384,7 @@ export default function FilesPage() {
 
             {/* Mobile Card View */}
             <div className="md:hidden space-y-3">
-                {filteredFiles.length === 0 ? (
+                {sortedFiles.length === 0 ? (
                     <div className="text-center py-12 bg-slate-50 dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
                         <div className="mx-auto h-12 w-12 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center mb-3 shadow-sm border border-slate-100 dark:border-slate-700">
                             <Search className="h-5 w-5 opacity-50" />
@@ -327,7 +392,7 @@ export default function FilesPage() {
                         <p className="text-muted-foreground text-sm">No se encontraron expedientes.</p>
                     </div>
                 ) : (
-                    filteredFiles.map((file) => {
+                    sortedFiles.map((file) => {
                         const hasPendingBalance = file.balance > 0;
                         const isPaid = file.totalSale > 0 && file.balance <= 0;
                         return (
@@ -353,20 +418,36 @@ export default function FilesPage() {
                                         </div>
                                         <div>
                                             <div className="font-semibold text-slate-900 dark:text-white leading-tight">{file.name}</div>
-                                            <div className="text-xs text-slate-500 font-mono mt-0.5">{file.fileNumber}</div>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <span className="text-xs text-slate-500 font-mono">{file.fileNumber}</span>
+                                                <span className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                                    <Users className="h-3 w-3" /> {file.passengerCount} Pax
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
                                     {getStatusBadge(file.status)}
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm mb-3">
-                                    <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                                    <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400 font-medium">
                                         <User className="h-3.5 w-3.5 opacity-70" />
                                         <span className="truncate">{file.customerName || "Sin Asignar"}</span>
                                     </div>
-                                    <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-                                        <Calendar className="h-3.5 w-3.5 opacity-70" />
-                                        <span>{file.startDate ? formatDate(file.startDate) : "-"}</span>
+                                    <div className="relative">
+                                        {file.startDate ? (
+                                            <div className="flex flex-col">
+                                                <div className="flex items-center gap-1.5 text-xs font-medium">
+                                                    <Calendar className="h-3.5 w-3.5 opacity-60 text-indigo-500" />
+                                                    {formatDate(file.startDate)}
+                                                </div>
+                                                {file.endDate && (
+                                                    <span className="pl-5 text-[10px] text-slate-400">al {formatDate(file.endDate)}</span>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-xs text-slate-400">-</span>
+                                        )}
                                     </div>
                                 </div>
 
@@ -374,10 +455,23 @@ export default function FilesPage() {
                                     <div className="text-xs text-slate-500">
                                         Venta: <span className="font-medium text-slate-900 dark:text-slate-200">{formatCurrency(file.totalSale)}</span>
                                     </div>
-                                    <div className="text-right">
-                                        <span className={`text-sm font-bold ${hasPendingBalance ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                            {hasPendingBalance ? "Saldo: " + formatCurrency(file.balance) : "Pagado"}
-                                        </span>
+                                    <div className="flex items-center gap-2">
+                                        <div className="text-right mr-2">
+                                            <span className={`text-sm font-bold ${hasPendingBalance ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                                {hasPendingBalance ? "Saldo: " + formatCurrency(file.balance) : "Pagado"}
+                                            </span>
+                                        </div>
+                                        <Button
+                                            variant="secondary"
+                                            size="icon"
+                                            className="h-7 w-7 rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                window.open(`https://wa.me/?text=Hola ${file.customerName}, te hablo por el viaje ${file.name}.`, '_blank');
+                                            }}
+                                        >
+                                            <MessageCircle className="h-3 w-3" />
+                                        </Button>
                                     </div>
                                 </div>
                             </div>
