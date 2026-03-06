@@ -15,7 +15,9 @@ public class MappingProfile : Profile
         CreateMap<Passenger, PassengerDto>();
         
         // Financials
-        CreateMap<Payment, PaymentDto>();
+        CreateMap<Payment, PaymentDto>()
+            .ForMember(dest => dest.TravelFileId, opt => opt.MapFrom(src => src.TravelFileId ?? (src.Reservation != null ? src.Reservation.TravelFileId : null)))
+            .ForMember(dest => dest.FileNumber, opt => opt.MapFrom(src => src.TravelFile != null ? src.TravelFile.FileNumber : (src.Reservation != null && src.Reservation.TravelFile != null ? src.Reservation.TravelFile.FileNumber : null)));
         CreateMap<Invoice, InvoiceDto>()
             .ForMember(dest => dest.TravelFile, opt => opt.MapFrom(src => src.TravelFile))
             .ForMember(dest => dest.InvoiceType, opt => opt.MapFrom(src => 

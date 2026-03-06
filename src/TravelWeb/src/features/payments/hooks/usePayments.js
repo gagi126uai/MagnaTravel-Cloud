@@ -14,9 +14,10 @@ export function usePayments() {
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
-            const [filesRes, invoicesRes] = await Promise.all([
+            const [filesRes, invoicesRes, paymentsRes] = await Promise.all([
                 api.get("/travelfiles"),
-                api.get("/invoices")
+                api.get("/invoices"),
+                api.get("/payments")
             ]);
 
             const enhancedFiles = filesRes.map(f => {
@@ -47,7 +48,10 @@ export function usePayments() {
 
             setGlobalFiles(enhancedFiles);
 
-            const allPayments = enhancedFiles.flatMap(f => f.validPayments.map(p => ({ ...p, travelFile: f })));
+            const allPayments = paymentsRes.map(p => ({
+                ...p,
+                travelFile: enhancedFiles.find(f => f.id === p.travelFileId) || { id: p.travelFileId, fileNumber: p.fileNumber }
+            }));
             allPayments.sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
             setPayments(allPayments);
 
