@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Security.Claims;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Interfaces;
