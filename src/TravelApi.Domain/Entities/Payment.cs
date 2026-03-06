@@ -1,0 +1,32 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace TravelApi.Domain.Entities;
+
+public class Payment
+{
+    public int Id { get; set; }
+
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal Amount { get; set; }
+
+    public DateTime PaidAt { get; set; } = DateTime.UtcNow;
+
+    public string Method { get; set; } = "Transfer"; // Cash, Transfer, Card
+    public string? Reference { get; set; } // Transaction ID, Check #, etc.
+
+    public string Status { get; set; } = "Paid"; // Paid, Pending, Cancelled
+
+    public string? Notes { get; set; }
+
+    // Soft Delete
+    public bool IsDeleted { get; set; } = false;
+    public DateTime? DeletedAt { get; set; }
+
+    // Direct link to TravelFile (preferred)
+    public int? TravelFileId { get; set; }
+    public TravelFile? TravelFile { get; set; }
+
+    // Legacy link via Reservation (for backwards compatibility)
+    public int? ReservationId { get; set; }
+    public Reservation? Reservation { get; set; }
+}

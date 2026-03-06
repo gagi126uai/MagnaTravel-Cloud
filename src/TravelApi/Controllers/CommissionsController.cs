@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Data;
-using TravelApi.Models;
+using TravelApi.Application.Interfaces;
 
 namespace TravelApi.Controllers;
 
@@ -11,11 +9,11 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class CommissionsController : ControllerBase
 {
-    private readonly AppDbContext _dbContext;
+    private readonly ICommissionService _commissionService;
 
-    public CommissionsController(AppDbContext dbContext)
+    public CommissionsController(ICommissionService commissionService)
     {
-        _dbContext = dbContext;
+        _commissionService = commissionService;
     }
 
     /// <summary>
@@ -24,24 +22,8 @@ public class CommissionsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
     {
-        var rules = await _dbContext.CommissionRules
-            .Include(r => r.Supplier)
-            .OrderByDescending(r => r.Priority)
-            .ThenBy(r => r.Supplier != null ? r.Supplier.Name : "")
-            .ToListAsync(cancellationToken);
-
-        return Ok(rules.Select(r => new
-        {
-            r.Id,
-            r.SupplierId,
-            SupplierName = r.Supplier?.Name,
-            r.ServiceType,
-            r.CommissionPercent,
-            r.Priority,
-            r.IsActive,
-            r.Description,
-            r.CreatedAt
-        }));
+        var rules = await _commissionService.GetAllRulesAsync(cancellationToken);
+        return Ok(rules);
     }
 
     /// <summary>
@@ -51,30 +33,15 @@ public class CommissionsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create([FromBody] CreateCommissionRuleRequest request, CancellationToken cancellationToken)
     {
-        // Verificar si ya existe una regla igual
-        var existing = await _dbContext.CommissionRules
-            .FirstOrDefaultAsync(r => 
-                r.SupplierId == request.SupplierId && 
-                r.ServiceType == request.ServiceType &&
-                r.IsActive, cancellationToken);
-
-        if (existing != null)
-            return BadRequest("Ya existe una regla con ese proveedor y tipo de servicio");
-
-        var rule = new CommissionRule
+        try
         {
-            SupplierId = request.SupplierId,
-            ServiceType = request.ServiceType,
-            CommissionPercent = request.CommissionPercent,
-            Priority = request.Priority,
-            Description = request.Description,
-            IsActive = true
-        };
-
-        _dbContext.CommissionRules.Add(rule);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        return Ok(rule);
+            var rule = await _commissionService.CreateRuleAsync(request, cancellationToken);
+            return Ok(rule);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     /// <summary>
@@ -84,16 +51,10 @@ public class CommissionsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateCommissionRuleRequest request, CancellationToken cancellationToken)
     {
-        var rule = await _dbContext.CommissionRules.FindAsync(new object[] { id }, cancellationToken);
+        var rule = await _commissionService.UpdateRuleAsync(id, request, cancellationToken);
         if (rule == null)
             return NotFound();
 
-        rule.CommissionPercent = request.CommissionPercent;
-        rule.Description = request.Description;
-        rule.Priority = request.Priority;
-        rule.IsActive = request.IsActive;
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
         return Ok(rule);
     }
 
@@ -104,12 +65,9 @@ public class CommissionsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
-        var rule = await _dbContext.CommissionRules.FindAsync(new object[] { id }, cancellationToken);
-        if (rule == null)
+        var result = await _commissionService.DeleteRuleAsync(id, cancellationToken);
+        if (!result)
             return NotFound();
-
-        _dbContext.CommissionRules.Remove(rule);
-        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok();
     }
@@ -121,44 +79,7 @@ public class CommissionsController : ControllerBase
     [HttpGet("calculate")]
     public async Task<IActionResult> Calculate([FromQuery] int? supplierId, [FromQuery] string? serviceType, CancellationToken cancellationToken)
     {
-        // Buscar la regla más específica que aplique
-        var rule = await _dbContext.CommissionRules
-            .Where(r => r.IsActive)
-            .Where(r => 
-                // Regla exacta (proveedor + servicio)
-                (r.SupplierId == supplierId && r.ServiceType == serviceType) ||
-                // Solo proveedor
-                (r.SupplierId == supplierId && r.ServiceType == null) ||
-                // Solo servicio
-                (r.SupplierId == null && r.ServiceType == serviceType) ||
-                // Default (aplica a todos)
-                (r.SupplierId == null && r.ServiceType == null)
-            )
-            .OrderByDescending(r => r.Priority)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (rule == null)
-        {
-            // Si no hay regla, usar el default de AgencySettings
-            var settings = await _dbContext.AgencySettings.FirstOrDefaultAsync(cancellationToken);
-            return Ok(new { commissionPercent = settings?.DefaultCommissionPercent ?? 10 });
-        }
-
-        return Ok(new { commissionPercent = rule.CommissionPercent });
+        var percent = await _commissionService.CalculateCommissionAsync(supplierId, serviceType, cancellationToken);
+        return Ok(new { commissionPercent = percent });
     }
 }
-
-public record CreateCommissionRuleRequest(
-    int? SupplierId,
-    string? ServiceType,
-    decimal CommissionPercent,
-    int Priority,
-    string? Description
-);
-
-public record UpdateCommissionRuleRequest(
-    decimal CommissionPercent,
-    int Priority,
-    string? Description,
-    bool IsActive
-);

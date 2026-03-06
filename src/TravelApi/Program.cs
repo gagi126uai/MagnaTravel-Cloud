@@ -3,15 +3,18 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
-using TravelApi.Data;
-using TravelApi.Models;
-using TravelApi.Options;
-using TravelApi.Services;
+using TravelApi.Infrastructure.Persistence;
+using TravelApi.Domain.Entities;
+using TravelApi.Domain.Interfaces;
+using TravelApi.Infrastructure.Repositories;
+using TravelApi.Domain.Options;
+using TravelApi.Infrastructure.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using Hangfire;
 using Hangfire.PostgreSql;
 using TravelApi.Filters;
+using TravelApi.Application.Interfaces;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -125,6 +128,23 @@ builder.Services.AddAuthorization();
 builder.Services.AddHttpClient<IAfipService, AfipService>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+builder.Services.AddScoped<ITravelFileService, TravelFileService>();
+builder.Services.AddScoped<ISupplierService, SupplierService>();
+builder.Services.AddScoped<ICustomerService, CustomerService>();
+builder.Services.AddScoped<IReportService, ReportService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<IReservationService, ReservationService>();
+builder.Services.AddScoped<ICommissionService, CommissionService>();
+builder.Services.AddScoped<IAlertService, AlertService>();
+builder.Services.AddScoped<ISearchService, SearchService>();
+builder.Services.AddScoped<IRateService, RateService>();
+builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<IAttachmentService, AttachmentService>();
+builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 
 // Load allowed origins from configuration (appsettings.json or ENV)
 var allowedOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
@@ -199,7 +219,7 @@ app.Use(async (context, next) =>
         if (context.Request.Cookies.TryGetValue("hangfire_auth", out var token))
         {
             var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-            var jwtOptions = builder.Configuration.GetSection(TravelApi.Options.JwtOptions.SectionName).Get<TravelApi.Options.JwtOptions>();
+            var jwtOptions = builder.Configuration.GetSection(TravelApi.Domain.Options.JwtOptions.SectionName).Get<TravelApi.Domain.Options.JwtOptions>();
             
             if (jwtOptions != null && handler.CanReadToken(token))
             {

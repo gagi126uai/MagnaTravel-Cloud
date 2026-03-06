@@ -1,9 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
-using TravelApi.Data;
-using TravelApi.Models;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -12,40 +11,31 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class NotificationsController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly INotificationService _notificationService;
 
-    public NotificationsController(AppDbContext context)
+    public NotificationsController(INotificationService notificationService)
     {
-        _context = context;
+        _notificationService = notificationService;
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Notification>>> GetUnread()
+    public async Task<ActionResult<IEnumerable<Notification>>> GetUnread(CancellationToken ct)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (userId == null) return Unauthorized();
 
-        var notifications = await _context.Notifications
-            .Where(n => n.UserId == userId && !n.IsRead)
-            .OrderByDescending(n => n.CreatedAt)
-            .ToListAsync();
-
+        var notifications = await _notificationService.GetUnreadNotificationsAsync(userId, ct);
         return Ok(notifications);
     }
 
     [HttpPost("{id}/read")]
-    public async Task<IActionResult> MarkAsRead(int id)
+    public async Task<IActionResult> MarkAsRead(int id, CancellationToken ct)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (userId == null) return Unauthorized();
 
-        var notification = await _context.Notifications.FindAsync(id);
-        if (notification == null) return NotFound();
-
-        if (notification.UserId != userId) return Forbid();
-
-        notification.IsRead = true;
-        await _context.SaveChangesAsync();
+        var success = await _notificationService.MarkAsReadAsync(id, userId, ct);
+        if (!success) return NotFound();
 
         return NoContent();
     }

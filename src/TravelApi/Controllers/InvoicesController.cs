@@ -1,13 +1,7 @@
-using AutoMapper;
-using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Data;
-using TravelApi.DTOs;
-using TravelApi.Models;
-using TravelApi.Services;
-using Hangfire;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
 using System.Security.Claims;
 
 namespace TravelApi.Controllers;
@@ -17,44 +11,27 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class InvoicesController : ControllerBase
 {
-    private readonly AppDbContext _context;
-    private readonly IAfipService _afipService;
-    private readonly IInvoicePdfService _pdfService;
-    private readonly IMapper _mapper;
-    private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IInvoiceService _invoiceService;
 
-    public InvoicesController(AppDbContext context, IAfipService afipService, IInvoicePdfService pdfService, IMapper mapper, IBackgroundJobClient backgroundJobClient)
+    public InvoicesController(IInvoiceService invoiceService)
     {
-        _context = context;
-        _afipService = afipService;
-        _pdfService = pdfService;
-        _mapper = mapper;
-        _backgroundJobClient = backgroundJobClient;
+        _invoiceService = invoiceService;
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetInvoices()
+    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetInvoices(CancellationToken ct)
     {
-        var invoices = await _context.Invoices
-            .OrderByDescending(i => i.CreatedAt)
-            .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
-            .ToListAsync();
+        var invoices = await _invoiceService.GetAllAsync(ct);
         return Ok(invoices);
     }
 
     [HttpPost]
-    public async Task<ActionResult<InvoiceDto>> CreateInvoice([FromBody] CreateInvoiceRequest request)
+    public async Task<ActionResult<InvoiceDto>> CreateInvoice([FromBody] CreateInvoiceRequest request, CancellationToken ct)
     {
         try
         {
-            // 1. Create Pending in DB
-            var invoice = await _afipService.CreatePendingInvoice(request.TravelFileId, request);
-            
-            // 2. Enqueue Job
-            _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(invoice.Id));
-
-            // return Accepted (Processing)
-            return Accepted(_mapper.Map<InvoiceDto>(invoice));
+            var invoice = await _invoiceService.CreateAsync(request, ct);
+            return Accepted(invoice);
         }
         catch (Exception ex)
         {
@@ -63,68 +40,56 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpPost("{id}/retry")]
-    public async Task<IActionResult> RetryInvoice(int id)
+    public async Task<IActionResult> RetryInvoice(int id, CancellationToken ct)
     {
-        var invoice = await _context.Invoices.FindAsync(id);
-        if (invoice == null) return NotFound();
-        if (invoice.Resultado == "A") return BadRequest("La factura ya está aprobada.");
-
-        // Reset to PENDING so UI shows yellow
-        invoice.Resultado = "PENDING";
-        invoice.Observaciones = null;
-        await _context.SaveChangesAsync();
-
-        _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(id));
-        
-        return Accepted(new { message = "Reintento encolado." });
+        try
+        {
+            var success = await _invoiceService.RetryAsync(id, ct);
+            if (!success) return NotFound();
+            
+            return Accepted(new { message = "Reintento encolado." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpGet("file/{travelFileId}")]
-    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByTravelFile(int travelFileId)
+    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByTravelFile(int travelFileId, CancellationToken ct)
     {
-        var invoices = await _context.Invoices
-            .Where(i => i.TravelFileId == travelFileId)
-            .OrderByDescending(i => i.CreatedAt)
-            .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
-            .ToListAsync();
+        var invoices = await _invoiceService.GetByTravelFileAsync(travelFileId, ct);
         return Ok(invoices);
     }
 
     [HttpGet("{id}/pdf")]
-    public async Task<IActionResult> GetInvoicePdf(int id)
+    public async Task<IActionResult> GetInvoicePdf(int id, CancellationToken ct)
     {
-        var invoice = await _context.Invoices
-            .Include(i => i.TravelFile)
-            .ThenInclude(t => t.Payer)
-            .FirstOrDefaultAsync(i => i.Id == id);
-
-        if (invoice == null) return NotFound();
-
-        var settings = await _context.AfipSettings.FirstOrDefaultAsync();
-        if (settings == null) return BadRequest("Configuración de AFIP no encontrada");
-
-        var agencySettings = await _context.AgencySettings.FirstOrDefaultAsync() ?? new AgencySettings();
-
         try
         {
-            var pdfBytes = _pdfService.GenerateInvoicePdf(invoice, invoice.TravelFile, settings, agencySettings);
-            return File(pdfBytes, "application/pdf", $"Factura-{invoice.TipoComprobante}-{invoice.NumeroComprobante}.pdf");
+            var pdfBytes = await _invoiceService.GetPdfAsync(id, ct);
+            // We'd need the invoice details to name the file properly, but for now we use a generic name or fetch it in the service if needed.
+            return File(pdfBytes, "application/pdf", $"Factura-{id}.pdf");
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error generating PDF: {ex.Message}");
-            Console.WriteLine(ex.StackTrace);
             return StatusCode(500, new { message = $"Error generando PDF: {ex.Message}" });
         }
     }
+
     [HttpPost("{id}/annul")]
-    public IActionResult AnnulInvoice(int id)
+    public async Task<IActionResult> AnnulInvoice(int id, CancellationToken ct)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
-        
-        // Enqueue Background Job
-        _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId));
-
+        await _invoiceService.EnqueueAnnulmentAsync(id, userId, ct);
         return Accepted(new { Message = "La anulación se está procesando en segundo plano. Te avisaremos cuando termine." });
     }
 }

@@ -1,12 +1,8 @@
-using AutoMapper;
-using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Contracts.Files;
-using TravelApi.Data;
-using TravelApi.DTOs;
-using TravelApi.Models;
+using TravelApi.Application.Contracts.Files;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -15,13 +11,11 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class TravelFilesController : ControllerBase
 {
-    private readonly AppDbContext _context;
-    private readonly IMapper _mapper;
+    private readonly ITravelFileService _travelFileService;
 
-    public TravelFilesController(AppDbContext context, IMapper mapper)
+    public TravelFilesController(ITravelFileService travelFileService)
     {
-        _context = context;
-        _mapper = mapper;
+        _travelFileService = travelFileService;
     }
 
     [HttpGet]
@@ -29,37 +23,7 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var files = await _context.TravelFiles
-                .OrderByDescending(f => f.CreatedAt)
-                .Select(f => new TravelFileListDto 
-                {
-                    Id = f.Id,
-                    FileNumber = f.FileNumber,
-                    Name = f.Name,
-                    Status = f.Status,
-                    CustomerName = f.Payer != null ? f.Payer.FullName : "",
-                    CreatedAt = f.CreatedAt,
-                    StartDate = f.StartDate,
-                    EndDate = f.EndDate,
-                    PassengerCount = f.Passengers.Count,
-                    TotalCost = (f.FlightSegments.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                                (f.HotelBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                                (f.TransferBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                                (f.PackageBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                                (f.Reservations.Sum(x => (decimal?)x.NetCost) ?? 0),
-                    TotalSale = (f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                                (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                                (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                                (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                                (f.Reservations.Sum(x => (decimal?)x.SalePrice) ?? 0),
-                    Balance = ((f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                               (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                               (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                               (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                               (f.Reservations.Sum(x => (decimal?)x.SalePrice) ?? 0)) -
-                               (f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
-                })
-                .ToListAsync();
+            var files = await _travelFileService.GetFilesAsync();
             return Ok(files);
         }
         catch (Exception ex)
@@ -68,53 +32,17 @@ public class TravelFilesController : ControllerBase
         }
     }
 
-
-
     [HttpGet("{id}")]
     public async Task<IActionResult> GetFile(int id)
     {
         try 
         {
-            var file = await _context.TravelFiles
-                .Include(f => f.Payer)
-                .Include(f => f.Passengers)
-                .Include(f => f.Payments)
-                .Include(f => f.Invoices)
-                .Include(f => f.Reservations)
-                .Include(f => f.FlightSegments).ThenInclude(fs => fs.Supplier)
-                .Include(f => f.HotelBookings).ThenInclude(hb => hb.Supplier)
-                .Include(f => f.TransferBookings).ThenInclude(tb => tb.Supplier)
-                .Include(f => f.PackageBookings).ThenInclude(pb => pb.Supplier)
-                .FirstOrDefaultAsync(f => f.Id == id);
-
-            if (file == null) 
-            {
-                return NotFound($"File with ID {id} not found locally");
-            }
-
-            // Fix 2: Recalcular totales desde los datos reales (no confiar en campos almacenados)
-            var totalSale = 
-                (file.FlightSegments?.Sum(f => f.SalePrice) ?? 0) +
-                (file.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
-                (file.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
-                (file.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
-                (file.Reservations?.Sum(r => r.SalePrice) ?? 0);
-
-            var totalCost = 
-                (file.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
-                (file.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
-                (file.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
-                (file.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
-                (file.Reservations?.Sum(r => r.NetCost) ?? 0);
-
-            var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled").Sum(p => p.Amount) ?? 0;
-
-            file.TotalSale = totalSale;
-            file.TotalCost = totalCost;
-            file.Balance = totalSale - totalPaid;
-
-            var dto = _mapper.Map<TravelFileDto>(file);
+            var dto = await _travelFileService.GetFileAsync(id);
             return Ok(dto);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
@@ -127,27 +55,7 @@ public class TravelFilesController : ControllerBase
     {
         try 
         {
-            var nextId = await _context.TravelFiles.CountAsync() + 1000;
-            var fileNumber = $"F-{DateTime.Now.Year}-{nextId}";
-            
-            // Use provided name OR default to FileNumber if empty
-            var fileName = !string.IsNullOrWhiteSpace(request.Name) 
-                ? request.Name 
-                : $"File {fileNumber}";
-
-            var file = new TravelFile
-            {
-                Name = fileName,
-                FileNumber = fileNumber,
-                PayerId = request.PayerId,
-                StartDate = request.StartDate,
-                Description = request.Description,
-                Status = FileStatus.Budget
-            };
-            
-            _context.TravelFiles.Add(file);
-            await _context.SaveChangesAsync();
-            
+            var file = await _travelFileService.CreateFileAsync(request);
             return CreatedAtAction(nameof(GetFile), new { id = file.Id }, file);
         }
         catch (Exception ex)
@@ -161,49 +69,19 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var file = await _context.TravelFiles.FindAsync(id);
-            if (file == null) return NotFound("Expediente no encontrado");
-
-            // Validations with specific error messages
-            if (string.IsNullOrWhiteSpace(request.ServiceType)) return BadRequest("Debe seleccionar un tipo de servicio");
-            if (request.DepartureDate == default) return BadRequest("La fecha de salida es obligatoria");
-            if (request.SalePrice <= 0) return BadRequest("El precio de venta debe ser mayor a 0");
-            if (request.NetCost < 0) return BadRequest("El costo neto no puede ser negativo");
-
-            // Warning instead of blocking when selling at a loss
-            string? warning = null;
-            if (request.NetCost > request.SalePrice)
-            {
-                warning = $"Atención: el costo ({request.NetCost:C}) supera el precio de venta ({request.SalePrice:C}). Se está vendiendo a pérdida.";
-            }
-
-            var reservation = new Reservation
-            {
-                TravelFileId = id,
-                ServiceType = request.ServiceType,
-                ProductType = request.ServiceType,
-                SupplierId = request.SupplierId,
-                CustomerId = file.PayerId,
-                Description = request.Description ?? request.ServiceType,
-                ConfirmationNumber = request.ConfirmationNumber ?? "PENDIENTE",
-                Status = "Solicitado",
-                DepartureDate = request.DepartureDate.ToUniversalTime(),
-                ReturnDate = request.ReturnDate?.ToUniversalTime(),
-                SalePrice = request.SalePrice,
-                NetCost = request.NetCost,
-                Commission = request.SalePrice - request.NetCost,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            _context.Reservations.Add(reservation);
-            await _context.SaveChangesAsync();
-
+            var (reservation, warning) = await _travelFileService.AddServiceAsync(id, request);
             if (warning != null)
                 return Ok(new { reservation, Warning = warning });
-
+                
             return Ok(reservation);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -216,34 +94,16 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var service = await _context.Reservations
-                .Include(r => r.TravelFile)
-                .FirstOrDefaultAsync(r => r.Id == serviceId);
-
-            if (service == null) return NotFound("Servicio no encontrado");
-
-            // Validations
-            if (string.IsNullOrWhiteSpace(request.ServiceType)) return BadRequest("Debe seleccionar un tipo de servicio");
-            if (request.SalePrice <= 0) return BadRequest("El precio de venta debe ser mayor a 0");
-
-            // Fix 2: No revertir manualmente, los totales se recalculan al leer
-
-            // Update service
-            service.ServiceType = request.ServiceType;
-            service.ProductType = request.ServiceType;
-            service.Description = request.Description ?? request.ServiceType;
-            service.ConfirmationNumber = request.ConfirmationNumber ?? service.ConfirmationNumber;
-            service.DepartureDate = request.DepartureDate.ToUniversalTime();
-            service.ReturnDate = request.ReturnDate?.ToUniversalTime();
-            service.SupplierId = request.SupplierId;
-            service.SalePrice = request.SalePrice;
-            service.NetCost = request.NetCost;
-            service.Commission = request.SalePrice - request.NetCost;
-
-            // Fix 2: No aplicar manualmente, los totales se recalculan al leer
-
-            await _context.SaveChangesAsync();
+            var service = await _travelFileService.UpdateServiceAsync(serviceId, request);
             return Ok(service);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -256,17 +116,12 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var service = await _context.Reservations
-                .Include(r => r.TravelFile)
-                .FirstOrDefaultAsync(r => r.Id == serviceId);
-                
-            if (service == null) return NotFound();
-
-            // Fix 2: No revertir manualmente, los totales se recalculan al leer
-
-            _context.Reservations.Remove(service);
-            await _context.SaveChangesAsync();
+            await _travelFileService.RemoveServiceAsync(serviceId);
             return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
         catch (Exception ex)
         {
@@ -276,81 +131,49 @@ public class TravelFilesController : ControllerBase
 
     // ==================== PASSENGERS ====================
     [HttpGet("{id}/passengers")]
-    public async Task<ActionResult<IEnumerable<PassengerDto>>> GetPassengers(int id)
+    public async Task<ActionResult> GetPassengers(int id)
     {
-        var passengers = await _context.Passengers
-            .Where(p => p.TravelFileId == id)
-            .OrderBy(p => p.FullName)
-            .ProjectTo<PassengerDto>(_mapper.ConfigurationProvider)
-            .ToListAsync();
+        var passengers = await _travelFileService.GetPassengersAsync(id);
         return Ok(passengers);
     }
 
     [HttpPost("{id}/passengers")]
-    public async Task<ActionResult<PassengerDto>> AddPassenger(int id, Passenger passenger)
+    public async Task<ActionResult> AddPassenger(int id, Passenger passenger)
     {
         try
         {
-            var file = await _context.TravelFiles.FindAsync(id);
-            if (file == null) return NotFound("Expediente no encontrado");
-
-            // Validations
-            if (string.IsNullOrWhiteSpace(passenger.FullName)) return BadRequest("El nombre del pasajero es obligatorio");
-            if (passenger.FullName.Length < 3) return BadRequest("El nombre debe tener al menos 3 caracteres");
-
-            // PostgreSQL requirement: All DateTimes must be UTC Kind
-            if (passenger.BirthDate.HasValue)
-            {
-                passenger.BirthDate = DateTime.SpecifyKind(passenger.BirthDate.Value, DateTimeKind.Utc);
-            }
-
-            passenger.TravelFileId = id;
-            passenger.CreatedAt = DateTime.UtcNow;
-
-            _context.Passengers.Add(passenger);
-            await _context.SaveChangesAsync();
-
-            return CreatedAtAction(nameof(GetFile), new { id = file.Id }, _mapper.Map<PassengerDto>(passenger));
+            var dto = await _travelFileService.AddPassengerAsync(id, passenger);
+            return CreatedAtAction(nameof(GetFile), new { id }, dto);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            var innerMsg = ex.InnerException?.Message;
-            return StatusCode(500, $"Error agregando pasajero: {ex.Message} | Inner: {innerMsg}");
+            return StatusCode(500, $"Error agregando pasajero: {ex.Message}");
         }
     }
 
     [HttpPut("passengers/{passengerId}")]
-    public async Task<ActionResult<PassengerDto>> UpdatePassenger(int passengerId, Passenger updated)
+    public async Task<ActionResult> UpdatePassenger(int passengerId, Passenger updated)
     {
         try
         {
-            var passenger = await _context.Passengers.FindAsync(passengerId);
-            if (passenger == null) return NotFound("Pasajero no encontrado");
-
-            if (string.IsNullOrWhiteSpace(updated.FullName)) return BadRequest("El nombre del pasajero es obligatorio");
-            if (updated.FullName.Length < 3) return BadRequest("El nombre debe tener al menos 3 caracteres");
-
-            passenger.FullName = updated.FullName;
-            passenger.DocumentType = updated.DocumentType;
-            passenger.DocumentNumber = updated.DocumentNumber;
-            
-            if (updated.BirthDate.HasValue)
-            {
-                passenger.BirthDate = DateTime.SpecifyKind(updated.BirthDate.Value, DateTimeKind.Utc);
-            }
-            else 
-            {
-                passenger.BirthDate = null;
-            }
-
-            passenger.Nationality = updated.Nationality;
-            passenger.Phone = updated.Phone;
-            passenger.Email = updated.Email;
-            passenger.Gender = updated.Gender;
-            passenger.Notes = updated.Notes;
-
-            await _context.SaveChangesAsync();
-            return Ok(_mapper.Map<PassengerDto>(passenger));
+            var dto = await _travelFileService.UpdatePassengerAsync(passengerId, updated);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -363,12 +186,12 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var passenger = await _context.Passengers.FindAsync(passengerId);
-            if (passenger == null) return NotFound();
-
-            _context.Passengers.Remove(passenger);
-            await _context.SaveChangesAsync();
+            await _travelFileService.RemovePassengerAsync(passengerId);
             return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
         catch (Exception ex)
         {
@@ -378,36 +201,27 @@ public class TravelFilesController : ControllerBase
 
     // ==================== PAYMENTS ====================
     [HttpGet("{id}/payments")]
-    public async Task<ActionResult<IEnumerable<PaymentDto>>> GetFilePayments(int id)
+    public async Task<ActionResult> GetFilePayments(int id)
     {
-        var payments = await _context.Payments
-            .Where(p => p.TravelFileId == id)
-            .OrderByDescending(p => p.PaidAt)
-            .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
-            .ToListAsync();
+        var payments = await _travelFileService.GetFilePaymentsAsync(id);
         return Ok(payments);
     }
 
     [HttpPost("{id}/payments")]
-    public async Task<ActionResult<PaymentDto>> AddPayment(int id, Payment payment)
+    public async Task<ActionResult> AddPayment(int id, Payment payment)
     {
         try
         {
-            var file = await _context.TravelFiles.FindAsync(id);
-            if (file == null) return NotFound("Expediente no encontrado");
-
-            if (payment.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
-            if (string.IsNullOrWhiteSpace(payment.Method)) return BadRequest("Debe seleccionar un método de pago");
-            payment.TravelFileId = id;
-            payment.PaidAt = DateTime.UtcNow;
-            payment.Status = "Paid";
-
-            // Fix 2: No manipular Balance manualmente, se recalcula al leer
-
-            _context.Payments.Add(payment);
-            await _context.SaveChangesAsync();
-
-            return CreatedAtAction(nameof(GetFile), new { id = file.Id }, _mapper.Map<PaymentDto>(payment));
+            var dto = await _travelFileService.AddPaymentAsync(id, payment);
+            return CreatedAtAction(nameof(GetFile), new { id }, dto);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -416,31 +230,20 @@ public class TravelFilesController : ControllerBase
     }
 
     [HttpPut("{id}/payments/{paymentId}")]
-    public async Task<ActionResult<PaymentDto>> UpdatePayment(int id, int paymentId, Payment updatedPayment)
+    public async Task<ActionResult> UpdatePayment(int id, int paymentId, Payment updatedPayment)
     {
         try
         {
-            var payment = await _context.Payments.FindAsync(paymentId);
-            if (payment == null) return NotFound("Pago no encontrado");
-            
-            if (payment.TravelFileId != id) return BadRequest("El pago no corresponde al File");
-
-            var file = await _context.TravelFiles.FindAsync(id);
-            if (file == null) return NotFound("File no encontrado");
-
-            // Update fields
-            if (updatedPayment.Amount <= 0) return BadRequest("El monto debe ser mayor a 0");
-            
-            payment.Amount = updatedPayment.Amount;
-            payment.Method = updatedPayment.Method;
-            payment.PaidAt = updatedPayment.PaidAt.ToUniversalTime();
-            payment.Notes = updatedPayment.Notes;
-
-            // Fix 2: No manipular Balance manualmente, se recalcula al leer
-
-            await _context.SaveChangesAsync();
-
-            return Ok(_mapper.Map<PaymentDto>(payment));
+            var dto = await _travelFileService.UpdatePaymentAsync(id, paymentId, updatedPayment);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -453,22 +256,16 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var payment = await _context.Payments.FindAsync(paymentId);
-            if (payment == null) return NotFound("Pago no encontrado");
-            
-            if (payment.TravelFileId != id) return BadRequest("El pago no corresponde al File");
-
-            var file = await _context.TravelFiles.FindAsync(id);
-            if (file == null) return NotFound("File no encontrado");
-
-            // Fix 1: Borrado lógico en vez de físico
-            payment.IsDeleted = true;
-            payment.DeletedAt = DateTime.UtcNow;
-
-            // Fix 2: No manipular Balance manualmente, se recalcula al leer
-            await _context.SaveChangesAsync();
-
+            await _travelFileService.DeletePaymentAsync(id, paymentId);
             return Ok();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -478,33 +275,24 @@ public class TravelFilesController : ControllerBase
 
     // ==================== STATUS ====================
     [HttpPut("{id}/status")]
-    public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateStatusRequest request)
+    public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateStatusDto request)
     {
         try
         {
-            var file = await _context.TravelFiles.FindAsync(id);
-            if (file == null) return NotFound("Expediente no encontrado");
-
-            var validStatuses = new[] { FileStatus.Budget, FileStatus.Reserved, FileStatus.Operational, FileStatus.Closed, FileStatus.Cancelled };
-            if (!validStatuses.Contains(request.Status)) return BadRequest("Estado no válido");
-
-            // Validation: Cannot go back to Budget if Payments or Invoices exist
-            if (file.Status == FileStatus.Reserved && request.Status == FileStatus.Budget)
-            {
-                 // Check Payments
-                 var hasPayments = await _context.Payments.AnyAsync(p => p.TravelFileId == id);
-                 if (hasPayments) return BadRequest("No se puede volver a Presupuesto porque hay pagos registrados. Elimínalos primero.");
-
-                 // Check Invoices
-                 var hasInvoices = await _context.Invoices.AnyAsync(i => i.TravelFileId == id);
-                 if (hasInvoices) return BadRequest("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Crédito).");
-            }
-
-            file.Status = request.Status;
-            if (request.Status == FileStatus.Closed) file.ClosedAt = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
+            var file = await _travelFileService.UpdateStatusAsync(id, request.Status);
             return Ok(file);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+             return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -517,12 +305,12 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var file = await _context.TravelFiles.FindAsync(id);
-            if (file == null) return NotFound("File no encontrado");
-            
-            file.Status = "Archived";
-            await _context.SaveChangesAsync();
+            var file = await _travelFileService.ArchiveFileAsync(id);
             return Ok(file);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
@@ -533,54 +321,24 @@ public class TravelFilesController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteFile(int id)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync();
         try
         {
-            var file = await _context.TravelFiles
-                .Include(f => f.Payments)
-                .Include(f => f.Reservations)
-                .Include(f => f.Passengers)
-                .Include(f => f.FlightSegments)
-                .Include(f => f.HotelBookings)
-                .Include(f => f.TransferBookings)
-                .Include(f => f.PackageBookings)
-                .FirstOrDefaultAsync(f => f.Id == id);
-
-            if (file == null) return NotFound("File no encontrado");
-
-            // Only allow delete if Budget
-            if (file.Status != FileStatus.Budget)
-            {
-                return BadRequest("Solo se pueden eliminar Files en estado Presupuesto.");
-            }
-
-            // Safety check for payments
-            if (file.Payments.Any())
-            {
-                return BadRequest("No se puede eliminar un File con pagos registrados. Elimine los pagos primero.");
-            }
-
-            // Delete all related entities explicitly
-            if (file.Reservations.Any()) _context.Reservations.RemoveRange(file.Reservations);
-            if (file.Passengers.Any()) _context.Passengers.RemoveRange(file.Passengers);
-            if (file.FlightSegments.Any()) _context.FlightSegments.RemoveRange(file.FlightSegments);
-            if (file.HotelBookings.Any()) _context.HotelBookings.RemoveRange(file.HotelBookings);
-            if (file.TransferBookings.Any()) _context.TransferBookings.RemoveRange(file.TransferBookings);
-            if (file.PackageBookings.Any()) _context.PackageBookings.RemoveRange(file.PackageBookings);
-
-            _context.TravelFiles.Remove(file);
-            
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
+            await _travelFileService.DeleteFileAsync(id);
             return Ok();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync();
             return StatusCode(500, $"Error eliminando expediente: {ex.Message}");
         }
     }
 }
 
-public record UpdateStatusRequest(string Status);
+public record UpdateStatusDto(string Status);

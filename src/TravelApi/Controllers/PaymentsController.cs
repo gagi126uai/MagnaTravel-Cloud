@@ -1,11 +1,7 @@
-using AutoMapper;
-using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Data;
-using TravelApi.DTOs;
-using TravelApi.Models;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
 
 namespace TravelApi.Controllers;
 
@@ -14,24 +10,17 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class PaymentsController : ControllerBase
 {
-    private readonly AppDbContext _dbContext;
-    private readonly IMapper _mapper;
+    private readonly IPaymentService _paymentService;
 
-    public PaymentsController(AppDbContext dbContext, IMapper mapper)
+    public PaymentsController(IPaymentService paymentService)
     {
-        _dbContext = dbContext;
-        _mapper = mapper;
+        _paymentService = paymentService;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<PaymentDto>>> GetAllPayments(CancellationToken cancellationToken)
     {
-        var payments = await _dbContext.Payments
-            .AsNoTracking()
-            .OrderByDescending(p => p.PaidAt)
-            .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
-            .ToListAsync(cancellationToken);
-
+        var payments = await _paymentService.GetAllPaymentsAsync(cancellationToken);
         return Ok(payments);
     }
 
@@ -40,13 +29,7 @@ public class PaymentsController : ControllerBase
         int reservationId,
         CancellationToken cancellationToken)
     {
-        var payments = await _dbContext.Payments
-            .AsNoTracking()
-            .Where(p => p.ReservationId == reservationId)
-            .OrderByDescending(p => p.PaidAt)
-            .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
-            .ToListAsync(cancellationToken);
-
+        var payments = await _paymentService.GetPaymentsForReservationAsync(reservationId, cancellationToken);
         return Ok(payments);
     }
 
@@ -55,32 +38,15 @@ public class PaymentsController : ControllerBase
         CreatePaymentRequest request,
         CancellationToken cancellationToken)
     {
-        // Validate reservation exists
-        var reservation = await _dbContext.Reservations
-            .Include(r => r.TravelFile)
-            .FirstOrDefaultAsync(r => r.Id == request.ReservationId, cancellationToken);
-
-        if (reservation is null)
+        try
         {
-            return BadRequest("Reserva no encontrada.");
+            var payment = await _paymentService.CreatePaymentAsync(request, cancellationToken);
+            return CreatedAtAction(nameof(GetPaymentsForReservation), new { reservationId = request.ReservationId }, payment);
         }
-
-        var payment = new Payment
+        catch (ArgumentException ex)
         {
-            ReservationId = request.ReservationId,
-            Amount = request.Amount,
-            Method = request.Method,
-            Reference = request.Reference,
-            PaidAt = DateTime.UtcNow
-        };
-
-        _dbContext.Payments.Add(payment);
-
-        // Fix 2: No manipular Balance manualmente, se recalcula al leer el File
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        return CreatedAtAction(nameof(GetPaymentsForReservation), new { reservationId = payment.ReservationId }, _mapper.Map<PaymentDto>(payment));
+            return BadRequest(ex.Message);
+        }
     }
 
     /// <summary>
@@ -90,29 +56,7 @@ public class PaymentsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult> GetDeletedPayments(CancellationToken cancellationToken)
     {
-        var deletedPayments = await _dbContext.Payments
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(p => p.IsDeleted)
-            .OrderByDescending(p => p.DeletedAt)
-            .Select(p => new {
-                p.Id,
-                p.Amount,
-                p.Method,
-                p.Reference,
-                p.Status,
-                p.PaidAt,
-                p.DeletedAt,
-                p.TravelFileId,
-                FileNumber = p.Reservation != null && p.Reservation.TravelFile != null 
-                    ? p.Reservation.TravelFile.FileNumber : null,
-                FileName = p.Reservation != null && p.Reservation.TravelFile != null 
-                    ? p.Reservation.TravelFile.Name : null,
-                CustomerName = p.Reservation != null && p.Reservation.TravelFile != null && p.Reservation.TravelFile.Payer != null
-                    ? p.Reservation.TravelFile.Payer.FullName : null
-            })
-            .ToListAsync(cancellationToken);
-
+        var deletedPayments = await _paymentService.GetDeletedPaymentsAsync(cancellationToken);
         return Ok(deletedPayments);
     }
 
@@ -123,26 +67,14 @@ public class PaymentsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult> RestorePayment(int id, CancellationToken cancellationToken)
     {
-        var payment = await _dbContext.Payments
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(p => p.Id == id && p.IsDeleted, cancellationToken);
-
-        if (payment == null)
-            return NotFound("Pago eliminado no encontrado.");
-
-        payment.IsDeleted = false;
-        payment.DeletedAt = null;
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        return Ok(new { message = "Pago restaurado correctamente.", paymentId = payment.Id });
+        try
+        {
+            var paymentId = await _paymentService.RestorePaymentAsync(id, cancellationToken);
+            return Ok(new { message = "Pago restaurado correctamente.", paymentId });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
     }
-}
-
-public class CreatePaymentRequest
-{
-    public int ReservationId { get; set; }
-    public decimal Amount { get; set; }
-    public string Method { get; set; } = string.Empty;
-    public string? Reference { get; set; }
 }

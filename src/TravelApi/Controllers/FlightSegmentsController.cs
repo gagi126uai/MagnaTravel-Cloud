@@ -1,11 +1,7 @@
-using AutoMapper;
-using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Data;
-using TravelApi.DTOs;
-using TravelApi.Models;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
 
 namespace TravelApi.Controllers;
 
@@ -14,23 +10,17 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class FlightSegmentsController : ControllerBase
 {
-    private readonly AppDbContext _db;
-    private readonly IMapper _mapper;
+    private readonly IBookingService _bookingService;
 
-    public FlightSegmentsController(AppDbContext db, IMapper mapper)
+    public FlightSegmentsController(IBookingService bookingService)
     {
-        _db = db;
-        _mapper = mapper;
+        _bookingService = bookingService;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
     {
-        var flights = await _db.FlightSegments
-            .Where(f => f.TravelFileId == fileId)
-            .OrderBy(f => f.DepartureTime)
-            .ProjectTo<FlightSegmentDto>(_mapper.ConfigurationProvider)
-            .ToListAsync(ct);
+        var flights = await _bookingService.GetFlightsAsync(fileId, ct);
         return Ok(flights);
     }
 
@@ -40,25 +30,12 @@ public class FlightSegmentsController : ControllerBase
     {
         try
         {
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file == null) return NotFound("File no encontrado");
-
-            var flight = _mapper.Map<FlightSegment>(req);
-            flight.TravelFileId = fileId;
-
-            _db.FlightSegments.Add(flight);
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Actualizar saldo del proveedor
-            if (flight.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { flight.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance += flight.NetCost;
-            }
-            
-            await _db.SaveChangesAsync(ct);
-            return Ok(_mapper.Map<FlightSegmentDto>(flight));
+            var flight = await _bookingService.CreateFlightAsync(fileId, req, ct);
+            return Ok(flight);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
@@ -72,29 +49,12 @@ public class FlightSegmentsController : ControllerBase
     {
         try
         {
-            var flight = await _db.FlightSegments.FindAsync(new object[] { id }, ct);
-            if (flight == null || flight.TravelFileId != fileId) return NotFound();
-
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file == null) return NotFound("File no encontrado");
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Actualizar saldo del proveedor si cambió el costo
-            var oldSupplierId = flight.SupplierId;
-            var oldNetCost = flight.NetCost;
-
-            _mapper.Map(req, flight);
-
-            // Fix 3: Ajustar saldo del proveedor
-            if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { flight.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance += (flight.NetCost - oldNetCost);
-            }
-
-            await _db.SaveChangesAsync(ct);
-            return Ok(_mapper.Map<FlightSegmentDto>(flight));
+            var flight = await _bookingService.UpdateFlightAsync(fileId, id, req, ct);
+            return Ok(flight);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
@@ -108,23 +68,12 @@ public class FlightSegmentsController : ControllerBase
     {
         try
         {
-            var flight = await _db.FlightSegments.FindAsync(new object[] { id }, ct);
-            if (flight == null || flight.TravelFileId != fileId) return NotFound();
-
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Restar del saldo del proveedor
-            if (flight.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { flight.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance -= flight.NetCost;
-            }
-
-            _db.FlightSegments.Remove(flight);
-            await _db.SaveChangesAsync(ct);
+            await _bookingService.DeleteFlightAsync(fileId, id, ct);
             return Ok();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {

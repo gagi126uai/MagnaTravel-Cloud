@@ -1,11 +1,7 @@
-using AutoMapper;
-using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Data;
-using TravelApi.DTOs;
-using TravelApi.Models;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
 
 namespace TravelApi.Controllers;
 
@@ -14,32 +10,32 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class HotelBookingsController : ControllerBase
 {
-    private readonly AppDbContext _db;
-    private readonly IMapper _mapper;
+    private readonly IBookingService _bookingService;
 
-    public HotelBookingsController(AppDbContext db, IMapper mapper)
+    public HotelBookingsController(IBookingService bookingService)
     {
-        _db = db;
-        _mapper = mapper;
+        _bookingService = bookingService;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
     {
-        var hotels = await _db.HotelBookings
-            .Where(h => h.TravelFileId == fileId)
-            .OrderBy(h => h.CheckIn)
-            .ProjectTo<HotelBookingDto>(_mapper.ConfigurationProvider)
-            .ToListAsync(ct);
+        var hotels = await _bookingService.GetHotelsAsync(fileId, ct);
         return Ok(hotels);
     }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(int fileId, int id, CancellationToken ct)
     {
-        var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
-        if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
-        return Ok(_mapper.Map<HotelBookingDto>(hotel));
+        try
+        {
+            var hotel = await _bookingService.GetHotelByIdAsync(fileId, id, ct);
+            return Ok(hotel);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 
     [HttpPost]
@@ -48,26 +44,12 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file == null) return NotFound("File no encontrado");
-
-            var hotel = _mapper.Map<HotelBooking>(req);
-            hotel.TravelFileId = fileId;
-            // Nights calculated in AutoMapper
-
-            _db.HotelBookings.Add(hotel);
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Actualizar saldo del proveedor
-            if (hotel.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { hotel.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance += hotel.NetCost;
-            }
-            
-            await _db.SaveChangesAsync(ct);
-            return Ok(_mapper.Map<HotelBookingDto>(hotel));
+            var hotel = await _bookingService.CreateHotelAsync(fileId, req, ct);
+            return Ok(hotel);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
@@ -81,29 +63,12 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
-            if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
-
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file == null) return NotFound("File no encontrado");
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Actualizar saldo del proveedor si cambió el costo
-            var oldNetCost = hotel.NetCost;
-
-            // Update Hotel Fields
-            _mapper.Map(req, hotel);
-            // Nights calculated in AutoMapper
-
-            if (hotel.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { hotel.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance += (hotel.NetCost - oldNetCost);
-            }
-
-            await _db.SaveChangesAsync(ct);
-            return Ok(_mapper.Map<HotelBookingDto>(hotel));
+            var hotel = await _bookingService.UpdateHotelAsync(fileId, id, req, ct);
+            return Ok(hotel);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
         catch (Exception ex)
         {
@@ -117,23 +82,12 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            var hotel = await _db.HotelBookings.FindAsync(new object[] { id }, ct);
-            if (hotel == null || hotel.TravelFileId != fileId) return NotFound();
-
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Restar del saldo del proveedor
-            if (hotel.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { hotel.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance -= hotel.NetCost;
-            }
-
-            _db.HotelBookings.Remove(hotel);
-            await _db.SaveChangesAsync(ct);
+            await _bookingService.DeleteHotelAsync(fileId, id, ct);
             return Ok();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
         catch (Exception ex)
         {

@@ -28,4 +28,9 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.2" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TravelApi.Application\TravelApi.Application.csproj" />
+    <ProjectReference Include="..\TravelApi.Infrastructure\TravelApi.Infrastructure.csproj" />
+  </ItemGroup>
 </Project>

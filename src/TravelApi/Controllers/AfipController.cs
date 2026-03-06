@@ -1,9 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Data;
-using TravelApi.Models;
-using TravelApi.Services;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -12,12 +10,10 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class AfipController : ControllerBase
 {
-    private readonly AppDbContext _context;
     private readonly IAfipService _afipService;
 
-    public AfipController(AppDbContext context, IAfipService afipService)
+    public AfipController(IAfipService afipService)
     {
-        _context = context;
         _afipService = afipService;
     }
 
@@ -31,7 +27,7 @@ public class AfipController : ControllerBase
     [HttpGet("settings")]
     public async Task<ActionResult<AfipSettings>> GetSettings()
     {
-        var settings = await _context.AfipSettings.FirstOrDefaultAsync();
+        var settings = await _afipService.GetSettingsAsync();
         if (settings == null) return NotFound();
         
         // Hide sensitive data
@@ -55,51 +51,43 @@ public class AfipController : ControllerBase
     [HttpPost("settings")]
     public async Task<ActionResult<AfipSettings>> UpdateSettings([FromForm] AfipSettingsRequest request)
     {
-        var settings = await _context.AfipSettings.FirstOrDefaultAsync();
-        if (settings == null)
-        {
-            settings = new AfipSettings();
-            _context.AfipSettings.Add(settings);
-        }
-
-        settings.Cuit = request.Cuit;
-        settings.PuntoDeVenta = request.PuntoDeVenta;
-        settings.IsProduction = request.IsProduction;
-        settings.TaxCondition = request.TaxCondition;
+        byte[]? certData = null;
+        string? certFileName = null;
 
         if (request.Certificate != null)
         {
-            using (var memoryStream = new MemoryStream())
-            {
-                await request.Certificate.CopyToAsync(memoryStream);
-                var certData = memoryStream.ToArray();
-                
-                // Validate before saving
-                var certPassword = !string.IsNullOrEmpty(request.Password) ? request.Password : settings.CertificatePassword;
-                
-                try 
-                {
-                     if (!await _afipService.ValidateCertificate(certData, certPassword))
-                     {
-                         return BadRequest("El certificado es inválido o la contraseña es incorrecta. Asegurate de que sea un archivo .pfx válido.");
-                     }
-                }
-                catch (Exception ex)
-                {
-                     return BadRequest($"Error validando certificado: {ex.Message}");
-                }
-
-                settings.CertificateData = certData;
-                settings.CertificatePath = request.Certificate.FileName; // Just for display
-            }
+            using var memoryStream = new MemoryStream();
+            await request.Certificate.CopyToAsync(memoryStream);
+            certData = memoryStream.ToArray();
+            certFileName = request.Certificate.FileName;
         }
 
-        if (!string.IsNullOrEmpty(request.Password))
+        try
         {
-            settings.CertificatePassword = request.Password;
-        }
+            var settings = await _afipService.UpdateSettingsAsync(
+                request.Cuit, 
+                request.PuntoDeVenta, 
+                request.IsProduction, 
+                request.TaxCondition, 
+                certData, 
+                certFileName, 
+                request.Password
+            );
 
-        await _context.SaveChangesAsync();
-        return Ok(settings);
+            // Hide sensitive data before returning
+            settings.CertificatePassword = null;
+            settings.Token = null;
+            settings.Sign = null;
+
+            return Ok(settings);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest($"Error validando certificado: {ex.Message}");
+        }
     }
 }

@@ -10,11 +10,16 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.8" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.8" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.8" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="Moq" Version="4.20.70" />
     <PackageReference Include="xunit" Version="2.6.6" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.6" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\TravelApi\TravelApi.csproj" />
+    <ProjectReference Include="..\TravelApi.Domain\TravelApi.Domain.csproj" />
+    <ProjectReference Include="..\TravelApi.Application\TravelApi.Application.csproj" />
+    <ProjectReference Include="..\TravelApi.Infrastructure\TravelApi.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

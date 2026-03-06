@@ -1,0 +1,20 @@
+using TravelApi.Application.DTOs;
+
+namespace TravelApi.Application.Interfaces;
+
+public interface IPaymentService
+{
+    Task<IEnumerable<PaymentDto>> GetAllPaymentsAsync(CancellationToken cancellationToken);
+    Task<IEnumerable<PaymentDto>> GetPaymentsForReservationAsync(int reservationId, CancellationToken cancellationToken);
+    Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);
+    Task<IEnumerable<object>> GetDeletedPaymentsAsync(CancellationToken cancellationToken);
+    Task<int> RestorePaymentAsync(int id, CancellationToken cancellationToken);
+}
+
+public class CreatePaymentRequest
+{
+    public int ReservationId { get; set; }
+    public decimal Amount { get; set; }
+    public string Method { get; set; } = string.Empty;
+    public string? Reference { get; set; }
+}

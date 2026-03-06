@@ -1,11 +1,7 @@
-using AutoMapper;
-using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Data;
-using TravelApi.DTOs;
-using TravelApi.Models;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
 
 namespace TravelApi.Controllers;
 
@@ -14,23 +10,17 @@ namespace TravelApi.Controllers;
 [Authorize]
 public class TransferBookingsController : ControllerBase
 {
-    private readonly AppDbContext _db;
-    private readonly IMapper _mapper;
+    private readonly IBookingService _bookingService;
 
-    public TransferBookingsController(AppDbContext db, IMapper mapper)
+    public TransferBookingsController(IBookingService bookingService)
     {
-        _db = db;
-        _mapper = mapper;
+        _bookingService = bookingService;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
     {
-        var transfers = await _db.TransferBookings
-            .Where(t => t.TravelFileId == fileId)
-            .OrderBy(t => t.PickupDateTime)
-            .ProjectTo<TransferBookingDto>(_mapper.ConfigurationProvider)
-            .ToListAsync(ct);
+        var transfers = await _bookingService.GetTransfersAsync(fileId, ct);
         return Ok(transfers);
     }
 
@@ -40,25 +30,12 @@ public class TransferBookingsController : ControllerBase
     {
         try
         {
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file == null) return NotFound("File no encontrado");
-
-            var transfer = _mapper.Map<TransferBooking>(req);
-            transfer.TravelFileId = fileId;
-
-            _db.TransferBookings.Add(transfer);
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Actualizar saldo del proveedor
-            if (transfer.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { transfer.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance += transfer.NetCost;
-            }
-            
-            await _db.SaveChangesAsync(ct);
-            return Ok(_mapper.Map<TransferBookingDto>(transfer));
+            var transfer = await _bookingService.CreateTransferAsync(fileId, req, ct);
+            return Ok(transfer);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
@@ -72,27 +49,12 @@ public class TransferBookingsController : ControllerBase
     {
         try
         {
-            var transfer = await _db.TransferBookings.FindAsync(new object[] { id }, ct);
-            if (transfer == null || transfer.TravelFileId != fileId) return NotFound();
-
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-            if (file == null) return NotFound("File no encontrado");
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Actualizar saldo del proveedor si cambió el costo
-            var oldNetCost = transfer.NetCost;
-
-            _mapper.Map(req, transfer);
-
-            if (transfer.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { transfer.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance += (transfer.NetCost - oldNetCost);
-            }
-
-            await _db.SaveChangesAsync(ct);
-            return Ok(_mapper.Map<TransferBookingDto>(transfer));
+            var transfer = await _bookingService.UpdateTransferAsync(fileId, id, req, ct);
+            return Ok(transfer);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
@@ -106,23 +68,12 @@ public class TransferBookingsController : ControllerBase
     {
         try
         {
-            var transfer = await _db.TransferBookings.FindAsync(new object[] { id }, ct);
-            if (transfer == null || transfer.TravelFileId != fileId) return NotFound();
-
-            var file = await _db.TravelFiles.FindAsync(new object[] { fileId }, ct);
-
-            // Fix 2: No manipular totales manualmente, se recalculan al leer
-
-            // Fix 3: Restar del saldo del proveedor
-            if (transfer.SupplierId > 0)
-            {
-                var supplier = await _db.Set<Supplier>().FindAsync(new object[] { transfer.SupplierId }, ct);
-                if (supplier != null) supplier.CurrentBalance -= transfer.NetCost;
-            }
-
-            _db.TransferBookings.Remove(transfer);
-            await _db.SaveChangesAsync(ct);
+            await _bookingService.DeleteTransferAsync(fileId, id, ct);
             return Ok();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {
