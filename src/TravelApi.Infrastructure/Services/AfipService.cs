@@ -551,7 +551,7 @@ public class AfipService : IAfipService
             // 3. Re-Calculate IVA Groups (AFIP Needs breakdown)
             bool isFacturaC = invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13;
 
-            var ivaGroups = isFacturaC ? new List<dynamic>() : invoice.Items
+            var ivaGroups = invoice.Items
                 .GroupBy(i => i.AlicuotaIvaId)
                 .Select(g => new 
                 {

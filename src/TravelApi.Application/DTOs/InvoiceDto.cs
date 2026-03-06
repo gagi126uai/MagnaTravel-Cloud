@@ -14,5 +14,5 @@ public class InvoiceDto
     public string? CAE { get; set; }
     public string? Resultado { get; set; }
     public string? Observaciones { get; set; }
-    public string InvoiceType { get; set; } // Keep for convenience if needed
+    public string InvoiceType { get; set; } = string.Empty; // Keep for convenience if needed
 }
