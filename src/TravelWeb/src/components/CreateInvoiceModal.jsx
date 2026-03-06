@@ -38,8 +38,8 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
         const fetchSettings = async () => {
             try {
                 const response = await api.get('/afip/settings');
-                console.log("AFIP Settings fetched in Modal:", response.data);
-                setAfipSettings(response.data);
+                console.log("AFIP Settings fetched in Modal:", response);
+                setAfipSettings(response);
             } catch (error) {
                 console.error("Error fetching AFIP settings:", error);
                 showError("No se pudo obtener la configuración de AFIP de la agencia.");
