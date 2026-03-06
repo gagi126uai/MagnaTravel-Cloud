@@ -40,6 +40,7 @@ public class TravelFileService : ITravelFileService
                             (f.TransferBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
                             (f.PackageBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
                             (f.Reservations.Sum(x => (decimal?)x.NetCost) ?? 0),
+                TotalPaid = f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0,
                 TotalSale = (f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                             (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                             (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +

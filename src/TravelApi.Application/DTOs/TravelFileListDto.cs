@@ -13,5 +13,6 @@ public class TravelFileListDto
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }
     public decimal TotalCost { get; set; }
+    public decimal TotalPaid { get; set; }
     public int PassengerCount { get; set; }
 }

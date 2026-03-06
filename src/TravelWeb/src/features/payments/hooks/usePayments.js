@@ -21,10 +21,9 @@ export function usePayments() {
 
             const enhancedFiles = filesRes.map(f => {
                 const fileInvoices = invoicesRes.filter(i => i.travelFileId === f.id);
-                const validPayments = f.payments?.filter(p => p.status !== 'Cancelled') || [];
 
                 const totalSale = f.totalSale || 0;
-                const totalPaid = validPayments.reduce((acc, p) => acc + p.amount, 0);
+                const totalPaid = f.totalPaid || 0;
 
                 const totalInvoiced = fileInvoices.reduce((acc, i) => {
                     if (i.resultado !== 'A') return acc;
@@ -38,11 +37,10 @@ export function usePayments() {
                 return {
                     ...f,
                     invoices: fileInvoices,
-                    validPayments,
                     computedPaid: totalPaid,
                     computedInvoiced: totalInvoiced,
                     pendingCollection: totalSale - totalPaid,
-                    pendingBilling: moneyCollectedNotInvoiced > 0 ? moneyCollectedNotInvoiced : 0,
+                    pendingBilling: moneyCollectedNotInvoiced > 0 ? (Math.round(moneyCollectedNotInvoiced * 100) / 100) : 0,
                     totalSaleAmount: totalSale
                 };
             });
