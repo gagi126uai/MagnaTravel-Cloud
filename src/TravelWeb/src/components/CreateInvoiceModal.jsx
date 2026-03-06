@@ -31,13 +31,14 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
     const [totalTributes, setTotalTributes] = useState(0);
     const [total, setTotal] = useState(0);
 
-    const isMonotributista = afipSettings?.taxCondition === "Monotributo" || afipSettings?.taxCondition === "Exento";
+    const isMonotributista = afipSettings?.taxCondition?.trim() === "Monotributo" || afipSettings?.taxCondition?.trim() === "Exento";
 
     // Fetch AFIP Settings
     useEffect(() => {
         const fetchSettings = async () => {
             try {
                 const response = await api.get('/afip/settings');
+                console.log("AFIP Settings fetched in Modal:", response.data);
                 setAfipSettings(response.data);
             } catch (error) {
                 console.error("Error fetching AFIP settings:", error);
