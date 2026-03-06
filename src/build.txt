@@ -1,0 +1,24 @@
+﻿  Determinando los proyectos que se van a restaurar...
+  Todos los proyectos est├ín actualizados para la restauraci├│n.
+  TravelApi.Domain -> D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Domain\bin\Debug\net8.0\TravelApi.Domain.dll
+  TravelApi.Application -> D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Application\bin\Debug\net8.0\TravelApi.Application.dll
+  TravelApi.Infrastructure -> D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Infrastructure\bin\Debug\net8.0\TravelApi.Infrastructure.dll
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\AfipController.cs(82,76): warning CS8604: Posible argumento de referencia nulo para el par├ímetro "password" en "Task<bool> IAfipService.ValidateCertificate(byte[] certData, string password)". [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\PaymentsController.cs(44,101): error CS1061: "PaymentDto" no contiene una definici├│n para "ReservationId" ni un m├®todo de extensi├│n accesible "ReservationId" que acepte un primer argumento del tipo "PaymentDto" (┬┐falta alguna directiva using o una referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\InvoicesController.cs(98,31): warning CS8602: Desreferencia de una referencia posiblemente NULL. [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\InvoicesController.cs(110,68): warning CS8604: Posible argumento de referencia nulo para el par├ímetro "travelFile" en "byte[] IInvoicePdfService.GenerateInvoicePdf(Invoice invoice, TravelFile travelFile, AfipSettings afipSettings, AgencySettings agencySettings)". [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Program.cs(160,47): warning CS0618: 'PostgreSqlBootstrapperConfigurationExtensions.UsePostgreSqlStorage(IGlobalConfiguration, string)' est├í obsoleto: 'Will be removed in 2.0. Please use UsePostgreSqlStorage(Action<PostgreSqlBootstrapperOptions>) overload.' [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+
+ERROR al compilar.
+
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\AfipController.cs(82,76): warning CS8604: Posible argumento de referencia nulo para el par├ímetro "password" en "Task<bool> IAfipService.ValidateCertificate(byte[] certData, string password)". [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\InvoicesController.cs(98,31): warning CS8602: Desreferencia de una referencia posiblemente NULL. [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\InvoicesController.cs(110,68): warning CS8604: Posible argumento de referencia nulo para el par├ímetro "travelFile" en "byte[] IInvoicePdfService.GenerateInvoicePdf(Invoice invoice, TravelFile travelFile, AfipSettings afipSettings, AgencySettings agencySettings)". [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Program.cs(160,47): warning CS0618: 'PostgreSqlBootstrapperConfigurationExtensions.UsePostgreSqlStorage(IGlobalConfiguration, string)' est├í obsoleto: 'Will be removed in 2.0. Please use UsePostgreSqlStorage(Action<PostgreSqlBootstrapperOptions>) overload.' [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\PaymentsController.cs(44,101): error CS1061: "PaymentDto" no contiene una definici├│n para "ReservationId" ni un m├®todo de extensi├│n accesible "ReservationId" que acepte un primer argumento del tipo "PaymentDto" (┬┐falta alguna directiva using o una referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\TravelApi.csproj]
+    4 Advertencia(s)
+    1 Errores
+
+Tiempo transcurrido 00:00:01.41
+
+Hay actualizaciones de carga de trabajo disponibles. Ejecute "dotnet workload list" para obtener m├ís informaci├│n.

@@ -61,7 +61,8 @@ public class MappingProfile : Profile
         CreateMap<TravelFile, TravelFileDto>()
             .ForMember(dest => dest.CustomerId, opt => opt.MapFrom(src => src.PayerId))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
-            .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer));
+            .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer))
+            .ForMember(dest => dest.Invoices, opt => opt.Ignore()); // BREAK CIRCULARITY: TravelFile -> Invoices -> TravelFile
 
         CreateMap<TravelFile, TravelFileListDto>()
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))

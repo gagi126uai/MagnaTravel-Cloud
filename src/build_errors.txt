@@ -1,0 +1,27 @@
+﻿  Determinando los proyectos que se van a restaurar...
+  Todos los proyectos est├ín actualizados para la restauraci├│n.
+  TravelApi.Domain -> D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Domain\bin\Debug\net8.0\TravelApi.Domain.dll
+  TravelApi.Application -> D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Application\bin\Debug\net8.0\TravelApi.Application.dll
+  TravelApi.Infrastructure -> D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Infrastructure\bin\Debug\net8.0\TravelApi.Infrastructure.dll
+  TravelApi -> D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\bin\Debug\net8.0\TravelApi.dll
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\QuotesControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Quotes' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\ReservationsControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Reservations' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\TariffsControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Tariffs' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\TreasuryControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Treasury' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Unit\BspImportServiceTests.cs(5,17): error CS0234: El tipo o el nombre del espacio de nombres 'Services' no existe en el espacio de nombres 'TravelApi' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Fixtures\TestAuthHandler.cs(15,9): warning CS0618: 'ISystemClock' est├í obsoleto: 'Use TimeProvider instead.' [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+
+ERROR al compilar.
+
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Fixtures\TestAuthHandler.cs(15,9): warning CS0618: 'ISystemClock' est├í obsoleto: 'Use TimeProvider instead.' [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\QuotesControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Quotes' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\ReservationsControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Reservations' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\TariffsControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Tariffs' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Integration\TreasuryControllerTests.cs(3,39): error CS0234: El tipo o el nombre del espacio de nombres 'Treasury' no existe en el espacio de nombres 'TravelApi.Application.Contracts' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\Unit\BspImportServiceTests.cs(5,17): error CS0234: El tipo o el nombre del espacio de nombres 'Services' no existe en el espacio de nombres 'TravelApi' (┬┐falta alguna referencia de ensamblado?) [D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Tests\TravelApi.Tests.csproj]
+    1 Advertencia(s)
+    5 Errores
+
+Tiempo transcurrido 00:00:01.68
+
+Hay actualizaciones de carga de trabajo disponibles. Ejecute "dotnet workload list" para obtener m├ís informaci├│n.
