@@ -89,6 +89,16 @@ export function usePayments() {
         }
     };
 
+    const handleViewPdf = async (invoice) => {
+        try {
+            const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([response], { type: 'application/pdf' }));
+            window.open(url, '_blank');
+        } catch (error) {
+            showError("Error al abrir PDF");
+        }
+    };
+
     const handleRetryInvoice = async (invoice) => {
         try {
             await api.post(`/invoices/${invoice.id}/retry`);
@@ -157,6 +167,7 @@ export function usePayments() {
         setDateFilter,
         loadData,
         handleDownloadPdf,
+        handleViewPdf,
         handleRetryInvoice,
         handleAnnulInvoice,
         filteredFiles,

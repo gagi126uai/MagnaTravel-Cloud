@@ -29,6 +29,7 @@ export default function PaymentsPage() {
     searchTerm,
     setSearchTerm,
     handleDownloadPdf,
+    handleViewPdf,
     handleRetryInvoice,
     handleAnnulInvoice,
     filteredFiles,
@@ -115,6 +116,7 @@ export default function PaymentsPage() {
             payments={payments}
             invoices={invoices}
             onDownloadPdf={handleDownloadPdf}
+            onViewPdf={handleViewPdf}
             onAnnulInvoice={handleAnnulInvoice}
             onRetryInvoice={handleRetryInvoice}
           />
