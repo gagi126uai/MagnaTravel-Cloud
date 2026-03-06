@@ -216,7 +216,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onAnnulInvoice, 
                                                     <div>
                                                         <div className="text-[10px] font-black text-rose-800 dark:text-rose-300 uppercase tracking-wider mb-1">Motivo del Rechazo (AFIP)</div>
                                                         <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 leading-relaxed italic">
-                                                            "{i.observaciones || "Error de validación desconocido en los servidores de AFIP. Por favor, revise los datos del cliente y reintente."}"
+                                                            "{i.observaciones || "AFIP rechazó el comprobante sin proporcionar una observación detallada. (Verificar CUIT/Condición IVA del cliente)."}"
                                                         </p>
                                                     </div>
                                                 </div>
