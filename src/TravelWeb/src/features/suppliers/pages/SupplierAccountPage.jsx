@@ -3,12 +3,12 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Building2, Phone, Mail, CreditCard, DollarSign, TrendingUp, FileText, Plus, Pencil, Trash2 } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess, showConfirm } from "../../../alerts";
-import PaymentModal from "../../../components/PaymentModal";
-import CreatePurchaseModal from "../../../components/CreatePurchaseModal";
+import SupplierPaymentModal from "../../../components/SupplierPaymentModal";
 import { Button } from "../../../components/ui/button";
-import { Skeleton } from "../../../components/ui/skeleton";
+import { Skeleton, AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { Badge } from "../../../components/ui/badge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
+import Swal from "sweetalert2";
 
 export default function SupplierAccountPage() {
     const { id } = useParams();
