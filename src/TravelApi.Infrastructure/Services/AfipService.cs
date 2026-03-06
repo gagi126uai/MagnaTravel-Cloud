@@ -549,7 +549,9 @@ public class AfipService : IAfipService
             }
 
             // 3. Re-Calculate IVA Groups (AFIP Needs breakdown)
-            var ivaGroups = invoice.Items
+            bool isFacturaC = invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13;
+
+            var ivaGroups = isFacturaC ? new List<dynamic>() : invoice.Items
                 .GroupBy(i => i.AlicuotaIvaId)
                 .Select(g => new 
                 {
@@ -560,15 +562,12 @@ public class AfipService : IAfipService
                 .ToList();
 
             // 4. Construct XML (Reuse logic)
-            // ... (Copy-paste XML construction from previous CreateInvoice) ...
-            // We need to DRY this up, but for now, let's inline it to avoid breaking changes.
-            
             var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
             var action = "http://ar.gov.afip.dif.FEV1/FECAESolicitar";
 
              // IVA Block
             var sbIva = new StringBuilder();
-            if (ivaGroups.Any() && (invoice.TipoComprobante == 1 || invoice.TipoComprobante == 6 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3 || invoice.TipoComprobante == 7 || invoice.TipoComprobante == 8)) 
+            if (!isFacturaC && ivaGroups.Any() && (invoice.TipoComprobante == 1 || invoice.TipoComprobante == 6 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3 || invoice.TipoComprobante == 7 || invoice.TipoComprobante == 8)) 
             {
                 sbIva.Append("<Iva>");
                 foreach(var g in ivaGroups)
@@ -615,6 +614,12 @@ public class AfipService : IAfipService
             }
             
             var today = DateTime.Now.ToString("yyyyMMdd");
+
+            // For Factura C, ImpNeto MUST be exactly equal to the subtotal before taxes. 
+            // And ImpIVA MUST be 0.
+            decimal impNeto = isFacturaC ? invoice.ImporteTotal - invoice.Tributes.Sum(t => t.Importe) : invoice.ImporteNeto;
+            decimal impIva = isFacturaC ? 0 : invoice.ImporteIva;
+
              var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
     <soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
       <soap:Body>
@@ -640,10 +645,10 @@ public class AfipService : IAfipService
                     <CbteFch>{today}</CbteFch>
                     <ImpTotal>{invoice.ImporteTotal.ToString("0.00", CultureInfo.InvariantCulture)}</ImpTotal>
                     <ImpTotConc>0</ImpTotConc>
-                    <ImpNeto>{invoice.ImporteNeto.ToString("0.00", CultureInfo.InvariantCulture)}</ImpNeto>
+                    <ImpNeto>{impNeto.ToString("0.00", CultureInfo.InvariantCulture)}</ImpNeto>
                     <ImpOpEx>0</ImpOpEx>
                     <ImpTrib>{invoice.Tributes.Sum(t=>t.Importe).ToString("0.00", CultureInfo.InvariantCulture)}</ImpTrib>
-                    <ImpIVA>{invoice.ImporteIva.ToString("0.00", CultureInfo.InvariantCulture)}</ImpIVA>
+                    <ImpIVA>{impIva.ToString("0.00", CultureInfo.InvariantCulture)}</ImpIVA>
                     <FchServDesde>{today}</FchServDesde>
                     <FchServHasta>{today}</FchServHasta>
                     <FchVtoPago>{DateTime.Now.AddDays(10).ToString("yyyyMMdd")}</FchVtoPago>
@@ -674,7 +679,7 @@ public class AfipService : IAfipService
             if (resultNode == null) 
             {
                 invoice.Resultado = "R";
-                invoice.Observaciones = "AFIP Empty Result or XML Error: " + responseXml;
+                invoice.Observaciones = "AFIP respondió con un error de red o XML inválido.";
                 await _context.SaveChangesAsync();
                 return;
             }
@@ -686,13 +691,23 @@ public class AfipService : IAfipService
                  var sbErr = new StringBuilder();
                  // Capture Errors and Observations
                  var errors = resultNode.Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
-                 foreach(var e in errors) sbErr.AppendLine($"[{e.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}] {e.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+                 foreach(var e in errors) 
+                 {
+                     var code = e.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                     var msg = e.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                     sbErr.AppendLine(TranslateAfipError(code, msg));
+                 }
                  
                  var obs = resultNode.Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
-                 foreach(var o in obs) sbErr.AppendLine($"[Obs {o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value}] {o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value}");
+                 foreach(var o in obs) 
+                 {
+                     var code = o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                     var msg = o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                     sbErr.AppendLine(TranslateAfipError(code, msg));
+                 }
 
                  invoice.Resultado = "R";
-                 invoice.Observaciones = sbErr.ToString();
+                 invoice.Observaciones = sbErr.ToString().Trim();
                  await _context.SaveChangesAsync();
                  return;
             }
@@ -713,10 +728,27 @@ public class AfipService : IAfipService
         catch (Exception ex)
         {
             invoice.Resultado = "R";
-            invoice.Observaciones = $"Exception: {ex.Message}";
+            invoice.Observaciones = $"Error técnico: {ex.Message}";
             await _context.SaveChangesAsync();
-            throw; // Let Hangfire know it failed (so it shows in dashboard too, even if user retries manual)
+            throw; 
         }
+    }
+
+    private string TranslateAfipError(string? code, string? rawMsg)
+    {
+        if (string.IsNullOrEmpty(code)) return rawMsg ?? "Error desconocido";
+
+        return code switch
+        {
+            "10047" => "Validación de IVA: En facturas tipo C el IVA siempre debe ser cero (0).",
+            "10048" => "Desequilibrio numérico: El total no coincide con la suma del neto y tributos. Revisá los importes.",
+            "10015" => "Punto de Venta inválido: El punto de venta no está habilitado para factura electrónica en AFIP.",
+            "10016" => "Tipo de Comprobante inválido: El tipo de factura no coincide con tu categoría ante AFIP.",
+            "501" or "502" => "Certificado expirado o inválido: Es necesario renovar el certificado digital en el panel de configuración.",
+            "1000\"" or "1001" => "CUIT emisor no autorizado: Tu CUIT no tiene permisos para emitir este tipo de comprobante. Revisá el 'Punto de Venta' y 'Condición frente al IVA' en la configuración.",
+            "10074" => "CUIT del receptor inválido: El CUIT o DNI del cliente no es válido o no existe en los registros de AFIP.",
+            _ => rawMsg ?? $"Error AFIP [{code}]"
+        };
     }
 
     private async Task<int> GetNextVoucherNumber(AfipSettings settings, int cbteTipo)

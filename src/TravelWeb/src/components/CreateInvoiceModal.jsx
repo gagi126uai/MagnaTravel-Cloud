@@ -22,6 +22,8 @@ const TRIBUTE_TYPES = [
 
 export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId, initialAmount, clientName, clientCuit }) {
     const [loading, setLoading] = useState(false);
+    const [fetchingSettings, setFetchingSettings] = useState(true);
+    const [afipSettings, setAfipSettings] = useState(null);
     const [items, setItems] = useState([]);
     const [tributes, setTributes] = useState([]);
     const [totalNet, setTotalNet] = useState(0);
@@ -29,20 +31,45 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
     const [totalTributes, setTotalTributes] = useState(0);
     const [total, setTotal] = useState(0);
 
+    const isMonotributista = afipSettings?.taxCondition === "Monotributo" || afipSettings?.taxCondition === "Exento";
+
+    // Fetch AFIP Settings
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                const response = await api.get('/afip/settings');
+                setAfipSettings(response.data);
+            } catch (error) {
+                console.error("Error fetching AFIP settings:", error);
+                showError("No se pudo obtener la configuración de AFIP de la agencia.");
+            } finally {
+                setFetchingSettings(false);
+            }
+        };
+
+        if (isOpen) {
+            fetchSettings();
+        }
+    }, [isOpen]);
+
     // Initial setup
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && !fetchingSettings) {
             // Default item
-            const defaultNet = initialAmount ? (initialAmount / 1.21) : 0;
+            // If Monotributo, total is the net.
+            const defaultNet = isMonotributista
+                ? (initialAmount || 0)
+                : (initialAmount ? (initialAmount / 1.21) : 0);
+
             setItems([{
                 description: 'Servicios Turísticos',
                 quantity: 1,
                 unitPrice: Number(defaultNet.toFixed(2)),
-                alicuotaIvaId: 5 // 21% default
+                alicuotaIvaId: isMonotributista ? 3 : 5 // 0% if Monotributo, else 21%
             }]);
             setTributes([]);
         }
-    }, [isOpen, initialAmount]);
+    }, [isOpen, initialAmount, fetchingSettings, isMonotributista]);
 
     // Calculations
     useEffect(() => {
@@ -53,7 +80,7 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
             const itemNet = (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
             const rate = VAT_RATES.find(r => r.id === Number(item.alicuotaIvaId))?.value || 0;
             net += itemNet;
-            vat += itemNet * rate;
+            vat += isMonotributista ? 0 : (itemNet * rate);
         });
 
         let trib = 0;
@@ -62,13 +89,13 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
         });
 
         setTotalNet(net);
-        setTotalVat(vat);
+        setTotalVat(isMonotributista ? 0 : vat);
         setTotalTributes(trib);
-        setTotal(net + vat + trib);
-    }, [items, tributes]);
+        setTotal(net + (isMonotributista ? 0 : vat) + trib);
+    }, [items, tributes, isMonotributista]);
 
     const handleAddItem = () => {
-        setItems([...items, { description: '', quantity: 1, unitPrice: 0, alicuotaIvaId: 5 }]);
+        setItems([...items, { description: '', quantity: 1, unitPrice: 0, alicuotaIvaId: isMonotributista ? 3 : 5 }]);
     };
 
     const handleRemoveItem = (index) => {
@@ -170,6 +197,12 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
                     <div>
                         <div className="flex justify-between items-center mb-3">
                             <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 uppercase tracking-wider">Items / Servicios</h3>
+                            {isMonotributista && (
+                                <div className="flex items-center gap-2 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-1 rounded-full border border-amber-100 dark:border-amber-900/30">
+                                    <AlertCircle className="w-3 h-3" />
+                                    Factura C: No discrimina IVA
+                                </div>
+                            )}
                         </div>
                         <div className="space-y-3">
                             {items.map((item, index) => (
@@ -207,18 +240,20 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
                                             />
                                         </div>
                                     </div>
-                                    <div className="w-32">
-                                        <label className="block text-xs font-medium text-gray-500 mb-1">IVA</label>
-                                        <select
-                                            value={item.alicuotaIvaId}
-                                            onChange={(e) => handleItemChange(index, 'alicuotaIvaId', e.target.value)}
-                                            className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
-                                        >
-                                            {VAT_RATES.map(rate => (
-                                                <option key={rate.id} value={rate.id}>{rate.label}</option>
-                                            ))}
-                                        </select>
-                                    </div>
+                                    {!isMonotributista && (
+                                        <div className="w-32">
+                                            <label className="block text-xs font-medium text-gray-500 mb-1">IVA</label>
+                                            <select
+                                                value={item.alicuotaIvaId}
+                                                onChange={(e) => handleItemChange(index, 'alicuotaIvaId', e.target.value)}
+                                                className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                                            >
+                                                {VAT_RATES.map(rate => (
+                                                    <option key={rate.id} value={rate.id}>{rate.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
                                     <div className="w-32 text-right pb-2 font-medium text-gray-900 dark:text-white">
                                         ${((item.quantity || 0) * (item.unitPrice || 0)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </div>
@@ -313,7 +348,9 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
                         <div className="flex items-center gap-8 w-full md:w-auto">
                             <div className="text-right space-y-1">
                                 <div className="text-sm text-gray-500">Neto: <span className="text-gray-900 dark:text-white font-medium">${totalNet.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span></div>
-                                <div className="text-sm text-gray-500">IVA: <span className="text-gray-900 dark:text-white font-medium">${totalVat.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span></div>
+                                {!isMonotributista && (
+                                    <div className="text-sm text-gray-500">IVA: <span className="text-gray-900 dark:text-white font-medium">${totalVat.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span></div>
+                                )}
                                 {totalTributes > 0 && (
                                     <div className="text-sm text-orange-600">Tributos: <span className="font-medium">${totalTributes.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span></div>
                                 )}
