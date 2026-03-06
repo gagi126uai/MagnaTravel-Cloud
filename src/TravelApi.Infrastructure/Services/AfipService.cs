@@ -719,7 +719,7 @@ public class AfipService : IAfipService
 
             invoice.Resultado = "A";
             invoice.CAE = cae;
-            invoice.VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null);
+            invoice.VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null).ToUniversalTime();
             invoice.NumeroComprobante = cbteNro; // Assign actual number used
             invoice.Observaciones = null;
             

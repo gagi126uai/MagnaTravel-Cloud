@@ -55,7 +55,7 @@ export function InvoicingTab({ files, onInvoice }) {
                                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 hover:scale-105 active:scale-95 transition-all shadow-md shadow-indigo-100 dark:shadow-none"
                                     >
                                         <Receipt className="w-4 h-4" />
-                                        Emitir AFIP
+                                        Emitir Factura
                                     </button>
                                 </td>
                             </tr>
