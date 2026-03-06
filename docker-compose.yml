@@ -15,8 +15,8 @@ services:
 
   api:
     build:
-      context: ./src/TravelApi
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/TravelApi/Dockerfile
     container_name: travel_api
     restart: unless-stopped
     depends_on:
@@ -38,8 +38,8 @@ services:
 
   web:
     build:
-      context: ./src/TravelWeb
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/TravelWeb/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:5000}
     container_name: travel_web
