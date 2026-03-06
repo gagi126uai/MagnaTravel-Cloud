@@ -42,7 +42,7 @@ builder.Services.AddExceptionHandler<TravelApi.Middleware.GlobalExceptionHandler
 builder.Services.AddProblemDetails();
 
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddAutoMapper(typeof(Program));
+builder.Services.AddAutoMapper(typeof(Program), typeof(TravelApi.Application.Mappings.MappingProfile));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
