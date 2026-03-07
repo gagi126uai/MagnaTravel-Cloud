@@ -12,61 +12,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropTable(
-                name: "InvoiceItems");
-
-            migrationBuilder.DropTable(
-                name: "InvoiceTributes");
-
-            migrationBuilder.CreateTable(
-                name: "InvoiceItem",
-                columns: table => new
-                {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    InvoiceId = table.Column<int>(type: "integer", nullable: false),
-                    Description = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
-                    Quantity = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    UnitPrice = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    Total = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    AlicuotaIvaId = table.Column<int>(type: "integer", nullable: false),
-                    ImporteIva = table.Column<decimal>(type: "numeric(18,2)", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_InvoiceItem", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_InvoiceItem_Invoices_InvoiceId",
-                        column: x => x.InvoiceId,
-                        principalTable: "Invoices",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "InvoiceTribute",
-                columns: table => new
-                {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    InvoiceId = table.Column<int>(type: "integer", nullable: false),
-                    TributeId = table.Column<int>(type: "integer", nullable: false),
-                    Description = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
-                    BaseImponible = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    Alicuota = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    Importe = table.Column<decimal>(type: "numeric(18,2)", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_InvoiceTribute", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_InvoiceTribute_Invoices_InvoiceId",
-                        column: x => x.InvoiceId,
-                        principalTable: "Invoices",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
             migrationBuilder.CreateTable(
                 name: "Leads",
                 columns: table => new
@@ -96,25 +41,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         column: x => x.ConvertedCustomerId,
                         principalTable: "Customers",
                         principalColumn: "Id");
-                });
-
-            migrationBuilder.CreateTable(
-                name: "Notifications",
-                columns: table => new
-                {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    UserId = table.Column<string>(type: "text", nullable: false),
-                    Message = table.Column<string>(type: "text", nullable: false),
-                    Type = table.Column<string>(type: "text", nullable: false),
-                    IsRead = table.Column<bool>(type: "boolean", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    RelatedEntityId = table.Column<int>(type: "integer", nullable: true),
-                    RelatedEntityType = table.Column<string>(type: "text", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_Notifications", x => x.Id);
                 });
 
             migrationBuilder.CreateTable(
@@ -214,16 +140,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_InvoiceItem_InvoiceId",
-                table: "InvoiceItem",
-                column: "InvoiceId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_InvoiceTribute_InvoiceId",
-                table: "InvoiceTribute",
-                column: "InvoiceId");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_LeadActivities_LeadId",
                 table: "LeadActivities",
                 column: "LeadId");
@@ -258,16 +174,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "InvoiceItem");
-
-            migrationBuilder.DropTable(
-                name: "InvoiceTribute");
-
-            migrationBuilder.DropTable(
                 name: "LeadActivities");
-
-            migrationBuilder.DropTable(
-                name: "Notifications");
 
             migrationBuilder.DropTable(
                 name: "QuoteItems");
@@ -277,65 +184,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "Quotes");
-
-            migrationBuilder.CreateTable(
-                name: "InvoiceItems",
-                columns: table => new
-                {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    InvoiceId = table.Column<int>(type: "integer", nullable: false),
-                    AlicuotaIvaId = table.Column<int>(type: "integer", nullable: false),
-                    Description = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
-                    ImporteIva = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    Quantity = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    Total = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    UnitPrice = table.Column<decimal>(type: "numeric(18,2)", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_InvoiceItems", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_InvoiceItems_Invoices_InvoiceId",
-                        column: x => x.InvoiceId,
-                        principalTable: "Invoices",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "InvoiceTributes",
-                columns: table => new
-                {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    InvoiceId = table.Column<int>(type: "integer", nullable: false),
-                    Alicuota = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    BaseImponible = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    Description = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
-                    Importe = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
-                    TributeId = table.Column<int>(type: "integer", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_InvoiceTributes", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_InvoiceTributes_Invoices_InvoiceId",
-                        column: x => x.InvoiceId,
-                        principalTable: "Invoices",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_InvoiceItems_InvoiceId",
-                table: "InvoiceItems",
-                column: "InvoiceId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_InvoiceTributes_InvoiceId",
-                table: "InvoiceTributes",
-                column: "InvoiceId");
         }
     }
 }
