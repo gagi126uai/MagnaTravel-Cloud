@@ -13,7 +13,9 @@ import {
     Trash2,
     Bell,
     Inbox,
-    Activity
+    Activity,
+    FileText,
+    UserPlus
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -22,6 +24,7 @@ import { useAlerts } from "../contexts/AlertsContext";
 const menuLinks = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/files", label: "Gestión de Viajes", icon: FolderOpen },
+    { to: "/quotes", label: "Cotizaciones", icon: FileText },
     { to: "/customers", label: "Clientes", icon: Users },
     { to: "/payments", label: "Facturación y Caja", icon: CreditCard },
     { to: "/suppliers", label: "Proveedores", icon: Building2 },
@@ -39,6 +42,7 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onTog
     const finalLinks = isAdmin
         ? [
             ...commonLinks,
+            { to: "/crm", label: "CRM Pipeline", icon: UserPlus },
             { to: "/reports", label: "Reportes", icon: BarChart3 },
             { to: "/analytics", label: "Analíticas", icon: Activity },
             { to: "/settings", label: "Configuración", icon: Settings },

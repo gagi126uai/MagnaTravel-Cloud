@@ -16,6 +16,8 @@ import SupplierAccountPage from "./features/suppliers/pages/SupplierAccountPage"
 import ReportsPage from "./pages/ReportsPage";
 import RatesPage from "./pages/RatesPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
+import QuotesPage from "./pages/QuotesPage";
+import CRMPage from "./pages/CRMPage";
 
 import PaymentsTrashPage from "./features/payments/pages/PaymentsTrashPage";
 import AlertsPage from "./pages/AlertsPage";
@@ -90,6 +92,8 @@ export default function App() {
                   {/* Treasury */}
                   <Route path="/payments" element={<PaymentsPage />} />
                   <Route path="/rates" element={<RatesPage />} />
+                  <Route path="/quotes" element={<QuotesPage />} />
+                  <Route path="/crm" element={adminUser ? <CRMPage /> : <Navigate to="/dashboard" replace />} />
 
                   {/* Admin */}
                   <Route

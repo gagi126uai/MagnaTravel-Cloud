@@ -12,10 +12,12 @@ namespace TravelApi.Controllers;
 public class TravelFilesController : ControllerBase
 {
     private readonly ITravelFileService _travelFileService;
+    private readonly IVoucherService _voucherService;
 
-    public TravelFilesController(ITravelFileService travelFileService)
+    public TravelFilesController(ITravelFileService travelFileService, IVoucherService voucherService)
     {
         _travelFileService = travelFileService;
+        _voucherService = voucherService;
     }
 
     [HttpGet]
@@ -337,6 +339,25 @@ public class TravelFilesController : ControllerBase
         catch (Exception ex)
         {
             return StatusCode(500, $"Error eliminando expediente: {ex.Message}");
+        }
+    }
+
+    // ==================== VOUCHER ====================
+    [HttpGet("{id}/voucher")]
+    public async Task<IActionResult> GenerateVoucher(int id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var html = await _voucherService.GenerateVoucherAsync(id, cancellationToken);
+            return File(html, "text/html", $"voucher-{id}.html");
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error generando voucher: {ex.Message}");
         }
     }
 }

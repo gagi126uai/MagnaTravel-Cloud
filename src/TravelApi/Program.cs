@@ -149,6 +149,11 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 
+// Pilar 1: Cotizador + CRM + Vouchers
+builder.Services.AddScoped<IQuoteService, QuoteService>();
+builder.Services.AddScoped<ILeadService, LeadService>();
+builder.Services.AddScoped<IVoucherService, VoucherService>();
+
 // Load allowed origins from configuration (appsettings.json or ENV)
 var allowedOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
 

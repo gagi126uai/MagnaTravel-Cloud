@@ -199,6 +199,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TravelFileAttachment> TravelFileAttachments => Set<TravelFileAttachment>();
 
+    // Pilar 1: Cotizador + CRM
+    public DbSet<Quote> Quotes => Set<Quote>();
+    public DbSet<QuoteItem> QuoteItems => Set<QuoteItem>();
+    public DbSet<Lead> Leads => Set<Lead>();
+    public DbSet<LeadActivity> LeadActivities => Set<LeadActivity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
