@@ -85,4 +85,41 @@ public class ReportsController : ControllerBase
         var settings = await _reportService.UpdateAgencySettingsAsync(updated, cancellationToken);
         return Ok(settings);
     }
+
+    // ===== BI Analytics Endpoints =====
+
+    [HttpGet("sellers")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetSellerRanking(
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to, CancellationToken cancellationToken)
+    {
+        var result = await _reportService.GetSellerRankingAsync(from, to, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("destinations")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetDestinationAnalytics(
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to, CancellationToken cancellationToken)
+    {
+        var result = await _reportService.GetDestinationAnalyticsAsync(from, to, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("cashflow")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetCashFlowProjection(
+        [FromQuery] int days = 90, CancellationToken cancellationToken = default)
+    {
+        var result = await _reportService.GetCashFlowProjectionAsync(days, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("yoy")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetYearOverYear(CancellationToken cancellationToken)
+    {
+        var result = await _reportService.GetYearOverYearAsync(cancellationToken);
+        return Ok(result);
+    }
 }

@@ -377,4 +377,183 @@ public class ReportService : IReportService
         await _dbContext.SaveChangesAsync(cancellationToken);
         return settings;
     }
+
+    // ===== BI ANALYTICS =====
+
+    public async Task<List<SellerRankingDto>> GetSellerRankingAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken)
+    {
+        var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
+
+        // Get file creation events from audit logs to attribute files to sellers
+        var fileCreations = await _dbContext.AuditLogs
+            .Where(a => a.Action == "Create" && a.EntityName == "TravelFile" 
+                && a.Timestamp >= dateFrom && a.Timestamp <= dateTo)
+            .Select(a => new { a.UserId, a.UserName, FileId = a.EntityId })
+            .ToListAsync(cancellationToken);
+
+        var fileIds = fileCreations.Select(fc => int.TryParse(fc.FileId, out var id) ? id : 0).Where(id => id > 0).ToList();
+
+        var files = await _dbContext.TravelFiles
+            .Where(f => fileIds.Contains(f.Id) && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+            .Select(f => new { f.Id, f.TotalSale, f.TotalCost })
+            .ToListAsync(cancellationToken);
+
+        var ranking = fileCreations
+            .GroupBy(fc => new { fc.UserId, fc.UserName })
+            .Select(g => {
+                var sellerFileIds = g.Select(x => int.TryParse(x.FileId, out var id) ? id : 0).Where(id => id > 0).ToHashSet();
+                var sellerFiles = files.Where(f => sellerFileIds.Contains(f.Id)).ToList();
+                var totalSales = sellerFiles.Sum(f => f.TotalSale);
+                var totalCosts = sellerFiles.Sum(f => f.TotalCost);
+                var margin = totalSales - totalCosts;
+                var marginPercent = totalSales > 0 ? Math.Round((margin / totalSales) * 100, 1) : 0;
+
+                return new SellerRankingDto(
+                    g.Key.UserId,
+                    g.Key.UserName ?? "Desconocido",
+                    sellerFiles.Count,
+                    totalSales,
+                    totalCosts,
+                    margin,
+                    marginPercent
+                );
+            })
+            .OrderByDescending(s => s.TotalSales)
+            .ToList();
+
+        return ranking;
+    }
+
+    public async Task<List<DestinationAnalyticsDto>> GetDestinationAnalyticsAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken)
+    {
+        var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
+
+        // Aggregate destinations from Hotels, Packages, and Flights
+        var hotelDestinations = await _dbContext.Set<HotelBooking>()
+            .Where(h => h.CreatedAt >= dateFrom && h.CreatedAt <= dateTo)
+            .Select(h => new { Destination = h.City, h.SalePrice, h.NetCost, Passengers = h.Adults + h.Children })
+            .ToListAsync(cancellationToken);
+
+        var packageDestinations = await _dbContext.Set<PackageBooking>()
+            .Where(p => p.CreatedAt >= dateFrom && p.CreatedAt <= dateTo)
+            .Select(p => new { p.Destination, p.SalePrice, NetCost = p.NetCost, Passengers = p.Adults + p.Children })
+            .ToListAsync(cancellationToken);
+
+        var flightDestinations = await _dbContext.Set<FlightSegment>()
+            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo)
+            .Select(f => new { Destination = f.DestinationCity ?? f.Destination, f.SalePrice, f.NetCost, Passengers = 1 })
+            .ToListAsync(cancellationToken);
+
+        var allBookings = hotelDestinations
+            .Concat(packageDestinations)
+            .Concat(flightDestinations)
+            .Where(b => !string.IsNullOrWhiteSpace(b.Destination))
+            .GroupBy(b => b.Destination.Trim().ToUpper())
+            .Select(g => new DestinationAnalyticsDto(
+                g.Key,
+                g.Count(),
+                g.Sum(b => b.SalePrice),
+                g.Sum(b => b.NetCost),
+                g.Sum(b => b.SalePrice) - g.Sum(b => b.NetCost),
+                g.Sum(b => b.Passengers)
+            ))
+            .OrderByDescending(d => d.TotalRevenue)
+            .Take(15)
+            .ToList();
+
+        return allBookings;
+    }
+
+    public async Task<CashFlowProjectionResponse> GetCashFlowProjectionAsync(int days, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow.Date;
+        var historicalStart = now.AddDays(-30);
+
+        // Historical cash in (customer payments)
+        var cashInByDay = await _dbContext.Payments
+            .Where(p => p.PaidAt >= historicalStart && p.PaidAt <= now && !p.IsDeleted)
+            .GroupBy(p => p.PaidAt.Date)
+            .Select(g => new { Date = g.Key, Amount = g.Sum(p => p.Amount) })
+            .ToListAsync(cancellationToken);
+
+        // Historical cash out (supplier payments)
+        var cashOutByDay = await _dbContext.SupplierPayments
+            .Where(p => p.PaidAt >= historicalStart && p.PaidAt <= now)
+            .GroupBy(p => p.PaidAt.Date)
+            .Select(g => new { Date = g.Key, Amount = g.Sum(p => p.Amount) })
+            .ToListAsync(cancellationToken);
+
+        // Build historical daily entries
+        var historical = new List<CashFlowDayDto>();
+        decimal runningBalance = 0;
+        for (var date = historicalStart; date <= now; date = date.AddDays(1))
+        {
+            var cashIn = cashInByDay.FirstOrDefault(c => c.Date == date)?.Amount ?? 0;
+            var cashOut = cashOutByDay.FirstOrDefault(c => c.Date == date)?.Amount ?? 0;
+            runningBalance += cashIn - cashOut;
+            historical.Add(new CashFlowDayDto(DateTime.SpecifyKind(date, DateTimeKind.Utc), cashIn, cashOut, runningBalance));
+        }
+
+        // Projection: use average daily cash in/out from last 30 days
+        var avgDailyCashIn = cashInByDay.Any() ? cashInByDay.Sum(c => c.Amount) / 30m : 0m;
+        var avgDailyCashOut = cashOutByDay.Any() ? cashOutByDay.Sum(c => c.Amount) / 30m : 0m;
+
+        var projected = new List<CashFlowDayDto>();
+        var projectedBalance = runningBalance;
+        for (int i = 1; i <= Math.Max(days, 90); i++)
+        {
+            var date = now.AddDays(i);
+            projectedBalance += avgDailyCashIn - avgDailyCashOut;
+            projected.Add(new CashFlowDayDto(DateTime.SpecifyKind(date, DateTimeKind.Utc), avgDailyCashIn, avgDailyCashOut, projectedBalance));
+        }
+
+        return new CashFlowProjectionResponse(
+            Historical: historical,
+            Projected: projected,
+            CurrentBalance: runningBalance,
+            ProjectedBalance30: projected.Count >= 30 ? projected[29].RunningBalance : projectedBalance,
+            ProjectedBalance60: projected.Count >= 60 ? projected[59].RunningBalance : projectedBalance,
+            ProjectedBalance90: projected.Count >= 90 ? projected[89].RunningBalance : projectedBalance
+        );
+    }
+
+    public async Task<YearOverYearResponse> GetYearOverYearAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var currentYearStart = new DateTime(now.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var previousYearStart = new DateTime(now.Year - 1, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var previousYearEnd = new DateTime(now.Year - 1, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+
+        var currentYearData = await _dbContext.TravelFiles
+            .Where(f => f.CreatedAt >= currentYearStart && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+            .GroupBy(f => f.CreatedAt.Month)
+            .Select(g => new { Month = g.Key, Sales = g.Sum(f => f.TotalSale), Costs = g.Sum(f => f.TotalCost), Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        var previousYearData = await _dbContext.TravelFiles
+            .Where(f => f.CreatedAt >= previousYearStart && f.CreatedAt <= previousYearEnd && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+            .GroupBy(f => f.CreatedAt.Month)
+            .Select(g => new { Month = g.Key, Sales = g.Sum(f => f.TotalSale), Costs = g.Sum(f => f.TotalCost), Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        var currentYear = Enumerable.Range(1, 12).Select(m => {
+            var data = currentYearData.FirstOrDefault(d => d.Month == m);
+            var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(m);
+            return new YoyMonthDto(monthName, m, data?.Sales ?? 0, data?.Costs ?? 0, (data?.Sales ?? 0) - (data?.Costs ?? 0), data?.Count ?? 0);
+        }).ToList();
+
+        var previousYear = Enumerable.Range(1, 12).Select(m => {
+            var data = previousYearData.FirstOrDefault(d => d.Month == m);
+            var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(m);
+            return new YoyMonthDto(monthName, m, data?.Sales ?? 0, data?.Costs ?? 0, (data?.Sales ?? 0) - (data?.Costs ?? 0), data?.Count ?? 0);
+        }).ToList();
+
+        var currentTotal = currentYear.Sum(m => m.Sales);
+        var previousTotal = previousYear.Sum(m => m.Sales);
+        var growth = previousTotal > 0 ? Math.Round(((currentTotal - previousTotal) / previousTotal) * 100, 1) : 0;
+
+        return new YearOverYearResponse(currentYear, previousYear, currentTotal, previousTotal, growth);
+    }
 }

@@ -12,7 +12,8 @@ import {
     DollarSign,
     Trash2,
     Bell,
-    Inbox
+    Inbox,
+    Activity
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -39,6 +40,7 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onTog
         ? [
             ...commonLinks,
             { to: "/reports", label: "Reportes", icon: BarChart3 },
+            { to: "/analytics", label: "Analíticas", icon: Activity },
             { to: "/settings", label: "Configuración", icon: Settings },
             { to: "/payments/trash", label: "Papelera", icon: Trash2 },
             { to: "/alerts", label: "Alertas", icon: Bell, badge: alerts?.TotalCount }

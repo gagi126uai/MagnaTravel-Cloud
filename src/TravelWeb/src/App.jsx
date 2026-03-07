@@ -15,6 +15,7 @@ import SuppliersPage from "./features/suppliers/pages/SuppliersPage";
 import SupplierAccountPage from "./features/suppliers/pages/SupplierAccountPage";
 import ReportsPage from "./pages/ReportsPage";
 import RatesPage from "./pages/RatesPage";
+import AnalyticsPage from "./pages/AnalyticsPage";
 
 import PaymentsTrashPage from "./features/payments/pages/PaymentsTrashPage";
 import AlertsPage from "./pages/AlertsPage";
@@ -98,6 +99,10 @@ export default function App() {
                   <Route
                     path="/settings"
                     element={adminUser ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
+                  />
+                  <Route
+                    path="/analytics"
+                    element={adminUser ? <AnalyticsPage /> : <Navigate to="/dashboard" replace />}
                   />
                   <Route
                     path="/payments/trash"
