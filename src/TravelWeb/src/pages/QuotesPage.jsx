@@ -46,9 +46,19 @@ export default function QuotesPage() {
         (q.destination || "").toLowerCase().includes(search.toLowerCase())
     );
 
+    const sanitizeQuote = (data) => ({
+        ...data,
+        customerId: data.customerId || null,
+        travelStartDate: data.travelStartDate || null,
+        travelEndDate: data.travelEndDate || null,
+        validUntil: data.validUntil || null,
+        adults: parseInt(data.adults) || 2,
+        children: parseInt(data.children) || 0,
+    });
+
     const handleCreate = async (data) => {
         try {
-            await api.post("/quotes", data);
+            await api.post("/quotes", sanitizeQuote(data));
             showSuccess("Cotización creada");
             setShowModal(false);
             loadQuotes();
@@ -57,7 +67,7 @@ export default function QuotesPage() {
 
     const handleUpdate = async (data) => {
         try {
-            await api.put(`/quotes/${editingQuote.id}`, data);
+            await api.put(`/quotes/${editingQuote.id}`, sanitizeQuote(data));
             showSuccess("Cotización actualizada");
             setEditingQuote(null);
             setShowModal(false);
