@@ -38,12 +38,23 @@ public class QuoteService : IQuoteService
         var count = await _db.Quotes.CountAsync(cancellationToken);
         quote.QuoteNumber = $"COT-{(count + 1).ToString().PadLeft(5, '0')}";
         quote.CreatedAt = DateTime.UtcNow;
-        quote.ValidUntil ??= DateTime.UtcNow.AddDays(15);
+        quote.ValidUntil = ToUtc(quote.ValidUntil) ?? DateTime.UtcNow.AddDays(15);
+        quote.TravelStartDate = ToUtc(quote.TravelStartDate);
+        quote.TravelEndDate = ToUtc(quote.TravelEndDate);
+        quote.AcceptedAt = ToUtc(quote.AcceptedAt);
 
         _db.Quotes.Add(quote);
         await _db.SaveChangesAsync(cancellationToken);
         await RecalculateTotalsAsync(quote.Id, cancellationToken);
         return quote;
+    }
+
+    private static DateTime? ToUtc(DateTime? dt)
+    {
+        if (!dt.HasValue) return null;
+        return dt.Value.Kind == DateTimeKind.Unspecified 
+            ? DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc) 
+            : dt.Value.ToUniversalTime();
     }
 
     public async Task<Quote> UpdateAsync(int id, Quote updated, CancellationToken cancellationToken)
@@ -54,12 +65,9 @@ public class QuoteService : IQuoteService
         quote.Title = updated.Title;
         quote.Description = updated.Description;
         quote.CustomerId = updated.CustomerId;
-        quote.ValidUntil = updated.ValidUntil.HasValue
-            ? DateTime.SpecifyKind(updated.ValidUntil.Value, DateTimeKind.Utc) : null;
-        quote.TravelStartDate = updated.TravelStartDate.HasValue
-            ? DateTime.SpecifyKind(updated.TravelStartDate.Value, DateTimeKind.Utc) : null;
-        quote.TravelEndDate = updated.TravelEndDate.HasValue
-            ? DateTime.SpecifyKind(updated.TravelEndDate.Value, DateTimeKind.Utc) : null;
+        quote.ValidUntil = ToUtc(updated.ValidUntil);
+        quote.TravelStartDate = ToUtc(updated.TravelStartDate);
+        quote.TravelEndDate = ToUtc(updated.TravelEndDate);
         quote.Destination = updated.Destination;
         quote.Adults = updated.Adults;
         quote.Children = updated.Children;
