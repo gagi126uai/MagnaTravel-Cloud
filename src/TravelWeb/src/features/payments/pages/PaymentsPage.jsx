@@ -58,7 +58,7 @@ export default function PaymentsPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-4 sm:p-8 space-y-8 pb-20 animate-in fade-in duration-500">
+    <div className="max-w-7xl mx-auto p-4 sm:p-8 space-y-8 pb-20">
       {/* HEADER & TOP FILTERS */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-100 dark:border-slate-800/50">
         <div>

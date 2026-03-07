@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import {
     Plus, User, Phone, Mail, MapPin, DollarSign, Calendar,
-    MessageSquare, ArrowRight, Loader2, ChevronDown, X, Check, Send
+    MessageSquare, ArrowRight, Loader2, ChevronDown, X, Check, Send, FileText
 } from "lucide-react";
 import Swal from "sweetalert2";
 
@@ -19,6 +20,7 @@ const ACTIVITY_TYPES = ["Llamada", "Email", "WhatsApp", "Reunión", "Nota", "Cot
 const SOURCES = ["Web", "WhatsApp", "Referido", "Teléfono", "Instagram", "Otro"];
 
 export default function CRMPage() {
+    const navigate = useNavigate();
     const [pipeline, setPipeline] = useState(null);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
@@ -128,6 +130,7 @@ export default function CRMPage() {
                     {detailLead.convertedCustomerId && (
                         <span className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-xs font-bold"><Check className="w-3.5 h-3.5" /> Cliente #{detailLead.convertedCustomerId}</span>
                     )}
+                    <button onClick={() => navigate("/quotes")} className="flex items-center gap-2 px-3 py-2 bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 rounded-lg text-xs font-bold hover:bg-violet-200 dark:hover:bg-violet-900/50 transition-colors"><FileText className="w-3.5 h-3.5" /> Ver Cotizaciones</button>
                     <button onClick={() => setShowActivityModal(true)} className="flex items-center gap-2 px-3 py-2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-lg text-xs font-bold hover:opacity-90"><MessageSquare className="w-3.5 h-3.5" /> Registrar Actividad</button>
                     <button onClick={() => handleDelete(detailLead.id)} className="flex items-center gap-2 px-3 py-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg text-xs font-bold">Eliminar</button>
                 </div>

@@ -57,7 +57,7 @@ export default function FileDetailPage() {
                 file={file}
                 onBack={() => navigate("/files")}
                 onStatusChange={handleStatusChange}
-                onDelete={() => { if (confirm("¿Eliminar File? Acción irreversible. Solo presupuestos sin pagos.")) handleDeleteFile(); }}
+                onDelete={() => { if (confirm("¿Eliminar Expediente? Acción irreversible. Solo aplicable a expedientes sin pagos.")) handleDeleteFile(); }}
                 onArchive={() => { if (confirm("¿Archivar File? El file pasará a estado 'Archivado'.")) handleArchiveFile(); }}
             />
 

@@ -54,7 +54,7 @@ export function useTravelFiles() {
         let viewMatch = true;
         if (viewFilter === 'all') {
             viewMatch = !['Cerrado', 'Cancelado', 'Archived'].includes(f.status);
-        } else if (viewFilter === 'archived') {
+        } else if (viewFilter === 'Cerrado') {
             viewMatch = ['Cerrado', 'Cancelado', 'Archived'].includes(f.status);
         } else {
             viewMatch = f.status === viewFilter;
@@ -72,10 +72,9 @@ export function useTravelFiles() {
 
     const tabCounts = {
         all: files.filter(f => !['Cerrado', 'Cancelado', 'Archived'].includes(f.status)).length,
-        Presupuesto: files.filter(f => f.status === 'Presupuesto').length,
         Reservado: files.filter(f => f.status === 'Reservado').length,
         Operativo: files.filter(f => f.status === 'Operativo').length,
-        archived: files.filter(f => ['Cerrado', 'Cancelado', 'Archived'].includes(f.status)).length,
+        Cerrado: files.filter(f => ['Cerrado', 'Cancelado', 'Archived'].includes(f.status)).length,
     };
 
     // KPIs

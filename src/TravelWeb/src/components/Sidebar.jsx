@@ -20,36 +20,45 @@ import {
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
 
-// Clean Menu - Retail ERP Loop
-const menuLinks = [
-    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/files", label: "Gestión de Viajes", icon: FolderOpen },
+// Ventas (Sales)
+const salesLinks = [
+    { to: "/crm", label: "CRM Pipeline", icon: UserPlus, adminOnly: true },
     { to: "/quotes", label: "Cotizaciones", icon: FileText },
     { to: "/customers", label: "Clientes", icon: Users },
-    { to: "/payments", label: "Facturación y Caja", icon: CreditCard },
+];
+
+// Operaciones (Operations)
+const opsLinks = [
+    { to: "/files", label: "Expedientes", icon: FolderOpen },
     { to: "/suppliers", label: "Proveedores", icon: Building2 },
+];
+
+// Administración (Admin)
+const adminLinks = [
+    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/payments", label: "Caja y Facturación", icon: CreditCard },
     { to: "/rates", label: "Tarifario", icon: DollarSign },
+    { to: "/reports", label: "Reportes", icon: BarChart3, adminOnly: true },
+    { to: "/analytics", label: "Analíticas", icon: Activity, adminOnly: true },
+    { to: "/alerts", label: "Alertas Operativas", icon: Bell, adminOnly: true },
+    { to: "/settings", label: "Configuración", icon: Settings, adminOnly: true },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onToggleCollapse, onCloseMobile }) {
-    const { alerts, notifications } = useAlerts() || { alerts: { TotalCount: 0 }, notifications: [] };
+    const { alerts } = useAlerts() || { alerts: { TotalCount: 0 } };
 
-    const commonLinks = [
-        ...menuLinks,
-        { to: "/notifications", label: "Notificaciones", icon: Inbox, badge: notifications?.length || 0 }
-    ];
+    // Construir los links estandarizados según rol
+    const allLinks = [...salesLinks, ...opsLinks, ...adminLinks];
+
+    // Asignar el badge de alertas solo al link correspondiente
+    const linksWithBadges = allLinks.map(link => {
+        if (link.to === "/alerts") return { ...link, badge: alerts?.TotalCount };
+        return link;
+    });
 
     const finalLinks = isAdmin
-        ? [
-            ...commonLinks,
-            { to: "/crm", label: "CRM Pipeline", icon: UserPlus },
-            { to: "/reports", label: "Reportes", icon: BarChart3 },
-            { to: "/analytics", label: "Analíticas", icon: Activity },
-            { to: "/settings", label: "Configuración", icon: Settings },
-            { to: "/payments/trash", label: "Papelera", icon: Trash2 },
-            { to: "/alerts", label: "Alertas", icon: Bell, badge: alerts?.TotalCount }
-        ]
-        : commonLinks;
+        ? linksWithBadges
+        : linksWithBadges.filter(l => !l.adminOnly);
 
     return (
         <aside className={cn("flex flex-col border-r bg-card text-card-foreground", className)}>

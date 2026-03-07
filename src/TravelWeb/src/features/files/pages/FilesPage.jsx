@@ -57,7 +57,7 @@ export default function FilesPage() {
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 {/* Status Filter Tabs */}
                 <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start sm:self-auto overflow-x-auto">
-                    {["all", "Presupuesto", "Reservado", "Operativo"].map((filter) => (
+                    {["all", "Reservado", "Operativo", "Cerrado"].map((filter) => (
                         <button
                             key={filter}
                             onClick={() => setViewFilter(filter)}

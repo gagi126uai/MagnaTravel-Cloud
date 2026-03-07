@@ -5,12 +5,12 @@ export function CollectionsTab({ files, onPay }) {
     const filtered = files.filter(f => f.pendingCollection > 0);
 
     return (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-6">
             {/* Desktop View */}
-            <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 shadow-sm">
+            <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
                 <table className="w-full text-left border-collapse">
                     <thead>
-                        <tr className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+                        <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-center w-16">#</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Expediente / Cliente</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Venta Total</th>
@@ -21,7 +21,7 @@ export function CollectionsTab({ files, onPay }) {
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                         {filtered.map((file, idx) => (
-                            <tr key={file.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-all duration-200">
+                            <tr key={file.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-6 py-4 text-center text-xs text-slate-400 font-mono">{(idx + 1).toString().padStart(2, '0')}</td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col">
@@ -49,7 +49,7 @@ export function CollectionsTab({ files, onPay }) {
                                 <td className="px-6 py-4 text-right pr-8">
                                     <button
                                         onClick={() => onPay(file)}
-                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-semibold hover:scale-105 active:scale-95 transition-all shadow-md shadow-slate-200 dark:shadow-none"
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm"
                                     >
                                         <DollarSign className="w-4 h-4" />
                                         Cobrar
@@ -64,7 +64,7 @@ export function CollectionsTab({ files, onPay }) {
             {/* Mobile View */}
             <div className="md:hidden space-y-4">
                 {filtered.map(file => (
-                    <div key={file.id} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm active:scale-[0.98] transition-transform">
+                    <div key={file.id} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
                         <div className="flex justify-between items-start mb-4">
                             <div>
                                 <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full mb-2 inline-block">
@@ -95,7 +95,7 @@ export function CollectionsTab({ files, onPay }) {
 
                         <button
                             onClick={() => onPay(file)}
-                            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold active:bg-slate-800 transition-colors shadow-lg shadow-slate-200 dark:shadow-none"
+                            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-medium hover:bg-slate-800 transition-colors shadow-sm"
                         >
                             <Wallet className="w-5 h-5" />
                             Registrar Cobro

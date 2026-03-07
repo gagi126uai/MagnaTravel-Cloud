@@ -5,12 +5,12 @@ export function InvoicingTab({ files, onInvoice }) {
     const filtered = files.filter(f => f.pendingBilling > 0);
 
     return (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-6">
             {/* Desktop View */}
-            <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 shadow-sm">
+            <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
                 <table className="w-full text-left border-collapse">
                     <thead>
-                        <tr className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+                        <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-center w-16">#</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Expediente / Cliente</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Dinero Ingresado</th>
@@ -21,7 +21,7 @@ export function InvoicingTab({ files, onInvoice }) {
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                         {filtered.map((file, idx) => (
-                            <tr key={file.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-all duration-200">
+                            <tr key={file.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-6 py-4 text-center text-xs text-slate-400 font-mono">{(idx + 1).toString().padStart(2, '0')}</td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col">
@@ -52,7 +52,7 @@ export function InvoicingTab({ files, onInvoice }) {
                                 <td className="px-6 py-4 text-right pr-8">
                                     <button
                                         onClick={() => onInvoice(file)}
-                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 hover:scale-105 active:scale-95 transition-all shadow-md shadow-indigo-100 dark:shadow-none"
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
                                     >
                                         <Receipt className="w-4 h-4" />
                                         Emitir Factura
@@ -97,7 +97,7 @@ export function InvoicingTab({ files, onInvoice }) {
 
                         <button
                             onClick={() => onInvoice(file)}
-                            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-600 text-white font-bold active:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 dark:shadow-none"
+                            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition-colors shadow-sm"
                         >
                             <FilePlus className="w-5 h-5" />
                             Emitir Comprobante

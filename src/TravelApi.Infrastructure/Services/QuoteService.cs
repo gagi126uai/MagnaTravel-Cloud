@@ -150,10 +150,11 @@ public class QuoteService : IQuoteService
             FileNumber = $"EXP-{(fileCount + 1).ToString().PadLeft(5, '0')}",
             Name = quote.Title,
             Description = quote.Description,
-            Status = FileStatus.Budget,
+            Status = FileStatus.Reserved,
             PayerId = quote.CustomerId,
             StartDate = quote.TravelStartDate,
             EndDate = quote.TravelEndDate,
+            // Even though generic File Service calculates dynamically, we still populate DB bounds
             TotalCost = quote.TotalCost,
             TotalSale = quote.TotalSale,
             Balance = quote.TotalSale,
@@ -162,6 +163,29 @@ public class QuoteService : IQuoteService
 
         _db.TravelFiles.Add(file);
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Migrate Quote Items to File Services (Reservations) so totals calculate correctly in UI
+        foreach (var item in quote.Items)
+        {
+            var res = new Reservation
+            {
+                TravelFileId = file.Id,
+                CustomerId = quote.CustomerId,
+                SupplierId = item.SupplierId,
+                ServiceType = string.IsNullOrWhiteSpace(item.ServiceType) ? ServiceTypes.Other : item.ServiceType,
+                ProductType = string.IsNullOrWhiteSpace(item.ServiceType) ? ServiceTypes.Other : item.ServiceType,
+                Description = $"{item.Quantity}x {item.Description}",
+                ConfirmationNumber = "PENDIENTE",
+                Status = ReservationStatuses.Requested,
+                DepartureDate = quote.TravelStartDate ?? DateTime.UtcNow,
+                ReturnDate = quote.TravelEndDate,
+                NetCost = item.TotalCost,
+                SalePrice = item.TotalPrice,
+                Commission = item.TotalPrice - item.TotalCost,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.Reservations.Add(res);
+        }
 
         // Link quote to the file
         quote.ConvertedFileId = file.Id;

@@ -114,7 +114,7 @@ public class TravelFileService : ITravelFileService
             PayerId = request.PayerId,
             StartDate = request.StartDate,
             Description = request.Description,
-            Status = FileStatus.Budget
+            Status = FileStatus.Reserved
         };
         
         _context.TravelFiles.Add(file);
@@ -387,9 +387,9 @@ public class TravelFileService : ITravelFileService
 
             if (file == null) throw new KeyNotFoundException("File no encontrado");
 
-            if (file.Status != FileStatus.Budget)
+            if (file.Status != FileStatus.Reserved && file.Status != FileStatus.Budget)
             {
-                throw new InvalidOperationException("Solo se pueden eliminar Files en estado Presupuesto.");
+                throw new InvalidOperationException("Solo se pueden eliminar Files en estado Reservado (o Presupuesto heredado).");
             }
 
             if (file.Payments.Any())
