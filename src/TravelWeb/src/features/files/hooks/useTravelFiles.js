@@ -30,11 +30,11 @@ export function useTravelFiles() {
     }, [loadFiles]);
 
     const handleArchive = async (id) => {
-        if (!confirm("¿Archivar este expediente? Desaparecerá de la lista principal.")) return;
+        if (!confirm("¿Archivar esta reserva? Desaparecerá de la lista principal.")) return;
 
         try {
             await api.put(`/travelfiles/${id}/archive`);
-            showSuccess("Expediente archivado");
+            showSuccess("Reserva archivada");
             await loadFiles();
             return true;
         } catch (error) {

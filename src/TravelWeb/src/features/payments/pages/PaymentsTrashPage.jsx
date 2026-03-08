@@ -39,7 +39,7 @@ export default function PaymentsTrashPage() {
         const result = await Swal.fire({
             title: "¿Restaurar este pago?",
             html: `<p>El pago de <b>${formatCurrency(payment.amount)}</b> volverá a estar activo.</p>
-                   <p class="text-sm text-gray-500 mt-1">Expediente: ${payment.fileNumber || "N/A"}</p>`,
+                   <p class="text-sm text-gray-500 mt-1">Reserva: ${payment.fileNumber || "N/A"}</p>`,
             icon: "question",
             showCancelButton: true,
             confirmButtonText: "Sí, restaurar",
@@ -89,7 +89,7 @@ export default function PaymentsTrashPage() {
                                 <tr>
                                     <th className="px-6 py-3 font-medium text-slate-500">Monto</th>
                                     <th className="px-6 py-3 font-medium text-slate-500">Método</th>
-                                    <th className="px-6 py-3 font-medium text-slate-500">Expediente</th>
+                                    <th className="px-6 py-3 font-medium text-slate-500">Reserva</th>
                                     <th className="px-6 py-3 font-medium text-slate-500">Cliente</th>
                                     <th className="px-6 py-3 font-medium text-slate-500">Fecha Pago</th>
                                     <th className="px-6 py-3 font-medium text-slate-500">Eliminado</th>
@@ -171,10 +171,10 @@ export default function PaymentsTrashPage() {
                 <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div className="text-sm text-amber-800 dark:text-amber-300">
                     <p className="font-medium">Sobre la papelera de pagos</p>
-                    <p className="mt-1 opacity-80">
-                        Los pagos eliminados se conservan como medida de seguridad. Al restaurar un pago,
-                        este volverá a impactar en el saldo del expediente correspondiente.
-                    </p>
+                    <div className="bg-amber-50 text-amber-800 p-3 rounded text-sm mb-4">
+                        <strong>Atención:</strong> Al restaurar este pago,
+                        este volverá a impactar en el saldo de la reserva correspondiente.
+                    </div>
                 </div>
             </div>
         </div>

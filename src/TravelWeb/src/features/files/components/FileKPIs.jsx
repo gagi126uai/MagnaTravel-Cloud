@@ -8,7 +8,7 @@ export function FileKPIs({ stats }) {
             <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
                 <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
                     <FolderOpen className="h-3.5 w-3.5" />
-                    Expedientes Activos
+                    Reservas Activas
                 </div>
                 <div className="text-xl font-bold text-slate-900 dark:text-white">{stats.activeCount}</div>
             </div>

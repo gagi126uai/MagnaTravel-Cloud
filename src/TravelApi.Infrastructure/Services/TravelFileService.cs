@@ -126,7 +126,7 @@ public class TravelFileService : ITravelFileService
     public async Task<(Reservation Reservation, string? Warning)> AddServiceAsync(int fileId, AddServiceRequest request)
     {
         var file = await _context.TravelFiles.FindAsync(fileId);
-        if (file == null) throw new KeyNotFoundException("Expediente no encontrado");
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
         if (request.DepartureDate == default) throw new ArgumentException("La fecha de salida es obligatoria");
@@ -213,7 +213,7 @@ public class TravelFileService : ITravelFileService
     public async Task<PassengerDto> AddPassengerAsync(int fileId, Passenger passenger)
     {
         var file = await _context.TravelFiles.FindAsync(fileId);
-        if (file == null) throw new KeyNotFoundException("Expediente no encontrado");
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (passenger.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
@@ -284,7 +284,7 @@ public class TravelFileService : ITravelFileService
     public async Task<PaymentDto> AddPaymentAsync(int fileId, Payment payment)
     {
         var file = await _context.TravelFiles.FindAsync(fileId);
-        if (file == null) throw new KeyNotFoundException("Expediente no encontrado");
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (payment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
         if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un método de pago");
@@ -339,7 +339,7 @@ public class TravelFileService : ITravelFileService
     public async Task<TravelFile> UpdateStatusAsync(int id, string status)
     {
         var file = await _context.TravelFiles.FindAsync(id);
-        if (file == null) throw new KeyNotFoundException("Expediente no encontrado");
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         var validStatuses = new[] { FileStatus.Budget, FileStatus.Reserved, FileStatus.Operational, FileStatus.Closed, FileStatus.Cancelled };
         if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no válido");

@@ -12,7 +12,7 @@ export function InvoicingTab({ files, onInvoice }) {
                     <thead>
                         <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-center w-16">#</th>
-                            <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Expediente / Cliente</th>
+                            <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Reserva / Cliente</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Dinero Ingresado</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Ya Facturado</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">A Facturar AFIP</th>

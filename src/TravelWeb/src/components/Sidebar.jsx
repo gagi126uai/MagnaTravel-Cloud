@@ -20,22 +20,13 @@ import {
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
 
-// Ventas (Sales)
-const salesLinks = [
+const mainLinks = [
+    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/crm", label: "CRM Pipeline", icon: UserPlus, adminOnly: true },
+    { to: "/files", label: "Reservas", icon: FolderOpen },
     { to: "/quotes", label: "Cotizaciones", icon: FileText },
     { to: "/customers", label: "Clientes", icon: Users },
-];
-
-// Operaciones (Operations)
-const opsLinks = [
-    { to: "/files", label: "Expedientes", icon: FolderOpen },
     { to: "/suppliers", label: "Proveedores", icon: Building2 },
-];
-
-// Administración (Admin)
-const adminLinks = [
-    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/payments", label: "Caja y Facturación", icon: CreditCard },
     { to: "/rates", label: "Tarifario", icon: DollarSign },
     { to: "/reports", label: "Reportes", icon: BarChart3, adminOnly: true },
@@ -48,7 +39,7 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onTog
     const { alerts } = useAlerts() || { alerts: { TotalCount: 0 } };
 
     // Construir los links estandarizados según rol
-    const allLinks = [...salesLinks, ...opsLinks, ...adminLinks];
+    const allLinks = mainLinks;
 
     // Asignar el badge de alertas solo al link correspondiente
     const linksWithBadges = allLinks.map(link => {

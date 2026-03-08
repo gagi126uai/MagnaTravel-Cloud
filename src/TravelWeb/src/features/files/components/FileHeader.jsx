@@ -12,7 +12,7 @@ export function FileHeader({ file, onBack, onStatusChange, onDelete, onArchive }
                     <ArrowLeft className="w-4 h-4 mr-1" /> Volver a Lista
                 </button>
                 <div className="flex items-center gap-3">
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">File #{file.fileNumber}</h1>
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Reserva #{file.fileNumber}</h1>
                     <span className={`px-3 py-1 rounded-full text-sm font-medium 
                 ${file.status === 'Presupuesto' ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200' :
                             file.status === 'Reservado' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
@@ -44,14 +44,14 @@ export function FileHeader({ file, onBack, onStatusChange, onDelete, onArchive }
                 )}
                 {file.status === 'Operativo' && (
                     <button onClick={() => onStatusChange('Cerrado')} className="btn btn-success bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow">
-                        Cerrar File
+                        Cerrar Reserva
                     </button>
                 )}
 
                 {/* ADMIN ACTIONS */}
                 <div className="ml-2 pl-2 border-l border-gray-300 dark:border-slate-700 flex gap-2">
                     {file.status === 'Presupuesto' && (
-                        <button onClick={onDelete} className="btn bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded" title="Eliminar File">
+                        <button onClick={onDelete} className="btn bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded" title="Eliminar Reserva">
                             <Trash2 className="w-5 h-5" />
                         </button>
                     )}
@@ -60,6 +60,6 @@ export function FileHeader({ file, onBack, onStatusChange, onDelete, onArchive }
                     </button>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

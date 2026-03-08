@@ -134,7 +134,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                             <thead>
                                 <tr className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider">Comprobante</th>
-                                    <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider">Fecha / Expediente</th>
+                                    <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider">Fecha / Reserva</th>
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider text-right">Importe</th>
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider text-center">Resultado</th>
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider text-right pr-6">Acciones</th>

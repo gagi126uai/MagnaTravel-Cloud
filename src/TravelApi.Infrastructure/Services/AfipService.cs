@@ -360,10 +360,10 @@ public class AfipService : IAfipService
             .Include(f => f.Payer)
             .FirstOrDefaultAsync(f => f.Id == travelFileId);
 
-        if (travelFile == null) throw new Exception("Expediente no encontrado");
+        if (travelFile == null) throw new Exception("Reserva no encontrada");
         
         var customer = travelFile.Payer;
-        if (customer == null) throw new Exception("El expediente no tiene cliente asignado"); // Allow Consumer Final?
+        if (customer == null) throw new Exception("La reserva no tiene cliente asignado"); // Allow Consumer Final?
 
         // 2. Load Original Invoice (if Annulment/Note)
         Invoice? originalInvoice = null;

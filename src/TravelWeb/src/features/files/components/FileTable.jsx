@@ -11,7 +11,7 @@ export function FileTable({ files, onRowClick, onArchive }) {
                 <table className="w-full text-left border-collapse">
                     <thead>
                         <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
-                            <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Expediente</th>
+                            <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Reserva</th>
                             <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Cliente / Pasajeros</th>
                             <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Estado</th>
                             <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Finanzas</th>
@@ -105,7 +105,7 @@ export function FileTable({ files, onRowClick, onArchive }) {
                                 <td colSpan="5" className="px-4 py-12 text-center">
                                     <div className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-600">
                                         <Archive className="h-12 w-12 mb-3 opacity-20" />
-                                        <p className="text-sm font-medium">No se encontraron expedientes</p>
+                                        <p className="text-sm font-medium">No se encontraron reservas</p>
                                         <p className="text-xs">Intenta ajustar los filtros de búsqueda</p>
                                     </div>
                                 </td>

@@ -176,7 +176,7 @@ export default function DashboardPage() {
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <PieChart className="h-5 w-5 text-slate-500" />
-                            Estado de Expedientes
+                            Estado de Reservas
                         </CardTitle>
                         <CardDescription>Distribución actual de files activos</CardDescription>
                     </CardHeader>

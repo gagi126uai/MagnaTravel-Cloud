@@ -88,11 +88,11 @@ export default function QuotesPage() {
     };
 
     const handleConvert = async (id) => {
-        const { isConfirmed } = await Swal.fire({ title: "¿Convertir a expediente?", text: "Se creará un expediente nuevo con los datos de esta cotización.", icon: "question", showCancelButton: true, confirmButtonColor: "#4f46e5" });
+        const { isConfirmed } = await Swal.fire({ title: "¿Convertir a reserva?", text: "Se creará una reserva nueva con los datos de esta cotización.", icon: "question", showCancelButton: true, confirmButtonColor: "#4f46e5" });
         if (!isConfirmed) return;
         try {
             const res = await api.post(`/quotes/${id}/convert`);
-            showSuccess(`Expediente creado: ID ${res.fileId}`);
+            showSuccess(`Reserva creada: ID ${res.fileId}`);
             loadQuotes();
         } catch (e) { showError(e.message || "Error al convertir"); }
     };
@@ -195,11 +195,11 @@ export default function QuotesPage() {
                         </>
                     )}
                     {(detailQuote.status === "Aceptada") && !detailQuote.convertedFileId && (
-                        <button onClick={() => handleConvert(detailQuote.id)} className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700"><ArrowRight className="w-4 h-4" /> Convertir a Expediente</button>
+                        <button onClick={() => handleConvert(detailQuote.id)} className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700"><ArrowRight className="w-4 h-4" /> Convertir a Reserva</button>
                     )}
                     {detailQuote.convertedFileId && (
                         <span className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-xl text-sm font-bold">
-                            <Check className="w-4 h-4" /> Convertida → Exp #{detailQuote.convertedFileId}
+                            <Check className="w-4 h-4" /> Convertida → Res #{detailQuote.convertedFileId}
                         </span>
                     )}
                 </div>
@@ -227,29 +227,76 @@ export default function QuotesPage() {
                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por título, número o destino..." className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm" />
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filtered.length === 0 ? (
-                    <div className="col-span-full py-16 text-center text-sm text-slate-400">No hay cotizaciones.</div>
-                ) : filtered.map(q => (
-                    <div key={q.id} className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 hover:shadow-md hover:border-indigo-200 dark:hover:border-indigo-800 transition-all cursor-pointer" onClick={() => loadDetail(q.id)}>
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[10px] font-black text-indigo-500">{q.quoteNumber}</span>
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[q.status] || STATUS_COLORS.Borrador}`}>{q.status}</span>
-                        </div>
-                        <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1 truncate">{q.title}</h3>
-                        <div className="flex items-center gap-3 text-[10px] text-slate-400 mb-3">
-                            {q.destination && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{q.destination}</span>}
-                            <span className="flex items-center gap-1"><Users className="w-3 h-3" />{q.adults + q.children} pax</span>
-                        </div>
-                        <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
-                            <span className="text-lg font-black text-indigo-600">{fmt(q.totalSale)}</span>
-                            <div className="flex gap-1">
-                                <button onClick={e => { e.stopPropagation(); setEditingQuote(q); setShowModal(true); }} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"><Edit className="w-3.5 h-3.5" /></button>
-                                <button onClick={e => { e.stopPropagation(); handleDelete(q.id); }} className="p-1.5 rounded hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-400"><Trash2 className="w-3.5 h-3.5" /></button>
-                            </div>
-                        </div>
-                    </div>
-                ))}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="min-w-full text-left border-collapse">
+                        <thead>
+                            <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+                                <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Cotización</th>
+                                <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Cliente / Título</th>
+                                <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Destino / Pax</th>
+                                <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Estado</th>
+                                <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Monto Total</th>
+                                <th className="px-4 py-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right pr-6">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                            {filtered.length === 0 ? (
+                                <tr>
+                                    <td colSpan="6" className="px-4 py-12 text-center">
+                                        <div className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-600">
+                                            <FileText className="h-10 w-10 mb-3 opacity-20" />
+                                            <p className="text-sm font-medium">No se encontraron cotizaciones</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : (
+                                filtered.map(q => (
+                                    <tr key={q.id} onClick={() => loadDetail(q.id)} className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors cursor-pointer">
+                                        <td className="px-4 py-3 align-middle whitespace-nowrap">
+                                            <span className="text-[11px] font-black text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 px-2 py-1 rounded-md">{q.quoteNumber}</span>
+                                        </td>
+                                        <td className="px-4 py-3 align-middle">
+                                            <div className="font-semibold text-sm text-slate-900 dark:text-white truncate">{q.title}</div>
+                                            <div className="text-xs text-slate-400 flex items-center gap-1">
+                                                <Calendar className="w-3 h-3" />
+                                                {q.createdAt ? new Date(q.createdAt).toLocaleDateString() : '-'}
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 align-middle">
+                                            <div className="text-sm text-slate-600 dark:text-slate-300">
+                                                {q.destination || <span className="text-slate-400 italic">Sin destino</span>}
+                                            </div>
+                                            <div className="text-xs text-slate-400 flex items-center gap-1">
+                                                <Users className="w-3 h-3" />
+                                                {q.adults + q.children} pax
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 align-middle whitespace-nowrap">
+                                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${STATUS_COLORS[q.status] || STATUS_COLORS.Borrador}`}>
+                                                {q.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 align-middle text-right whitespace-nowrap">
+                                            <div className="text-sm font-black text-indigo-600 dark:text-indigo-400">{fmt(q.totalSale)}</div>
+                                            <div className="text-[10px] text-slate-400">Neto: {fmt(q.totalCost)}</div>
+                                        </td>
+                                        <td className="px-4 py-3 align-middle text-right pr-4 whitespace-nowrap">
+                                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button onClick={e => { e.stopPropagation(); setEditingQuote(q); setShowModal(true); }} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded">
+                                                    <Edit className="w-4 h-4" />
+                                                </button>
+                                                <button onClick={e => { e.stopPropagation(); handleDelete(q.id); }} className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded">
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {showModal && <QuoteFormModal customers={customers} initial={editingQuote} onSave={editingQuote ? handleUpdate : handleCreate} onClose={() => { setShowModal(false); setEditingQuote(null); }} />}
@@ -298,7 +345,10 @@ function QuoteFormModal({ customers, initial, onSave, onClose }) {
 }
 
 function ItemModal({ serviceTypes, onSave, onClose }) {
-    const [form, setForm] = useState({ serviceType: "Hotel", description: "", quantity: 1, unitCost: 0, unitPrice: 0, markupPercent: 20, notes: "" });
+    const [form, setForm] = useState({ serviceType: "Hotel", description: "", quantity: 1, unitCost: 0, unitPrice: 0, markupPercent: 20, notes: "", rateId: null });
+    const [ratesResults, setRatesResults] = useState([]);
+    const [isSearching, setIsSearching] = useState(false);
+
     const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
     const handleMarkupCalc = () => {
@@ -307,23 +357,109 @@ function ItemModal({ serviceTypes, onSave, onClose }) {
         }
     };
 
+    // Auto-search rates when service string or description changes
+    useEffect(() => {
+        const fetchRates = async () => {
+            if (form.description.length < 2 && !form.serviceType) {
+                setRatesResults([]);
+                return;
+            }
+            setIsSearching(true);
+            try {
+                const res = await api.get(`/rates/search?serviceType=${form.serviceType}&query=${form.description}`);
+                setRatesResults(res || []);
+            } catch (e) {
+                console.error(e);
+                setRatesResults([]);
+            } finally {
+                setIsSearching(false);
+            }
+        };
+        const timeoutId = setTimeout(fetchRates, 300);
+        return () => clearTimeout(timeoutId);
+    }, [form.serviceType, form.description]);
+
+    const selectRate = (rate) => {
+        setForm(p => ({
+            ...p,
+            description: rate.productName || rate.hotelName || rate.description || "Servicio seleccionado",
+            unitCost: rate.netCost || 0,
+            unitPrice: rate.salePrice || 0,
+            rateId: rate.id,
+            markupPercent: rate.netCost ? Math.round(((rate.salePrice - rate.netCost) / rate.netCost) * 100) : 0
+        }));
+        setRatesResults([]); // Hide results after selection
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
-            <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
-                <h2 className="text-lg font-black text-slate-900 dark:text-white">Agregar Servicio</h2>
-                <select value={form.serviceType} onChange={e => set("serviceType", e.target.value)} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm">
-                    {serviceTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <input value={form.description} onChange={e => set("description", e.target.value)} placeholder="Descripción *" className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm" />
-                <div className="grid grid-cols-3 gap-3">
-                    <div><label className="text-[10px] font-bold text-slate-400">CANTIDAD</label><input type="number" value={form.quantity} onChange={e => set("quantity", parseInt(e.target.value) || 1)} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm" /></div>
-                    <div><label className="text-[10px] font-bold text-slate-400">COSTO</label><input type="number" value={form.unitCost} onChange={e => set("unitCost", parseFloat(e.target.value) || 0)} onBlur={handleMarkupCalc} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm" /></div>
-                    <div><label className="text-[10px] font-bold text-slate-400">MARKUP %</label><input type="number" value={form.markupPercent} onChange={e => set("markupPercent", parseFloat(e.target.value) || 0)} onBlur={handleMarkupCalc} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm" /></div>
+            <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">Agregar Servicio a Cotización</h2>
+
+                <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Tipo de Servicio</label>
+                    <select value={form.serviceType} onChange={e => { set("serviceType", e.target.value); set("rateId", null); }} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        {serviceTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
                 </div>
-                <div><label className="text-[10px] font-bold text-slate-400">PRECIO VENTA</label><input type="number" value={form.unitPrice} onChange={e => set("unitPrice", parseFloat(e.target.value) || 0)} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm" /></div>
-                <div className="flex gap-3 justify-end pt-2">
-                    <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancelar</button>
-                    <button onClick={() => onSave(form)} disabled={!form.description} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:opacity-40">Agregar</button>
+
+                <div className="relative">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Descripción o Nombre de Tarifa</label>
+                    <div className="relative">
+                        <input value={form.description} onChange={e => { set("description", e.target.value); set("rateId", null); }} placeholder="EJ: Hotel Hilton Base Doble" className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50" />
+                        {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin" />}
+                    </div>
+
+                    {/* Tarifa Autocomplete Results */}
+                    {ratesResults.length > 0 && !form.rateId && (
+                        <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
+                            {ratesResults.map(r => (
+                                <div key={r.id} onClick={() => selectRate(r)} className="p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                                    <div className="font-bold text-sm text-slate-900 dark:text-white">{r.productName || r.hotelName || r.description}</div>
+                                    <div className="flex justify-between mt-1 text-xs">
+                                        <span className="text-slate-500">{r.supplierName || 'Tarifario'}</span>
+                                        <span className="font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">${r.salePrice}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {form.rateId && (
+                    <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/30 rounded-lg p-3 flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 text-sm font-medium">
+                            <Check className="w-4 h-4" /> Vinculado a Tarifario (#{form.rateId})
+                        </div>
+                        <button onClick={() => set("rateId", null)} className="text-xs text-emerald-600 hover:text-emerald-800 underline">Desvincular</button>
+                    </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-3">
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">CANT</label>
+                        <input type="number" min="1" value={form.quantity} onChange={e => set("quantity", parseInt(e.target.value) || 1)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-bold text-center" />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">COSTO ($)</label>
+                        <input type="number" min="0" value={form.unitCost} onChange={e => set("unitCost", parseFloat(e.target.value) || 0)} onBlur={handleMarkupCalc} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-right" />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">MARKUP (%)</label>
+                        <input type="number" min="0" value={form.markupPercent} onChange={e => set("markupPercent", parseFloat(e.target.value) || 0)} onBlur={handleMarkupCalc} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-center" />
+                    </div>
+                </div>
+
+                <div>
+                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider mb-1 block">PRECIO VTA ($)</label>
+                    <input type="number" min="0" value={form.unitPrice} onChange={e => set("unitPrice", parseFloat(e.target.value) || 0)} className="w-full px-4 py-3 rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 text-lg font-black text-indigo-700 dark:text-indigo-400 text-right focus:border-indigo-500 focus:outline-none" />
+                </div>
+
+                <div className="flex gap-3 justify-end pt-4 mt-2 border-t border-slate-100 dark:border-slate-800">
+                    <button onClick={onClose} className="px-5 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">Cancelar</button>
+                    <button onClick={() => onSave(form)} disabled={!form.description} className="px-6 py-2.5 bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:shadow-none transition-all flex items-center gap-2">
+                        <Plus className="w-4 h-4" /> Agregar Ítem
+                    </button>
                 </div>
             </div>
         </div>

@@ -62,7 +62,7 @@ public class TravelFilesController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error creando expediente: {ex.Message}");
+            return StatusCode(500, $"Error creando reserva: {ex.Message}");
         }
     }
 
@@ -338,7 +338,7 @@ public class TravelFilesController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error eliminando expediente: {ex.Message}");
+            return StatusCode(500, $"Error eliminando reserva: {ex.Message}");
         }
     }
 

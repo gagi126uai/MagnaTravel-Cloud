@@ -178,7 +178,7 @@ export default function SupplierAccountPage() {
                             <tr className="border-b bg-muted/50">
                                 <th className="p-3 text-left font-medium">Tipo</th>
                                 <th className="p-3 text-left font-medium">Descripción</th>
-                                <th className="p-3 text-left font-medium">Expediente</th>
+                                <th className="p-3 text-left font-medium">Reserva</th>
                                 <th className="p-3 text-left font-medium">Fecha</th>
                                 <th className="p-3 text-left font-medium">Estado</th>
                                 <th className="p-3 text-right font-medium">Costo</th>
@@ -281,7 +281,7 @@ export default function SupplierAccountPage() {
                                 <th className="p-3 text-left font-medium">Fecha</th>
                                 <th className="p-3 text-left font-medium">Método</th>
                                 <th className="p-3 text-left font-medium">Referencia</th>
-                                <th className="p-3 text-left font-medium">Expediente</th>
+                                <th className="p-3 text-left font-medium">Reserva</th>
                                 <th className="p-3 text-left font-medium">Notas</th>
                                 <th className="p-3 text-right font-medium">Monto</th>
                                 <th className="p-3 text-center font-medium">Acciones</th>

@@ -12,7 +12,7 @@ export function CollectionsTab({ files, onPay }) {
                     <thead>
                         <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-center w-16">#</th>
-                            <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Expediente / Cliente</th>
+                            <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Reserva / Cliente</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Venta Total</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Cobrado</th>
                             <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Pendiente</th>
@@ -111,7 +111,7 @@ export function CollectionsTab({ files, onPay }) {
                         <Wallet className="w-8 h-8 text-slate-300" />
                     </div>
                     <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">Todo al día</h3>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm">No hay expedientes con deuda comercial pendiente.</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">No hay reservas con deuda comercial pendiente.</p>
                 </div>
             )}
         </div>

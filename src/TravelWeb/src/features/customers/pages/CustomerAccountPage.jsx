@@ -90,7 +90,7 @@ export default function CustomerAccountPage() {
     const handleDeletePayment = async (payment) => {
         const result = await Swal.fire({
             title: "¿Eliminar pago?",
-            text: `Se anulará el pago de ${formatCurrency(payment.amount)} y la deuda volverá al expediente.`,
+            text: `Se anulará el pago de ${formatCurrency(payment.amount)} y la deuda volverá a la reserva.`,
             icon: "warning",
             showCancelButton: true,
             confirmButtonText: "Sí, eliminar",
@@ -296,7 +296,7 @@ export default function CustomerAccountPage() {
                                                         </>
                                                     )}
                                                     {move.type === 'FILE' && (
-                                                        <Link to={`/files/${move.originalData.id}`} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Expediente">
+                                                        <Link to={`/files/${move.originalData.id}`} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Reserva">
                                                             <FileText className="h-3.5 w-3.5" />
                                                         </Link>
                                                     )}

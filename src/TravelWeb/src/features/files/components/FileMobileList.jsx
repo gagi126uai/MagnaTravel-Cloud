@@ -8,7 +8,7 @@ export function FileMobileList({ files, onRowClick }) {
     if (files.length === 0) {
         return (
             <div className="text-center py-12 bg-slate-50 dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                <p className="text-muted-foreground text-sm">No se encontraron expedientes.</p>
+                <p className="text-muted-foreground text-sm">No se encontraron reservas.</p>
             </div>
         );
     }

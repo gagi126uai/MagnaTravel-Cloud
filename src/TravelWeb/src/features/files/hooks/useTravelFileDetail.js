@@ -18,7 +18,7 @@ export function useTravelFileDetail(fileId, navigate) {
             setFile(res);
         } catch (error) {
             console.error(error);
-            showError("Error al cargar el expediente: " + (error.response?.data?.Error || error.message || "Error desconocido"));
+            showError("Error al cargar la reserva: " + (error.response?.data?.Error || error.message || "Error desconocido"));
             setFile(null);
         } finally {
             setLoading(false);

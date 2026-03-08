@@ -42,11 +42,11 @@ export default function FilesPage() {
             {/* Header section */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <div>
-                    <h2 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Gestión de Viajes</h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Administra tus expedientes, presupuestos y ventas.</p>
+                    <h2 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Reservas</h2>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Administra tus reservas, presupuestos y ventas.</p>
                 </div>
                 <Button onClick={() => setIsCreateModalOpen(true)} className="w-full sm:w-auto shadow-sm">
-                    <Plus className="h-4 w-4 mr-2" /> Nuevo Expediente
+                    <Plus className="h-4 w-4 mr-2" /> Nueva Reserva
                 </Button>
             </div>
 
