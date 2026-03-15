@@ -31,39 +31,49 @@ const MESSAGE_COOLDOWN_MS = 3000;
 const lastMessageTime = new Map();
 
 // ─── Bot Messages (Defaults) ─────────────────────────────
+let agencyName = "MagnaTravel";
+
 let MSG = {
-    welcome: "¡Hola! 👋 Bienvenido/a a *MagnaTravel* 🌎✈️\n\nSoy tu asistente virtual y estoy acá para ayudarte a planificar tu próximo viaje soñado. 🏖️🗺️\n\nPara empezar, *¿me decís tu nombre completo?*",
+    welcome: () => `¡Hola! 👋 Bienvenido/a a *${agencyName}* 🌎✈️\n\nSoy tu asistente virtual y estoy acá para ayudarte a planificar tu próximo viaje soñado. 🏖️🗺️\n\nPara empezar, *¿me decís tu nombre completo?*`,
     badName: `No pude captar tu nombre 😅 ¿Podés decirme tu *nombre y apellido*?`,
     askInterest: (name) => `¡Un placer, *${name}*! 🤩\n\nContame, *¿qué destino o tipo de viaje te gustaría hacer?*\n\n✈️ _Ej: Cancún, Europa, Crucero, Brasil, Bariloche..._`,
     askDates: (interest) => `¡*${interest}*! Excelente elección 😍\n\n¿Tenés alguna *fecha aproximada* en mente para viajar? 📅\n\n_Ej: "marzo 2026", "semana santa", "todavía no sé"_`,
     askTravelers: () => `Perfecto 📝\n\nÚltima pregunta: *¿cuántas personas viajan?* 👥\n\n_Ej: "somos 2", "familia de 4", "soy solo/a", "grupo de amigos"_`,
-    thanks: (name) => `¡Genial, *${name}*! Ya tengo toda la info 🎉\n\n📋 *Tu consulta fue registrada* y un asesor se va a comunicar con vos a la brevedad.\n\n¡Gracias por confiar en *MagnaTravel*! ✨🛫`,
+    thanks: (name) => `¡Genial, *${name}*! Ya tengo toda la info 🎉\n\n📋 *Tu consulta fue registrada* y un asesor se va a comunicar con vos a la brevedad.\n\n¡Gracias por confiar en *${agencyName}*! ✨🛫`,
     agentRequest: (name) => `Entendido, *${name || ""}*! 🤝 Ya le avisé a un asesor para que te contacte personalmente.📞`,
     duplicate: `¡Hola de nuevo! 😊 Tu consulta ya fue registrada y estamos trabajando en tu propuesta.\nSi es algo urgente, podés llamarnos directamente. 📞`,
     error: `Disculpá, hubo un problema al registrar la consulta 😔\nPor favor intentá de nuevo o llamanos por teléfono.`,
 };
 
 // ─── Dynamic Config ──────────────────────────────────────
+async function fetchAgencyInfo() {
+    try {
+        const res = await axios.get(`${API_URL}/api/reports/settings`);
+        if (res.data && res.data.agencyName) {
+            agencyName = res.data.agencyName;
+            console.log(`🏢 Agencia: ${agencyName}`);
+        }
+    } catch (err) {
+        console.log("⚠️ No se pudo cargar info de la agencia.");
+    }
+}
+
 async function fetchConfig() {
     try {
+        await fetchAgencyInfo(); // Cargar agencia primero
         console.log("🔄 Cargando configuración desde API...");
         const res = await axios.get(`${API_URL}/api/whatsapp/config`);
         const config = res.data;
         if (config) {
-            MSG.welcome = config.welcomeMessage || MSG.welcome;
-            MSG.askInterestTemplate = config.askInterestMessage || MSG.askInterestTemplate;
-            MSG.askDatesTemplate = config.askDatesMessage || MSG.askDatesTemplate;
-            MSG.askTravelers = () => config.askTravelersMessage || "Última pregunta: *¿cuántas personas viajan?* 👥";
-            MSG.thanksTemplate = config.thanksMessage || MSG.thanksTemplate;
-            MSG.agentRequestTemplate = config.agentRequestMessage || MSG.agentRequestTemplate;
+            // Funciones con reemplazos dinámicos
+            MSG.welcome = () => (config.welcomeMessage || "¡Hola! 👋 Bienvenido/a a *{agencyName}* 🌎✈️...").replace("{agencyName}", agencyName);
+            MSG.askInterest = (name) => (config.askInterestMessage || "¡Un placer, *{name}*! 🤩...").replace("{name}", name);
+            MSG.askDates = (interest) => (config.askDatesMessage || "¡*{interest}*! Excelente elección 😍...").replace("{interest}", interest);
+            MSG.askTravelers = () => config.askTravelersMessage || "Perfecto 📝... Última pregunta: *¿cuántas personas viajan?* 👥\n\n_Ej: \"somos 2\", \"familia de 4\", \"soy solo/a\", \"grupo de amigos\"_";
+            MSG.thanks = (name) => (config.thanksMessage || "¡Genial, *{name}*!...").replace("{name}", name).replace("{agencyName}", agencyName);
+            MSG.agentRequest = (name) => (config.agentRequestMessage || "Entendido, *{name}*! 🤝").replace("{name}", name || "");
             MSG.duplicate = config.duplicateMessage || MSG.duplicate;
 
-            // Funciones con reemplazos
-            MSG.askInterest = (name) => (config.askInterestMessage || "").replace("{name}", name);
-            MSG.askDates = (interest) => (config.askDatesMessage || "").replace("{interest}", interest);
-            MSG.thanks = (name) => (config.thanksMessage || "").replace("{name}", name);
-            MSG.agentRequest = (name) => (config.agentRequestMessage || "").replace("{name}", name || "");
-            
             console.log("✅ Configuración actualizada.");
         }
     } catch (err) {
@@ -243,15 +253,16 @@ client.on("message", async (message) => {
 
     if (/nueva\s*consulta/i.test(body)) {
         const s = createSession(chatId);
-        await message.reply(MSG.welcome);
-        s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${MSG.welcome}`);
+        const welcomeMsg = typeof MSG.welcome === "function" ? MSG.welcome() : MSG.welcome;
+        await message.reply(welcomeMsg);
+        s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${welcomeMsg}`);
         s.state = "WAITING_NAME";
         return;
     }
 
     if (AGENT_REQUEST.test(body)) {
         const s = getSession(chatId) || createSession(chatId);
-        const amsg = MSG.agentRequest(s.name);
+        const amsg = typeof MSG.agentRequest === "function" ? MSG.agentRequest(s.name) : MSG.agentRequest;
         await message.reply(amsg);
         s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${amsg}`);
         s.state = "DONE";
@@ -264,8 +275,9 @@ client.on("message", async (message) => {
     try {
         if (!session) {
             session = createSession(chatId);
-            await message.reply(MSG.welcome);
-            session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${MSG.welcome}`);
+            const welcomeMsg = typeof MSG.welcome === "function" ? MSG.welcome() : MSG.welcome;
+            await message.reply(welcomeMsg);
+            session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${welcomeMsg}`);
             session.state = "WAITING_NAME";
             return;
         }

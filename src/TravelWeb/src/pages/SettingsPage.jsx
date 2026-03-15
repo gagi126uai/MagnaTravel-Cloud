@@ -24,7 +24,8 @@ import {
   ChevronRight,
   ChevronDown,
   Briefcase,
-  Clock
+  Clock,
+  Smartphone
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
@@ -806,7 +807,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="p-6 space-y-6">
-                    <MsgInput label="Mensaje de Bienvenida" sub="Primer contacto con el usuario." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
+                    <MsgInput label="Mensaje de Bienvenida" sub="Usa {agencyName} para el nombre de tu agencia." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
                     <MsgInput label="Pregunta por Interés" sub="Usa {name} para el nombre del cliente." value={botConfig.askInterestMessage} onChange={v => setBotConfig({ ...botConfig, askInterestMessage: v })} />
                     <MsgInput label="Pregunta por Fechas" sub="Usa {interest} para el destino capturado." value={botConfig.askDatesMessage} onChange={v => setBotConfig({ ...botConfig, askDatesMessage: v })} />
                     <MsgInput label="Pregunta por Viajeros" sub="Último paso antes de cerrar el lead." value={botConfig.askTravelersMessage} onChange={v => setBotConfig({ ...botConfig, askTravelersMessage: v })} />
