@@ -33,6 +33,7 @@ services:
       Jwt__Audience: ${JWT_AUDIENCE:-MagnaTravelUsers}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       Cors__Origins__0: ${WEB_ORIGIN:-http://localhost:3000}
+      WhatsApp__WebhookSecret: ${WHATSAPP_WEBHOOK_SECRET:-CHANGE_THIS_SECRET}
     ports:
       - "5000:8080"
 
@@ -49,5 +50,22 @@ services:
     ports:
       - "3000:80"
 
+  whatsapp-bot:
+    build:
+      context: .
+      dockerfile: src/WhatsAppBot/Dockerfile
+    container_name: travel_whatsapp_bot
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      - whatsapp_auth:/app/.wwebjs_auth
+    environment:
+      WEBHOOK_URL: http://api:8080/api/webhooks/whatsapp
+      WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-CHANGE_THIS_SECRET}
+      BOT_SESSION_TIMEOUT_MINUTES: 30
+
 volumes:
   pgdata:
+  whatsapp_auth:
+

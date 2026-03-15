@@ -4,7 +4,7 @@ import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import {
     Plus, User, Phone, Mail, MapPin, DollarSign, Calendar,
-    MessageSquare, ArrowRight, Loader2, ChevronDown, X, Check, Send, FileText
+    MessageSquare, ArrowRight, Loader2, ChevronDown, X, Check, Send, FileText, Smartphone
 } from "lucide-react";
 import Swal from "sweetalert2";
 
@@ -98,7 +98,14 @@ export default function CRMPage() {
                     <button onClick={() => setDetailLead(null)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"><X className="w-5 h-5" /></button>
                     <div className="flex-1">
                         <h1 className="text-xl font-black text-slate-900 dark:text-white">{detailLead.fullName}</h1>
-                        <p className="text-xs text-slate-400">{detailLead.source || "Sin fuente"} | {detailLead.interestedIn || "Sin interés definido"}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                            {detailLead.source === "WhatsApp" && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-[10px] font-black">
+                                    <Smartphone className="w-3 h-3" /> Vía WhatsApp Bot
+                                </span>
+                            )}
+                            <p className="text-xs text-slate-400">{detailLead.source || "Sin fuente"} | {detailLead.interestedIn || "Sin interés definido"}</p>
+                        </div>
                     </div>
                 </div>
 
@@ -189,8 +196,16 @@ export default function CRMPage() {
                             <div className="px-3 pb-3 space-y-2">
                                 {leads.map(lead => (
                                     <div key={lead.id} onClick={() => loadDetail(lead.id)}
-                                        className="bg-white dark:bg-slate-900 rounded-xl p-3 shadow-sm border border-slate-100 dark:border-slate-800 cursor-pointer hover:shadow-md hover:border-indigo-200 dark:hover:border-indigo-800 transition-all">
-                                        <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{lead.fullName}</div>
+                                        className={`bg-white dark:bg-slate-900 rounded-xl p-3 shadow-sm border cursor-pointer hover:shadow-md transition-all ${lead.source === "WhatsApp" ? "border-emerald-200 dark:border-emerald-800 hover:border-emerald-300 dark:hover:border-emerald-700" : "border-slate-100 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800"}`}>
+                                        <div className="flex items-center gap-2">
+                                            <div className="text-sm font-bold text-slate-900 dark:text-white truncate flex-1">{lead.fullName}</div>
+                                            {lead.source === "WhatsApp" && (
+                                                <span className="relative flex h-4 w-4 flex-shrink-0" title="Vía WhatsApp Bot">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40"></span>
+                                                    <Smartphone className="relative w-4 h-4 text-emerald-500" />
+                                                </span>
+                                            )}
+                                        </div>
                                         {lead.interestedIn && <div className="text-[10px] text-indigo-500 font-bold mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3" />{lead.interestedIn}</div>}
                                         <div className="flex items-center justify-between mt-2">
                                             <span className="text-[10px] text-slate-400">{lead.source || "—"}</span>
