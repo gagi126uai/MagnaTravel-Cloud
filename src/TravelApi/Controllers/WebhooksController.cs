@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -8,8 +9,7 @@ using TravelApi.Infrastructure.Persistence;
 namespace TravelApi.Controllers;
 
 /// <summary>
-/// Endpoints públicos (sin JWT) para recibir datos desde servicios externos.
-/// Protegidos con un header secreto compartido (X-Webhook-Secret).
+/// Endpoints para WhatsApp: webhook público + envío de mensajes (autenticado).
 /// </summary>
 [ApiController]
 [Route("api/webhooks")]
@@ -19,59 +19,56 @@ public class WebhooksController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IConfiguration _config;
     private readonly ILogger<WebhooksController> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public WebhooksController(
         ILeadService leadService,
         AppDbContext db,
         IConfiguration config,
-        ILogger<WebhooksController> logger)
+        ILogger<WebhooksController> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _leadService = leadService;
         _db = db;
         _config = config;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
+    }
+
+    private bool ValidateSecret()
+    {
+        var expected = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+        var provided = Request.Headers["X-Webhook-Secret"].FirstOrDefault();
+        return !string.IsNullOrEmpty(provided) && provided == expected;
     }
 
     /// <summary>
     /// Recibe leads desde el bot de WhatsApp.
     /// POST /api/webhooks/whatsapp
-    /// Header requerido: X-Webhook-Secret
     /// </summary>
     [HttpPost("whatsapp")]
     public async Task<ActionResult> WhatsAppLead(
         [FromBody] WhatsAppWebhookDto dto,
         CancellationToken cancellationToken)
     {
-        // 1. Validar secret
-        var expectedSecret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
-        var providedSecret = Request.Headers["X-Webhook-Secret"].FirstOrDefault();
-
-        if (string.IsNullOrEmpty(providedSecret) || providedSecret != expectedSecret)
+        if (!ValidateSecret())
         {
-            _logger.LogWarning("Webhook WhatsApp rechazado: secret inválido desde {IP}",
-                HttpContext.Connection.RemoteIpAddress);
+            _logger.LogWarning("Webhook rechazado: secret inválido desde {IP}", HttpContext.Connection.RemoteIpAddress);
             return Unauthorized(new { message = "Secret inválido." });
         }
 
-        // 2. Validar datos mínimos
         if (string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Phone))
-        {
             return BadRequest(new { message = "Nombre y teléfono son obligatorios." });
-        }
 
-        // 3. Verificar duplicados: buscar lead activo con el mismo teléfono
+        // Verificar duplicados
         var existingLead = await _db.Leads
-            .Where(l => l.Phone == dto.Phone
-                && l.Status != LeadStatus.Won
-                && l.Status != LeadStatus.Lost)
+            .Where(l => l.Phone == dto.Phone && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (existingLead != null)
         {
-            _logger.LogInformation("Lead duplicado de WhatsApp: {Phone} ya existe como Lead #{Id}",
-                dto.Phone, existingLead.Id);
+            _logger.LogInformation("Lead duplicado WhatsApp: {Phone} → Lead #{Id}", dto.Phone, existingLead.Id);
 
-            // Agregar una actividad al lead existente con la nueva conversación
             if (!string.IsNullOrWhiteSpace(dto.Transcript))
             {
                 await _leadService.AddActivityAsync(existingLead.Id, new LeadActivity
@@ -82,14 +79,14 @@ public class WebhooksController : ControllerBase
                 }, cancellationToken);
             }
 
-            return Conflict(new
-            {
-                message = "Ya existe un lead activo con este teléfono.",
-                leadId = existingLead.Id
-            });
+            return Conflict(new { message = "Ya existe un lead activo con este teléfono.", leadId = existingLead.Id });
         }
 
-        // 4. Crear el lead
+        // Crear lead
+        var notes = "Lead capturado por WhatsApp Bot.";
+        if (!string.IsNullOrWhiteSpace(dto.Dates)) notes += $"\n📅 Fechas: {dto.Dates}";
+        if (!string.IsNullOrWhiteSpace(dto.Travelers)) notes += $"\n👥 Viajeros: {dto.Travelers}";
+
         var lead = new Lead
         {
             FullName = dto.Name.Trim(),
@@ -97,12 +94,11 @@ public class WebhooksController : ControllerBase
             Source = "WhatsApp",
             InterestedIn = dto.Interest?.Trim(),
             Status = LeadStatus.New,
-            Notes = $"Lead capturado automáticamente por el bot de WhatsApp.",
+            Notes = notes,
         };
 
         var created = await _leadService.CreateAsync(lead, cancellationToken);
 
-        // 5. Registrar la actividad con el transcript
         if (!string.IsNullOrWhiteSpace(dto.Transcript))
         {
             await _leadService.AddActivityAsync(created.Id, new LeadActivity
@@ -113,8 +109,7 @@ public class WebhooksController : ControllerBase
             }, cancellationToken);
         }
 
-        _logger.LogInformation("✅ Nuevo lead de WhatsApp: #{Id} — {Name} ({Phone}) — Interés: {Interest}",
-            created.Id, created.FullName, created.Phone, created.InterestedIn ?? "No especificado");
+        _logger.LogInformation("✅ Nuevo lead WhatsApp: #{Id} — {Name} ({Phone})", created.Id, created.FullName, created.Phone);
 
         return StatusCode(201, new
         {
@@ -124,4 +119,112 @@ public class WebhooksController : ControllerBase
             phone = created.Phone
         });
     }
+
+    /// <summary>
+    /// Recibe mensajes individuales del bot (para mantener el historial en el CRM).
+    /// POST /api/webhooks/whatsapp/message
+    /// </summary>
+    [HttpPost("whatsapp/message")]
+    public async Task<ActionResult> WhatsAppMessage(
+        [FromBody] WhatsAppMessageDto dto,
+        CancellationToken cancellationToken)
+    {
+        if (!ValidateSecret())
+            return Unauthorized(new { message = "Secret inválido." });
+
+        if (string.IsNullOrWhiteSpace(dto.Phone) || string.IsNullOrWhiteSpace(dto.Message))
+            return BadRequest(new { message = "Phone y message son obligatorios." });
+
+        // Buscar lead activo con ese teléfono
+        var lead = await _db.Leads
+            .Where(l => l.Phone == dto.Phone && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (lead == null)
+            return Ok(new { message = "No hay lead activo con ese teléfono, mensaje ignorado." });
+
+        // Guardar como actividad
+        await _leadService.AddActivityAsync(lead.Id, new LeadActivity
+        {
+            Type = "WhatsApp",
+            Description = dto.Message,
+            CreatedBy = dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"
+        }, cancellationToken);
+
+        return Ok(new { leadId = lead.Id });
+    }
+
+    /// <summary>
+    /// Envía un mensaje de WhatsApp a un lead desde el CRM.
+    /// POST /api/leads/{leadId}/whatsapp-message
+    /// Requiere autenticación JWT.
+    /// </summary>
+    [HttpPost("/api/leads/{leadId}/whatsapp-message")]
+    [Authorize]
+    public async Task<ActionResult> SendWhatsAppMessage(
+        int leadId,
+        [FromBody] SendMessageRequest request,
+        CancellationToken cancellationToken)
+    {
+        var lead = await _leadService.GetByIdAsync(leadId, cancellationToken);
+        if (lead == null) return NotFound(new { message = "Lead no encontrado." });
+
+        if (string.IsNullOrWhiteSpace(lead.Phone))
+            return BadRequest(new { message = "El lead no tiene teléfono." });
+
+        if (string.IsNullOrWhiteSpace(request.Message))
+            return BadRequest(new { message = "El mensaje es obligatorio." });
+
+        // Enviar al bot via HTTP
+        var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
+        var secret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+            var botRequest = new HttpRequestMessage(HttpMethod.Post, $"{botUrl}/send")
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(new
+                {
+                    phone = lead.Phone,
+                    message = request.Message
+                })
+            };
+            botRequest.Headers.Add("X-Webhook-Secret", secret);
+
+            var response = await httpClient.SendAsync(botRequest, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("Error enviando WhatsApp a {Phone}: {Error}", lead.Phone, error);
+                return StatusCode(502, new { message = "Error al enviar mensaje por WhatsApp." });
+            }
+
+            // Guardar como actividad
+            var userName = User.Identity?.Name ?? "Agente";
+            await _leadService.AddActivityAsync(leadId, new LeadActivity
+            {
+                Type = "WhatsApp",
+                Description = request.Message,
+                CreatedBy = userName
+            }, cancellationToken);
+
+            _logger.LogInformation("📤 WhatsApp enviado a {Phone} por {User}: {Msg}", lead.Phone, userName, request.Message.Substring(0, Math.Min(50, request.Message.Length)));
+
+            return Ok(new { message = "Mensaje enviado exitosamente." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error conectando con bot WhatsApp");
+            return StatusCode(502, new { message = "No se pudo conectar con el bot de WhatsApp." });
+        }
+    }
+}
+
+public class SendMessageRequest
+{
+    public string Message { get; set; } = string.Empty;
 }

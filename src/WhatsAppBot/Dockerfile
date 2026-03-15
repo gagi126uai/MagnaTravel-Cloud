@@ -39,4 +39,7 @@ COPY src/WhatsAppBot/.env.example .env.example
 # Session data will be persisted via volume
 VOLUME ["/app/.wwebjs_auth"]
 
+# Express HTTP server for CRM chat
+EXPOSE 3001
+
 CMD ["node", "bot.js"]
