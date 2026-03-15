@@ -193,7 +193,7 @@ export default function SettingsPage() {
 
   const loadBotStatus = async () => {
     try {
-      const data = await api.get("/whatsapp/status");
+      const data = await api.get("/webhooks/status");
       setBotStatus(data.status);
       setQrCode(data.qr);
     } catch (error) {
@@ -213,7 +213,7 @@ export default function SettingsPage() {
 
     if (result.isConfirmed) {
       try {
-        await api.post("/whatsapp/logout");
+        await api.post("/webhooks/logout");
         showSuccess("Sesión cerrada");
         loadBotStatus();
       } catch {
@@ -253,11 +253,15 @@ export default function SettingsPage() {
   };
 
   const reloadBot = async () => {
+    setLoadingStatus(true);
     try {
-      await api.post("/whatsapp/webhook/reload");
-      showSuccess("Bot recargado correctamente");
-    } catch {
-      showError("Error al recargar el bot");
+      await api.post("/webhooks/reload");
+      showSuccess("Bot sincronizado");
+      loadBotStatus();
+    } catch (error) {
+      showError("Error al sincronizar");
+    } finally {
+      setLoadingStatus(false);
     }
   };
 
