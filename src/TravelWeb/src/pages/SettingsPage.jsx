@@ -64,6 +64,18 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   );
 };
 
+const MsgInput = ({ label, sub, value, onChange }) => (
+  <div className="space-y-1.5">
+    <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</label>
+    <p className="text-[11px] text-slate-500 font-medium">{sub}</p>
+    <textarea
+      className="w-full rounded-xl border-slate-200 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-emerald-500 focus:border-emerald-500 min-h-[80px] p-3 shadow-sm"
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    />
+  </div>
+);
+
 const RoleBadge = ({ role }) => {
   const colors = {
     Admin: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-800",
@@ -107,6 +119,7 @@ const tabs = [
   { id: "users", label: "Usuarios", icon: User },
   { id: "commissions", label: "Comisiones", icon: Briefcase },
   { id: "afip", label: "Facturación", icon: FileText },
+  { id: "whatsapp", label: "WhatsApp Bot", icon: Smartphone },
   { id: "programming", label: "Programación", icon: Clock },
 ];
 
@@ -156,8 +169,51 @@ export default function SettingsPage() {
     description: ""
   });
 
+  // WhatsApp Bot State
+  const [botConfig, setBotConfig] = useState({
+    welcomeMessage: "",
+    askInterestMessage: "",
+    askDatesMessage: "",
+    askTravelersMessage: "",
+    thanksMessage: "",
+    agentRequestMessage: "",
+    duplicateMessage: ""
+  });
+  const [savingBot, setSavingBot] = useState(false);
+
   // Mobile Nav State
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const loadBotConfig = async () => {
+    try {
+      const data = await api.get("/whatsapp/config");
+      setBotConfig(data);
+    } catch { }
+  };
+
+  const saveBotConfig = async (e) => {
+    e.preventDefault();
+    setSavingBot(true);
+    try {
+      await api.put("/whatsapp/config", botConfig);
+      showSuccess("Configuración del bot guardada");
+      // Optional: Trigger reload on bot
+      try { await api.post("/whatsapp/webhook/reload"); } catch { }
+    } catch {
+      showError("No se pudo guardar la configuración");
+    } finally {
+      setSavingBot(false);
+    }
+  };
+
+  const reloadBot = async () => {
+    try {
+      await api.post("/whatsapp/webhook/reload");
+      showSuccess("Bot recargado correctamente");
+    } catch {
+      showError("Error al recargar el bot");
+    }
+  };
 
   const closeModal = () => {
     setModalType(null);
@@ -323,6 +379,7 @@ export default function SettingsPage() {
       loadCommissionRules();
       loadSuppliers();
     }
+    if (activeTab === "whatsapp") loadBotConfig();
   }, [activeTab, adminUser]);
 
   // Handlers
@@ -729,6 +786,68 @@ export default function SettingsPage() {
 
         {/* --- AFIP TAB --- */}
         {activeTab === "afip" && <AfipSettingsTab />}
+
+        {/* --- WHATSAPP TAB --- */}
+        {activeTab === "whatsapp" && (
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2 space-y-6">
+              <form onSubmit={saveBotConfig} className="space-y-6">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/20">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-600 dark:text-emerald-400">
+                        <Smartphone className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-slate-900 dark:text-white">Flujo del Chatbot</h3>
+                        <p className="text-xs text-slate-500">Personaliza los mensajes que el bot envía a los leads</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 space-y-6">
+                    <MsgInput label="Mensaje de Bienvenida" sub="Primer contacto con el usuario." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
+                    <MsgInput label="Pregunta por Interés" sub="Usa {name} para el nombre del cliente." value={botConfig.askInterestMessage} onChange={v => setBotConfig({ ...botConfig, askInterestMessage: v })} />
+                    <MsgInput label="Pregunta por Fechas" sub="Usa {interest} para el destino capturado." value={botConfig.askDatesMessage} onChange={v => setBotConfig({ ...botConfig, askDatesMessage: v })} />
+                    <MsgInput label="Pregunta por Viajeros" sub="Último paso antes de cerrar el lead." value={botConfig.askTravelersMessage} onChange={v => setBotConfig({ ...botConfig, askTravelersMessage: v })} />
+                    <MsgInput label="Mensaje de Cierre / Gracias" sub="Usa {name} para despedirte." value={botConfig.thanksMessage} onChange={v => setBotConfig({ ...botConfig, thanksMessage: v })} />
+                    <MsgInput label="Respuesta por Agente" sub="Cuando el cliente pide hablar con alguien." value={botConfig.agentRequestMessage} onChange={v => setBotConfig({ ...botConfig, agentRequestMessage: v })} />
+                    <MsgInput label="Lead Duplicado" sub="Si el cliente ya tiene una consulta abierta." value={botConfig.duplicateMessage} onChange={v => setBotConfig({ ...botConfig, duplicateMessage: v })} />
+                  </div>
+
+                  <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3">
+                    <Button type="button" variant="outline" onClick={reloadBot} className="rounded-lg">Sincronizar Bot</Button>
+                    <Button type="submit" disabled={savingBot} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-6">
+                      {savingBot ? "Guardando..." : "Guardar Configuración"}
+                    </Button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <div className="space-y-6">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 overflow-hidden relative">
+                <div className="absolute top-0 right-0 p-4 opacity-10">
+                  <Smartphone className="w-12 h-12" />
+                </div>
+                <h3 className="font-semibold text-slate-900 dark:text-white mb-2">Estado del Bot</h3>
+                <p className="text-sm text-slate-500 mb-4">El bot procesa mensajes automáticamente y los registra en el CRM como leads.</p>
+                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 rounded-xl border border-emerald-100 dark:border-emerald-800/50">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <span className="text-xs font-bold uppercase tracking-wider">Servicio Activo</span>
+                </div>
+                <div className="mt-6 space-y-3">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tips de Bot</h4>
+                    <ul className="text-xs text-slate-500 space-y-2 list-disc pl-4">
+                        <li>Usa emojis para un tono más amable.</li>
+                        <li>Las variables entre llaves se reemplazan solas.</li>
+                        <li>Trata de que las preguntas sean cortas.</li>
+                    </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* --- PROGRAMMING TAB (Hangfire) --- */}
         {activeTab === "programming" && (

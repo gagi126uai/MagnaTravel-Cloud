@@ -204,6 +204,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<QuoteItem> QuoteItems => Set<QuoteItem>();
     public DbSet<Lead> Leads => Set<Lead>();
     public DbSet<LeadActivity> LeadActivities => Set<LeadActivity>();
+    public DbSet<WhatsAppBotConfig> WhatsAppBotConfigs => Set<WhatsAppBotConfig>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

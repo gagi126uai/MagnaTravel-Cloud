@@ -1,8 +1,8 @@
 /**
- * MagnaTravel WhatsApp Bot v3.1
+ * MagnaTravel WhatsApp Bot v3.2
  * =============================
- * Bot personalizado con flujo de 5 pasos + Express HTTP server
- * para enviar mensajes desde el CRM.
+ * Bot personalizado con configuración dinámica desde API
+ * y corrección automática de bloqueo de Chromium.
  */
 
 require("dotenv").config();
@@ -10,12 +10,16 @@ const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const axios = require("axios");
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
 // ─── Config ──────────────────────────────────────────────
 const WEBHOOK_URL = process.env.WEBHOOK_URL || "http://localhost:5000/api/webhooks/whatsapp";
+const API_URL = process.env.API_URL || "http://api:8080"; // URL interna en Docker
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "CHANGE_THIS_SECRET";
 const SESSION_TIMEOUT = (parseInt(process.env.BOT_SESSION_TIMEOUT_MINUTES) || 30) * 60 * 1000;
 const HTTP_PORT = parseInt(process.env.BOT_HTTP_PORT) || 3001;
+const AUTH_PATH = path.join(__dirname, ".wwebjs_auth");
 
 // ─── Control de Logs ─────────────────────────────────────
 let isShowingQR = false;
@@ -25,6 +29,71 @@ let isBotReady = false;
 const processedMessages = new Set();
 const MESSAGE_COOLDOWN_MS = 3000;
 const lastMessageTime = new Map();
+
+// ─── Bot Messages (Defaults) ─────────────────────────────
+let MSG = {
+    welcome: "¡Hola! 👋 Bienvenido/a a *MagnaTravel* 🌎✈️\n\nSoy tu asistente virtual y estoy acá para ayudarte a planificar tu próximo viaje soñado. 🏖️🗺️\n\nPara empezar, *¿me decís tu nombre completo?*",
+    badName: `No pude captar tu nombre 😅 ¿Podés decirme tu *nombre y apellido*?`,
+    askInterest: (name) => `¡Un placer, *${name}*! 🤩\n\nContame, *¿qué destino o tipo de viaje te gustaría hacer?*\n\n✈️ _Ej: Cancún, Europa, Crucero, Brasil, Bariloche..._`,
+    askDates: (interest) => `¡*${interest}*! Excelente elección 😍\n\n¿Tenés alguna *fecha aproximada* en mente para viajar? 📅\n\n_Ej: "marzo 2026", "semana santa", "todavía no sé"_`,
+    askTravelers: () => `Perfecto 📝\n\nÚltima pregunta: *¿cuántas personas viajan?* 👥\n\n_Ej: "somos 2", "familia de 4", "soy solo/a", "grupo de amigos"_`,
+    thanks: (name) => `¡Genial, *${name}*! Ya tengo toda la info 🎉\n\n📋 *Tu consulta fue registrada* y un asesor se va a comunicar con vos a la brevedad.\n\n¡Gracias por confiar en *MagnaTravel*! ✨🛫`,
+    agentRequest: (name) => `Entendido, *${name || ""}*! 🤝 Ya le avisé a un asesor para que te contacte personalmente.📞`,
+    duplicate: `¡Hola de nuevo! 😊 Tu consulta ya fue registrada y estamos trabajando en tu propuesta.\nSi es algo urgente, podés llamarnos directamente. 📞`,
+    error: `Disculpá, hubo un problema al registrar la consulta 😔\nPor favor intentá de nuevo o llamanos por teléfono.`,
+};
+
+// ─── Dynamic Config ──────────────────────────────────────
+async function fetchConfig() {
+    try {
+        console.log("🔄 Cargando configuración desde API...");
+        const res = await axios.get(`${API_URL}/api/whatsapp/config`);
+        const config = res.data;
+        if (config) {
+            MSG.welcome = config.welcomeMessage || MSG.welcome;
+            MSG.askInterestTemplate = config.askInterestMessage || MSG.askInterestTemplate;
+            MSG.askDatesTemplate = config.askDatesMessage || MSG.askDatesTemplate;
+            MSG.askTravelers = () => config.askTravelersMessage || "Última pregunta: *¿cuántas personas viajan?* 👥";
+            MSG.thanksTemplate = config.thanksMessage || MSG.thanksTemplate;
+            MSG.agentRequestTemplate = config.agentRequestMessage || MSG.agentRequestTemplate;
+            MSG.duplicate = config.duplicateMessage || MSG.duplicate;
+
+            // Funciones con reemplazos
+            MSG.askInterest = (name) => (config.askInterestMessage || "").replace("{name}", name);
+            MSG.askDates = (interest) => (config.askDatesMessage || "").replace("{interest}", interest);
+            MSG.thanks = (name) => (config.thanksMessage || "").replace("{name}", name);
+            MSG.agentRequest = (name) => (config.agentRequestMessage || "").replace("{name}", name || "");
+            
+            console.log("✅ Configuración actualizada.");
+        }
+    } catch (err) {
+        console.error("⚠️ Error al cargar configuración de API: " + err.message);
+    }
+}
+
+// ─── Fix Chromium Lock ──────────────────────────────────
+function cleanLockFiles() {
+    try {
+        if (!fs.existsSync(AUTH_PATH)) return;
+        
+        const deleteLock = (dirPath) => {
+            const files = fs.readdirSync(dirPath);
+            for (const file of files) {
+                const fullPath = path.join(dirPath, file);
+                if (fs.statSync(fullPath).isDirectory()) {
+                    deleteLock(fullPath);
+                } else if (file === "SingletonLock") {
+                    console.log(`🧹 Eliminando bloqueo de Chromium: ${fullPath}`);
+                    fs.unlinkSync(fullPath);
+                }
+            }
+        };
+        
+        deleteLock(AUTH_PATH);
+    } catch (err) {
+        console.error("⚠️ Error al limpiar archivos de bloqueo: " + err.message);
+    }
+}
 
 // ─── Sesiones ────────────────────────────────────────────
 const sessions = new Map();
@@ -111,51 +180,20 @@ async function sendMessageToWebhook(phone, message, sender) {
     } catch (err) { /* silent on message log error */ }
 }
 
-// ─── Mensajes del Bot ────────────────────────────────────
-const MSG = {
-    welcome:
-        `¡Hola! 👋 Bienvenido/a a *MagnaTravel* 🌎✈️\n\n` +
-        `Soy tu asistente virtual y estoy acá para ayudarte a planificar tu próximo viaje soñado. 🏖️🗺️\n\n` +
-        `Para empezar, *¿me decís tu nombre completo?*`,
-
-    badName: `No pude captar tu nombre 😅 ¿Podés decirme tu *nombre y apellido*?`,
-
-    askInterest: (name) =>
-        `¡Un placer, *${name}*! 🤩\n\n` +
-        `Contame, *¿qué destino o tipo de viaje te gustaría hacer?*\n\n` +
-        `✈️ _Ej: Cancún, Europa, Crucero, Brasil, Bariloche..._`,
-
-    askDates: (interest) =>
-        `¡*${interest}*! Excelente elección 😍\n\n` +
-        `¿Tenés alguna *fecha aproximada* en mente para viajar? 📅\n\n` +
-        `_Ej: "marzo 2026", "semana santa", "todavía no sé"_`,
-
-    askTravelers: () =>
-        `Perfecto 📝\n\n` +
-        `Última pregunta: *¿cuántas personas viajan?* 👥\n\n` +
-        `_Ej: "somos 2", "familia de 4", "soy solo/a", "grupo de amigos"_`,
-
-    thanks: (name) =>
-        `¡Genial, *${name}*! Ya tengo toda la info 🎉\n\n` +
-        `📋 *Tu consulta fue registrada* y un asesor se va a comunicar con vos a la brevedad.\n\n` +
-        `¡Gracias por confiar en *MagnaTravel*! ✨🛫`,
-
-    agentRequest: (name) =>
-        `Entendido, *${name || ""}*! 🤝 Ya le avisé a un asesor para que te contacte personalmente.📞`,
-
-    duplicate:
-        `¡Hola de nuevo! 😊 Tu consulta ya fue registrada y estamos trabajando en tu propuesta.\n` +
-        `Si es algo urgente, podés llamarnos directamente. 📞`,
-
-    error: `Disculpá, hubo un problema al registrar la consulta 😔\nPor favor intentá de nuevo o llamanos por teléfono.`,
-};
-
 // ─── WhatsApp Client ─────────────────────────────────────
+cleanLockFiles();
+
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        args: [
+            "--no-sandbox", 
+            "--disable-setuid-sandbox", 
+            "--disable-dev-shm-usage", 
+            "--disable-gpu",
+            "--disable-features=SharedArrayBuffer"
+        ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
     }
 });
@@ -172,9 +210,10 @@ client.on("ready", () => {
     isBotReady = true;
     isShowingQR = false;
     console.log("\n══════════════════════════════════════════════");
-    console.log("  🤖 MagnaTravel WhatsApp Bot v3.1 — CONECTADO");
-    console.log("  HTTP Server: puerto " + HTTP_PORT);
+    console.log("  🤖 MagnaTravel WhatsApp Bot v3.2 — CONECTADO");
+    console.log("  Dynamic Config: Habilitada");
     console.log("══════════════════════════════════════════════\n");
+    fetchConfig(); // Cargar al estar listo
 });
 
 client.on("authenticated", () => { if (!isBotReady) console.log("🔐 Autenticado."); });
@@ -188,7 +227,6 @@ client.on("message", async (message) => {
     const body = message.body?.trim();
     if (!body) return;
 
-    // Anti-spam & Cooldown
     const msgKey = `${chatId}_${body}`;
     if (processedMessages.has(msgKey)) return;
     processedMessages.add(msgKey);
@@ -201,10 +239,8 @@ client.on("message", async (message) => {
     const phone = extractPhone(chatId);
     console.log(`💬 [${phone}]: ${body.substring(0, 50)}`);
 
-    // Log message in CRM
     sendMessageToWebhook(phone, body, "Cliente");
 
-    // "Nueva consulta"
     if (/nueva\s*consulta/i.test(body)) {
         const s = createSession(chatId);
         await message.reply(MSG.welcome);
@@ -213,11 +249,11 @@ client.on("message", async (message) => {
         return;
     }
 
-    // Agent request
     if (AGENT_REQUEST.test(body)) {
         const s = getSession(chatId) || createSession(chatId);
-        await message.reply(MSG.agentRequest(s.name));
-        s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${MSG.agentRequest(s.name)}`);
+        const amsg = MSG.agentRequest(s.name);
+        await message.reply(amsg);
+        s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${amsg}`);
         s.state = "DONE";
         if (s.name) await sendToWebhook(phone, s);
         return;
@@ -228,9 +264,8 @@ client.on("message", async (message) => {
     try {
         if (!session) {
             session = createSession(chatId);
-            const initialMsg = isGreeting(body) ? MSG.welcome : MSG.welcome;
-            await message.reply(initialMsg);
-            session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${initialMsg}`);
+            await message.reply(MSG.welcome);
+            session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${MSG.welcome}`);
             session.state = "WAITING_NAME";
             return;
         }
@@ -299,8 +334,14 @@ app.post("/send", async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Endpoint para recargar configuración sin reiniciar
+app.post("/reload", async (req, res) => {
+    await fetchConfig();
+    res.json({ success: true, m: "Configuración recargada" });
+});
+
 app.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.log(`🚀 Bot v3.1 escuchando comandos en puerto ${HTTP_PORT}`);
+    console.log(`🚀 Bot v3.2 escuchando comandos en puerto ${HTTP_PORT}`);
 });
 
 client.initialize();
