@@ -208,6 +208,15 @@ app.Use(async (context, next) =>
     }
 });
 
+// Apply migrations on startup
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
+
+app.UseSerilogRequestLogging();
+
 app.UseRouting();
 
 // 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy)
