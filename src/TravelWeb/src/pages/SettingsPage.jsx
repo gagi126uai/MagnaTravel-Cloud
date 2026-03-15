@@ -25,8 +25,11 @@ import {
   ChevronDown,
   Briefcase,
   Clock,
-  Smartphone
+  Smartphone,
+  RefreshCcw,
+  LogOut
 } from "lucide-react";
+import { QRCodeCanvas } from "qrcode.react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 
@@ -171,6 +174,8 @@ export default function SettingsPage() {
   });
 
   // WhatsApp Bot State
+  const [botStatus, setBotStatus] = useState("STARTING");
+  const [qrCode, setQrCode] = useState(null);
   const [botConfig, setBotConfig] = useState({
     welcomeMessage: "",
     askInterestMessage: "",
@@ -181,9 +186,49 @@ export default function SettingsPage() {
     duplicateMessage: ""
   });
   const [savingBot, setSavingBot] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState(false);
 
   // Mobile Nav State
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const loadBotStatus = async () => {
+    try {
+      const data = await api.get("/whatsapp/status");
+      setBotStatus(data.status);
+      setQrCode(data.qr);
+    } catch (error) {
+      setBotStatus("OFFLINE");
+    }
+  };
+
+  const handleLogoutBot = async () => {
+    const result = await Swal.fire({
+      title: "¿Cerrar sesión de WhatsApp?",
+      text: "El bot dejará de funcionar hasta que vuelvas a escanear el QR.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Sí, cerrar sesión",
+      cancelButtonText: "Cancelar"
+    });
+
+    if (result.isConfirmed) {
+      try {
+        await api.post("/whatsapp/logout");
+        showSuccess("Sesión cerrada");
+        loadBotStatus();
+      } catch {
+        showError("No se pudo cerrar la sesión");
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "whatsapp") {
+      loadBotStatus();
+      const interval = setInterval(loadBotStatus, 5000); // Poll cada 5s
+      return () => clearInterval(interval);
+    }
+  }, [activeTab]);
 
   const loadBotConfig = async () => {
     try {
@@ -828,22 +873,68 @@ export default function SettingsPage() {
 
             <div className="space-y-6">
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 overflow-hidden relative">
-                <div className="absolute top-0 right-0 p-4 opacity-10">
-                  <Smartphone className="w-12 h-12" />
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="font-semibold text-slate-900 dark:text-white">Estado de Conexión</h3>
+                    <button onClick={loadBotStatus} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors text-slate-400">
+                        <RefreshCcw className="h-4 w-4" />
+                    </button>
                 </div>
-                <h3 className="font-semibold text-slate-900 dark:text-white mb-2">Estado del Bot</h3>
-                <p className="text-sm text-slate-500 mb-4">El bot procesa mensajes automáticamente y los registra en el CRM como leads.</p>
-                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 rounded-xl border border-emerald-100 dark:border-emerald-800/50">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                  <span className="text-xs font-bold uppercase tracking-wider">Servicio Activo</span>
+
+                <div className="space-y-6 flex flex-col items-center text-center">
+                    {botStatus === "READY" ? (
+                        <div className="w-full space-y-4">
+                            <div className="h-32 w-32 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-2 text-emerald-600 dark:text-emerald-400">
+                                <Smartphone className="h-16 w-16" />
+                            </div>
+                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 rounded-full border border-emerald-100 dark:border-emerald-800/50">
+                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                                <span className="text-xs font-bold uppercase tracking-widest">Bot Conectado</span>
+                            </div>
+                            <p className="text-sm text-slate-500">El bot está vinculado y listo para responder leads.</p>
+                            <Button variant="outline" className="w-full text-rose-600 border-rose-100 hover:bg-rose-50" onClick={handleLogoutBot}>
+                                <LogOut className="h-4 w-4 mr-2" />
+                                Desvincular WhatsApp
+                            </Button>
+                        </div>
+                    ) : botStatus === "SCAN_QR" || qrCode ? (
+                        <div className="w-full space-y-4">
+                            <div className="bg-white p-4 rounded-xl shadow-inner border border-slate-100 inline-block">
+                                <QRCodeCanvas value={qrCode} size={200} level="H" />
+                            </div>
+                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full border border-amber-100 dark:border-amber-800/50">
+                                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
+                                <span className="text-xs font-bold uppercase tracking-widest">Esperando Escaneo</span>
+                            </div>
+                            <p className="text-xs text-slate-500">Escaneá este código con tu WhatsApp para vincular el bot (Configuración {">"} Dispositivos vinculados).</p>
+                        </div>
+                    ) : (
+                        <div className="w-full space-y-4">
+                             <div className="h-32 w-32 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-2 text-slate-400">
+                                <Smartphone className="h-16 w-16 opacity-30" />
+                            </div>
+                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full border border-slate-200 dark:border-slate-700">
+                                <span className="text-xs font-bold uppercase tracking-widest">{botStatus === "OFFLINE" ? "Bot Fuera de Línea" : "Iniciando..."}</span>
+                            </div>
+                            <p className="text-sm text-slate-500">El servicio del bot se está iniciando o no está disponible.</p>
+                        </div>
+                    )}
                 </div>
-                <div className="mt-6 space-y-3">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tips de Bot</h4>
-                    <ul className="text-xs text-slate-500 space-y-2 list-disc pl-4">
-                        <li>Usa emojis para un tono más amable.</li>
-                        <li>Las variables entre llaves se reemplazan solas.</li>
-                        <li>Trata de que las preguntas sean cortas.</li>
-                    </ul>
+
+                <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <Check className="h-3 w-3" />
+                        Variables Disponibles
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
+                            <code className="text-indigo-600 dark:text-indigo-400 font-bold text-[10px]">{"{agencyName}"}</code>
+                            <p className="text-[9px] text-slate-500">Nombre de la agencia</p>
+                        </div>
+                        <div className="bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
+                            <code className="text-indigo-600 dark:text-indigo-400 font-bold text-[10px]">{"{name}"}</code>
+                            <p className="text-[9px] text-slate-500">Nombre del cliente</p>
+                        </div>
+                    </div>
                 </div>
               </div>
             </div>

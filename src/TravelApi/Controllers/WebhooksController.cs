@@ -223,6 +223,32 @@ public class WebhooksController : ControllerBase
         }
     }
 
+    [HttpGet("status")]
+    [Authorize]
+    public async Task<IActionResult> GetBotStatus()
+    {
+        var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
+        var secret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Webhook-Secret", secret);
+            var response = await client.GetAsync($"{botUrl}/status");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                return Content(content, "application/json");
+            }
+            return StatusCode((int)response.StatusCode, "Error al obtener estado del bot");
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error interno: {ex.Message}");
+        }
+    }
+
     [HttpPost("reload")]
     [Authorize]
     public async Task<IActionResult> ReloadBotConfig()
@@ -238,6 +264,28 @@ public class WebhooksController : ControllerBase
             
             if (response.IsSuccessStatusCode) return Ok(new { success = true });
             return StatusCode((int)response.StatusCode, "Error al notificar al bot");
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error interno: {ex.Message}");
+        }
+    }
+
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> LogoutBot()
+    {
+        var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
+        var secret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Webhook-Secret", secret);
+            var response = await client.PostAsync($"{botUrl}/logout", null);
+            
+            if (response.IsSuccessStatusCode) return Ok(new { success = true });
+            return StatusCode((int)response.StatusCode, "Error al cerrar sesión del bot");
         }
         catch (Exception ex)
         {

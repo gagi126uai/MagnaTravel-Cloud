@@ -21,9 +21,11 @@ const SESSION_TIMEOUT = (parseInt(process.env.BOT_SESSION_TIMEOUT_MINUTES) || 30
 const HTTP_PORT = parseInt(process.env.BOT_HTTP_PORT) || 3001;
 const AUTH_PATH = path.join(__dirname, ".wwebjs_auth");
 
-// ─── Control de Logs ─────────────────────────────────────
+// ─── Control de Logs y Estado ─────────────────────────
 let isShowingQR = false;
 let isBotReady = false;
+let lastQR = null;
+let botStatus = "STARTING"; // STARTING, SCAN_QR, AUTHENTICATED, READY, DISCONNECTED
 
 // ─── Anti-spam ───────────────────────────────────────────
 const processedMessages = new Set();
@@ -209,6 +211,8 @@ const client = new Client({
 });
 
 client.on("qr", (qr) => {
+    lastQR = qr;
+    botStatus = "SCAN_QR";
     if (isShowingQR) return;
     isShowingQR = true;
     console.log("\n📱 ESCANEÁ EL QR PARA CONECTAR:\n");
@@ -216,6 +220,8 @@ client.on("qr", (qr) => {
 });
 
 client.on("ready", () => {
+    botStatus = "READY";
+    lastQR = null;
     if (isBotReady) return;
     isBotReady = true;
     isShowingQR = false;
@@ -226,8 +232,17 @@ client.on("ready", () => {
     fetchConfig(); // Cargar al estar listo
 });
 
-client.on("authenticated", () => { if (!isBotReady) console.log("🔐 Autenticado."); });
-client.on("disconnected", () => { console.log("📴 Desconectado."); process.exit(1); });
+client.on("authenticated", () => { 
+    botStatus = "AUTHENTICATED";
+    if (!isBotReady) console.log("🔐 Autenticado."); 
+});
+
+client.on("disconnected", () => { 
+    botStatus = "DISCONNECTED";
+    isBotReady = false;
+    console.log("📴 Desconectado."); 
+    process.exit(1); 
+});
 
 // ─── Message Handler ─────────────────────────────────────
 client.on("message", async (message) => {
@@ -348,12 +363,39 @@ app.post("/send", async (req, res) => {
 
 // Endpoint para recargar configuración sin reiniciar
 app.post("/reload", async (req, res) => {
+    if (req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) return res.status(401).send();
     await fetchConfig();
-    res.json({ success: true, m: "Configuración recargada" });
+    res.json({ success: true, status: botStatus });
+});
+
+app.get("/status", (req, res) => {
+    if (req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) return res.status(401).send();
+    res.json({ 
+        status: botStatus, 
+        qr: lastQR,
+        isReady: isBotReady
+    });
+});
+
+app.post("/logout", async (req, res) => {
+    if (req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) return res.status(401).send();
+    try {
+        console.log("🚪 Petición de Logout recibida...");
+        await client.logout();
+        botStatus = "DISCONNECTED";
+        isBotReady = false;
+        lastQR = null;
+        res.json({ success: true });
+        // Dar tiempo a responder antes de salir para que Docker reinicie limpio si es necesario
+        setTimeout(() => process.exit(0), 1000);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.log(`🚀 Bot v3.2 escuchando comandos en puerto ${HTTP_PORT}`);
+    console.log(`🚀 Bot v3.3 escuchando comandos en puerto ${HTTP_PORT}`);
+    fetchConfig(); // Cargar configuración al iniciar el servidor HTTP
 });
 
 client.initialize();
