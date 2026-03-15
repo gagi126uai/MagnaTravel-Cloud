@@ -25,6 +25,7 @@ export default function CRMPage() {
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [detailLead, setDetailLead] = useState(null);
+    const [detailLoading, setDetailLoading] = useState(false);
     const [showActivityModal, setShowActivityModal] = useState(false);
 
     const fmt = (n) => `$${(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 0 })}`;
@@ -34,15 +35,24 @@ export default function CRMPage() {
         try {
             const data = await api.get("/leads/pipeline");
             setPipeline(data);
-        } catch { showError("Error al cargar pipeline"); }
+        } catch (e) { console.error("Pipeline error:", e); showError("Error al cargar pipeline"); }
         finally { setLoading(false); }
     }, []);
 
     useEffect(() => { loadPipeline(); }, [loadPipeline]);
 
     const loadDetail = async (id) => {
-        try { const lead = await api.get(`/leads/${id}`); setDetailLead(lead); }
-        catch { showError("Error al cargar detalle"); }
+        setDetailLoading(true);
+        try {
+            const lead = await api.get(`/leads/${id}`);
+            console.log("Lead detail:", lead);
+            setDetailLead(lead);
+        } catch (e) {
+            console.error("Detail error:", e);
+            showError("Error al cargar detalle del lead");
+        } finally {
+            setDetailLoading(false);
+        }
     };
 
     const handleCreate = async (data) => {
@@ -90,8 +100,22 @@ export default function CRMPage() {
         );
     }
 
+    // DETAIL LOADING
+    if (detailLoading) {
+        return (
+            <div className="flex items-center justify-center h-[60vh]">
+                <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+            </div>
+        );
+    }
+
     // DETAIL VIEW
     if (detailLead) {
+        // Buscar la conversación de WhatsApp bot en las actividades
+        const whatsappTranscript = (detailLead.activities || []).find(
+            a => a.type === "WhatsApp" && a.createdBy === "WhatsApp Bot"
+        );
+
         return (
             <div className="space-y-6 pb-12 max-w-2xl mx-auto">
                 <div className="flex items-center gap-3">
@@ -142,6 +166,40 @@ export default function CRMPage() {
                     <button onClick={() => handleDelete(detailLead.id)} className="flex items-center gap-2 px-3 py-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg text-xs font-bold">Eliminar</button>
                 </div>
 
+                {/* WhatsApp Transcript */}
+                {whatsappTranscript && (
+                    <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-2xl overflow-hidden">
+                        <div className="px-6 py-3 border-b border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
+                            <Smartphone className="w-4 h-4 text-emerald-600" />
+                            <h3 className="text-sm font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">Conversación WhatsApp</h3>
+                        </div>
+                        <div className="px-6 py-4 space-y-2">
+                            {whatsappTranscript.description?.split("\n").filter(l => l.trim()).map((line, i) => {
+                                const isBot = line.includes("[Bot]");
+                                const isClient = line.includes("[Cliente]");
+                                const cleanLine = line.replace(/^\[(Bot|Cliente)\]:\s*/, "").replace(/^Conversación capturada por bot:\s*/, "");
+                                if (!cleanLine.trim()) return null;
+                                return (
+                                    <div key={i} className={`flex ${isBot ? "justify-start" : "justify-end"}`}>
+                                        <div className={`max-w-[80%] px-3 py-2 rounded-xl text-sm ${
+                                            isBot
+                                                ? "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-bl-sm"
+                                                : isClient
+                                                    ? "bg-emerald-600 text-white rounded-br-sm"
+                                                    : "bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200"
+                                        }`}>
+                                            {cleanLine}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="px-6 py-2 text-[10px] text-emerald-500 dark:text-emerald-600 border-t border-emerald-200 dark:border-emerald-800">
+                            {new Date(whatsappTranscript.createdAt).toLocaleString("es-AR")}
+                        </div>
+                    </div>
+                )}
+
                 {/* Activities Timeline */}
                 <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
                     <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
@@ -152,11 +210,15 @@ export default function CRMPage() {
                             <div className="px-6 py-8 text-center text-sm text-slate-400">No hay actividades registradas.</div>
                         ) : detailLead.activities.map(a => (
                             <div key={a.id} className="px-6 py-3 flex gap-3">
-                                <div className="w-8 h-8 rounded-full bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 flex items-center justify-center text-[10px] font-black flex-shrink-0 mt-0.5">
-                                    {a.type?.substring(0, 2).toUpperCase()}
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 mt-0.5 ${
+                                    a.type === "WhatsApp"
+                                        ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600"
+                                        : "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600"
+                                }`}>
+                                    {a.type === "WhatsApp" ? "WA" : a.type?.substring(0, 2).toUpperCase()}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <div className="text-sm text-slate-900 dark:text-white">{a.description}</div>
+                                    <div className="text-sm text-slate-900 dark:text-white whitespace-pre-wrap">{a.description}</div>
                                     <div className="text-[10px] text-slate-400 mt-1">{a.type} • {new Date(a.createdAt).toLocaleString("es-AR")} • {a.createdBy || "Sistema"}</div>
                                 </div>
                             </div>

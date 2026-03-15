@@ -96,5 +96,10 @@ export const api = {
       body: isFormData ? data : JSON.stringify(data)
     });
   },
-  delete: (url, options) => apiRequest(url, { ...options, method: 'DELETE' })
+  delete: (url, options) => apiRequest(url, { ...options, method: 'DELETE' }),
+  patch: (url, data, options = {}) => apiRequest(url, {
+    ...options,
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  })
 };
