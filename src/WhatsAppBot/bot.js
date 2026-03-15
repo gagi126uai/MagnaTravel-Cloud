@@ -169,8 +169,8 @@ client.on("auth_failure", (msg) => {
     console.log("   Eliminá .wwebjs_auth/ y re-escaneá el QR.");
 });
 client.on("disconnected", (reason) => {
-    console.log("📴 Desconectado:", reason, "— Reiniciando en 5s...");
-    setTimeout(() => client.initialize(), 5000);
+    console.log("📴 Desconectado:", reason, "— Saliendo para que Docker reinicie...");
+    process.exit(1); // Docker restart: unless-stopped se encarga de reiniciar
 });
 
 // ─── Handler Principal ───────────────────────────────────
