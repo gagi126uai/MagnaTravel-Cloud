@@ -84,8 +84,6 @@ public class WebhooksController : ControllerBase
 
         // Crear lead
         var notes = "Lead capturado por WhatsApp Bot.";
-        if (!string.IsNullOrWhiteSpace(dto.Dates)) notes += $"\n📅 Fechas: {dto.Dates}";
-        if (!string.IsNullOrWhiteSpace(dto.Travelers)) notes += $"\n👥 Viajeros: {dto.Travelers}";
 
         var lead = new Lead
         {
@@ -93,6 +91,8 @@ public class WebhooksController : ControllerBase
             Phone = dto.Phone.Trim(),
             Source = "WhatsApp",
             InterestedIn = dto.Interest?.Trim(),
+            TravelDates = dto.Dates?.Trim(),
+            Travelers = dto.Travelers?.Trim(),
             Status = LeadStatus.New,
             Notes = notes,
         };

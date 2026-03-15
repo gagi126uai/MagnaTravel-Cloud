@@ -1,6 +1,6 @@
 /**
- * MagnaTravel WhatsApp Bot v3
- * ===========================
+ * MagnaTravel WhatsApp Bot v3.1
+ * =============================
  * Bot personalizado con flujo de 5 pasos + Express HTTP server
  * para enviar mensajes desde el CRM.
  */
@@ -16,6 +16,10 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL || "http://localhost:5000/api/webhoo
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "CHANGE_THIS_SECRET";
 const SESSION_TIMEOUT = (parseInt(process.env.BOT_SESSION_TIMEOUT_MINUTES) || 30) * 60 * 1000;
 const HTTP_PORT = parseInt(process.env.BOT_HTTP_PORT) || 3001;
+
+// ─── Control de Logs ─────────────────────────────────────
+let isShowingQR = false;
+let isBotReady = false;
 
 // ─── Anti-spam ───────────────────────────────────────────
 const processedMessages = new Set();
@@ -71,7 +75,6 @@ function extractPhone(chatId) {
 }
 
 function phoneToChatId(phone) {
-    // +5493364670633 → 5493364670633@c.us
     return phone.replace(/^\+/, "").replace(/[^0-9]/g, "") + "@c.us";
 }
 
@@ -90,29 +93,22 @@ async function sendToWebhook(phone, session) {
             headers: { "Content-Type": "application/json", "X-Webhook-Secret": WEBHOOK_SECRET },
             timeout: 10000,
         });
-        console.log(`✅ Lead creado: ID ${res.data?.leadId || "?"} — ${session.name} (${phone})`);
+        console.log(`✅ Lead # ${res.data?.leadId} creado: ${session.name} (${phone})`);
         return "ok";
     } catch (error) {
-        if (error.response?.status === 409) { console.log(`ℹ️  Lead duplicado: ${phone}`); return "duplicate"; }
-        console.error(`❌ Webhook error: ${error.response?.status || "?"} — ${error.response?.data?.message || error.message}`);
+        if (error.response?.status === 409) { console.log(`ℹ️ Duplicado: ${phone}`); return "duplicate"; }
+        console.error(`❌ Webhook Error: ${error.response?.status || error.message}`);
         return "error";
     }
 }
 
-// Enviar mensajes individuales al webhook como actividades
 async function sendMessageToWebhook(phone, message, sender) {
     try {
-        await axios.post(`${WEBHOOK_URL}/message`, {
-            phone,
-            message,
-            sender, // "Cliente" o "Agente"
-        }, {
+        await axios.post(`${WEBHOOK_URL}/message`, { phone, message, sender }, {
             headers: { "Content-Type": "application/json", "X-Webhook-Secret": WEBHOOK_SECRET },
-            timeout: 10000,
+            timeout: 5000,
         });
-    } catch (err) {
-        console.error(`❌ Error enviando mensaje al webhook: ${err.message}`);
-    }
+    } catch (err) { /* silent on message log error */ }
 }
 
 // ─── Mensajes del Bot ────────────────────────────────────
@@ -127,136 +123,102 @@ const MSG = {
     askInterest: (name) =>
         `¡Un placer, *${name}*! 🤩\n\n` +
         `Contame, *¿qué destino o tipo de viaje te gustaría hacer?*\n\n` +
-        `✈️ _Por ejemplo:_\n` +
-        `• Cancún 🌴\n` +
-        `• Europa (Italia, España, Francia) 🏰\n` +
-        `• Crucero por el Caribe 🚢\n` +
-        `• Brasil 🇧🇷\n` +
-        `• Bariloche ⛷️\n\n` +
-        `O cualquier otro destino que tengas en mente 🌍`,
+        `✈️ _Ej: Cancún, Europa, Crucero, Brasil, Bariloche..._`,
 
     askDates: (interest) =>
         `¡*${interest}*! Excelente elección 😍\n\n` +
-        `¿Tenés alguna *fecha aproximada* en mente para viajar?\n\n` +
-        `_Por ejemplo: "marzo 2026", "semana santa", "vacaciones de julio", "todavía no sé"_`,
+        `¿Tenés alguna *fecha aproximada* en mente para viajar? 📅\n\n` +
+        `_Ej: "marzo 2026", "semana santa", "todavía no sé"_`,
 
     askTravelers: () =>
         `Perfecto 📝\n\n` +
-        `Última pregunta: *¿cuántas personas viajan?*\n\n` +
-        `_Ej: "somos 2", "familia de 4", "soy solo/a", "grupo de 6 amigos"_`,
+        `Última pregunta: *¿cuántas personas viajan?* 👥\n\n` +
+        `_Ej: "somos 2", "familia de 4", "soy solo/a", "grupo de amigos"_`,
 
     thanks: (name) =>
         `¡Genial, *${name}*! Ya tengo toda la info 🎉\n\n` +
-        `📋 *Tu consulta fue registrada* y un asesor especializado se va a comunicar con vos a la brevedad para armarte la mejor propuesta.\n\n` +
-        `Mientras tanto, podés seguirnos en nuestras redes para ver destinos increíbles 🌟\n\n` +
+        `📋 *Tu consulta fue registrada* y un asesor se va a comunicar con vos a la brevedad.\n\n` +
         `¡Gracias por confiar en *MagnaTravel*! ✨🛫`,
 
     agentRequest: (name) =>
-        `Entendido, *${name || ""}*! 🤝\n\n` +
-        `Ya le avisé a un asesor que querés hablar con una persona real. Se va a comunicar con vos lo antes posible.\n\n` +
-        `¡Quedate tranquilo/a! 📞`,
+        `Entendido, *${name || ""}*! 🤝 Ya le avisé a un asesor para que te contacte personalmente.📞`,
 
     duplicate:
-        `¡Hola de nuevo! 😊\n\n` +
-        `Tu consulta ya fue registrada y un asesor se va a poner en contacto pronto.\n` +
-        `Si es urgente, llamanos directamente al teléfono de la agencia. 📞`,
+        `¡Hola de nuevo! 😊 Tu consulta ya fue registrada y estamos trabajando en tu propuesta.\n` +
+        `Si es algo urgente, podés llamarnos directamente. 📞`,
 
-    error: `Disculpá, tuvimos un inconveniente técnico 😔\nPor favor intentá de nuevo en unos minutos o llamanos directamente.`,
-
-    alreadyDone:
-        `¡Hola! Ya recibimos tu consulta anterior 😊\n` +
-        `Un asesor se va a poner en contacto con vos pronto.\n\n` +
-        `Si querés hacer una *nueva consulta*, escribí *"nueva consulta"* ✍️`,
+    error: `Disculpá, hubo un problema al registrar la consulta 😔\nPor favor intentá de nuevo o llamanos por teléfono.`,
 };
 
 // ─── WhatsApp Client ─────────────────────────────────────
-const puppeteerConfig = {
-    headless: true,
-    args: [
-        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas", "--no-first-run", "--disable-gpu",
-    ],
-};
-if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    puppeteerConfig.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    console.log(`🐳 Docker: Chromium → ${puppeteerConfig.executablePath}`);
-}
+const client = new Client({
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+    }
+});
 
-const client = new Client({ authStrategy: new LocalAuth(), puppeteer: puppeteerConfig });
-
-// ─── WhatsApp Events ─────────────────────────────────────
 client.on("qr", (qr) => {
-    console.log("\n📱 Escaneá este código QR con WhatsApp:\n");
+    if (isShowingQR) return;
+    isShowingQR = true;
+    console.log("\n📱 ESCANEÁ EL QR PARA CONECTAR:\n");
     qrcode.generate(qr, { small: true });
-    console.log("\n(WhatsApp → Dispositivos vinculados → Vincular dispositivo)\n");
 });
 
 client.on("ready", () => {
-    console.log("══════════════════════════════════════════════");
-    console.log("  🤖 MagnaTravel WhatsApp Bot v3 — CONECTADO");
-    console.log("══════════════════════════════════════════════");
-    console.log(`  Webhook: ${WEBHOOK_URL}`);
-    console.log(`  HTTP Server: http://0.0.0.0:${HTTP_PORT}`);
-    console.log(`  Timeout sesión: ${SESSION_TIMEOUT / 60000} min`);
-    console.log("  Esperando mensajes...\n");
+    if (isBotReady) return;
+    isBotReady = true;
+    isShowingQR = false;
+    console.log("\n══════════════════════════════════════════════");
+    console.log("  🤖 MagnaTravel WhatsApp Bot v3.1 — CONECTADO");
+    console.log("  HTTP Server: puerto " + HTTP_PORT);
+    console.log("══════════════════════════════════════════════\n");
 });
 
-client.on("authenticated", () => console.log("🔐 Sesión autenticada."));
-client.on("auth_failure", (msg) => {
-    console.error("❌ Auth error:", msg);
-    console.log("   Eliminá .wwebjs_auth/ y re-escaneá el QR.");
-});
-client.on("disconnected", (reason) => {
-    console.log("📴 Desconectado:", reason, "— Saliendo para que Docker reinicie...");
-    process.exit(1);
-});
+client.on("authenticated", () => { if (!isBotReady) console.log("🔐 Autenticado."); });
+client.on("disconnected", () => { console.log("📴 Desconectado."); process.exit(1); });
 
 // ─── Message Handler ─────────────────────────────────────
 client.on("message", async (message) => {
-    if (message.from.includes("@g.us")) return;
-    if (message.from === "status@broadcast") return;
-    if (message.fromMe) return;
+    if (message.from.includes("@g.us") || message.fromMe) return;
 
     const chatId = message.from;
     const body = message.body?.trim();
     if (!body) return;
 
-    // Anti-spam
-    const msgKey = `${chatId}_${message.id?.id || message.timestamp}`;
+    // Anti-spam & Cooldown
+    const msgKey = `${chatId}_${body}`;
     if (processedMessages.has(msgKey)) return;
     processedMessages.add(msgKey);
-    setTimeout(() => processedMessages.delete(msgKey), 60000);
+    setTimeout(() => processedMessages.delete(msgKey), 10000);
 
     const now = Date.now();
     if (now - (lastMessageTime.get(chatId) || 0) < MESSAGE_COOLDOWN_MS) return;
     lastMessageTime.set(chatId, now);
 
     const phone = extractPhone(chatId);
-    console.log(`💬 [${phone}]: ${body.substring(0, 100)}${body.length > 100 ? "..." : ""}`);
+    console.log(`💬 [${phone}]: ${body.substring(0, 50)}`);
 
-    // Guardar mensaje del cliente en el CRM (si ya tiene lead)
+    // Log message in CRM
     sendMessageToWebhook(phone, body, "Cliente");
 
-    // Keyword: nueva consulta
+    // "Nueva consulta"
     if (/nueva\s*consulta/i.test(body)) {
         const s = createSession(chatId);
-        const msg = MSG.welcome;
-        await message.reply(msg);
-        s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${msg}`);
+        await message.reply(MSG.welcome);
+        s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${MSG.welcome}`);
         s.state = "WAITING_NAME";
-        console.log(`🔄 [${phone}]: Reinició conversación`);
         return;
     }
 
-    // Keyword: pide asesor humano
+    // Agent request
     if (AGENT_REQUEST.test(body)) {
         const s = getSession(chatId) || createSession(chatId);
-        s.transcript.push(`[Cliente]: ${body}`);
-        const msg = MSG.agentRequest(s.name);
-        await message.reply(msg);
-        s.transcript.push(`[Bot]: ${msg}`);
-        s.state = "WAITING_AGENT";
-        // Enviar al webhook lo que tenga hasta ahora
+        await message.reply(MSG.agentRequest(s.name));
+        s.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${MSG.agentRequest(s.name)}`);
+        s.state = "DONE";
         if (s.name) await sendToWebhook(phone, s);
         return;
     }
@@ -264,163 +226,81 @@ client.on("message", async (message) => {
     let session = getSession(chatId);
 
     try {
-        // ── Sin sesión → crear ──
         if (!session) {
             session = createSession(chatId);
-
-            if (isGreeting(body)) {
-                session.transcript.push(`[Cliente]: ${body}`);
-                const msg = MSG.welcome;
-                await message.reply(msg);
-                session.transcript.push(`[Bot]: ${msg}`);
-                session.state = "WAITING_NAME";
-                return;
-            }
-
-            if (looksLikeName(body)) {
-                session.transcript.push(`[Cliente]: ${body}`);
-                session.name = body.substring(0, 200);
-                session.state = "WAITING_INTEREST";
-                const msg = MSG.askInterest(session.name);
-                await message.reply(msg);
-                session.transcript.push(`[Bot]: ${msg}`);
-                return;
-            }
-
-            session.transcript.push(`[Cliente]: ${body}`);
-            const msg = MSG.welcome;
-            await message.reply(msg);
-            session.transcript.push(`[Bot]: ${msg}`);
+            const initialMsg = isGreeting(body) ? MSG.welcome : MSG.welcome;
+            await message.reply(initialMsg);
+            session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${initialMsg}`);
             session.state = "WAITING_NAME";
             return;
         }
 
         session.transcript.push(`[Cliente]: ${body}`);
 
-        // ── WAITING_NAME ──
-        if (session.state === "WAITING_NAME") {
-            if (!looksLikeName(body)) {
-                const msg = MSG.badName;
-                await message.reply(msg);
-                session.transcript.push(`[Bot]: ${msg}`);
-                return;
-            }
-            session.name = body.substring(0, 200);
-            session.state = "WAITING_INTEREST";
-            const msg = MSG.askInterest(session.name);
-            await message.reply(msg);
-            session.transcript.push(`[Bot]: ${msg}`);
-            return;
-        }
+        switch (session.state) {
+            case "WAITING_NAME":
+                if (!looksLikeName(body)) {
+                    await message.reply(MSG.badName);
+                    session.transcript.push(`[Bot]: ${MSG.badName}`);
+                    return;
+                }
+                session.name = body;
+                session.state = "WAITING_INTEREST";
+                const m2 = MSG.askInterest(session.name);
+                await message.reply(m2);
+                session.transcript.push(`[Bot]: ${m2}`);
+                break;
 
-        // ── WAITING_INTEREST ──
-        if (session.state === "WAITING_INTEREST") {
-            session.interest = body.substring(0, 200);
-            session.state = "WAITING_DATES";
-            const msg = MSG.askDates(session.interest);
-            await message.reply(msg);
-            session.transcript.push(`[Bot]: ${msg}`);
-            return;
-        }
+            case "WAITING_INTEREST":
+                session.interest = body;
+                session.state = "WAITING_DATES";
+                const m3 = MSG.askDates(session.interest);
+                await message.reply(m3);
+                session.transcript.push(`[Bot]: ${m3}`);
+                break;
 
-        // ── WAITING_DATES ──
-        if (session.state === "WAITING_DATES") {
-            session.dates = body.substring(0, 200);
-            session.state = "WAITING_TRAVELERS";
-            const msg = MSG.askTravelers();
-            await message.reply(msg);
-            session.transcript.push(`[Bot]: ${msg}`);
-            return;
-        }
-
-        // ── WAITING_TRAVELERS ──
-        if (session.state === "WAITING_TRAVELERS") {
-            session.travelers = body.substring(0, 200);
-            session.state = "SENDING";
-
-            const result = await sendToWebhook(phone, session);
-
-            if (result === "duplicate") {
-                session.state = "DONE";
-                await message.reply(MSG.duplicate);
-                session.transcript.push(`[Bot]: ${MSG.duplicate}`);
-            } else if (result === "ok") {
-                session.state = "DONE";
-                const msg = MSG.thanks(session.name);
-                await message.reply(msg);
-                session.transcript.push(`[Bot]: ${msg}`);
-            } else {
+            case "WAITING_DATES":
+                session.dates = body;
                 session.state = "WAITING_TRAVELERS";
-                session.travelers = null;
-                await message.reply(MSG.error);
-                session.transcript.push(`[Bot]: ${MSG.error}`);
-            }
-            return;
-        }
+                const m4 = MSG.askTravelers();
+                await message.reply(m4);
+                session.transcript.push(`[Bot]: ${m4}`);
+                break;
 
-        // ── WAITING_AGENT (ya pidió humano, pasar mensajes al CRM) ──
-        if (session.state === "WAITING_AGENT" || session.state === "DONE") {
-            // No responder más, los mensajes se guardan en el CRM via webhook
-            return;
+            case "WAITING_TRAVELERS":
+                session.travelers = body;
+                session.state = "SENDING";
+                const res = await sendToWebhook(phone, session);
+                if (res === "duplicate") {
+                    await message.reply(MSG.duplicate);
+                } else if (res === "ok") {
+                    await message.reply(MSG.thanks(session.name));
+                } else {
+                    await message.reply(MSG.error);
+                }
+                session.state = "DONE";
+                break;
         }
-
-    } catch (err) {
-        console.error(`❌ Error [${phone}]:`, err.message);
-    }
+    } catch (err) { console.error("Flow error:", err.message); }
 });
 
-// ═══════════════════════════════════════════════════════════
-// EXPRESS HTTP SERVER — para enviar mensajes desde el CRM
-// ═══════════════════════════════════════════════════════════
+// ─── Express Server ──────────────────────────────────────
 const app = express();
 app.use(express.json());
 
-// Auth middleware
-function authMiddleware(req, res, next) {
-    const secret = req.headers["x-webhook-secret"];
-    if (!secret || secret !== WEBHOOK_SECRET) {
-        return res.status(401).json({ error: "Secret inválido" });
-    }
-    next();
-}
-
-// Health check
-app.get("/health", (req, res) => {
-    const info = client.info;
-    res.json({
-        status: "ok",
-        connected: !!info,
-        phone: info?.wid?.user || null,
-        uptime: process.uptime(),
-    });
-});
-
-// POST /send — Enviar mensaje a un número de WhatsApp
-app.post("/send", authMiddleware, async (req, res) => {
+app.post("/send", async (req, res) => {
     const { phone, message } = req.body;
-
-    if (!phone || !message) {
-        return res.status(400).json({ error: "phone y message son obligatorios" });
-    }
-
+    if (req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) return res.status(401).send();
     try {
         const chatId = phoneToChatId(phone);
         await client.sendMessage(chatId, message);
-        console.log(`📤 [CRM → ${phone}]: ${message.substring(0, 80)}${message.length > 80 ? "..." : ""}`);
-        res.json({ success: true, chatId });
-    } catch (err) {
-        console.error(`❌ Error enviando a ${phone}:`, err.message);
-        res.status(500).json({ error: err.message });
-    }
+        console.log(`📤 [CRM → ${phone}]: ${message.substring(0, 50)}`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.log(`🌐 HTTP Server escuchando en puerto ${HTTP_PORT}`);
+    console.log(`🚀 Bot v3.1 escuchando comandos en puerto ${HTTP_PORT}`);
 });
 
-// ─── Arranque ────────────────────────────────────────────
-console.log("🚀 Iniciando MagnaTravel WhatsApp Bot v3...\n");
 client.initialize();
-
-process.on("SIGINT", async () => { console.log("\n🛑 Cerrando bot..."); await client.destroy(); process.exit(0); });
-process.on("SIGTERM", async () => { await client.destroy(); process.exit(0); });

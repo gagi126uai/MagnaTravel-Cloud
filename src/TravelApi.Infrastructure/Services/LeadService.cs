@@ -48,6 +48,8 @@ public class LeadService : ILeadService
         lead.Phone = updated.Phone;
         lead.Source = updated.Source;
         lead.InterestedIn = updated.InterestedIn;
+        lead.TravelDates = updated.TravelDates;
+        lead.Travelers = updated.Travelers;
         lead.EstimatedBudget = updated.EstimatedBudget;
         lead.Notes = updated.Notes;
         lead.AssignedToUserId = updated.AssignedToUserId;

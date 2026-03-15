@@ -36,6 +36,12 @@ public class Lead
     [MaxLength(200)]
     public string? InterestedIn { get; set; } // Destino o producto de interés
     
+    [MaxLength(200)]
+    public string? TravelDates { get; set; } // Fechas aproximadas de viaje
+    
+    [MaxLength(100)]
+    public string? Travelers { get; set; } // Cantidad o descripción de viajeros
+    
     [Column(TypeName = "decimal(18,2)")]
     public decimal EstimatedBudget { get; set; } = 0;
     
