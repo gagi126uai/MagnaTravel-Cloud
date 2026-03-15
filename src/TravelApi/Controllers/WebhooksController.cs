@@ -221,12 +221,14 @@ public class WebhooksController : ControllerBase
             _logger.LogError(ex, "Error conectando con bot WhatsApp");
             return StatusCode(502, new { message = "No se pudo conectar con el bot de WhatsApp." });
         }
+    }
+
     [HttpPost("reload")]
     [Authorize]
     public async Task<IActionResult> ReloadBotConfig()
     {
-        var botUrl = _configuration["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
-        var secret = _configuration["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+        var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
+        var secret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
 
         try
         {
