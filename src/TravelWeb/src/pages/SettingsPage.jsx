@@ -29,7 +29,6 @@ import {
   RefreshCcw,
   LogOut,
   TerminalSquare,
-  ChevronDown,
   Settings2
 } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
