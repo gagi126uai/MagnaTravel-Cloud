@@ -286,6 +286,7 @@ public class WebhooksController : ControllerBase
             
             if (response.IsSuccessStatusCode) return Ok(new { success = true });
             return StatusCode((int)response.StatusCode, "Error al cerrar sesión del bot");
+        }
         catch (Exception ex)
         {
             return StatusCode(500, $"Error interno: {ex.Message}");
