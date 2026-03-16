@@ -307,31 +307,8 @@ client.on("message", async (message) => {
                     return;
                 }
                 session.name = body;
-                session.state = "WAITING_INTEREST";
-                const m2 = MSG.askInterest(session.name);
-                await message.reply(m2);
-                session.transcript.push(`[Bot]: ${m2}`);
-                break;
-
-            case "WAITING_INTEREST":
-                session.interest = body;
-                session.state = "WAITING_DATES";
-                const m3 = MSG.askDates(session.interest);
-                await message.reply(m3);
-                session.transcript.push(`[Bot]: ${m3}`);
-                break;
-
-            case "WAITING_DATES":
-                session.dates = body;
-                session.state = "WAITING_TRAVELERS";
-                const m4 = MSG.askTravelers();
-                await message.reply(m4);
-                session.transcript.push(`[Bot]: ${m4}`);
-                break;
-
-            case "WAITING_TRAVELERS":
-                session.travelers = body;
                 session.state = "SENDING";
+                
                 const res = await sendToWebhook(phone, session);
                 if (res === "duplicate") {
                     await message.reply(MSG.duplicate);

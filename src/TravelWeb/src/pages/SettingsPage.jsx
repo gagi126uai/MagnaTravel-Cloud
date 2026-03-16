@@ -849,18 +849,15 @@ export default function SettingsPage() {
                         <Smartphone className="h-5 w-5" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-slate-900 dark:text-white">Flujo del Chatbot</h3>
-                        <p className="text-xs text-slate-500">Personaliza los mensajes que el bot envía a los leads</p>
+                        <h3 className="font-semibold text-slate-900 dark:text-white">Captura de Leads Automática</h3>
+                        <p className="text-xs text-slate-500">Configura cómo el bot recibe a tus nuevos clientes</p>
                       </div>
                     </div>
                   </div>
 
                   <div className="p-6 space-y-6">
-                    <MsgInput label="Mensaje de Bienvenida" sub="Usa {agencyName} para el nombre de tu agencia." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
-                    <MsgInput label="Pregunta por Interés" sub="Usa {name} para el nombre del cliente." value={botConfig.askInterestMessage} onChange={v => setBotConfig({ ...botConfig, askInterestMessage: v })} />
-                    <MsgInput label="Pregunta por Fechas" sub="Usa {interest} para el destino capturado." value={botConfig.askDatesMessage} onChange={v => setBotConfig({ ...botConfig, askDatesMessage: v })} />
-                    <MsgInput label="Pregunta por Viajeros" sub="Último paso antes de cerrar el lead." value={botConfig.askTravelersMessage} onChange={v => setBotConfig({ ...botConfig, askTravelersMessage: v })} />
-                    <MsgInput label="Mensaje de Cierre / Gracias" sub="Usa {name} para despedirte." value={botConfig.thanksMessage} onChange={v => setBotConfig({ ...botConfig, thanksMessage: v })} />
+                    <MsgInput label="Mensaje de Bienvenida" sub="Primer mensaje enviado al cliente. Usa {agencyName}." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
+                    <MsgInput label="Captura de Nombre" sub="Confirmación después de que el cliente da su nombre. Usa {name}." value={botConfig.thanksMessage} onChange={v => setBotConfig({ ...botConfig, thanksMessage: v })} />
                     <MsgInput label="Respuesta por Agente" sub="Cuando el cliente pide hablar con alguien." value={botConfig.agentRequestMessage} onChange={v => setBotConfig({ ...botConfig, agentRequestMessage: v })} />
                     <MsgInput label="Lead Duplicado" sub="Si el cliente ya tiene una consulta abierta." value={botConfig.duplicateMessage} onChange={v => setBotConfig({ ...botConfig, duplicateMessage: v })} />
                   </div>
