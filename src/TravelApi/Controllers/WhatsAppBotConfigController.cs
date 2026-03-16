@@ -16,6 +16,18 @@ public class WhatsAppBotConfigController : ControllerBase
         _db = db;
     }
 
+    [HttpGet("env")]
+    public async Task<ActionResult> GetBotEnv()
+    {
+        var config = await _db.WhatsAppBotConfigs.FirstOrDefaultAsync() ?? new WhatsAppBotConfig();
+        var agency = await _db.AgencySettings.FirstOrDefaultAsync() ?? new AgencySettings();
+        
+        return Ok(new {
+            config,
+            agencyName = agency.AgencyName
+        });
+    }
+
     [HttpGet]
     public async Task<ActionResult<WhatsAppBotConfig>> GetConfig()
     {

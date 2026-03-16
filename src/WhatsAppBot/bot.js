@@ -48,32 +48,25 @@ let MSG = {
 };
 
 // ─── Dynamic Config ──────────────────────────────────────
-async function fetchAgencyInfo() {
-    try {
-        const res = await axios.get(`${API_URL}/api/reports/settings`);
-        if (res.data && res.data.agencyName) {
-            agencyName = res.data.agencyName;
-            console.log(`🏢 Agencia: ${agencyName}`);
-        }
-    } catch (err) {
-        console.log("⚠️ No se pudo cargar info de la agencia.");
-    }
-}
+
 
 async function fetchConfig() {
     try {
-        await fetchAgencyInfo(); // Cargar agencia primero
         console.log("🔄 Cargando configuración desde API...");
-        const res = await axios.get(`${API_URL}/api/whatsapp/config`);
-        const config = res.data;
+        const res = await axios.get(`${API_URL}/api/whatsapp/config/env`);
+        const { config, agencyName: name } = res.data;
+        
+        if (name) agencyName = name;
+        console.log(`🏢 Agencia: ${agencyName}`);
+
         if (config) {
             // Funciones con reemplazos dinámicos
-            MSG.welcome = () => (config.welcomeMessage || "¡Hola! 👋 Bienvenido/a a *{agencyName}* 🌎✈️...").replace("{agencyName}", agencyName);
-            MSG.askInterest = (name) => (config.askInterestMessage || "¡Un placer, *{name}*! 🤩...").replace("{name}", name);
-            MSG.askDates = (interest) => (config.askDatesMessage || "¡*{interest}*! Excelente elección 😍...").replace("{interest}", interest);
-            MSG.askTravelers = () => config.askTravelersMessage || "Perfecto 📝... Última pregunta: *¿cuántas personas viajan?* 👥\n\n_Ej: \"somos 2\", \"familia de 4\", \"soy solo/a\", \"grupo de amigos\"_";
-            MSG.thanks = (name) => (config.thanksMessage || "¡Genial, *{name}*!...").replace("{name}", name).replace("{agencyName}", agencyName);
-            MSG.agentRequest = (name) => (config.agentRequestMessage || "Entendido, *{name}*! 🤝").replace("{name}", name || "");
+            MSG.welcome = () => (config.welcomeMessage || "¡Hola! 👋 Bienvenido/a a *{agencyName}* 🌎✈️...").replace(/{agencyName}/g, agencyName);
+            MSG.askInterest = (name) => (config.askInterestMessage || "¡Un placer, *{name}*! 🤩...").replace(/{name}/g, name);
+            MSG.askDates = (interest) => (config.askDatesMessage || "¡*{interest}*! Excelente elección 😍...").replace(/{interest}/g, interest);
+            MSG.askTravelers = () => config.askTravelersMessage || "Perfecto 📝...";
+            MSG.thanks = (name) => (config.thanksMessage || "¡Genial, *{name}*!...").replace(/{name}/g, name).replace(/{agencyName}/g, agencyName);
+            MSG.agentRequest = (name) => (config.agentRequestMessage || "Entendido, *{name}*! 🤝").replace(/{name}/g, name || "");
             MSG.duplicate = config.duplicateMessage || MSG.duplicate;
 
             console.log("✅ Configuración actualizada.");
@@ -307,8 +300,31 @@ client.on("message", async (message) => {
                     return;
                 }
                 session.name = body;
+                session.state = "WAITING_INTEREST";
+                const m2 = MSG.askInterest(session.name);
+                await message.reply(m2);
+                session.transcript.push(`[Bot]: ${m2}`);
+                break;
+
+            case "WAITING_INTEREST":
+                session.interest = body;
+                session.state = "WAITING_DATES";
+                const m3 = MSG.askDates(session.interest);
+                await message.reply(m3);
+                session.transcript.push(`[Bot]: ${m3}`);
+                break;
+
+            case "WAITING_DATES":
+                session.dates = body;
+                session.state = "WAITING_TRAVELERS";
+                const m4 = MSG.askTravelers();
+                await message.reply(m4);
+                session.transcript.push(`[Bot]: ${m4}`);
+                break;
+
+            case "WAITING_TRAVELERS":
+                session.travelers = body;
                 session.state = "SENDING";
-                
                 const res = await sendToWebhook(phone, session);
                 if (res === "duplicate") {
                     await message.reply(MSG.duplicate);
