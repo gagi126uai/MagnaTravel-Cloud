@@ -198,6 +198,7 @@ async function sendMessageToWebhook(phone, message, sender) {
 }
 
 // ─── WhatsApp Client ─────────────────────────────────────
+botLog("🚀 Iniciando motor del bot...");
 cleanLockFiles();
 
 const client = new Client({
@@ -209,10 +210,19 @@ const client = new Client({
             "--disable-setuid-sandbox", 
             "--disable-dev-shm-usage", 
             "--disable-gpu",
-            "--disable-features=SharedArrayBuffer"
+            "--disable-features=SharedArrayBuffer",
+            "--no-first-run",
+            "--no-zygote",
+            "--single-process"
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
     }
+});
+
+botLog("📦 Cargando cliente de WhatsApp...");
+client.initialize().catch(err => {
+    botLog(`❌ ERROR FATAL AL LANZAR CHROMIUM: ${err.message}`);
+    botLog("💡 Sugerencia: Revisa que no haya otros procesos de Chrome corriendo en el servidor.");
 });
 
 client.on("qr", (qr) => {

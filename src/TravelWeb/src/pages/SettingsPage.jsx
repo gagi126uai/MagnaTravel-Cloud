@@ -28,7 +28,9 @@ import {
   Smartphone,
   RefreshCcw,
   LogOut,
-  TerminalSquare
+  TerminalSquare,
+  ChevronDown,
+  Settings2
 } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import Swal from "sweetalert2";
@@ -212,6 +214,7 @@ export default function SettingsPage() {
 
   // Mobile Nav State
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showAdvancedBot, setShowAdvancedBot] = useState(false);
 
   const loadBotStatus = async () => {
     try {
@@ -864,108 +867,137 @@ export default function SettingsPage() {
 
         {/* --- WHATSAPP TAB --- */}
         {activeTab === "whatsapp" && (
-          <div className="grid gap-6 lg:grid-cols-12">
-            {/* Dashboard Column */}
-            <div className="lg:col-span-5 space-y-6">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 overflow-hidden flex flex-col h-full">
-                <div className="flex justify-between items-center mb-6">
-                    <h3 className="font-semibold text-slate-900 dark:text-white">Dashboard de Conexión</h3>
-                    <div className="flex gap-2">
-                        <button onClick={loadBotStatus} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors text-slate-400">
-                            <RefreshCcw className="h-4 w-4" />
-                        </button>
-                    </div>
+          <div className="max-w-4xl mx-auto space-y-8">
+            {/* Header & Status */}
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div>
+                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
+                        <Smartphone className="h-7 w-7 text-indigo-600" />
+                        Vinculación del Bot
+                    </h2>
+                    <p className="text-sm text-slate-500">Conecta tu WhatsApp para empezar a capturar leads automáticamente.</p>
                 </div>
-
-                <div className="flex-1 flex flex-col items-center">
-                    {botStatus === "READY" ? (
-                        <div className="w-full text-center space-y-4 py-8">
-                            <div className="h-40 w-40 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-emerald-600 dark:text-emerald-400 shadow-inner">
-                                <Smartphone className="h-20 w-20" />
-                            </div>
-                            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 rounded-full border border-emerald-100 dark:border-emerald-800/50">
-                                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                                <span className="text-xs font-bold uppercase tracking-widest">BOT TRABAJANDO</span>
-                            </div>
-                            <p className="text-sm text-slate-500 max-w-[250px] mx-auto">El bot está vinculado y procesando nuevos clientes de forma automática.</p>
-                            <div className="pt-4">
-                                <Button variant="outline" className="w-full text-rose-600 border-rose-100 hover:bg-rose-50" onClick={handleLogoutBot}>
-                                    <LogOut className="h-4 w-4 mr-2" />
-                                    Cerrar Sesión WhatsApp
-                                </Button>
-                            </div>
-                        </div>
-                    ) : (botStatus === "SCAN_QR" || qrCode) ? (
-                        <div className="w-full text-center space-y-6">
-                            <div className="bg-white p-4 rounded-3xl shadow-xl inline-block border-8 border-indigo-50 dark:border-slate-800 relative group">
-                                <QRCodeCanvas value={qrCode} size={240} level="H" />
-                                <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <span className="bg-indigo-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg">Escaneá para conectar</span>
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 rounded-full border border-indigo-100 dark:border-indigo-800/50">
-                                    <div className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></div>
-                                    <span className="text-xs font-bold uppercase tracking-widest">ESPERANDO ESCANEO</span>
-                                </div>
-                                <p className="text-[11px] text-slate-500 italic">Abrí WhatsApp en tu celu y vinculá el dispositivo para conectar.</p>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="w-full text-center space-y-4 py-12">
-                            <div className="h-32 w-32 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-400">
-                                <RefreshCcw className="h-10 w-10 animate-spin-slow" />
-                            </div>
-                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full">
-                                <span className="text-xs font-bold uppercase tracking-widest">{botStatus === "OFFLINE" ? "BOT DESCONECTADO" : "INICIANDO SERVICIO"}</span>
-                            </div>
-                            <p className="text-sm text-slate-500">El servicio del bot se está iniciando en el servidor. Esto puede tardar unos segundos...</p>
-                        </div>
+                <div className="flex gap-2">
+                    <button 
+                        onClick={() => { loadBotStatus(); reloadBot(); }} 
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-all text-slate-600 dark:text-slate-300 font-semibold text-sm"
+                    >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refrescar
+                    </button>
+                    {botStatus === "READY" && (
+                        <Button variant="outline" className="text-rose-600 border-rose-100 hover:bg-rose-50 rounded-xl" onClick={handleLogoutBot}>
+                            Cerrar Sesión
+                        </Button>
                     )}
                 </div>
-
-                <div className="mt-auto pt-6 border-t border-slate-100 dark:border-slate-800">
-                    <div className="flex items-center gap-2 mb-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        <TerminalSquare className="h-3.5 w-3.5" />
-                        Consola en Vivo
-                    </div>
-                    <Terminal logs={botLogs} />
-                </div>
-              </div>
             </div>
 
-            {/* Customization Column */}
-            <div className="lg:col-span-7 space-y-6">
-              <form onSubmit={saveBotConfig} className="space-y-6">
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
-                    <h3 className="font-semibold text-slate-900 dark:text-white">Personalización del Bot</h3>
-                    <p className="text-xs text-slate-500">Configurá las respuestas automáticas para tus clientes</p>
-                  </div>
-
-                  <div className="p-6 grid gap-4 grid-cols-1 md:grid-cols-2">
-                    <div className="md:col-span-2">
-                        <MsgInput label="Mensaje de Bienvenida" sub="Usa {agencyName} para tu nombre comercial." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
+            {/* Connection Dashboard (BIG QR) */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+                <div className="grid md:grid-cols-2">
+                    {/* Visual QR Part */}
+                    <div className="p-8 md:p-12 flex flex-col items-center justify-center bg-slate-50/50 dark:bg-slate-800/10 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800 min-h-[400px]">
+                        {botStatus === "READY" ? (
+                            <div className="text-center space-y-6">
+                                <div className="h-48 w-48 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400 shadow-2xl">
+                                    <Check className="h-24 w-24" />
+                                </div>
+                                <div className="inline-flex items-center gap-2 px-6 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full border border-emerald-200 dark:border-emerald-800">
+                                    <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                                    <span className="font-bold uppercase tracking-widest text-sm">BOT CONECTADO</span>
+                                </div>
+                                <p className="text-slate-500 font-medium">¡Todo listo! El bot está operando normalmente.</p>
+                            </div>
+                        ) : (botStatus === "SCAN_QR" || qrCode) ? (
+                            <div className="text-center space-y-8">
+                                <div className="bg-white p-6 rounded-[32px] shadow-2xl inline-block border-8 border-white/50 relative">
+                                    <QRCodeCanvas value={qrCode} size={280} level="H" />
+                                    <div className="absolute -top-4 -right-4 bg-indigo-600 text-white p-3 rounded-2xl shadow-lg ring-4 ring-white">
+                                        <Smartphone className="h-6 w-6" />
+                                    </div>
+                                </div>
+                                <div className="space-y-3">
+                                    <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded-full border border-indigo-200 dark:border-indigo-800">
+                                        <div className="w-3 h-3 rounded-full bg-indigo-500 animate-pulse"></div>
+                                        <span className="font-bold uppercase tracking-widest text-sm">ESCANEÁ EL CÓDIGO</span>
+                                    </div>
+                                    <p className="text-sm text-slate-500 italic">Vincular dispositivo en la app de WhatsApp</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-center space-y-6 py-12">
+                                <div className="h-32 w-32 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
+                                    <RefreshCcw className="h-12 w-12 animate-spin-slow" />
+                                </div>
+                                <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full">
+                                    <span className="text-xs font-bold uppercase tracking-widest leading-none">
+                                        {botStatus === "OFFLINE" ? "BOT FUERA DE LÍNEA" : "INICIANDO MOTOR..."}
+                                    </span>
+                                </div>
+                                <p className="text-sm text-slate-400 max-w-[200px]">Esperando respuesta del servidor del bot...</p>
+                            </div>
+                        )}
                     </div>
-                    <MsgInput label="Pregunta por Interés" sub="Usa {name} para el nombre del cliente." value={botConfig.askInterestMessage} onChange={v => setBotConfig({ ...botConfig, askInterestMessage: v })} />
-                    <MsgInput label="Pregunta por Fechas" sub="Usa {interest} para el destino capturado." value={botConfig.askDatesMessage} onChange={v => setBotConfig({ ...botConfig, askDatesMessage: v })} />
-                    <MsgInput label="Pregunta por Viajeros" sub="Mensaje final de calificación." value={botConfig.askTravelersMessage} onChange={v => setBotConfig({ ...botConfig, askTravelersMessage: v })} />
-                    <div className="md:col-span-2 grid gap-4 grid-cols-2">
-                        <MsgInput label="Pedido de Agente" sub="Si el cliente pide hablar con alguien." value={botConfig.agentRequestMessage} onChange={v => setBotConfig({ ...botConfig, agentRequestMessage: v })} />
-                        <MsgInput label="Lead Duplicado" sub="Si ya tiene una consulta abierta." value={botConfig.duplicateMessage} onChange={v => setBotConfig({ ...botConfig, duplicateMessage: v })} />
-                    </div>
-                  </div>
 
-                  <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex justify-between gap-3">
-                    <Button type="button" variant="outline" onClick={reloadBot} className="rounded-lg text-xs">
-                        Refrescar Configuración
-                    </Button>
-                    <Button type="submit" disabled={savingBot} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-8">
-                      {savingBot ? "Guardando..." : "Guardar & Aplicar"}
-                    </Button>
-                  </div>
+                    {/* Live Console Part */}
+                    <div className="p-8 flex flex-col bg-slate-900 dark:bg-slate-950">
+                        <div className="flex items-center justify-between mb-4">
+                            <span className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                <TerminalSquare className="h-4 w-4 text-emerald-500" />
+                                Consola del Servidor (Real-Time)
+                            </span>
+                            <div className="flex gap-1">
+                                <div className="w-2 h-2 rounded-full bg-rose-500/50"></div>
+                                <div className="w-2 h-2 rounded-full bg-amber-500/50"></div>
+                                <div className="w-2 h-2 rounded-full bg-emerald-500/50"></div>
+                            </div>
+                        </div>
+                        <Terminal logs={botLogs} />
+                        <div className="mt-4 p-4 bg-slate-800/30 rounded-xl border border-slate-800/50">
+                            <p className="text-[11px] text-slate-400 leading-relaxed">
+                                <b className="text-indigo-400">💡 Tip:</b> Si el QR no aparece después de 30 segundos, hacé clic en el botón <b>Refrescar</b> arriba para forzar una nueva comprobación.
+                            </p>
+                        </div>
+                    </div>
                 </div>
-              </form>
+            </div>
+
+            {/* Advanced Settings (Collapsed by default) */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                <button 
+                    onClick={() => setShowAdvancedBot(!showAdvancedBot)}
+                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                >
+                    <div className="flex items-center gap-3">
+                        <Settings2 className="h-5 w-5 text-slate-400" />
+                        <span className="font-semibold text-slate-700 dark:text-slate-200">Configuración Avanzada de Mensajes</span>
+                    </div>
+                    <ChevronDown className={`h-5 w-5 text-slate-400 transition-transform ${showAdvancedBot ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showAdvancedBot && (
+                    <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/10 space-y-6">
+                        <form onSubmit={saveBotConfig} className="space-y-6">
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <div className="md:col-span-2">
+                                    <MsgInput label="Mensaje de Bienvenida" sub="Usa {agencyName} para tu nombre comercial." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
+                                </div>
+                                <MsgInput label="Pregunta por Interés" sub="Usa {name} para el nombre del cliente." value={botConfig.askInterestMessage} onChange={v => setBotConfig({ ...botConfig, askInterestMessage: v })} />
+                                <MsgInput label="Pregunta por Fechas" sub="Usa {interest} para el destino capturado." value={botConfig.askDatesMessage} onChange={v => setBotConfig({ ...botConfig, askDatesMessage: v })} />
+                                <MsgInput label="Pregunta por Viajeros" sub="Mensaje final de calificación." value={botConfig.askTravelersMessage} onChange={v => setBotConfig({ ...botConfig, askTravelersMessage: v })} />
+                                <MsgInput label="Mensaje de Cierre" sub="Usa {name} para despedirte." value={botConfig.thanksMessage} onChange={v => setBotConfig({ ...botConfig, thanksMessage: v })} />
+                                <MsgInput label="Pedido de Agente" sub="Si el cliente pide hablar con alguien." value={botConfig.agentRequestMessage} onChange={v => setBotConfig({ ...botConfig, agentRequestMessage: v })} />
+                            </div>
+
+                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-700">
+                                <Button type="submit" disabled={savingBot} className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 rounded-xl font-bold">
+                                    {savingBot ? "Guardando..." : "Guardar & Aplicar"}
+                                </Button>
+                            </div>
+                        </form>
+                    </div>
+                )}
             </div>
           </div>
         )}
