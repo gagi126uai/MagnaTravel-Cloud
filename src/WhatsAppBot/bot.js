@@ -26,6 +26,16 @@ let isShowingQR = false;
 let isBotReady = false;
 let lastQR = null;
 let botStatus = "STARTING"; // STARTING, SCAN_QR, AUTHENTICATED, READY, DISCONNECTED
+const botLogs = [];
+const MAX_LOGS = 100;
+
+function botLog(msg) {
+    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+    const logEntry = `[${timestamp}] ${msg}`;
+    console.log(logEntry);
+    botLogs.push(logEntry);
+    if (botLogs.length > MAX_LOGS) botLogs.shift();
+}
 
 // ─── Anti-spam ───────────────────────────────────────────
 const processedMessages = new Set();
@@ -52,12 +62,14 @@ let MSG = {
 
 async function fetchConfig() {
     try {
-        console.log("🔄 Cargando configuración desde API...");
+        botLog("🔄 Sincronizando configuración con API...");
         const res = await axios.get(`${API_URL}/api/whatsapp/config/env`);
         const { config, agencyName: name } = res.data;
         
-        if (name) agencyName = name;
-        console.log(`🏢 Agencia: ${agencyName}`);
+        if (name) {
+            agencyName = name;
+            botLog(`🏢 Agencia cargada: ${agencyName}`);
+        }
 
         if (config) {
             // Funciones con reemplazos dinámicos
@@ -69,10 +81,10 @@ async function fetchConfig() {
             MSG.agentRequest = (name) => (config.agentRequestMessage || "Entendido, *{name}*! 🤝").replace(/{name}/g, name || "");
             MSG.duplicate = config.duplicateMessage || MSG.duplicate;
 
-            console.log("✅ Configuración actualizada.");
+            botLog("✅ Configuración actualizada.");
         }
     } catch (err) {
-        console.error("⚠️ Error al cargar configuración de API: " + err.message);
+        botLog("⚠️ No se pudo cargar info de la agencia.");
     }
 }
 
@@ -88,7 +100,7 @@ function cleanLockFiles() {
                 if (fs.statSync(fullPath).isDirectory()) {
                     deleteLock(fullPath);
                 } else if (file === "SingletonLock") {
-                    console.log(`🧹 Eliminando bloqueo de Chromium: ${fullPath}`);
+                    botLog(`🧹 Limpiando bloqueo de Chromium: ${fullPath}`);
                     fs.unlinkSync(fullPath);
                 }
             }
@@ -96,7 +108,7 @@ function cleanLockFiles() {
         
         deleteLock(AUTH_PATH);
     } catch (err) {
-        console.error("⚠️ Error al limpiar archivos de bloqueo: " + err.message);
+        botLog(`❌ Error limpiando locks: ${err.message}`);
     }
 }
 
@@ -208,8 +220,7 @@ client.on("qr", (qr) => {
     botStatus = "SCAN_QR";
     if (isShowingQR) return;
     isShowingQR = true;
-    console.log("\n📱 ESCANEÁ EL QR PARA CONECTAR:\n");
-    qrcode.generate(qr, { small: true });
+    botLog("📱 NUEVO CÓDIGO QR GENERADO. Esperando escaneo...");
 });
 
 client.on("ready", () => {
@@ -218,22 +229,19 @@ client.on("ready", () => {
     if (isBotReady) return;
     isBotReady = true;
     isShowingQR = false;
-    console.log("\n══════════════════════════════════════════════");
-    console.log("  🤖 MagnaTravel WhatsApp Bot v3.2 — CONECTADO");
-    console.log("  Dynamic Config: Habilitada");
-    console.log("══════════════════════════════════════════════\n");
+    botLog("✅ BOT CONECTADO Y TRABAJANDO.");
     fetchConfig(); // Cargar al estar listo
 });
 
 client.on("authenticated", () => { 
     botStatus = "AUTHENTICATED";
-    if (!isBotReady) console.log("🔐 Autenticado."); 
+    botLog("🔐 Sesión recuperada. Autenticado."); 
 });
 
-client.on("disconnected", () => { 
+client.on("disconnected", (reason) => { 
+    botLog(`📴 Bot desconectado: ${reason}`);
     botStatus = "DISCONNECTED";
     isBotReady = false;
-    console.log("📴 Desconectado."); 
     process.exit(1); 
 });
 
@@ -362,12 +370,11 @@ app.post("/reload", async (req, res) => {
 });
 
 app.get("/status", (req, res) => {
-    if (req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) return res.status(401).send();
-    res.json({ 
-        status: botStatus, 
-        qr: lastQR,
-        isReady: isBotReady
-    });
+    res.json({ status: botStatus, qr: lastQR, ready: isBotReady });
+});
+
+app.get("/logs", (req, res) => {
+    res.json(botLogs);
 });
 
 app.post("/logout", async (req, res) => {

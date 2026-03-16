@@ -286,6 +286,29 @@ public class WebhooksController : ControllerBase
             
             if (response.IsSuccessStatusCode) return Ok(new { success = true });
             return StatusCode((int)response.StatusCode, "Error al cerrar sesión del bot");
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error interno: {ex.Message}");
+        }
+    }
+
+    [HttpGet("logs")]
+    [Authorize]
+    public async Task<IActionResult> GetBotLogs()
+    {
+        var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
+        
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            var response = await client.GetAsync($"{botUrl}/logs");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                return Content(content, "application/json");
+            }
+            return StatusCode((int)response.StatusCode, "Error al obtener logs del bot");
         }
         catch (Exception ex)
         {
