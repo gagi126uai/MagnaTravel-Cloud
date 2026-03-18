@@ -387,7 +387,7 @@ public class ReportService : IReportService
 
         // Get file creation events from audit logs to attribute files to sellers
         var fileCreations = await _dbContext.AuditLogs
-            .Where(a => a.Action == "Create" && a.EntityName == "Reserva" 
+            .Where(a => a.Action == "Create" && (a.EntityName == "Reserva" || a.EntityName == "TravelFile")
                 && a.Timestamp >= dateFrom && a.Timestamp <= dateTo)
             .Select(a => new { a.UserId, a.UserName, FileId = a.EntityId })
             .ToListAsync(cancellationToken);
