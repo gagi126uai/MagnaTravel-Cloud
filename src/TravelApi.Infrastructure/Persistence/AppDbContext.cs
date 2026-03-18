@@ -341,6 +341,30 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(i => i.ReservaId).HasColumnName("TravelFileId");
         });
 
+        // HotelBooking
+        modelBuilder.Entity<HotelBooking>(entity =>
+        {
+            entity.Property(h => h.ReservaId).HasColumnName("TravelFileId");
+        });
+
+        // TransferBooking
+        modelBuilder.Entity<TransferBooking>(entity =>
+        {
+            entity.Property(t => t.ReservaId).HasColumnName("TravelFileId");
+        });
+
+        // PackageBooking
+        modelBuilder.Entity<PackageBooking>(entity =>
+        {
+            entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
+        });
+
+        // Quotes
+        modelBuilder.Entity<Quote>(entity =>
+        {
+            entity.Property(q => q.ConvertedReservaId).HasColumnName("ConvertedTravelFileId");
+        });
+
         // ReservaAttachment
         modelBuilder.Entity<ReservaAttachment>(entity =>
         {

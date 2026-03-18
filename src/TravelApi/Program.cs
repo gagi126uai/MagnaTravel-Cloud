@@ -215,15 +215,15 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
 }
 
-app.UseSerilogRequestLogging();
-
-app.UseRouting();
-
-// 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy)
+// 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy) - MUST BE FIRST
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
 });
+
+app.UseSerilogRequestLogging();
+
+app.UseRouting();
 
 // 2. CORS (Explicitly permissive for known origins + wildcard fallback if needed)
 app.UseCors("web");
