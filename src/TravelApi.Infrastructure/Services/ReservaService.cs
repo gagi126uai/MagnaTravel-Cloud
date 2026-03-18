@@ -95,6 +95,8 @@ public class ReservaService : IReservaService
         file.TotalCost = totalCost;
         file.Balance = totalSale - totalPaid;
 
+        await _context.SaveChangesAsync();
+
         return _mapper.Map<ReservaDto>(file);
     }
 
@@ -159,6 +161,7 @@ public class ReservaService : IReservaService
 
         _context.Servicios.Add(reservation);
         await _context.SaveChangesAsync();
+        await UpdateBalanceAsync(reservaId);
 
         return (reservation, warning);
     }
@@ -186,6 +189,7 @@ public class ReservaService : IReservaService
         service.Commission = request.SalePrice - request.NetCost;
 
         await _context.SaveChangesAsync();
+        await UpdateBalanceAsync(service.ReservaId);
         return service;
     }
 
@@ -198,7 +202,9 @@ public class ReservaService : IReservaService
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
 
         _context.Servicios.Remove(service);
+        var resId = service.ReservaId;
         await _context.SaveChangesAsync();
+        await UpdateBalanceAsync(resId);
     }
 
     public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId)
@@ -295,6 +301,7 @@ public class ReservaService : IReservaService
 
         _context.Payments.Add(payment);
         await _context.SaveChangesAsync();
+        await UpdateBalanceAsync(reservaId);
 
         return _mapper.Map<PaymentDto>(payment);
     }
@@ -317,6 +324,7 @@ public class ReservaService : IReservaService
         payment.Notes = updatedPayment.Notes;
 
         await _context.SaveChangesAsync();
+        await UpdateBalanceAsync(reservaId);
         return _mapper.Map<PaymentDto>(payment);
     }
 
@@ -334,6 +342,7 @@ public class ReservaService : IReservaService
         payment.DeletedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+        await UpdateBalanceAsync(reservaId);
     }
 
     public async Task<Reserva> UpdateStatusAsync(int id, string status)
@@ -414,5 +423,41 @@ public class ReservaService : IReservaService
             await transaction.RollbackAsync();
             throw;
         }
+    }
+
+    public async Task UpdateBalanceAsync(int reservaId)
+    {
+        var file = await _context.Reservas
+            .Include(f => f.Payments)
+            .Include(f => f.Servicios)
+            .Include(f => f.FlightSegments)
+            .Include(f => f.HotelBookings)
+            .Include(f => f.TransferBookings)
+            .Include(f => f.PackageBookings)
+            .FirstOrDefaultAsync(f => f.Id == reservaId);
+
+        if (file == null) return;
+
+        var totalSale = 
+            (file.FlightSegments?.Sum(f => f.SalePrice) ?? 0) +
+            (file.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
+            (file.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
+            (file.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
+            (file.Servicios?.Sum(r => r.SalePrice) ?? 0);
+
+        var totalCost = 
+            (file.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
+            (file.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
+            (file.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
+            (file.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
+            (file.Servicios?.Sum(r => r.NetCost) ?? 0);
+
+        var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => p.Amount) ?? 0;
+
+        file.TotalSale = totalSale;
+        file.TotalCost = totalCost;
+        file.Balance = totalSale - totalPaid;
+
+        await _context.SaveChangesAsync();
     }
 }

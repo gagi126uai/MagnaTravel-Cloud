@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { X, Save, User } from "lucide-react";
+import { X, Save, User, Search, Loader2 } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 
@@ -21,6 +21,41 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         notes: ""
     });
     const [loading, setLoading] = useState(false);
+    const [loadingFiscal, setLoadingFiscal] = useState(false);
+
+    const handleFiscalLookup = async () => {
+        if (!formData.documentNumber || formData.documentNumber.length < 7) {
+            showError("Ingrese un DNI o CUIT válido");
+            return;
+        }
+
+        setLoadingFiscal(true);
+        try {
+            const result = await api.get(`/fiscal/persona/${formData.documentNumber}`);
+            
+            // Format result
+            let fullResultName = "";
+            if (result.razonSocial) {
+                fullResultName = result.razonSocial;
+            } else if (result.nombre || result.apellido) {
+                fullResultName = `${result.apellido || ''} ${result.nombre || ''}`.trim();
+            }
+
+            if (fullResultName) {
+                setFormData(prev => ({
+                    ...prev,
+                    fullName: fullResultName,
+                    documentNumber: result.id || prev.documentNumber
+                }));
+                showSuccess("Datos de AFIP: " + fullResultName);
+            }
+        } catch (error) {
+            console.error(error);
+            showError(error.response?.data || "No se pudo obtener información fiscal");
+        } finally {
+            setLoadingFiscal(false);
+        }
+    };
 
     useEffect(() => {
         if (isOpen) {
@@ -116,12 +151,24 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                         </div>
                         <div>
                             <label className={labelClass}>Número Documento</label>
-                            <input
-                                type="text"
-                                className={inputClass}
-                                value={formData.documentNumber}
-                                onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
-                            />
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    className={inputClass}
+                                    placeholder="DNI o CUIT"
+                                    value={formData.documentNumber}
+                                    onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleFiscalLookup}
+                                    disabled={loadingFiscal || !formData.documentNumber}
+                                    className="px-3 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
+                                    title="Consultar AFIP"
+                                >
+                                    {loadingFiscal ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Search className="w-4 h-4 text-slate-500" />}
+                                </button>
+                            </div>
                         </div>
 
                         {/* Personal Info */}

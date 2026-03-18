@@ -25,6 +25,7 @@ public interface IReservaService
     Task DeletePaymentAsync(int reservaId, int paymentId);
 
     Task<Reserva> UpdateStatusAsync(int id, string status);
+    Task UpdateBalanceAsync(int reservaId);
     Task<Reserva> ArchiveReservaAsync(int id);
     Task DeleteReservaAsync(int id);
 }

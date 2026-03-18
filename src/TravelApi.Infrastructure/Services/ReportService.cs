@@ -392,6 +392,8 @@ public class ReportService : IReportService
             .Select(a => new { a.UserId, a.UserName, FileId = a.EntityId })
             .ToListAsync(cancellationToken);
 
+        if (!fileCreations.Any()) return new List<SellerRankingDto>();
+
         var fileIds = fileCreations.Select(fc => int.TryParse(fc.FileId, out var id) ? id : 0).Where(id => id > 0).ToList();
 
         var files = await _dbContext.Reservas
@@ -399,19 +401,31 @@ public class ReportService : IReportService
             .Select(f => new { f.Id, f.TotalSale, f.TotalCost })
             .ToListAsync(cancellationToken);
 
+        // Get all users to map IDs to Names if AuditLog is missing them
+        var users = await _dbContext.Users.ToDictionaryAsync(u => u.Id, u => u.FullName, cancellationToken);
+
         var ranking = fileCreations
-            .GroupBy(fc => new { fc.UserId, fc.UserName })
+            .GroupBy(fc => fc.UserId)
             .Select(g => {
+                var userId = g.Key;
+                var userName = g.First().UserName;
+                if (string.IsNullOrWhiteSpace(userName) || userName == "System")
+                {
+                    if (users.TryGetValue(userId, out var fullName)) userName = fullName;
+                    else userName = "Sistema / Desconocido";
+                }
+
                 var sellerFileIds = g.Select(x => int.TryParse(x.FileId, out var id) ? id : 0).Where(id => id > 0).ToHashSet();
                 var sellerFiles = files.Where(f => sellerFileIds.Contains(f.Id)).ToList();
+                
                 var totalSales = sellerFiles.Sum(f => f.TotalSale);
                 var totalCosts = sellerFiles.Sum(f => f.TotalCost);
                 var margin = totalSales - totalCosts;
                 var marginPercent = totalSales > 0 ? Math.Round((margin / totalSales) * 100, 1) : 0;
 
                 return new SellerRankingDto(
-                    g.Key.UserId,
-                    g.Key.UserName ?? "Desconocido",
+                    userId,
+                    userName,
                     sellerFiles.Count,
                     totalSales,
                     totalCosts,
@@ -419,6 +433,7 @@ public class ReportService : IReportService
                     marginPercent
                 );
             })
+            .Where(s => s.FilesCreated > 0)
             .OrderByDescending(s => s.TotalSales)
             .ToList();
 

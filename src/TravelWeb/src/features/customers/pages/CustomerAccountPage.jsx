@@ -17,7 +17,13 @@ import {
     Pencil,
     Trash2,
     ArrowDownLeft,
-    ArrowUpRight
+    ArrowUpRight,
+    Receipt,
+    Wallet,
+    Info,
+    Download,
+    Eye,
+    History
 } from "lucide-react";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import Swal from "sweetalert2";
@@ -124,16 +130,12 @@ export default function CustomerAccountPage() {
 
     const { customer, reservas = [], payments = [], summary = {}, invoices = [] } = data;
 
-    // --- Unified Ledger Logic (Cuenta Corriente Real) ---
-    // 1. Map Files (Ventas) -> DEBITS
-    // 2. Map Payments (Cobros) -> CREDITS
-    // 3. Sort Chronologically
-    // 4. Calculate Running Balance
-
+    // --- Unified Ledger Logic ---
     const debitMovements = (reservas || []).map(r => ({
         id: r.id,
+        trackId: `res-${r.id}`,
         type: 'RESERVA',
-        date: r.startDate || r.createdAt, // Use startDate as fallback for transaction date
+        date: r.startDate || r.createdAt,
         concept: `Reserva ${r.numeroReserva} - ${r.name}`,
         debit: r.totalSale,
         credit: 0,
@@ -142,6 +144,7 @@ export default function CustomerAccountPage() {
 
     const creditMovements = (payments || []).map(p => ({
         id: p.id,
+        trackId: `pay-${p.id}`,
         type: 'PAYMENT',
         date: p.paymentDate,
         concept: `Pago (${methodLabels[p.method] || p.method})`,
@@ -150,20 +153,30 @@ export default function CustomerAccountPage() {
         originalData: p
     }));
 
-    // Merge and Sort Oldest to Newest to calculate balance
-    const allMovements = [...debitMovements, ...creditMovements].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const invoiceMovements = (invoices || []).map(i => ({
+        id: i.id,
+        trackId: `inv-${i.id}`,
+        type: 'INVOICE',
+        date: i.createdAt,
+        concept: `${i.tipoComprobante === 1 ? 'Factura A' : i.tipoComprobante === 6 ? 'Factura B' : 'Factura C'} ${String(i.puntoDeVenta).padStart(5, '0')}-${String(i.numeroComprobante).padStart(8, '0')}`,
+        debit: 0, 
+        credit: 0, // Informational only in ledger to avoid double counting
+        info: formatCurrency(i.importeTotal),
+        originalData: i
+    }));
 
-    // Calculate Running Balance
+    // Merge and Sort
+    const allMovements = [...debitMovements, ...creditMovements, ...invoiceMovements].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Calculate Balance (Invoices don't affect it here as the Reserva already did)
     let runningBalance = 0;
     const ledger = allMovements.map(m => {
-        runningBalance += (m.debit - m.credit);
+        if (m.type !== 'INVOICE') {
+            runningBalance += (m.debit - m.credit);
+        }
         return { ...m, balance: runningBalance };
     });
 
-    // Reverse for UI (Newest First) if preferred, or keep Oldest First.
-    // For "Statement" view, usually Oldest First is better to read the story.
-    // For "Quick Check", Newest First is better.
-    // Let's do Newest First but display it clearly.
     const displayLedger = [...ledger].reverse();
 
     return (
@@ -228,187 +241,100 @@ export default function CustomerAccountPage() {
                 </div>
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-3">
-                <div className="lg:col-span-2">
-                    {/* Unified Ledger Table */}
-                    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
-                        <div className="bg-slate-50/50 px-6 py-4 border-b border-slate-200 dark:bg-slate-800/20 dark:border-slate-800">
-                            <h3 className="font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
-                                <FileText className="h-5 w-5 text-indigo-500" />
-                                Movimientos (Cuenta Corriente)
-                            </h3>
+            <div className="grid gap-6">
+                {/* Unified Ledger Table */}
+                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+                    <div className="bg-slate-50/50 px-6 py-4 border-b border-slate-200 dark:bg-slate-800/20 dark:border-slate-800 flex items-center justify-between">
+                        <h3 className="font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
+                            <Wallet className="h-5 w-5 text-indigo-500" />
+                            Historial de Movimientos (Incluye Facturas AFIP)
+                        </h3>
+                        <div className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">
+                            Cuenta Corriente
                         </div>
+                    </div>
 
-                        {displayLedger.length > 0 ? (
-                            <>
-                                {/* Desktop Table */}
-                                <div className="hidden md:block overflow-x-auto">
-                                    <table className="w-full text-sm text-left">
-                                        <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400">
-                                            <tr>
-                                                <th className="px-6 py-3 font-medium w-[120px]">Fecha</th>
-                                                <th className="px-6 py-3 font-medium">Concepto</th>
-                                                <th className="px-6 py-3 font-medium text-right w-[150px]">Debe (Venta)</th>
-                                                <th className="px-6 py-3 font-medium text-right w-[150px]">Haber (Pago)</th>
-                                                <th className="px-6 py-3 font-medium text-right w-[150px]">Saldo Parcial</th>
-                                                <th className="px-6 py-3 w-[50px]"></th>
+                    {displayLedger.length > 0 ? (
+                        <>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400">
+                                        <tr>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px]">Fecha</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px]">Concepto / Detalle</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px] text-right w-[150px]">Debe (Venta)</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px] text-right w-[150px]">Haber (Cobro)</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px] text-right w-[150px]">Saldo Parcial</th>
+                                            <th className="px-6 py-3 w-[80px]"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                        {displayLedger.map((move) => (
+                                            <tr key={move.trackId} className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group ${move.type === 'INVOICE' ? 'bg-slate-50/30 dark:bg-slate-800/10' : ''}`}>
+                                                <td className="px-6 py-4 text-slate-600 dark:text-slate-400 font-medium">
+                                                    {formatDate(move.date)}
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 transition-colors">
+                                                        {move.concept}
+                                                    </div>
+                                                    <div className="text-[10px] font-black uppercase mt-0.5 tracking-tighter">
+                                                        {move.type === 'RESERVA' ? (
+                                                            <span className="text-rose-500 flex items-center gap-1">
+                                                                <ArrowUpRight className="h-3 w-3" /> Cargo por Servicios
+                                                            </span>
+                                                        ) : move.type === 'PAYMENT' ? (
+                                                            <span className="text-emerald-500 flex items-center gap-1">
+                                                                <ArrowDownLeft className="h-3 w-3" /> Cobranza Recibida
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-indigo-500 flex items-center gap-1">
+                                                                <Receipt className="h-3 w-3" /> Documento Fiscal AFIP ({move.info})
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 text-right font-black text-rose-600 dark:text-rose-400">
+                                                    {move.debit > 0 ? formatCurrency(move.debit) : "-"}
+                                                </td>
+                                                <td className="px-6 py-4 text-right font-black text-emerald-600 dark:text-emerald-400">
+                                                    {move.credit > 0 ? formatCurrency(move.credit) : "-"}
+                                                </td>
+                                                <td className="px-6 py-4 text-right font-black text-slate-700 dark:text-slate-300 bg-slate-50/30 dark:bg-slate-800/10">
+                                                    {move.type !== 'INVOICE' ? formatCurrency(move.balance) : "---"}
+                                                </td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        {move.type === 'PAYMENT' && (
+                                                            <button onClick={() => handleDeletePayment(move.originalData)} className="p-1.5 hover:bg-rose-50 rounded-lg text-rose-400 hover:text-rose-600 transition-colors" title="Anular Pago">
+                                                                <Trash2 className="h-4 w-4" />
+                                                            </button>
+                                                        )}
+                                                        {move.type === 'RESERVA' && (
+                                                            <Link to={`/reservas/${move.originalData.id}`} className="p-1.5 hover:bg-indigo-50 rounded-lg text-indigo-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Detalles">
+                                                                <Eye className="h-4 w-4" />
+                                                            </Link>
+                                                        )}
+                                                        {move.type === 'INVOICE' && (
+                                                            <button className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 transition-all">
+                                                                <Download className="w-4 h-4" />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </td>
                                             </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                            {displayLedger.map((move) => (
-                                                <tr key={`${move.type}-${move.id}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
-                                                        {formatDate(move.date)}
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        <div className="font-medium text-slate-900 dark:text-slate-200">
-                                                            {move.concept}
-                                                        </div>
-                                                        <div className="text-xs text-slate-500 mt-0.5">
-                                                            {move.type === 'RESERVA' ? (
-                                                                <span className="inline-flex items-center gap-1 text-rose-500/80">
-                                                                    <ArrowUpRight className="h-3 w-3" /> Nuevo Cargo
-                                                                </span>
-                                                            ) : (
-                                                                <span className="inline-flex items-center gap-1 text-emerald-500/80">
-                                                                    <ArrowDownLeft className="h-3 w-3" /> Pago Recibido
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right font-medium text-rose-600/90 dark:text-rose-400/90">
-                                                        {move.debit > 0 ? formatCurrency(move.debit) : "-"}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right font-medium text-emerald-600/90 dark:text-emerald-400/90">
-                                                        {move.credit > 0 ? formatCurrency(move.credit) : "-"}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right font-bold text-slate-700 dark:text-slate-300">
-                                                        {formatCurrency(move.balance)}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right">
-                                                        <div className="flex justify-end gap-1">
-                                                            {move.type === 'PAYMENT' && (
-                                                                <>
-                                                                    <button onClick={() => handleOpenModal(move.originalData)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors" title="Editar">
-                                                                        <Pencil className="h-3.5 w-3.5" />
-                                                                    </button>
-                                                                    <button onClick={() => handleDeletePayment(move.originalData)} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-rose-600 transition-colors" title="Eliminar">
-                                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                                    </button>
-                                                                </>
-                                                            )}
-                                                            {move.type === 'RESERVA' && (
-                                                                <Link to={`/reservas/${move.originalData.id}`} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Reserva">
-                                                                    <FileText className="h-3.5 w-3.5" />
-                                                                </Link>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                {/* Mobile Cards */}
-                                <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
-                                    {displayLedger.map((move) => (
-                                        <div key={`${move.type}-${move.id}`} className="p-4 space-y-2">
-                                            <div className="flex justify-between items-start">
-                                                <div className="text-sm text-slate-500">{formatDate(move.date)}</div>
-                                                <div className="font-bold text-slate-900 dark:text-white">{formatCurrency(move.balance)}</div>
-                                            </div>
-                                            <div className="font-medium text-slate-800 dark:text-slate-200 leading-snug">
-                                                {move.concept}
-                                            </div>
-                                            <div className="flex justify-between items-center pt-1">
-                                                <div className={`text-sm font-semibold flex items-center gap-1 ${move.debit > 0 ? "text-rose-600" : "text-emerald-600"}`}>
-                                                    {move.debit > 0 ? (
-                                                        <>Cargo: {formatCurrency(move.debit)}</>
-                                                    ) : (
-                                                        <>Pago: {formatCurrency(move.credit)}</>
-                                                    )}
-                                                </div>
-                                                <div className="flex gap-2">
-                                                    {move.type === 'RESERVA' ? (
-                                                        <Link to={`/reservas/${move.originalData.id}`} className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600">
-                                                            Ver Reserva
-                                                        </Link>
-                                                    ) : (
-                                                        <button onClick={() => handleOpenModal(move.originalData)} className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600">
-                                                            Editar
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </>
-                        ) : (
-                            <div className="px-6 py-12 text-center text-muted-foreground">
-                                <div className="mx-auto h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
-                                    <FileText className="h-6 w-6 opacity-30" />
-                                </div>
-                                <p>No hay movimientos registrados.</p>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Vertical Sidebar: Invoices */}
-                <div className="space-y-4">
-                    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
-                        <div className="bg-slate-50/50 px-6 py-4 border-b border-slate-200 dark:bg-slate-800/20 dark:border-slate-800 flex items-center justify-between">
-                            <h3 className="font-semibold flex items-center gap-2 text-slate-900 dark:text-white text-sm">
-                                <CreditCard className="h-4 w-4 text-emerald-500" />
-                                Facturación AFIP
-                            </h3>
-                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full dark:bg-emerald-900/30 dark:text-emerald-400">
-                                {invoices.length} docs
-                            </span>
+                        </>
+                    ) : (
+                        <div className="px-6 py-16 text-center text-slate-400 italic bg-slate-50/50 dark:bg-slate-800/10">
+                            No se registran movimientos en la cuenta.
                         </div>
-                        <div className="p-4 space-y-3">
-                            {invoices.length > 0 ? (
-                                invoices.map(inv => (
-                                    <div key={inv.id} className="p-3 rounded-lg border border-slate-100 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/30 space-y-1">
-                                        <div className="flex justify-between items-start">
-                                            <span className="text-[10px] font-black uppercase text-slate-400">
-                                                {inv.tipoComprobante === 1 ? 'Factura A' : inv.tipoComprobante === 6 ? 'Factura B' : 'Factura C'}
-                                            </span>
-                                            <span className="text-xs font-bold text-slate-900 dark:text-white">
-                                                {formatCurrency(inv.importeTotal)}
-                                            </span>
-                                        </div>
-                                        <div className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                                            #{String(inv.puntoDeVenta).padStart(5, '0')}-{String(inv.numeroComprobante).padStart(8, '0')}
-                                        </div>
-                                        <div className="flex justify-between items-center pt-1 mt-1 border-t border-slate-200/50 dark:border-slate-700/50">
-                                            <span className="text-[10px] text-slate-400 font-medium">
-                                                {formatDate(inv.createdAt)}
-                                            </span>
-                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${inv.resultado === 'A' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                                                {inv.resultado === 'A' ? 'Aprobada' : 'Error'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))
-                            ) : (
-                                <p className="text-xs text-center text-slate-400 py-4">No hay facturas emitidas para este cliente.</p>
-                            )}
-                        </div>
-                    </div>
+                    )}
                 </div>
             </div>
-
-            <CustomerPaymentModal
-                isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
-                paymentToEdit={paymentToEdit}
-                customerId={id}
-                availableReservas={reservas.filter(f => f.status !== "Cancelado")}
-                onSave={loadAccount}
-            />
 
             <CustomerPaymentModal
                 isOpen={isModalOpen}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-    FileText, Users, Clock, CreditCard, Paperclip
+    FileText, Users, Clock, CreditCard, Paperclip, History
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -26,6 +26,7 @@ export default function ReservaDetailPage() {
     const [serviceToEdit, setServiceToEdit] = useState(null);
     const [showPassengerForm, setShowPassengerForm] = useState(false);
     const [editingPassenger, setEditingPassenger] = useState(null);
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
 
     const {
         reserva,
@@ -117,10 +118,127 @@ export default function ReservaDetailPage() {
                     {activeTab === 'attachments' && <ReservaAttachmentsTab reservaId={id} />}
 
                     {activeTab === 'account' && (
-                        <div className="flex flex-col items-center justify-center py-16 text-slate-400 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                            <CreditCard className="w-12 h-12 mb-4 opacity-20" />
-                            <h4 className="text-lg font-semibold text-slate-600 dark:text-slate-300">Estado de Cuenta</h4>
-                            <p className="max-w-xs text-center mt-2 text-sm">Este módulo se encuentra en desarrollo integrado con el sistema de Pagos y Facturación.</p>
+                        <div className="space-y-6 animate-in fade-in duration-500">
+                             {/* Financial Summary Cards */}
+                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                                    <div className="text-[10px] font-black uppercase text-slate-400 mb-1">Total Venta</div>
+                                    <div className="text-xl font-black text-slate-900 dark:text-white">
+                                        {reserva.totalSale?.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                                    </div>
+                                </div>
+                                <div className="bg-emerald-50/50 dark:bg-emerald-950/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-900/30">
+                                    <div className="text-[10px] font-black uppercase text-emerald-600/70 dark:text-emerald-400/70 mb-1">Total Cobrado</div>
+                                    <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+                                        {(reserva.totalSale - reserva.balance)?.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                                    </div>
+                                </div>
+                                <div className={`p-4 rounded-xl border ${reserva.balance > 0 ? 'bg-rose-50/50 border-rose-100 dark:bg-rose-950/20 dark:border-rose-900/30' : 'bg-slate-50 border-slate-200 dark:bg-slate-800/30 dark:border-slate-800'}`}>
+                                    <div className={`text-[10px] font-black uppercase mb-1 ${reserva.balance > 0 ? 'text-rose-600/70' : 'text-slate-400'}`}>Saldo Pendiente</div>
+                                    <div className={`text-xl font-black ${reserva.balance > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
+                                        {reserva.balance?.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                                    </div>
+                                </div>
+                             </div>
+
+                             <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setShowPaymentModal(true)}
+                                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all flex items-center gap-2"
+                                    >
+                                        <CreditCard className="w-4 h-4" /> Registrar Cobranza
+                                    </button>
+                                </div>
+                                <div className="text-xs text-slate-500 font-medium italic">
+                                    * Los pagos recibidos afectan directamente al saldo de la reserva.
+                                </div>
+                             </div>
+
+                             {/* Payments & Invoices Tables (Estilo Caja y Facturación) */}
+                             <div className="grid grid-cols-1 gap-6">
+                                {/* Cobranzas */}
+                                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+                                    <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/10 flex items-center gap-2">
+                                        <History className="w-4 h-4 text-emerald-500" />
+                                        <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Historial de Cobranzas</h4>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left text-sm">
+                                            <thead className="bg-slate-50/50 dark:bg-slate-950 text-slate-500 font-bold border-b border-slate-200 dark:border-slate-800">
+                                                <tr>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px]">Fecha</th>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px]">Método</th>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px]">Notas</th>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px] text-right">Importe</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                                {reserva.payments?.length > 0 ? reserva.payments.map(p => (
+                                                    <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                                                        <td className="px-6 py-4">{new Date(p.paidAt).toLocaleDateString()}</td>
+                                                        <td className="px-6 py-4">
+                                                            <span className="text-[10px] font-black bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded uppercase">
+                                                                {p.method}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-slate-500">{p.notes || '-'}</td>
+                                                        <td className="px-6 py-4 text-right font-black text-emerald-600">
+                                                            {p.amount?.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                                                        </td>
+                                                    </tr>
+                                                )) : (
+                                                    <tr>
+                                                        <td colSpan="4" className="px-6 py-8 text-center text-slate-400 italic">No hay pagos registrados.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                {/* Facturas emitidas */}
+                                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+                                    <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/10 flex items-center gap-2">
+                                        <FileText className="w-4 h-4 text-indigo-500" />
+                                        <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Documentos Fiscales AFIP</h4>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left text-sm">
+                                            <thead className="bg-slate-50/50 dark:bg-slate-950 text-slate-500 font-bold border-b border-slate-200 dark:border-slate-800">
+                                                <tr>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px]">Tipo</th>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px]">Número</th>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px]">CAE</th>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px]">Estado</th>
+                                                    <th className="px-6 py-3 font-bold uppercase text-[10px] text-right">Importe</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                                {reserva.invoices?.length > 0 ? reserva.invoices.map(i => (
+                                                    <tr key={i.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                                                        <td className="px-6 py-4 font-bold">Factura {i.tipoComprobante === 1 ? 'A' : i.tipoComprobante === 6 ? 'B' : 'C'}</td>
+                                                        <td className="px-6 py-4 font-mono">{String(i.puntoDeVenta).padStart(5, '0')}-{String(i.numeroComprobante).padStart(8, '0')}</td>
+                                                        <td className="px-6 py-4 text-xs font-mono text-slate-400">{i.cae || '---'}</td>
+                                                        <td className="px-6 py-4 text-[10px]">
+                                                            <span className={`px-2 py-0.5 rounded font-black uppercase ${i.resultado === 'A' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                                {i.resultado === 'A' ? 'Aceptada' : 'Error'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right font-black">
+                                                            {i.importeTotal?.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}
+                                                        </td>
+                                                    </tr>
+                                                )) : (
+                                                    <tr>
+                                                        <td colSpan="5" className="px-6 py-8 text-center text-slate-400 italic">No hay facturas emitidas para esta reserva.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                             </div>
                         </div>
                     )}
                 </div>
