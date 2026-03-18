@@ -106,10 +106,10 @@ export default function PaymentsPage() {
       {/* TAB CONTENT */}
       <div className="min-h-[400px]">
         {activeTab === 'collections' && (
-          <CollectionsTab files={filteredFiles} onPay={handleOpenPayment} />
+          <CollectionsTab reservas={filteredFiles} onPay={handleOpenPayment} />
         )}
         {activeTab === 'invoicing' && (
-          <InvoicingTab files={filteredFiles} onInvoice={handleOpenInvoice} />
+          <InvoicingTab reservas={filteredFiles} onInvoice={handleOpenInvoice} />
         )}
         {activeTab === 'history' && (
           <HistoryTab
