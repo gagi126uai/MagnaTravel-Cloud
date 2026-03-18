@@ -23,8 +23,8 @@ export function usePayments() {
             const enhancedReservas = reservasRes.map(r => {
                 const reservaInvoices = invoicesRes.filter(i => i.reservaId === r.id);
 
-                const totalSale = f.totalSale || 0;
-                const totalPaid = f.totalPaid || 0;
+                const totalSale = r.totalSale || 0;
+                const totalPaid = r.totalPaid || 0;
 
                 const totalInvoiced = reservaInvoices.reduce((acc, i) => {
                     if (i.resultado !== 'A') return acc;
@@ -170,7 +170,7 @@ export function usePayments() {
         handleViewPdf,
         handleRetryInvoice,
         handleAnnulInvoice,
-        filteredReservas,
+        filteredFiles: filteredReservas,
         stats
     };
 }
