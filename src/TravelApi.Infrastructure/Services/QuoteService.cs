@@ -28,7 +28,7 @@ public class QuoteService : IQuoteService
         return await _db.Quotes
             .Include(q => q.Customer)
             .Include(q => q.Items).ThenInclude(i => i.Supplier)
-            .Include(q => q.ConvertedFile)
+            .Include(q => q.ConvertedReserva)
             .FirstOrDefaultAsync(q => q.Id == id, cancellationToken);
     }
 
@@ -140,17 +140,17 @@ public class QuoteService : IQuoteService
             .FirstOrDefaultAsync(q => q.Id == quoteId, cancellationToken)
             ?? throw new KeyNotFoundException($"Cotización {quoteId} no encontrada.");
 
-        if (quote.ConvertedFileId.HasValue)
-            throw new InvalidOperationException("Esta cotización ya fue convertida a expediente.");
+        if (quote.ConvertedReservaId.HasValue)
+            throw new InvalidOperationException("Esta cotización ya fue convertida a reserva.");
 
-        // Create TravelFile from quote
-        var fileCount = await _db.TravelFiles.CountAsync(cancellationToken);
-        var file = new TravelFile
+        // Create Reserva from quote
+        var fileCount = await _db.Reservas.CountAsync(cancellationToken);
+        var file = new Reserva
         {
-            FileNumber = $"EXP-{(fileCount + 1).ToString().PadLeft(5, '0')}",
+            NumeroReserva = $"RES-{(fileCount + 1).ToString().PadLeft(5, '0')}",
             Name = quote.Title,
             Description = quote.Description,
-            Status = FileStatus.Reserved,
+            Status = EstadoReserva.Reserved,
             PayerId = quote.CustomerId,
             StartDate = quote.TravelStartDate,
             EndDate = quote.TravelEndDate,
@@ -161,15 +161,15 @@ public class QuoteService : IQuoteService
             CreatedAt = DateTime.UtcNow
         };
 
-        _db.TravelFiles.Add(file);
+        _db.Reservas.Add(file);
         await _db.SaveChangesAsync(cancellationToken);
 
-        // Migrate Quote Items to File Services (Reservations) so totals calculate correctly in UI
+        // Migrate Quote Items to File Services (Servicios) so totals calculate correctly in UI
         foreach (var item in quote.Items)
         {
-            var res = new Reservation
+            var res = new ServicioReserva
             {
-                TravelFileId = file.Id,
+                ReservaId = file.Id,
                 CustomerId = quote.CustomerId,
                 SupplierId = item.SupplierId,
                 ServiceType = string.IsNullOrWhiteSpace(item.ServiceType) ? ServiceTypes.Other : item.ServiceType,
@@ -184,11 +184,11 @@ public class QuoteService : IQuoteService
                 Commission = item.TotalPrice - item.TotalCost,
                 CreatedAt = DateTime.UtcNow
             };
-            _db.Reservations.Add(res);
+            _db.Servicios.Add(res);
         }
 
         // Link quote to the file
-        quote.ConvertedFileId = file.Id;
+        quote.ConvertedReservaId = file.Id;
         quote.Status = QuoteStatus.Accepted;
         quote.AcceptedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);

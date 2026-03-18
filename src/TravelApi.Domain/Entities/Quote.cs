@@ -59,9 +59,9 @@ public class Quote
     [Column(TypeName = "decimal(18,2)")]
     public decimal GrossMargin { get; set; } = 0;
     
-    // Converted to TravelFile?
-    public int? ConvertedFileId { get; set; }
-    public TravelFile? ConvertedFile { get; set; }
+    // Converted to Reserva?
+    public int? ConvertedReservaId { get; set; }
+    public Reserva? ConvertedReserva { get; set; }
     
     [MaxLength(500)]
     public string? Notes { get; set; }

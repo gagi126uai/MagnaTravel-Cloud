@@ -2,7 +2,7 @@ import React from 'react';
 import { FolderOpen, Plane, TrendingUp, Wallet, AlertCircle } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 
-export function FileKPIs({ stats }) {
+export function ReservaKPIs({ stats }) {
     return (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">

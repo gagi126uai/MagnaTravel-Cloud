@@ -1,11 +1,10 @@
 namespace TravelApi.Application.DTOs;
 
-public class TravelFileDto
+public class ReservaDto
 {
     public int Id { get; set; }
-    public string FileNumber { get; set; } = string.Empty;
+    public string NumeroReserva { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string? Description { get; set; }
     public string Status { get; set; } = "Presupuesto";
     public int? CustomerId { get; set; }
 

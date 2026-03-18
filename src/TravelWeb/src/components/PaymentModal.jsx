@@ -3,7 +3,7 @@ import { api } from "../api";
 import { DollarSign, X } from "lucide-react";
 import { showError, showSuccess } from "../alerts";
 
-export default function PaymentModal({ isOpen, onClose, onSuccess, fileId, maxAmount }) {
+export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, maxAmount }) {
     const [amount, setAmount] = useState("");
     const [method, setMethod] = useState("Transferencia");
     const [notes, setNotes] = useState("");
@@ -33,7 +33,7 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, fileId, maxAm
                 return;
             }
 
-            await api.post(`/travelfiles/${fileId}/payments`, {
+            await api.post(`/reservas/${reservaId}/payments`, {
                 amount: parseFloat(amount),
                 method,
                 notes

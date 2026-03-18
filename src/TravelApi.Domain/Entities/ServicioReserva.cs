@@ -22,13 +22,13 @@ public static class ReservationStatuses
     public const string Cancelled = "Cancelado";
 }
 
-public class Reservation
+public class ServicioReserva
 {
     public int Id { get; set; }
     
     // Core Links
-    public int? TravelFileId { get; set; }
-    public TravelFile? TravelFile { get; set; }
+    public int? ReservaId { get; set; }
+    public Reserva? Reserva { get; set; }
 
     public int? CustomerId { get; set; } 
     public Customer? Customer { get; set; }

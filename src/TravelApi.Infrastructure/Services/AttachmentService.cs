@@ -13,27 +13,27 @@ namespace TravelApi.Infrastructure.Services;
 
 public class AttachmentService : IAttachmentService
 {
-    private readonly IRepository<TravelFileAttachment> _attachmentRepo;
-    private readonly IRepository<TravelFile> _travelFileRepo;
+    private readonly IRepository<ReservaAttachment> _attachmentRepo;
+    private readonly IRepository<Reserva> _reservaRepo;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<AttachmentService> _logger;
 
     public AttachmentService(
-        IRepository<TravelFileAttachment> attachmentRepo,
-        IRepository<TravelFile> travelFileRepo,
+        IRepository<ReservaAttachment> attachmentRepo,
+        IRepository<Reserva> reservaRepo,
         IWebHostEnvironment env,
         ILogger<AttachmentService> logger)
     {
         _attachmentRepo = attachmentRepo;
-        _travelFileRepo = travelFileRepo;
+        _reservaRepo = reservaRepo;
         _env = env;
         _logger = logger;
     }
 
-    public async Task<IEnumerable<AttachmentDto>> GetAttachmentsAsync(int travelFileId, CancellationToken ct)
+    public async Task<IEnumerable<AttachmentDto>> GetAttachmentsAsync(int reservaId, CancellationToken ct)
     {
         return await _attachmentRepo.Query()
-            .Where(a => a.TravelFileId == travelFileId)
+            .Where(a => a.ReservaId == reservaId)
             .OrderByDescending(a => a.UploadedAt)
             .Select(a => new AttachmentDto
             {
@@ -47,10 +47,10 @@ public class AttachmentService : IAttachmentService
             .ToListAsync(ct);
     }
 
-    public async Task<AttachmentDto> UploadAttachmentAsync(int travelFileId, Stream fileStream, string fileName, string contentType, string uploadedBy, CancellationToken ct)
+    public async Task<AttachmentDto> UploadAttachmentAsync(int reservaId, Stream fileStream, string fileName, string contentType, string uploadedBy, CancellationToken ct)
     {
-        var travelFile = await _travelFileRepo.GetByIdAsync(travelFileId, ct);
-        if (travelFile == null) throw new KeyNotFoundException("Travel file not found.");
+        var reserva = await _reservaRepo.GetByIdAsync(reservaId, ct);
+        if (reserva == null) throw new KeyNotFoundException("Reserva not found.");
 
         var uploadsFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Files", DateTime.UtcNow.Year.ToString());
         if (!Directory.Exists(uploadsFolder)) Directory.CreateDirectory(uploadsFolder);
@@ -63,9 +63,9 @@ public class AttachmentService : IAttachmentService
             await fileStream.CopyToAsync(stream, ct);
         }
 
-        var attachment = new TravelFileAttachment
+        var attachment = new ReservaAttachment
         {
-            TravelFileId = travelFileId,
+            ReservaId = reservaId,
             FileName = fileName,
             StoredFileName = Path.Combine(DateTime.UtcNow.Year.ToString(), storedFileName),
             ContentType = contentType,

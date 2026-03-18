@@ -70,7 +70,7 @@ public class SupplierService : ISupplierService
         var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
         if (supplier == null) throw new KeyNotFoundException("Proveedor no encontrado");
 
-        var hasServices = await _dbContext.Reservations.AnyAsync(r => r.SupplierId == id, cancellationToken);
+        var hasServices = await _dbContext.Servicios.AnyAsync(r => r.SupplierId == id, cancellationToken);
         if (hasServices)
         {
             throw new InvalidOperationException("No se puede eliminar: el proveedor tiene servicios asociados");
@@ -91,7 +91,7 @@ public class SupplierService : ISupplierService
         var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
         if (supplier == null) throw new KeyNotFoundException("Proveedor no encontrado");
 
-        await _dbContext.Reservations
+        await _dbContext.Servicios
             .Where(r => r.SupplierId == id)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.SupplierId, (int?)null), cancellationToken);
 
@@ -127,9 +127,9 @@ public class SupplierService : ISupplierService
 
         var flights = await _dbContext.FlightSegments
             .AsNoTracking()
-            .Include(f => f.TravelFile)
+            .Include(f => f.Reserva)
             .Where(f => f.SupplierId == id && 
-                        validStatuses.Contains(f.TravelFile!.Status))
+                        validStatuses.Contains(f.Reserva!.Status))
             .Select(f => new SupplierServiceDto
             {
                 Id = f.Id,
@@ -140,16 +140,16 @@ public class SupplierService : ISupplierService
                 SalePrice = f.SalePrice,
                 Date = f.DepartureTime,
                 Status = f.Status,
-                FileNumber = f.TravelFile!.FileNumber,
-                FileName = f.TravelFile!.Name
+                NumeroReserva = f.Reserva!.NumeroReserva,
+                FileName = f.Reserva!.Name
             })
             .ToListAsync(cancellationToken);
 
         var hotels = await _dbContext.HotelBookings
             .AsNoTracking()
-            .Include(h => h.TravelFile)
+            .Include(h => h.Reserva)
             .Where(h => h.SupplierId == id && 
-                        validStatuses.Contains(h.TravelFile!.Status))
+                        validStatuses.Contains(h.Reserva!.Status))
             .Select(h => new SupplierServiceDto
             {
                 Id = h.Id,
@@ -160,16 +160,16 @@ public class SupplierService : ISupplierService
                 SalePrice = h.SalePrice,
                 Date = h.CheckIn,
                 Status = h.Status,
-                FileNumber = h.TravelFile!.FileNumber,
-                FileName = h.TravelFile!.Name
+                NumeroReserva = h.Reserva!.NumeroReserva,
+                FileName = h.Reserva!.Name
             })
             .ToListAsync(cancellationToken);
 
         var transfers = await _dbContext.TransferBookings
             .AsNoTracking()
-            .Include(t => t.TravelFile)
+            .Include(t => t.Reserva)
             .Where(t => t.SupplierId == id && 
-                        validStatuses.Contains(t.TravelFile!.Status))
+                        validStatuses.Contains(t.Reserva!.Status))
             .Select(t => new SupplierServiceDto
             {
                 Id = t.Id,
@@ -180,16 +180,16 @@ public class SupplierService : ISupplierService
                 SalePrice = t.SalePrice,
                 Date = t.PickupDateTime,
                 Status = t.Status,
-                FileNumber = t.TravelFile!.FileNumber,
-                FileName = t.TravelFile!.Name
+                NumeroReserva = t.Reserva!.NumeroReserva,
+                FileName = t.Reserva!.Name
             })
             .ToListAsync(cancellationToken);
 
         var packages = await _dbContext.PackageBookings
             .AsNoTracking()
-            .Include(p => p.TravelFile)
+            .Include(p => p.Reserva)
             .Where(p => p.SupplierId == id && 
-                        validStatuses.Contains(p.TravelFile!.Status))
+                        validStatuses.Contains(p.Reserva!.Status))
             .Select(p => new SupplierServiceDto
             {
                 Id = p.Id,
@@ -200,16 +200,16 @@ public class SupplierService : ISupplierService
                 SalePrice = p.SalePrice,
                 Date = p.StartDate,
                 Status = p.Status,
-                FileNumber = p.TravelFile!.FileNumber,
-                FileName = p.TravelFile!.Name
+                NumeroReserva = p.Reserva!.NumeroReserva,
+                FileName = p.Reserva!.Name
             })
             .ToListAsync(cancellationToken);
 
-        var reservations = await _dbContext.Reservations
+        var reservations = await _dbContext.Servicios
             .AsNoTracking()
-            .Include(r => r.TravelFile)
+            .Include(r => r.Reserva)
             .Where(r => r.SupplierId == id && 
-                        validStatuses.Contains(r.TravelFile!.Status))
+                        validStatuses.Contains(r.Reserva!.Status))
             .Select(r => new SupplierServiceDto
             {
                 Id = r.Id,
@@ -220,8 +220,8 @@ public class SupplierService : ISupplierService
                 SalePrice = r.SalePrice,
                 Date = r.DepartureDate,
                 Status = r.Status,
-                FileNumber = r.TravelFile!.FileNumber,
-                FileName = r.TravelFile!.Name
+                NumeroReserva = r.Reserva!.NumeroReserva,
+                FileName = r.Reserva!.Name
             })
             .ToListAsync(cancellationToken);
 
@@ -246,7 +246,7 @@ public class SupplierService : ISupplierService
                 p.PaidAt,
                 p.Reference,
                 p.Notes,
-                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null
+                NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null
             })
             .ToListAsync(cancellationToken);
 
@@ -299,8 +299,8 @@ public class SupplierService : ISupplierService
             Method = request.Method ?? "Transfer",
             Reference = request.Reference,
             Notes = request.Notes,
-            TravelFileId = request.TravelFileId,
-            ReservationId = request.ReservationId,
+            ReservaId = request.ReservaId,
+            ServicioReservaId = request.ServicioReservaId,
             PaidAt = DateTime.UtcNow
         };
 
@@ -334,7 +334,7 @@ public class SupplierService : ISupplierService
         payment.Method = request.Method ?? payment.Method;
         payment.Reference = request.Reference;
         payment.Notes = request.Notes;
-        payment.TravelFileId = request.TravelFileId;
+        payment.ReservaId = request.ReservaId;
         
         supplier.CurrentBalance = debtPrePayment - request.Amount;
 
@@ -370,9 +370,9 @@ public class SupplierService : ISupplierService
                 PaidAt = p.PaidAt,
                 Reference = p.Reference,
                 Notes = p.Notes,
-                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : (string?)null,
-                FileName = p.TravelFile != null ? p.TravelFile.Name : (string?)null,
-                TravelFileId = p.TravelFileId 
+                NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : (string?)null,
+                FileName = p.Reserva != null ? p.Reserva.Name : (string?)null,
+                ReservaId = p.ReservaId 
             })
             .ToListAsync(cancellationToken);
     }
@@ -381,11 +381,11 @@ public class SupplierService : ISupplierService
     {
         var validStatuses = new[] { "Reservado", "Operativo", "Cerrado" };
 
-        var flights = await _dbContext.FlightSegments.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
-        var hotels = await _dbContext.HotelBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
-        var transfers = await _dbContext.TransferBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
-        var packages = await _dbContext.PackageBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
-        var reservations = await _dbContext.Reservations.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.TravelFile!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var flights = await _dbContext.FlightSegments.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.Reserva!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var hotels = await _dbContext.HotelBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.Reserva!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var transfers = await _dbContext.TransferBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.Reserva!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var packages = await _dbContext.PackageBookings.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.Reserva!.Status)).SumAsync(x => x.NetCost, cancellationToken);
+        var reservations = await _dbContext.Servicios.Where(x => x.SupplierId == supplierId && validStatuses.Contains(x.Reserva!.Status)).SumAsync(x => x.NetCost, cancellationToken);
 
         var totalPurchases = flights + hotels + transfers + packages + reservations;
         var totalPaid = await _dbContext.SupplierPayments.Where(p => p.SupplierId == supplierId).SumAsync(p => p.Amount, cancellationToken);

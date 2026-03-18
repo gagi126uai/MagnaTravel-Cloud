@@ -63,8 +63,9 @@ export default function SearchPalette({ isOpen, onClose }) {
     const handleSelect = (type, id) => {
         onClose();
         switch (type) {
-            case "file":
-                navigate(`/files/${id}`);
+            case "reserva":
+            case "file": // Fallback for backend legacy naming in search response if exists
+                navigate(`/reservas/${id}`);
                 break;
             case "customer":
                 navigate(`/customers/${id}/account`);
@@ -74,7 +75,7 @@ export default function SearchPalette({ isOpen, onClose }) {
 
     if (!isOpen) return null;
 
-    const hasResults = results && (results.files?.length > 0 || results.customers?.length > 0 || results.payments?.length > 0);
+    const hasResults = results && (results.reservas?.length > 0 || results.files?.length > 0 || results.customers?.length > 0 || results.payments?.length > 0);
     const noResults = results && !hasResults && query.trim();
 
     return (
@@ -94,7 +95,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                         <input
                             ref={inputRef}
                             type="text"
-                            placeholder="Buscar expedientes, clientes..."
+                            placeholder="Buscar reservas, clientes..."
                             value={query}
                             onChange={(e) => handleSearch(e.target.value)}
                             className="flex-1 bg-transparent text-base sm:text-sm outline-none placeholder:text-slate-400 text-slate-900 dark:text-white"
@@ -112,33 +113,33 @@ export default function SearchPalette({ isOpen, onClose }) {
 
                     {/* Results */}
                     <div className="overflow-y-auto overscroll-contain">
-                        {/* Files */}
-                        {results?.files?.length > 0 && (
+                        {/* Reservas */}
+                        {(results?.reservas?.length > 0 || results?.files?.length > 0) && (
                             <div className="p-2">
                                 <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                                    Expedientes
+                                    Reservas
                                 </div>
-                                {results.files.map((file) => (
+                                {(results.reservas || results.files).map((reserva) => (
                                     <button
-                                        key={`file-${file.id}`}
-                                        onClick={() => handleSelect("file", file.id)}
+                                        key={`reserva-${reserva.id}`}
+                                        onClick={() => handleSelect("reserva", reserva.id)}
                                         className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors text-left group"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center shrink-0">
                                             <FolderOpen className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <div className="text-sm font-medium text-slate-900 dark:text-white truncate">{file.name}</div>
+                                            <div className="text-sm font-medium text-slate-900 dark:text-white truncate">{reserva.name}</div>
                                             <div className="flex items-center gap-2 text-xs text-slate-500">
-                                                <span className="font-mono">{file.fileNumber}</span>
-                                                {file.payerName && <span className="truncate">· {file.payerName}</span>}
+                                                <span className="font-mono">{reserva.numeroReserva}</span>
+                                                {reserva.payerName && <span className="truncate">· {reserva.payerName}</span>}
                                             </div>
                                         </div>
-                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${file.status === 'Operativo' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                                            file.status === 'Reservado' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${reserva.status === 'Operativo' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                                            reserva.status === 'Reservado' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
                                                 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                                             }`}>
-                                            {file.status}
+                                            {reserva.status}
                                         </span>
                                     </button>
                                 ))}
@@ -190,7 +191,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                                 {formatCurrency(pay.amount)} — {pay.method}
                                             </div>
                                             <div className="text-xs text-slate-500">
-                                                {pay.fileNumber || "Sin expediente"} · {pay.status}
+                                                {pay.numeroReserva || "Sin reserva"} · {pay.status}
                                             </div>
                                         </div>
                                     </div>
@@ -209,7 +210,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                         {/* Initial state hint */}
                         {!results && !loading && (
                             <div className="p-6 text-center">
-                                <p className="text-xs text-slate-400">Escribí un nombre, número de file o cliente</p>
+                                <p className="text-xs text-slate-400">Escribí un nombre, número de reserva o cliente</p>
                             </div>
                         )}
                     </div>

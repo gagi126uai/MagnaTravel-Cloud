@@ -21,7 +21,7 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
         method: "Transfer",
         reference: "",
         notes: "",
-        travelFileId: null
+        reservaId: null
     });
 
     const [loading, setLoading] = useState(false);
@@ -42,10 +42,10 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                     method: editingPayment.method,
                     reference: editingPayment.reference || "",
                     notes: editingPayment.notes || "",
-                    travelFileId: editingPayment.travelFileId
+                    reservaId: editingPayment.reservaId
                 });
             } else {
-                setFormData({ amount: "", method: "Transfer", reference: "", notes: "", travelFileId: null });
+                setFormData({ amount: "", method: "Transfer", reference: "", notes: "", reservaId: null });
             }
             setError(null);
 
@@ -98,7 +98,7 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                 method: formData.method,
                 reference: formData.reference,
                 notes: formData.notes,
-                travelFileId: formData.travelFileId ? Number(formData.travelFileId) : null
+                reservaId: formData.reservaId ? Number(formData.reservaId) : null
             };
 
             if (editingPayment) {

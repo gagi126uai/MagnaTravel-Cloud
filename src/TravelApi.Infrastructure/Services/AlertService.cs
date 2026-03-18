@@ -19,15 +19,15 @@ public class AlertService : IAlertService
         var today = DateTime.UtcNow.Date;
         var nextWeek = today.AddDays(7);
 
-        var urgentTrips = await _context.TravelFiles
-            .Where(f => (f.Status == FileStatus.Reserved || f.Status == FileStatus.Operational) &&
+        var urgentTrips = await _context.Reservas
+            .Where(f => (f.Status == EstadoReserva.Reserved || f.Status == EstadoReserva.Operational) &&
                         f.StartDate >= today && 
                         f.StartDate <= nextWeek && 
                         f.Balance > 0)
             .Select(f => new
             {
                 f.Id,
-                f.FileNumber,
+                f.NumeroReserva,
                 f.Name,
                 f.StartDate,
                 f.Balance,

@@ -5,7 +5,7 @@ import Swal from "sweetalert2";
 
 export function usePayments() {
     const [loading, setLoading] = useState(true);
-    const [globalFiles, setGlobalFiles] = useState([]);
+    const [globalReservas, setGlobalReservas] = useState([]);
     const [payments, setPayments] = useState([]);
     const [invoices, setInvoices] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
@@ -14,19 +14,19 @@ export function usePayments() {
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
-            const [filesRes, invoicesRes, paymentsRes] = await Promise.all([
-                api.get("/travelfiles"),
+            const [reservasRes, invoicesRes, paymentsRes] = await Promise.all([
+                api.get("/reservas"),
                 api.get("/invoices"),
                 api.get("/payments")
             ]);
 
-            const enhancedFiles = filesRes.map(f => {
-                const fileInvoices = invoicesRes.filter(i => i.travelFileId === f.id);
+            const enhancedReservas = reservasRes.map(r => {
+                const reservaInvoices = invoicesRes.filter(i => i.reservaId === r.id);
 
                 const totalSale = f.totalSale || 0;
                 const totalPaid = f.totalPaid || 0;
 
-                const totalInvoiced = fileInvoices.reduce((acc, i) => {
+                const totalInvoiced = reservaInvoices.reduce((acc, i) => {
                     if (i.resultado !== 'A') return acc;
                     const isCreditNote = [3, 8, 13, 53].includes(i.tipoComprobante);
                     if (isCreditNote) return acc - i.importeTotal;
@@ -36,8 +36,8 @@ export function usePayments() {
                 const moneyCollectedNotInvoiced = totalPaid - totalInvoiced;
 
                 return {
-                    ...f,
-                    invoices: fileInvoices,
+                    ...r,
+                    invoices: reservaInvoices,
                     computedPaid: totalPaid,
                     computedInvoiced: totalInvoiced,
                     pendingCollection: totalSale - totalPaid,
@@ -46,18 +46,18 @@ export function usePayments() {
                 };
             });
 
-            setGlobalFiles(enhancedFiles);
+            setGlobalReservas(enhancedReservas);
 
             const allPayments = paymentsRes.map(p => ({
                 ...p,
-                travelFile: enhancedFiles.find(f => f.id === p.travelFileId) || { id: p.travelFileId, fileNumber: p.fileNumber }
+                reserva: enhancedReservas.find(r => r.id === p.reservaId) || { id: p.reservaId, numeroReserva: p.numeroReserva }
             }));
             allPayments.sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
             setPayments(allPayments);
 
             const allInvoices = invoicesRes.map(i => ({
                 ...i,
-                travelFile: enhancedFiles.find(f => f.id === i.travelFileId) || i.travelFile
+                reserva: enhancedReservas.find(r => r.id === i.reservaId) || i.reserva
             }));
             allInvoices.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
             setInvoices(allInvoices);
@@ -131,18 +131,18 @@ export function usePayments() {
         }
     };
 
-    const filteredFiles = useMemo(() => {
-        return globalFiles.filter(f => {
-            const matchesSearch = f.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                f.fileNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                f.payer?.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
+    const filteredReservas = useMemo(() => {
+        return globalReservas.filter(r => {
+            const matchesSearch = r.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                r.numeroReserva?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                r.payer?.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
             return matchesSearch;
         });
-    }, [globalFiles, searchTerm]);
+    }, [globalReservas, searchTerm]);
 
     const stats = useMemo(() => {
-        const totalPendingCollection = globalFiles.reduce((acc, f) => acc + (f.pendingCollection > 0 ? f.pendingCollection : 0), 0);
-        const totalPendingBilling = globalFiles.reduce((acc, f) => acc + (f.pendingBilling > 0 ? f.pendingBilling : 0), 0);
+        const totalPendingCollection = globalReservas.reduce((acc, r) => acc + (r.pendingCollection > 0 ? r.pendingCollection : 0), 0);
+        const totalPendingBilling = globalReservas.reduce((acc, r) => acc + (r.pendingBilling > 0 ? r.pendingBilling : 0), 0);
 
         const thisMonthInvoices = invoices.filter(i => i.resultado === 'A' && new Date(i.createdAt).getMonth() === new Date().getMonth());
         const totalInvoicedMonth = thisMonthInvoices.reduce((acc, i) => {
@@ -155,7 +155,7 @@ export function usePayments() {
             totalPendingBilling,
             totalInvoicedMonth
         };
-    }, [globalFiles, invoices]);
+    }, [globalReservas, invoices]);
 
     return {
         loading,
@@ -170,7 +170,7 @@ export function usePayments() {
         handleViewPdf,
         handleRetryInvoice,
         handleAnnulInvoice,
-        filteredFiles,
+        filteredReservas,
         stats
     };
 }

@@ -34,6 +34,7 @@ import {
 import { QRCodeCanvas } from "qrcode.react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
+import AfipSettingsTab from "../components/AfipSettingsTab";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
@@ -138,7 +139,6 @@ const Avatar = ({ name, size = "md" }) => {
 
 // --- Page ---
 
-import AfipSettingsTab from "../components/AfipSettingsTab";
 
 const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
@@ -220,6 +220,7 @@ export default function SettingsPage() {
       const data = await api.get("/webhooks/status");
       setBotStatus(data.status);
       setQrCode(data.qr);
+      console.log("Bot Status:", data.status, "QR exists:", !!data.qr);
       
       const logs = await api.get("/webhooks/logs");
       if (Array.isArray(logs)) setBotLogs(logs);

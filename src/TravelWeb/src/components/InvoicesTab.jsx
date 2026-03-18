@@ -5,7 +5,7 @@ import Swal from "sweetalert2";
 import { showError, showSuccess } from "../alerts";
 import CreateInvoiceModal from "./CreateInvoiceModal";
 
-export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnly = false, clientName, clientCuit }) {
+export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, readOnly = false, clientName, clientCuit }) {
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -13,14 +13,14 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
     const fetchInvoices = useCallback(async () => {
         try {
             setLoading(true);
-            const res = await api.get(`/invoices/file/${fileId}`);
+            const res = await api.get(`/invoices/reserva/${reservaId}`);
             setInvoices(res || []);
         } catch (error) {
             console.error(error);
         } finally {
             setLoading(false);
         }
-    }, [fileId]);
+    }, [reservaId]);
 
     useEffect(() => {
         fetchInvoices();
@@ -211,7 +211,7 @@ export default function InvoicesTab({ fileId, balance, onInvoiceCreated, readOnl
                 isOpen={showCreateModal}
                 onClose={() => setShowCreateModal(false)}
                 onSuccess={handleInvoiceCreated}
-                fileId={fileId}
+                reservaId={reservaId}
                 initialAmount={balance}
                 clientName={clientName}
                 clientCuit={clientCuit}

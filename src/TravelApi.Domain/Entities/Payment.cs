@@ -22,11 +22,11 @@ public class Payment
     public bool IsDeleted { get; set; } = false;
     public DateTime? DeletedAt { get; set; }
 
-    // Direct link to TravelFile (preferred)
-    public int? TravelFileId { get; set; }
-    public TravelFile? TravelFile { get; set; }
+    // Direct link to Reserva (preferred)
+    public int? ReservaId { get; set; }
+    public Reserva? Reserva { get; set; }
 
-    // Legacy link via Reservation (for backwards compatibility)
-    public int? ReservationId { get; set; }
-    public Reservation? Reservation { get; set; }
+    // Link via Servicio (for backwards compatibility)
+    public int? ServicioReservaId { get; set; }
+    public ServicioReserva? ServicioReserva { get; set; }
 }

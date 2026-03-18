@@ -3,7 +3,7 @@ import { X, User, Calendar, FileText, CheckCircle2, Search } from "lucide-react"
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 
-export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
+export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
     if (!isOpen) return null;
 
     const [bgOpacity, setBgOpacity] = useState("opacity-0");
@@ -54,17 +54,17 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
 
         setLoading(true);
         try {
-            await api.post("/travelfiles", {
+            await api.post("/reservas", {
                 name: "", // Backend will auto-generate
                 payerId: formData.payerId ? parseInt(formData.payerId) : null,
                 startDate: formData.startDate ? new Date(formData.startDate).toISOString() : null,
                 status: formData.isBudget ? 'Presupuesto' : 'Reservado'
             });
-            showSuccess("Expediente creado exitosamente");
+            showSuccess("Reserva creada exitosamente");
             onSuccess();
             handleClose();
         } catch (error) {
-            showError(error.response?.data?.message || "Error al crear el expediente");
+            showError(error.response?.data?.message || "Error al crear la reserva");
         } finally {
             setLoading(false);
         }
@@ -91,7 +91,7 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
                 <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
                     <div>
                         <h2 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
-                            Nuevo Expediente
+                            Nueva Reserva
                         </h2>
                         <p className="text-sm text-slate-500 dark:text-slate-400">
                             Comienza a planificar un nuevo viaje
@@ -107,7 +107,7 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
 
                 <form onSubmit={handleSubmit} className="p-6 space-y-8">
 
-                    {/* Step 1: File Type Selection */}
+                    {/* Step 1: Type Selection */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <label
                             className={`cursor-pointer group relative flex flex-col items-center justify-center p-6 rounded-xl border-2 transition-all duration-200 ${formData.isBudget
@@ -116,7 +116,7 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
                         >
                             <input
                                 type="radio"
-                                name="fileType"
+                                name="reservaType"
                                 className="sr-only"
                                 checked={formData.isBudget}
                                 onChange={() => setFormData({ ...formData, isBudget: true })}
@@ -141,7 +141,7 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
                         >
                             <input
                                 type="radio"
-                                name="fileType"
+                                name="reservaType"
                                 className="sr-only"
                                 checked={!formData.isBudget}
                                 onChange={() => setFormData({ ...formData, isBudget: false })}
@@ -225,7 +225,7 @@ export default function CreateFileModal({ isOpen, onClose, onSuccess }) {
                                     Creando...
                                 </span>
                             ) : (
-                                "Crear Expediente"
+                                "Crear Reserva"
                             )}
                         </button>
                     </div>

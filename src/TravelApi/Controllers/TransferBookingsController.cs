@@ -6,7 +6,7 @@ using TravelApi.Application.Interfaces;
 namespace TravelApi.Controllers;
 
 [ApiController]
-[Route("api/files/{fileId}/transfers")]
+[Route("api/reservas/{reservaId}/transfers")]
 [Authorize]
 public class TransferBookingsController : ControllerBase
 {
@@ -18,19 +18,19 @@ public class TransferBookingsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
+    public async Task<IActionResult> GetAll(int reservaId, CancellationToken ct)
     {
-        var transfers = await _bookingService.GetTransfersAsync(fileId, ct);
+        var transfers = await _bookingService.GetTransfersAsync(reservaId, ct);
         return Ok(transfers);
     }
 
     [HttpPost]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Create(int fileId, [FromBody] CreateTransferRequest req, CancellationToken ct)
+    public async Task<IActionResult> Create(int reservaId, [FromBody] CreateTransferRequest req, CancellationToken ct)
     {
         try
         {
-            var transfer = await _bookingService.CreateTransferAsync(fileId, req, ct);
+            var transfer = await _bookingService.CreateTransferAsync(reservaId, req, ct);
             return Ok(transfer);
         }
         catch (KeyNotFoundException ex)
@@ -45,11 +45,11 @@ public class TransferBookingsController : ControllerBase
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Update(int fileId, int id, [FromBody] UpdateTransferRequest req, CancellationToken ct)
+    public async Task<IActionResult> Update(int reservaId, int id, [FromBody] UpdateTransferRequest req, CancellationToken ct)
     {
         try
         {
-            var transfer = await _bookingService.UpdateTransferAsync(fileId, id, req, ct);
+            var transfer = await _bookingService.UpdateTransferAsync(reservaId, id, req, ct);
             return Ok(transfer);
         }
         catch (KeyNotFoundException ex)
@@ -64,11 +64,11 @@ public class TransferBookingsController : ControllerBase
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(int fileId, int id, CancellationToken ct)
+    public async Task<IActionResult> Delete(int reservaId, int id, CancellationToken ct)
     {
         try
         {
-            await _bookingService.DeleteTransferAsync(fileId, id, ct);
+            await _bookingService.DeleteTransferAsync(reservaId, id, ct);
             return Ok();
         }
         catch (KeyNotFoundException ex)

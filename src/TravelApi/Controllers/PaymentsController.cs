@@ -24,12 +24,12 @@ public class PaymentsController : ControllerBase
         return Ok(payments);
     }
 
-    [HttpGet("reservation/{reservationId:int}")]
-    public async Task<ActionResult<IEnumerable<PaymentDto>>> GetPaymentsForReservation(
-        int reservationId,
+    [HttpGet("reserva/{ReservaId:int}")]
+    public async Task<ActionResult<IEnumerable<PaymentDto>>> GetPaymentsForReserva(
+        int ReservaId,
         CancellationToken cancellationToken)
     {
-        var payments = await _paymentService.GetPaymentsForReservationAsync(reservationId, cancellationToken);
+        var payments = await _paymentService.GetPaymentsForReservaAsync(ReservaId, cancellationToken);
         return Ok(payments);
     }
 
@@ -41,7 +41,7 @@ public class PaymentsController : ControllerBase
         try
         {
             var payment = await _paymentService.CreatePaymentAsync(request, cancellationToken);
-            return CreatedAtAction(nameof(GetPaymentsForReservation), new { reservationId = request.ReservationId }, payment);
+            return CreatedAtAction(nameof(GetPaymentsForReserva), new { ReservaId = request.ReservaId }, payment);
         }
         catch (ArgumentException ex)
         {

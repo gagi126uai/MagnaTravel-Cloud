@@ -350,19 +350,19 @@ public class AfipService : IAfipService
         }
     }
 
-    public async Task<Invoice> CreatePendingInvoice(int travelFileId, CreateInvoiceRequest request)
+    public async Task<Invoice> CreatePendingInvoice(int ReservaId, CreateInvoiceRequest request)
     {
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
         if (settings == null) throw new Exception("AFIP no configurado");
 
-        // 1. Get TravelFile & Customer
-        var travelFile = await _context.TravelFiles
+        // 1. Get Reserva & Customer
+        var reserva = await _context.Reservas
             .Include(f => f.Payer)
-            .FirstOrDefaultAsync(f => f.Id == travelFileId);
+            .FirstOrDefaultAsync(f => f.Id == ReservaId);
 
-        if (travelFile == null) throw new Exception("Reserva no encontrada");
+        if (reserva == null) throw new Exception("Reserva no encontrada");
         
-        var customer = travelFile.Payer;
+        var customer = reserva.Payer;
         if (customer == null) throw new Exception("La reserva no tiene cliente asignado"); // Allow Consumer Final?
 
         // 2. Load Original Invoice (if Annulment/Note)
@@ -449,7 +449,7 @@ public class AfipService : IAfipService
 
         var invoice = new Invoice
         {
-             TravelFileId = travelFileId,
+             ReservaId = ReservaId,
              OriginalInvoiceId = request.OriginalInvoiceId,
              TipoComprobante = cbteTipo,
              PuntoDeVenta = settings.PuntoDeVenta,

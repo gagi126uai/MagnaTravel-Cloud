@@ -4,8 +4,8 @@ public class InvoiceDto
 {
     public int Id { get; set; }
 
-    public int TravelFileId { get; set; }
-    public TravelFileDto? TravelFile { get; set; } // Navigation for frontend "File" and "Client" columns
+    public int ReservaId { get; set; }
+    public ReservaDto? Reserva { get; set; } // Navigation for frontend "Reserva" and "Client" columns
     public int TipoComprobante { get; set; } 
     public int PuntoDeVenta { get; set; }
     public long NumeroComprobante { get; set; }

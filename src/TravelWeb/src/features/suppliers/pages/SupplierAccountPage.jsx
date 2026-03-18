@@ -202,8 +202,8 @@ export default function SupplierAccountPage() {
                                         </td>
                                         <td className="p-3">{service.description || "-"}</td>
                                         <td className="p-3">
-                                            {service.fileNumber ? (
-                                                <span className="text-primary font-medium">{service.fileNumber}</span>
+                                            {service.numeroReserva ? (
+                                                <span className="text-primary font-medium">{service.numeroReserva}</span>
                                             ) : "-"}
                                         </td>
                                         <td className="p-3">{formatDate(service.date)}</td>
@@ -246,7 +246,7 @@ export default function SupplierAccountPage() {
                                     </span>
                                 </div>
                                 <div className="flex justify-between items-center text-sm text-muted-foreground">
-                                    <div>{service.fileNumber} <span className="mx-1">•</span> {formatDate(service.date)}</div>
+                                    <div>{service.numeroReserva} <span className="mx-1">•</span> {formatDate(service.date)}</div>
                                 </div>
                                 <div className="flex justify-between items-center text-sm pt-1 border-t border-dashed border-gray-100 dark:border-gray-800">
                                     <div className="flex flex-col">
@@ -304,7 +304,7 @@ export default function SupplierAccountPage() {
                                             </span>
                                         </td>
                                         <td className="p-3 font-mono text-xs">{payment.reference || "-"}</td>
-                                        <td className="p-3">{payment.fileNumber || "-"}</td>
+                                        <td className="p-3">{payment.numeroReserva || "-"}</td>
                                         <td className="p-3 text-muted-foreground max-w-xs truncate">{payment.notes || "-"}</td>
                                         <td className="p-3 text-right font-mono text-green-600 font-medium">
                                             {formatCurrency(payment.amount)}
@@ -353,7 +353,7 @@ export default function SupplierAccountPage() {
                                     </span>
                                 </div>
                                 <div className="text-sm">
-                                    <div><span className="font-semibold">{payment.fileNumber || "Sin exp."}</span> <span className="text-muted-foreground">Ref: {payment.reference || "-"}</span></div>
+                                    <div><span className="font-semibold">{payment.numeroReserva || "Sin exp."}</span> <span className="text-muted-foreground">Ref: {payment.reference || "-"}</span></div>
                                     {payment.notes && <div className="text-xs text-muted-foreground mt-1 italic">{payment.notes}</div>}
                                 </div>
                                 <div className="flex justify-end gap-3 pt-2">

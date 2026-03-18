@@ -9,6 +9,6 @@ public class PaymentDto
     public string? Reference { get; set; }
     public string? Notes { get; set; }
     public string Status { get; set; } = "Paid";
-    public int? TravelFileId { get; set; }
-    public string? FileNumber { get; set; }
+    public int? ReservaId { get; set; }
+    public string? NumeroReserva { get; set; }
 }

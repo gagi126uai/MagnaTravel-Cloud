@@ -37,9 +37,8 @@ export default function PaymentsTrashPage() {
 
     const handleRestore = async (payment) => {
         const result = await Swal.fire({
-            title: "¿Restaurar este pago?",
             html: `<p>El pago de <b>${formatCurrency(payment.amount)}</b> volverá a estar activo.</p>
-                   <p class="text-sm text-gray-500 mt-1">Reserva: ${payment.fileNumber || "N/A"}</p>`,
+                   <p class="text-sm text-gray-500 mt-1">Reserva: ${payment.numeroReserva || "N/A"}</p>`,
             icon: "question",
             showCancelButton: true,
             confirmButtonText: "Sí, restaurar",
@@ -111,10 +110,10 @@ export default function PaymentsTrashPage() {
                                         </td>
                                         <td className="px-6 py-4 text-slate-600 dark:text-slate-400">{p.method}</td>
                                         <td className="px-6 py-4">
-                                            {p.fileNumber ? (
+                                            {p.numeroReserva ? (
                                                 <div className="flex items-center gap-1.5">
                                                     <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
-                                                    <span className="font-mono text-xs">{p.fileNumber}</span>
+                                                    <span className="font-mono text-xs">{p.numeroReserva}</span>
                                                     {p.fileName && <span className="text-slate-400 text-xs">— {p.fileName}</span>}
                                                 </div>
                                             ) : (

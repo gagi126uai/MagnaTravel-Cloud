@@ -35,8 +35,8 @@ public class Invoice
     public string? CustomerSnapshot { get; set; }
     
     // Relationships
-    public int? TravelFileId { get; set; }
-    public TravelFile? TravelFile { get; set; }
+    public int? ReservaId { get; set; }
+    public Reserva? Reserva { get; set; }
 
     // Navigation for Items/Tributes
     public ICollection<InvoiceItem> Items { get; set; } = new List<InvoiceItem>();

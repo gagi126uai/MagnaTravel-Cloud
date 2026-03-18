@@ -3,27 +3,27 @@ import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 
 /**
- * Hook to manage a single Travel File's details, including CRUD for services and passengers.
+ * Hook to manage a single Reserva's details, including CRUD for services and passengers.
  */
-export function useTravelFileDetail(fileId, navigate) {
-    const [file, setFile] = useState(null);
+export function useReservaDetail(reservaId, navigate) {
+    const [reserva, setReserva] = useState(null);
     const [loading, setLoading] = useState(true);
     const [suppliers, setSuppliers] = useState([]);
 
-    const fetchFile = useCallback(async () => {
-        if (!fileId) return;
+    const fetchReserva = useCallback(async () => {
+        if (!reservaId) return;
         try {
             setLoading(true);
-            const res = await api.get(`/travelfiles/${fileId}`);
-            setFile(res);
+            const res = await api.get(`/reservas/${reservaId}`);
+            setReserva(res);
         } catch (error) {
             console.error(error);
             showError("Error al cargar la reserva: " + (error.response?.data?.Error || error.message || "Error desconocido"));
-            setFile(null);
+            setReserva(null);
         } finally {
             setLoading(false);
         }
-    }, [fileId]);
+    }, [reservaId]);
 
     const fetchSuppliers = useCallback(async () => {
         try {
@@ -35,16 +35,16 @@ export function useTravelFileDetail(fileId, navigate) {
     }, []);
 
     useEffect(() => {
-        fetchFile();
+        fetchReserva();
         fetchSuppliers();
-    }, [fetchFile, fetchSuppliers]);
+    }, [fetchReserva, fetchSuppliers]);
 
     // Actions
-    const handleArchiveFile = async () => {
+    const handleArchiveReserva = async () => {
         try {
-            await api.put(`/travelfiles/${fileId}/archive`);
-            showSuccess("File archivado correctamente");
-            if (navigate) navigate("/files");
+            await api.put(`/reservas/${reservaId}/archive`);
+            showSuccess("Reserva archivada correctamente");
+            if (navigate) navigate("/reservas");
             return true;
         } catch (error) {
             showError("Error al archivar");
@@ -52,11 +52,11 @@ export function useTravelFileDetail(fileId, navigate) {
         }
     };
 
-    const handleDeleteFile = async () => {
+    const handleDeleteReserva = async () => {
         try {
-            await api.delete(`/travelfiles/${fileId}`);
-            showSuccess("File eliminado correctamente");
-            if (navigate) navigate("/files");
+            await api.delete(`/reservas/${reservaId}`);
+            showSuccess("Reserva eliminada correctamente");
+            if (navigate) navigate("/reservas");
             return true;
         } catch (error) {
             showError(error.response?.data || "Error al eliminar");
@@ -65,20 +65,20 @@ export function useTravelFileDetail(fileId, navigate) {
     };
 
     const handleStatusChange = async (newStatus) => {
-        if (file?.status === 'Reservado' && newStatus === 'Presupuesto') {
-            if (file.payments?.length > 0) {
+        if (reserva?.status === 'Reservado' && newStatus === 'Presupuesto') {
+            if (reserva.payments?.length > 0) {
                 showError("No se puede volver a Presupuesto: hay pagos registrados.");
                 return;
             }
-            if (file.invoices?.length > 0) {
+            if (reserva.invoices?.length > 0) {
                 showError("No se puede volver a Presupuesto: hay facturas emitidas.");
                 return;
             }
         }
 
         try {
-            await api.put(`/travelfiles/${fileId}/status`, { status: newStatus });
-            await fetchFile();
+            await api.put(`/reservas/${reservaId}/status`, { status: newStatus });
+            await fetchReserva();
             showSuccess(`Estado actualizado a ${newStatus}`);
             return true;
         } catch (error) {
@@ -90,15 +90,15 @@ export function useTravelFileDetail(fileId, navigate) {
     const handleDeleteService = async (service) => {
         try {
             let endpoint = "";
-            if (service._type === 'Flight') endpoint = `/files/${fileId}/flights/${service.id}`;
-            else if (service._type === 'Hotel') endpoint = `/files/${fileId}/hotels/${service.id}`;
-            else if (service._type === 'Transfer') endpoint = `/files/${fileId}/transfers/${service.id}`;
-            else if (service._type === 'Package') endpoint = `/files/${fileId}/packages/${service.id}`;
+            if (service._type === 'Flight') endpoint = `/reservas/${reservaId}/flights/${service.id}`;
+            else if (service._type === 'Hotel') endpoint = `/reservas/${reservaId}/hotels/${service.id}`;
+            else if (service._type === 'Transfer') endpoint = `/reservas/${reservaId}/transfers/${service.id}`;
+            else if (service._type === 'Package') endpoint = `/reservas/${reservaId}/packages/${service.id}`;
 
             if (!endpoint) return;
 
             await api.delete(endpoint);
-            await fetchFile();
+            await fetchReserva();
             showSuccess("Servicio eliminado");
             return true;
         } catch (error) {
@@ -109,8 +109,8 @@ export function useTravelFileDetail(fileId, navigate) {
 
     const handleDeletePassenger = async (passengerId) => {
         try {
-            await api.delete(`/travelfiles/passengers/${passengerId}`);
-            await fetchFile();
+            await api.delete(`/reservas/passengers/${passengerId}`);
+            await fetchReserva();
             showSuccess("Pasajero eliminado");
             return true;
         } catch (error) {
@@ -121,20 +121,20 @@ export function useTravelFileDetail(fileId, navigate) {
 
     // Memoized Helpers
     const allServices = useMemo(() => {
-        if (!file) return [];
+        if (!reserva) return [];
         const services = [];
-        file.flightSegments?.forEach(f => services.push({ ...f, _type: 'Flight', date: f.departureTime, name: `${f.airlineName} ${f.flightNumber}` }));
-        file.hotelBookings?.forEach(h => services.push({ ...h, _type: 'Hotel', date: h.checkIn, name: h.hotelName }));
-        file.transferBookings?.forEach(t => services.push({ ...t, _type: 'Transfer', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
-        file.packageBookings?.forEach(p => services.push({ ...p, _type: 'Package', date: p.startDate, name: p.packageName }));
-        file.reservations?.forEach(r => services.push({ ...r, _type: r.serviceType || 'Generic', date: r.departureDate, name: r.description }));
+        reserva.flightSegments?.forEach(f => services.push({ ...f, _type: 'Flight', date: f.departureTime, name: `${f.airlineName} ${f.flightNumber}` }));
+        reserva.hotelBookings?.forEach(h => services.push({ ...h, _type: 'Hotel', date: h.checkIn, name: h.hotelName }));
+        reserva.transferBookings?.forEach(t => services.push({ ...t, _type: 'Transfer', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
+        reserva.packageBookings?.forEach(p => services.push({ ...p, _type: 'Package', date: p.startDate, name: p.packageName }));
+        reserva.reservations?.forEach(r => services.push({ ...r, _type: r.serviceType || 'Generic', date: r.departureDate, name: r.description }));
         return services.sort((a, b) => new Date(a.date) - new Date(b.date));
-    }, [file]);
+    }, [reserva]);
 
     const hotelCapacity = useMemo(() => {
-        if (!file) return 0;
+        if (!reserva) return 0;
         let capacity = 0;
-        file.hotelBookings?.forEach(h => {
+        reserva.hotelBookings?.forEach(h => {
             const type = h.roomType?.toLowerCase() || '';
             if (type.includes('sing')) capacity += h.rooms;
             else if (type.includes('trip')) capacity += (3 * h.rooms);
@@ -142,15 +142,15 @@ export function useTravelFileDetail(fileId, navigate) {
             else capacity += (2 * h.rooms);
         });
         return capacity;
-    }, [file]);
+    }, [reserva]);
 
     return {
-        file,
+        reserva,
         loading,
         suppliers,
-        fetchFile,
-        handleArchiveFile,
-        handleDeleteFile,
+        fetchReserva,
+        handleArchiveReserva,
+        handleDeleteReserva,
         handleStatusChange,
         handleDeleteService,
         handleDeletePassenger,

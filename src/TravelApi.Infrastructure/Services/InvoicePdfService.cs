@@ -18,7 +18,7 @@ public class InvoicePdfService : IInvoicePdfService
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
-    public byte[] GenerateInvoicePdf(Invoice invoice, TravelFile travelFile, AfipSettings afipSettings, AgencySettings agencySettings)
+    public byte[] GenerateInvoicePdf(Invoice invoice, Reserva reserva, AfipSettings afipSettings, AgencySettings agencySettings)
     {
         var document = Document.Create(container =>
         {
@@ -29,8 +29,8 @@ public class InvoicePdfService : IInvoicePdfService
                 page.PageColor(Colors.White);
                 page.DefaultTextStyle(x => x.FontSize(10));
 
-                page.Header().Element(header => ComposeHeader(header, invoice, travelFile, afipSettings, agencySettings));
-                page.Content().Element(content => ComposeContent(content, invoice, travelFile));
+                page.Header().Element(header => ComposeHeader(header, invoice, reserva, afipSettings, agencySettings));
+                page.Content().Element(content => ComposeContent(content, invoice, reserva));
                 page.Footer().Element(footer => ComposeFooter(footer, invoice, afipSettings));
             });
         });
@@ -38,7 +38,7 @@ public class InvoicePdfService : IInvoicePdfService
         return document.GeneratePdf();
     }
 
-     void ComposeHeader(IContainer container, Invoice invoice, TravelFile travelFile, AfipSettings settings, AgencySettings agencySettings)
+     void ComposeHeader(IContainer container, Invoice invoice, Reserva reserva, AfipSettings settings, AgencySettings agencySettings)
     {
         var titleStyle = TextStyle.Default.FontSize(20).SemiBold().FontColor(Colors.Blue.Medium);
         var subTitleStyle = TextStyle.Default.FontSize(10).SemiBold().FontColor(Colors.Grey.Darken2);
@@ -138,13 +138,13 @@ public class InvoicePdfService : IInvoicePdfService
         });
     }
 
-    void ComposeContent(IContainer container, Invoice invoice, TravelFile travelFile)
+    void ComposeContent(IContainer container, Invoice invoice, Reserva reserva)
     {
         // Snapshot Logic for Customer
-        var customerName = travelFile.Payer?.FullName ?? "Consumidor Final";
-        var customerAddress = travelFile.Payer?.Address ?? "-";
-        var customerTaxCondition = travelFile.Payer?.TaxCondition ?? "Consumidor Final";
-        var customerDoc = travelFile.Payer?.TaxId ?? travelFile.Payer?.DocumentNumber ?? "-";
+        var customerName = reserva.Payer?.FullName ?? "Consumidor Final";
+        var customerAddress = reserva.Payer?.Address ?? "-";
+        var customerTaxCondition = reserva.Payer?.TaxCondition ?? "Consumidor Final";
+        var customerDoc = reserva.Payer?.TaxId ?? reserva.Payer?.DocumentNumber ?? "-";
         
         if (!string.IsNullOrEmpty(invoice.CustomerSnapshot))
         {
@@ -226,7 +226,7 @@ public class InvoicePdfService : IInvoicePdfService
                 if (!invoice.Items.Any())
                 {
                     table.Cell().Element(CellStyle).Text("1");
-                    table.Cell().Element(CellStyle).Text($"Servicios Turísticos - Exp {travelFile.FileNumber}");
+                    table.Cell().Element(CellStyle).Text($"Servicios Turísticos - Res {reserva.NumeroReserva}");
                     table.Cell().Element(CellStyle).AlignRight().Text("1");
                     var isA = invoice.TipoComprobante == 1 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3;
                     var unitPrice = isA ? invoice.ImporteNeto : invoice.ImporteTotal;

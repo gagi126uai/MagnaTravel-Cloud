@@ -23,6 +23,6 @@ public class Customer
     public decimal CurrentBalance { get; set; } = 0; // Positive = they owe us
     public bool IsActive { get; set; } = true;
 
-    public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
-    public ICollection<TravelFile> TravelFiles { get; set; } = new List<TravelFile>();
+    public ICollection<ServicioReserva> Reservations { get; set; } = new List<ServicioReserva>();
+    public ICollection<Reserva> Reservas { get; set; } = new List<Reserva>();
 }

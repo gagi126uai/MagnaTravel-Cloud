@@ -24,7 +24,7 @@ public class CustomerService : ICustomerService
         }
 
         return await query
-            .Include(c => c.TravelFiles)
+            .Include(c => c.Reservas)
             .OrderBy(customer => customer.FullName)
             .Select(c => new 
             {
@@ -38,8 +38,8 @@ public class CustomerService : ICustomerService
                 c.TaxId,
                 c.CreditLimit,
                 c.IsActive,
-                CurrentBalance = c.TravelFiles
-                    .Where(f => f.Status != FileStatus.Cancelled && f.Status != FileStatus.Budget)
+                CurrentBalance = c.Reservas
+                    .Where(f => f.Status != EstadoReserva.Cancelled && f.Status != EstadoReserva.Budget)
                     .Sum(f => f.Balance)
             })
             .ToListAsync(cancellationToken);
@@ -49,7 +49,7 @@ public class CustomerService : ICustomerService
     {
         var customer = await _dbContext.Customers
             .AsNoTracking()
-            .Include(c => c.TravelFiles)
+            .Include(c => c.Reservas)
             .FirstOrDefaultAsync(found => found.Id == id, cancellationToken);
 
         if (customer == null) throw new KeyNotFoundException("Cliente no encontrado");
@@ -66,8 +66,8 @@ public class CustomerService : ICustomerService
             customer.TaxId,
             customer.CreditLimit,
             customer.IsActive,
-            CurrentBalance = customer.TravelFiles
-                .Where(f => f.Status != FileStatus.Cancelled && f.Status != FileStatus.Budget)
+            CurrentBalance = customer.Reservas
+                .Where(f => f.Status != EstadoReserva.Cancelled && f.Status != EstadoReserva.Budget)
                 .Sum(f => f.Balance)
         };
     }
@@ -110,14 +110,14 @@ public class CustomerService : ICustomerService
 
         if (customer == null) throw new KeyNotFoundException("Cliente no encontrado");
 
-        var files = await _dbContext.TravelFiles
+        var files = await _dbContext.Reservas
             .AsNoTracking()
             .Where(f => f.PayerId == id)
             .OrderByDescending(f => f.CreatedAt)
             .Select(f => new
             {
                 f.Id,
-                f.FileNumber,
+                f.NumeroReserva,
                 f.Name,
                 f.Status,
                 f.TotalSale,
@@ -131,7 +131,7 @@ public class CustomerService : ICustomerService
         var fileIds = files.Select(f => f.Id).ToList();
         var payments = await _dbContext.Payments
             .AsNoTracking()
-            .Where(p => p.TravelFileId != null && fileIds.Contains(p.TravelFileId.Value) && !p.IsDeleted)
+            .Where(p => p.ReservaId != null && fileIds.Contains(p.ReservaId.Value) && !p.IsDeleted)
             .OrderByDescending(p => p.PaidAt)
             .Select(p => new
             {
@@ -140,9 +140,9 @@ public class CustomerService : ICustomerService
                 p.Method,
                 PaymentDate = p.PaidAt,
                 p.Notes,
-                TravelFileId = p.TravelFileId,
-                FileNumber = p.TravelFile != null ? p.TravelFile.FileNumber : null,
-                FileName = p.TravelFile != null ? p.TravelFile.Name : null
+                ReservaId = p.ReservaId,
+                NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null,
+                FileName = p.Reserva != null ? p.Reserva.Name : null
             })
             .ToListAsync(cancellationToken);
 

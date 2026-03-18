@@ -14,17 +14,17 @@ public class VoucherService : IVoucherService
         _db = db;
     }
 
-    public async Task<byte[]> GenerateVoucherAsync(int travelFileId, CancellationToken cancellationToken)
+    public async Task<byte[]> GenerateVoucherAsync(int reservaId, CancellationToken cancellationToken)
     {
-        var file = await _db.TravelFiles
+        var reserva = await _db.Reservas
             .Include(f => f.Payer)
             .Include(f => f.Passengers)
             .Include(f => f.HotelBookings).ThenInclude(h => h.Supplier)
             .Include(f => f.FlightSegments)
             .Include(f => f.TransferBookings).ThenInclude(t => t.Supplier)
             .Include(f => f.PackageBookings).ThenInclude(p => p.Supplier)
-            .FirstOrDefaultAsync(f => f.Id == travelFileId, cancellationToken)
-            ?? throw new KeyNotFoundException($"Expediente {travelFileId} no encontrado.");
+            .FirstOrDefaultAsync(f => f.Id == reservaId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Reserva {reservaId} no encontrada.");
 
         var agency = await _db.AgencySettings.FirstOrDefaultAsync(cancellationToken);
 
@@ -50,24 +50,24 @@ public class VoucherService : IVoucherService
         html.AppendLine("<div class='header'>");
         html.AppendLine($"<div><h1>{agency?.AgencyName ?? "Agencia de Viajes"}</h1>");
         html.AppendLine($"<p style='color:#64748b;font-size:12px'>{agency?.Address ?? ""} | {agency?.Phone ?? ""}</p></div>");
-        html.AppendLine($"<div style='text-align:right'><div style='font-size:12px;color:#94a3b8'>VOUCHER</div>");
-        html.AppendLine($"<div style='font-size:20px;font-weight:800;color:#4f46e5'>{file.FileNumber}</div></div>");
+        html.AppendLine($"<div style='text-align:right'><div style='font-size:12px;color:#94a3b8'>RESERVA</div>");
+        html.AppendLine($"<div style='font-size:20px;font-weight:800;color:#4f46e5'>{reserva.NumeroReserva}</div></div>");
         html.AppendLine("</div>");
 
         // Client info
         html.AppendLine("<h2>Datos del Pasajero</h2>");
         html.AppendLine("<div class='info-grid'>");
-        html.AppendLine($"<div class='info-item'><div class='info-label'>Titular</div><div class='info-value'>{file.Payer?.FullName ?? "---"}</div></div>");
-        html.AppendLine($"<div class='info-item'><div class='info-label'>Documento</div><div class='info-value'>{file.Payer?.DocumentNumber ?? "---"}</div></div>");
-        html.AppendLine($"<div class='info-item'><div class='info-label'>Salida</div><div class='info-value'>{file.StartDate?.ToString("dd/MM/yyyy") ?? "---"}</div></div>");
-        html.AppendLine($"<div class='info-item'><div class='info-label'>Regreso</div><div class='info-value'>{file.EndDate?.ToString("dd/MM/yyyy") ?? "---"}</div></div>");
+        html.AppendLine($"<div class='info-item'><div class='info-label'>Titular</div><div class='info-value'>{reserva.Payer?.FullName ?? "---"}</div></div>");
+        html.AppendLine($"<div class='info-item'><div class='info-label'>Documento</div><div class='info-value'>{reserva.Payer?.DocumentNumber ?? "---"}</div></div>");
+        html.AppendLine($"<div class='info-item'><div class='info-label'>Salida</div><div class='info-value'>{reserva.StartDate?.ToString("dd/MM/yyyy") ?? "---"}</div></div>");
+        html.AppendLine($"<div class='info-item'><div class='info-label'>Regreso</div><div class='info-value'>{reserva.EndDate?.ToString("dd/MM/yyyy") ?? "---"}</div></div>");
         html.AppendLine("</div>");
 
         // Passengers
-        if (file.Passengers.Any())
+        if (reserva.Passengers.Any())
         {
             html.AppendLine("<h2>Pasajeros</h2><table><thead><tr><th>Nombre</th><th>Documento</th><th>Nacimiento</th></tr></thead><tbody>");
-            foreach (var p in file.Passengers)
+            foreach (var p in reserva.Passengers)
             {
                 html.AppendLine($"<tr><td>{p.FullName}</td><td>{p.DocumentType} {p.DocumentNumber}</td><td>{p.BirthDate?.ToString("dd/MM/yyyy") ?? "---"}</td></tr>");
             }
@@ -75,10 +75,10 @@ public class VoucherService : IVoucherService
         }
 
         // Hotels
-        if (file.HotelBookings.Any())
+        if (reserva.HotelBookings.Any())
         {
             html.AppendLine("<h2>Alojamiento</h2><table><thead><tr><th>Hotel</th><th>Check-In</th><th>Check-Out</th><th>Noches</th><th>Habitación</th><th>Confirmación</th></tr></thead><tbody>");
-            foreach (var h in file.HotelBookings)
+            foreach (var h in reserva.HotelBookings)
             {
                 html.AppendLine($"<tr><td><strong>{h.HotelName}</strong><br/><span style='font-size:11px;color:#64748b'>{h.City}</span></td><td>{h.CheckIn:dd/MM/yyyy}</td><td>{h.CheckOut:dd/MM/yyyy}</td><td>{h.Nights}</td><td>{h.RoomType} ({h.MealPlan})</td><td>{h.ConfirmationNumber ?? "Pendiente"}</td></tr>");
             }
@@ -86,10 +86,10 @@ public class VoucherService : IVoucherService
         }
 
         // Flights
-        if (file.FlightSegments.Any())
+        if (reserva.FlightSegments.Any())
         {
             html.AppendLine("<h2>Vuelos</h2><table><thead><tr><th>Vuelo</th><th>Origen</th><th>Destino</th><th>Fecha</th><th>Clase</th><th>PNR</th></tr></thead><tbody>");
-            foreach (var f2 in file.FlightSegments)
+            foreach (var f2 in reserva.FlightSegments)
             {
                 html.AppendLine($"<tr><td>{f2.AirlineCode} {f2.FlightNumber}</td><td>{f2.OriginCity ?? f2.Origin}</td><td>{f2.DestinationCity ?? f2.Destination}</td><td>{f2.DepartureTime:dd/MM/yyyy HH:mm}</td><td>{f2.CabinClass}</td><td>{f2.PNR ?? "---"}</td></tr>");
             }
@@ -97,10 +97,10 @@ public class VoucherService : IVoucherService
         }
 
         // Transfers
-        if (file.TransferBookings.Any())
+        if (reserva.TransferBookings.Any())
         {
             html.AppendLine("<h2>Transfers</h2><table><thead><tr><th>Vehículo</th><th>Origen</th><th>Destino</th><th>Fecha</th><th>Confirmación</th></tr></thead><tbody>");
-            foreach (var t in file.TransferBookings)
+            foreach (var t in reserva.TransferBookings)
             {
                 html.AppendLine($"<tr><td>{t.VehicleType}</td><td>{t.PickupLocation}</td><td>{t.DropoffLocation}</td><td>{t.PickupDateTime:dd/MM/yyyy HH:mm}</td><td>{t.ConfirmationNumber ?? "Pendiente"}</td></tr>");
             }
@@ -108,10 +108,10 @@ public class VoucherService : IVoucherService
         }
 
         // Packages
-        if (file.PackageBookings.Any())
+        if (reserva.PackageBookings.Any())
         {
             html.AppendLine("<h2>Paquetes</h2><table><thead><tr><th>Paquete</th><th>Destino</th><th>Fechas</th><th>Noches</th><th>Confirmación</th></tr></thead><tbody>");
-            foreach (var p in file.PackageBookings)
+            foreach (var p in reserva.PackageBookings)
             {
                 html.AppendLine($"<tr><td>{p.PackageName}</td><td>{p.Destination}</td><td>{p.StartDate:dd/MM/yyyy} - {p.EndDate:dd/MM/yyyy}</td><td>{p.Nights}</td><td>{p.ConfirmationNumber ?? "Pendiente"}</td></tr>");
             }

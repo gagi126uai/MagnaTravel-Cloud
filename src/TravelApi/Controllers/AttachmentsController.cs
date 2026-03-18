@@ -18,16 +18,16 @@ public class AttachmentsController : ControllerBase
         _logger = logger;
     }
 
-    [HttpGet("file/{travelFileId}")]
-    public async Task<ActionResult> GetAttachments(int travelFileId, CancellationToken cancellationToken)
+    [HttpGet("reserva/{reservaId}")]
+    public async Task<ActionResult> GetAttachments(int reservaId, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Getting attachments for TravelFileId: {TravelFileId}", travelFileId);
-        var attachments = await _attachmentService.GetAttachmentsAsync(travelFileId, cancellationToken);
+        _logger.LogInformation("Getting attachments for ReservaId: {ReservaId}", reservaId);
+        var attachments = await _attachmentService.GetAttachmentsAsync(reservaId, cancellationToken);
         return Ok(attachments);
     }
 
-    [HttpPost("upload/{travelFileId}")]
-    public async Task<ActionResult> UploadAttachment(int travelFileId, IFormFile file, CancellationToken cancellationToken)
+    [HttpPost("upload/{reservaId}")]
+    public async Task<ActionResult> UploadAttachment(int reservaId, IFormFile file, CancellationToken cancellationToken)
     {
         if (file == null || file.Length == 0)
             return BadRequest("No file uploaded.");
@@ -37,7 +37,7 @@ public class AttachmentsController : ControllerBase
             var uploadedBy = User.Identity?.Name ?? "System";
             using var stream = file.OpenReadStream();
             var attachment = await _attachmentService.UploadAttachmentAsync(
-                travelFileId, 
+                reservaId, 
                 stream, 
                 file.FileName, 
                 file.ContentType, 

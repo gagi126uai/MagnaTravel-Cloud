@@ -1,9 +1,9 @@
 namespace TravelApi.Application.DTOs;
 
-public class TravelFileListDto
+public class ReservaListDto
 {
     public int Id { get; set; }
-    public string FileNumber { get; set; } = string.Empty;
+    public string NumeroReserva { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Status { get; set; } = "Presupuesto";
     public string? CustomerName { get; set; }

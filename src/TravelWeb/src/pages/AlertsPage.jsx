@@ -48,7 +48,7 @@ export default function AlertsPage() {
                                             <p className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
                                                 {trip.name}
                                                 <span className="text-xs bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-1.5 py-0.5 rounded border border-gray-200 dark:border-slate-600">
-                                                    #{trip.fileNumber}
+                                                    #{trip.numeroReserva}
                                                 </span>
                                             </p>
                                             <p className="text-sm text-gray-500 dark:text-slate-400">{trip.payerName}</p>
@@ -64,10 +64,10 @@ export default function AlertsPage() {
                                         </div>
                                     </div>
                                     <button
-                                        onClick={() => navigate(`/files/${trip.id}`)}
+                                        onClick={() => navigate(`/reservas/${trip.id}`)}
                                         className="w-full mt-2 text-sm text-center py-1.5 rounded border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 hover:border-blue-300 dark:hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-all flex items-center justify-center gap-1 group"
                                     >
-                                        Ver Expediente <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
+                                        Ver Reserva <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
                                     </button>
                                 </div>
                             ))}

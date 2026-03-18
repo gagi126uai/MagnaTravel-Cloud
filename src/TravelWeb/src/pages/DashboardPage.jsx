@@ -178,7 +178,7 @@ export default function DashboardPage() {
                             <PieChart className="h-5 w-5 text-slate-500" />
                             Estado de Reservas
                         </CardTitle>
-                        <CardDescription>Distribución actual de files activos</CardDescription>
+                        <CardDescription>Distribución actual de reservas activas</CardDescription>
                     </CardHeader>
                     <CardContent>
                         <div className="h-[300px] w-full flex items-center justify-center">
@@ -233,25 +233,25 @@ export default function DashboardPage() {
                     </CardHeader>
                     <CardContent>
                         <div className="space-y-4">
-                            {dashboard.expedientesPendientes?.length > 0 ? (
-                                dashboard.expedientesPendientes.map((file) => (
+                            {dashboard.reservasPendientes?.length > 0 ? (
+                                dashboard.reservasPendientes.map((reserva) => (
                                     <div
-                                        key={file.id}
+                                        key={reserva.id}
                                         className="flex items-center justify-between p-3 rounded-lg bg-rose-50/50 hover:bg-rose-100/50 dark:bg-rose-900/10 dark:hover:bg-rose-900/20 cursor-pointer transition-colors border border-rose-100 dark:border-rose-900/20"
-                                        onClick={() => navigate(`/files/${file.id}`)}
+                                        onClick={() => navigate(`/reservas/${reserva.id}`)}
                                     >
                                         <div className="flex gap-3 items-center">
                                             <div className="bg-rose-100 dark:bg-rose-900/30 p-2 rounded-full">
                                                 <DollarSign className="h-4 w-4 text-rose-600" />
                                             </div>
                                             <div>
-                                                <div className="font-medium text-slate-800 dark:text-slate-200">{file.name}</div>
-                                                <div className="text-xs text-rose-600/80 font-medium">{file.fileNumber}</div>
+                                                <div className="font-medium text-slate-800 dark:text-slate-200">{reserva.name}</div>
+                                                <div className="text-xs text-rose-600/80 font-medium">{reserva.numeroReserva}</div>
                                             </div>
                                         </div>
                                         <div className="text-right">
                                             <div className="font-bold text-rose-700 dark:text-rose-400">
-                                                ${file.balance?.toLocaleString()}
+                                                ${reserva.balance?.toLocaleString()}
                                             </div>
                                             <div className="text-[10px] text-muted-foreground uppercase">Pendiente</div>
                                         </div>
@@ -280,7 +280,7 @@ export default function DashboardPage() {
                                     <div
                                         key={trip.id}
                                         className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 cursor-pointer transition-colors border border-slate-100 dark:border-slate-800"
-                                        onClick={() => navigate(`/files/${trip.id}`)}
+                                        onClick={() => navigate(`/reservas/${trip.id}`)}
                                     >
                                         <div className="flex gap-3 items-center">
                                             <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-full">
@@ -288,7 +288,7 @@ export default function DashboardPage() {
                                             </div>
                                             <div>
                                                 <div className="font-medium text-slate-800 dark:text-slate-200">{trip.name}</div>
-                                                <div className="text-xs text-muted-foreground">{trip.fileNumber}</div>
+                                                <div className="text-xs text-muted-foreground">{trip.numeroReserva}</div>
                                             </div>
                                         </div>
                                         <div className="text-right">

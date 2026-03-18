@@ -7,8 +7,8 @@ import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
 import CustomersPage from "./features/customers/pages/CustomersPage";
 import CustomerAccountPage from "./features/customers/pages/CustomerAccountPage";
-import FilesPage from "./features/files/pages/FilesPage";
-import FileDetailPage from "./features/files/pages/FileDetailPage";
+import ReservasPage from "./features/reservas/pages/ReservasPage";
+import ReservaDetailPage from "./features/reservas/pages/ReservaDetailPage";
 import PaymentsPage from "./features/payments/pages/PaymentsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./features/suppliers/pages/SuppliersPage";
@@ -80,8 +80,8 @@ export default function App() {
                   <Route path="/dashboard" element={<DashboardPage />} />
 
                   {/* Core ERP Modules */}
-                  <Route path="/files" element={<FilesPage />} />
-                  <Route path="/files/:id" element={<FileDetailPage />} />
+                  <Route path="/reservas" element={<ReservasPage />} />
+                  <Route path="/reservas/:id" element={<ReservaDetailPage />} />
 
                   <Route path="/customers" element={<CustomersPage />} />
                   <Route path="/customers/:id/account" element={<CustomerAccountPage />} />

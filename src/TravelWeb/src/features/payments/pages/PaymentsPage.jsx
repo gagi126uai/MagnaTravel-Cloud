@@ -20,7 +20,7 @@ export default function PaymentsPage() {
   const [activeTab, setActiveTab] = useState("collections"); // collections, invoicing, history
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedReserva, setSelectedReserva] = useState(null);
 
   const {
     loading,
@@ -37,18 +37,18 @@ export default function PaymentsPage() {
     loadData
   } = usePayments();
 
-  const handleOpenPayment = (file) => {
-    setSelectedFile(file);
+  const handleOpenPayment = (reserva) => {
+    setSelectedReserva(reserva);
     setShowPaymentModal(true);
   };
 
-  const handleOpenInvoice = (file) => {
-    if (file.status === 'Presupuesto') {
+  const handleOpenInvoice = (reserva) => {
+    if (reserva.status === 'Presupuesto') {
       return; // Hook or component should already guard but just in case
     }
-    setSelectedFile({
-      ...file,
-      suggestedInvoiceAmount: file.pendingBilling
+    setSelectedReserva({
+      ...reserva,
+      suggestedInvoiceAmount: reserva.pendingBilling
     });
     setShowInvoiceModal(true);
   };
@@ -126,19 +126,19 @@ export default function PaymentsPage() {
       {/* MODALS */}
       <PaymentModal
         isOpen={showPaymentModal}
-        onClose={() => { setShowPaymentModal(false); setSelectedFile(null); }}
-        fileId={selectedFile?.id}
-        maxAmount={selectedFile?.pendingCollection}
+        onClose={() => { setShowPaymentModal(false); setSelectedReserva(null); }}
+        reservaId={selectedReserva?.id}
+        maxAmount={selectedReserva?.pendingCollection}
         onSuccess={loadData}
       />
 
       <CreateInvoiceModal
         isOpen={showInvoiceModal}
-        onClose={() => { setShowInvoiceModal(false); setSelectedFile(null); }}
-        fileId={selectedFile?.id}
-        initialAmount={selectedFile?.suggestedInvoiceAmount}
-        clientName={selectedFile?.payer?.fullName || selectedFile?.customerName}
-        clientCuit={selectedFile?.payer?.taxId || selectedFile?.payer?.documentNumber}
+        onClose={() => { setShowInvoiceModal(false); setSelectedReserva(null); }}
+        reservaId={selectedReserva?.id}
+        initialAmount={selectedReserva?.suggestedInvoiceAmount}
+        clientName={selectedReserva?.payer?.fullName || selectedReserva?.customerName}
+        clientCuit={selectedReserva?.payer?.taxId || selectedReserva?.payer?.documentNumber}
         onSuccess={loadData}
       />
     </div>

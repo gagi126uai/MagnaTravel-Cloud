@@ -7,8 +7,8 @@ public class Passenger
 {
     public int Id { get; set; }
     
-    public int TravelFileId { get; set; }
-    public TravelFile? TravelFile { get; set; }
+    public int ReservaId { get; set; }
+    public Reserva? Reserva { get; set; }
 
     [Required]
     [MaxLength(200)]

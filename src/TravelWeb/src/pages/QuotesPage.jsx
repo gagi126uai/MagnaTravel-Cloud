@@ -92,7 +92,7 @@ export default function QuotesPage() {
         if (!isConfirmed) return;
         try {
             const res = await api.post(`/quotes/${id}/convert`);
-            showSuccess(`Reserva creada: ID ${res.fileId}`);
+            showSuccess(`Reserva creada: ID ${res.reservaId}`);
             loadQuotes();
         } catch (e) { showError(e.message || "Error al convertir"); }
     };
@@ -194,12 +194,12 @@ export default function QuotesPage() {
                             <button onClick={() => handleStatusChange(detailQuote.id, "Rechazada")} className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700"><X className="w-4 h-4" /> Rechazada</button>
                         </>
                     )}
-                    {(detailQuote.status === "Aceptada") && !detailQuote.convertedFileId && (
+                    {(detailQuote.status === "Aceptada") && !detailQuote.convertedReservaId && (
                         <button onClick={() => handleConvert(detailQuote.id)} className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700"><ArrowRight className="w-4 h-4" /> Convertir a Reserva</button>
                     )}
-                    {detailQuote.convertedFileId && (
+                    {detailQuote.convertedReservaId && (
                         <span className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-xl text-sm font-bold">
-                            <Check className="w-4 h-4" /> Convertida → Res #{detailQuote.convertedFileId}
+                            <Check className="w-4 h-4" /> Convertida → Res #{detailQuote.convertedReservaId}
                         </span>
                     )}
                 </div>

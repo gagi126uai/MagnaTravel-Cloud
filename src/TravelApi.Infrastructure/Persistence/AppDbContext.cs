@@ -176,9 +176,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Core Entities - Retail ERP
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
-    public DbSet<TravelFile> TravelFiles => Set<TravelFile>();
+    public DbSet<Reserva> Reservas => Set<Reserva>();
     public DbSet<Passenger> Passengers => Set<Passenger>();
-    public DbSet<Reservation> Reservations => Set<Reservation>();
+    public DbSet<ServicioReserva> Servicios => Set<ServicioReserva>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<FlightSegment> FlightSegments => Set<FlightSegment>();
     
@@ -197,7 +197,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AfipSettings> AfipSettings => Set<AfipSettings>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
-    public DbSet<TravelFileAttachment> TravelFileAttachments => Set<TravelFileAttachment>();
+    public DbSet<ReservaAttachment> ReservaAttachments => Set<ReservaAttachment>();
 
     // Pilar 1: Cotizador + CRM
     public DbSet<Quote> Quotes => Set<Quote>();
@@ -228,31 +228,32 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(c => c.Address).HasMaxLength(300);
         });
 
-        // TravelFile
-        modelBuilder.Entity<TravelFile>(entity =>
+        // Reserva (Master)
+        modelBuilder.Entity<Reserva>(entity =>
         {
-            entity.Property(f => f.FileNumber).HasMaxLength(50).IsRequired();
+            entity.ToTable("Reservas"); // Rename table
+            entity.Property(f => f.NumeroReserva).HasMaxLength(50).IsRequired();
             entity.Property(f => f.Name).HasMaxLength(200).IsRequired();
             entity.Property(f => f.Status).HasMaxLength(50).IsRequired();
 
             entity.HasOne(f => f.Payer)
-                  .WithMany(c => c.TravelFiles)
+                  .WithMany(c => c.Reservas)
                   .HasForeignKey(f => f.PayerId)
                   .OnDelete(DeleteBehavior.Restrict);
 
-            entity.HasMany(f => f.Reservations)
-                  .WithOne(r => r.TravelFile)
-                  .HasForeignKey(r => r.TravelFileId)
+            entity.HasMany(f => f.Servicios)
+                  .WithOne(r => r.Reserva)
+                  .HasForeignKey(r => r.ReservaId)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasMany(f => f.Passengers)
-                  .WithOne(p => p.TravelFile)
-                  .HasForeignKey(p => p.TravelFileId)
+                  .WithOne(p => p.Reserva)
+                  .HasForeignKey(p => p.ReservaId)
                   .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasMany(f => f.Payments)
-                  .WithOne(p => p.TravelFile)
-                  .HasForeignKey(p => p.TravelFileId)
+                  .WithOne(p => p.Reserva)
+                  .HasForeignKey(p => p.ReservaId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -268,9 +269,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Gender).HasMaxLength(10);
         });
 
-        // Reservation (Service)
-        modelBuilder.Entity<Reservation>(entity =>
+        // ServicioReserva (Item)
+        modelBuilder.Entity<ServicioReserva>(entity =>
         {
+            entity.ToTable("ServiciosReserva"); // Rename table
             entity.Property(r => r.Status).HasMaxLength(50).IsRequired();
             entity.Property(r => r.SupplierName).HasMaxLength(200);
 
@@ -300,9 +302,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // Filtro global: excluir pagos borrados de todas las consultas
             entity.HasQueryFilter(p => !p.IsDeleted);
 
-            entity.HasOne(p => p.Reservation)
+            entity.HasOne(p => p.Reserva)
                   .WithMany(r => r.Payments)
-                  .HasForeignKey(p => p.ReservationId)
+                  .HasForeignKey(p => p.ReservaId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(p => p.ServicioReserva)
+                  .WithMany(s => s.Payments)
+                  .HasForeignKey(p => p.ServicioReservaId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -315,9 +322,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(s => s.Destination).HasMaxLength(3).IsRequired();
             entity.Property(s => s.Status).HasMaxLength(2);
 
-            entity.HasOne(s => s.Reservation)
-                  .WithMany(r => r.Segments)
-                  .HasForeignKey(s => s.ReservationId)
+            entity.HasOne(s => s.Reserva)
+                  .WithMany(r => r.FlightSegments)
+                  .HasForeignKey(s => s.ReservaId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
     }

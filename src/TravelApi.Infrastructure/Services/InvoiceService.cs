@@ -46,7 +46,7 @@ public class InvoiceService : IInvoiceService
     public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, CancellationToken ct)
     {
         // 1. Create Pending in DB
-        var invoice = await _afipService.CreatePendingInvoice(request.TravelFileId, request);
+        var invoice = await _afipService.CreatePendingInvoice(request.ReservaId, request);
         
         // 2. Enqueue Job
         _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(invoice.Id));
@@ -69,10 +69,10 @@ public class InvoiceService : IInvoiceService
         return true;
     }
 
-    public async Task<IEnumerable<InvoiceDto>> GetByTravelFileAsync(int travelFileId, CancellationToken ct)
+    public async Task<IEnumerable<InvoiceDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct)
     {
         return await _context.Invoices
-            .Where(i => i.TravelFileId == travelFileId)
+            .Where(i => i.ReservaId == reservaId)
             .OrderByDescending(i => i.CreatedAt)
             .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
@@ -81,7 +81,7 @@ public class InvoiceService : IInvoiceService
     public async Task<byte[]> GetPdfAsync(int id, CancellationToken ct)
     {
         var invoice = await _context.Invoices
-            .Include(i => i.TravelFile)
+            .Include(i => i.Reserva)
             .ThenInclude(t => t.Payer)
             .FirstOrDefaultAsync(i => i.Id == id, ct);
 
@@ -92,7 +92,7 @@ public class InvoiceService : IInvoiceService
 
         var agencySettings = await _context.AgencySettings.FirstOrDefaultAsync(ct) ?? new AgencySettings();
 
-        return _pdfService.GenerateInvoicePdf(invoice, invoice.TravelFile, settings, agencySettings);
+        return _pdfService.GenerateInvoicePdf(invoice, invoice.Reserva, settings, agencySettings);
     }
 
     public async Task EnqueueAnnulmentAsync(int id, string userId, CancellationToken ct)
@@ -135,7 +135,7 @@ public class InvoiceService : IInvoiceService
 
             var request = new CreateInvoiceRequest
             {
-                TravelFileId = original.TravelFileId ?? 0,
+                ReservaId = original.ReservaId ?? 0,
                 CbteTipo = cbteTipo,
                 Concepto = 3, // Productos y Servicios (default)
                 DocTipo = 99, // Sin info
@@ -256,7 +256,7 @@ public class InvoiceService : IInvoiceService
             }
 
             // Execute AFIP Call (Chain the pending creation and the processing)
-            var newInvoice = await _afipService.CreatePendingInvoice(request.TravelFileId, request);
+            var newInvoice = await _afipService.CreatePendingInvoice(request.ReservaId, request);
             
             // Since we are already in a background job, we can process it immediately
             await _afipService.ProcessInvoiceJob(newInvoice.Id);

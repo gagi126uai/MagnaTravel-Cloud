@@ -36,7 +36,7 @@ public class SupplierServiceDto
     public decimal SalePrice { get; set; }
     public DateTime Date { get; set; }
     public string Status { get; set; } = "";
-    public string? FileNumber { get; set; }
+    public string? NumeroReserva { get; set; }
     public string? FileName { get; set; }
 }
 
@@ -48,9 +48,9 @@ public class SupplierPaymentDto
     public DateTime PaidAt { get; set; }
     public string? Reference { get; set; }
     public string? Notes { get; set; }
-    public string? FileNumber { get; set; }
+    public string? NumeroReserva { get; set; }
     public string? FileName { get; set; }
-    public int? TravelFileId { get; set; }
+    public int? ReservaId { get; set; }
 }
 
 public record SupplierPaymentRequest(
@@ -58,6 +58,6 @@ public record SupplierPaymentRequest(
     string? Method, 
     string? Reference, 
     string? Notes,
-    int? TravelFileId,
-    int? ReservationId
+    int? ReservaId,
+    int? ServicioReservaId
 );

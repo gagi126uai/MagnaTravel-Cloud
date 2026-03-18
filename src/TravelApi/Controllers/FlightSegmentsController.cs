@@ -6,7 +6,7 @@ using TravelApi.Application.Interfaces;
 namespace TravelApi.Controllers;
 
 [ApiController]
-[Route("api/files/{fileId}/flights")]
+[Route("api/reservas/{reservaId}/flights")]
 [Authorize]
 public class FlightSegmentsController : ControllerBase
 {
@@ -18,19 +18,19 @@ public class FlightSegmentsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
+    public async Task<IActionResult> GetAll(int reservaId, CancellationToken ct)
     {
-        var flights = await _bookingService.GetFlightsAsync(fileId, ct);
+        var flights = await _bookingService.GetFlightsAsync(reservaId, ct);
         return Ok(flights);
     }
 
     [HttpPost]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Create(int fileId, [FromBody] CreateFlightRequest req, CancellationToken ct)
+    public async Task<IActionResult> Create(int reservaId, [FromBody] CreateFlightRequest req, CancellationToken ct)
     {
         try
         {
-            var flight = await _bookingService.CreateFlightAsync(fileId, req, ct);
+            var flight = await _bookingService.CreateFlightAsync(reservaId, req, ct);
             return Ok(flight);
         }
         catch (KeyNotFoundException ex)
@@ -45,11 +45,11 @@ public class FlightSegmentsController : ControllerBase
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Update(int fileId, int id, [FromBody] UpdateFlightRequest req, CancellationToken ct)
+    public async Task<IActionResult> Update(int reservaId, int id, [FromBody] UpdateFlightRequest req, CancellationToken ct)
     {
         try
         {
-            var flight = await _bookingService.UpdateFlightAsync(fileId, id, req, ct);
+            var flight = await _bookingService.UpdateFlightAsync(reservaId, id, req, ct);
             return Ok(flight);
         }
         catch (KeyNotFoundException ex)
@@ -64,11 +64,11 @@ public class FlightSegmentsController : ControllerBase
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(int fileId, int id, CancellationToken ct)
+    public async Task<IActionResult> Delete(int reservaId, int id, CancellationToken ct)
     {
         try
         {
-            await _bookingService.DeleteFlightAsync(fileId, id, ct);
+            await _bookingService.DeleteFlightAsync(reservaId, id, ct);
             return Ok();
         }
         catch (KeyNotFoundException ex)

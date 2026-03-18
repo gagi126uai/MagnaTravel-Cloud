@@ -15,7 +15,7 @@ public class BookingService : IBookingService
     private readonly IRepository<HotelBooking> _hotelRepo;
     private readonly IRepository<PackageBooking> _packageRepo;
     private readonly IRepository<TransferBooking> _transferRepo;
-    private readonly IRepository<TravelFile> _fileRepo;
+    private readonly IRepository<Reserva> _fileRepo;
     private readonly IRepository<Supplier> _supplierRepo;
     private readonly IMapper _mapper;
 
@@ -24,7 +24,7 @@ public class BookingService : IBookingService
         IRepository<HotelBooking> hotelRepo,
         IRepository<PackageBooking> packageRepo,
         IRepository<TransferBooking> transferRepo,
-        IRepository<TravelFile> fileRepo,
+        IRepository<Reserva> fileRepo,
         IRepository<Supplier> supplierRepo,
         IMapper mapper)
     {
@@ -39,22 +39,22 @@ public class BookingService : IBookingService
 
     #region Flights
 
-    public async Task<IEnumerable<FlightSegmentDto>> GetFlightsAsync(int fileId, CancellationToken ct)
+    public async Task<IEnumerable<FlightSegmentDto>> GetFlightsAsync(int reservaId, CancellationToken ct)
     {
         return await _flightRepo.Query()
-            .Where(f => f.TravelFileId == fileId)
+            .Where(f => f.ReservaId == reservaId)
             .OrderBy(f => f.DepartureTime)
             .ProjectTo<FlightSegmentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
     }
 
-    public async Task<FlightSegmentDto> CreateFlightAsync(int fileId, CreateFlightRequest req, CancellationToken ct)
+    public async Task<FlightSegmentDto> CreateFlightAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
     {
-        var file = await _fileRepo.GetByIdAsync(fileId, ct);
-        if (file == null) throw new KeyNotFoundException("File no encontrado");
+        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         var flight = _mapper.Map<FlightSegment>(req);
-        flight.TravelFileId = fileId;
+        flight.ReservaId = reservaId;
 
         await _flightRepo.AddAsync(flight, ct);
 
@@ -71,10 +71,10 @@ public class BookingService : IBookingService
         return _mapper.Map<FlightSegmentDto>(flight);
     }
 
-    public async Task<FlightSegmentDto> UpdateFlightAsync(int fileId, int id, UpdateFlightRequest req, CancellationToken ct)
+    public async Task<FlightSegmentDto> UpdateFlightAsync(int reservaId, int id, UpdateFlightRequest req, CancellationToken ct)
     {
         var flight = await _flightRepo.GetByIdAsync(id, ct);
-        if (flight == null || flight.TravelFileId != fileId) throw new KeyNotFoundException("Vuelo no encontrado");
+        if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
         var oldNetCost = flight.NetCost;
         var oldSupplierId = flight.SupplierId;
@@ -116,10 +116,10 @@ public class BookingService : IBookingService
         return _mapper.Map<FlightSegmentDto>(flight);
     }
 
-    public async Task DeleteFlightAsync(int fileId, int id, CancellationToken ct)
+    public async Task DeleteFlightAsync(int reservaId, int id, CancellationToken ct)
     {
         var flight = await _flightRepo.GetByIdAsync(id, ct);
-        if (flight == null || flight.TravelFileId != fileId) throw new KeyNotFoundException("Vuelo no encontrado");
+        if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
         if (flight.SupplierId > 0)
         {
@@ -138,29 +138,29 @@ public class BookingService : IBookingService
 
     #region Hotels
 
-    public async Task<IEnumerable<HotelBookingDto>> GetHotelsAsync(int fileId, CancellationToken ct)
+    public async Task<IEnumerable<HotelBookingDto>> GetHotelsAsync(int reservaId, CancellationToken ct)
     {
         return await _hotelRepo.Query()
-            .Where(h => h.TravelFileId == fileId)
+            .Where(h => h.ReservaId == reservaId)
             .OrderBy(h => h.CheckIn)
             .ProjectTo<HotelBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
     }
 
-    public async Task<HotelBookingDto> GetHotelByIdAsync(int fileId, int id, CancellationToken ct)
+    public async Task<HotelBookingDto> GetHotelByIdAsync(int reservaId, int id, CancellationToken ct)
     {
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
-        if (hotel == null || hotel.TravelFileId != fileId) throw new KeyNotFoundException("Hotel no encontrado");
+        if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
-    public async Task<HotelBookingDto> CreateHotelAsync(int fileId, CreateHotelRequest req, CancellationToken ct)
+    public async Task<HotelBookingDto> CreateHotelAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
     {
-        var file = await _fileRepo.GetByIdAsync(fileId, ct);
-        if (file == null) throw new KeyNotFoundException("File no encontrado");
+        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         var hotel = _mapper.Map<HotelBooking>(req);
-        hotel.TravelFileId = fileId;
+        hotel.ReservaId = reservaId;
 
         await _hotelRepo.AddAsync(hotel, ct);
 
@@ -177,10 +177,10 @@ public class BookingService : IBookingService
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
-    public async Task<HotelBookingDto> UpdateHotelAsync(int fileId, int id, UpdateHotelRequest req, CancellationToken ct)
+    public async Task<HotelBookingDto> UpdateHotelAsync(int reservaId, int id, UpdateHotelRequest req, CancellationToken ct)
     {
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
-        if (hotel == null || hotel.TravelFileId != fileId) throw new KeyNotFoundException("Hotel no encontrado");
+        if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
         var oldNetCost = hotel.NetCost;
         var oldSupplierId = hotel.SupplierId;
@@ -222,10 +222,10 @@ public class BookingService : IBookingService
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
-    public async Task DeleteHotelAsync(int fileId, int id, CancellationToken ct)
+    public async Task DeleteHotelAsync(int reservaId, int id, CancellationToken ct)
     {
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
-        if (hotel == null || hotel.TravelFileId != fileId) throw new KeyNotFoundException("Hotel no encontrado");
+        if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
         if (hotel.SupplierId > 0)
         {
@@ -244,22 +244,22 @@ public class BookingService : IBookingService
 
     #region Packages
 
-    public async Task<IEnumerable<PackageBookingDto>> GetPackagesAsync(int fileId, CancellationToken ct)
+    public async Task<IEnumerable<PackageBookingDto>> GetPackagesAsync(int reservaId, CancellationToken ct)
     {
         return await _packageRepo.Query()
-            .Where(p => p.TravelFileId == fileId)
+            .Where(p => p.ReservaId == reservaId)
             .OrderBy(p => p.CreatedAt)
             .ProjectTo<PackageBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
     }
 
-    public async Task<PackageBookingDto> CreatePackageAsync(int fileId, CreatePackageRequest req, CancellationToken ct)
+    public async Task<PackageBookingDto> CreatePackageAsync(int reservaId, CreatePackageRequest req, CancellationToken ct)
     {
-        var file = await _fileRepo.GetByIdAsync(fileId, ct);
-        if (file == null) throw new KeyNotFoundException("File no encontrado");
+        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         var package = _mapper.Map<PackageBooking>(req);
-        package.TravelFileId = fileId;
+        package.ReservaId = reservaId;
 
         await _packageRepo.AddAsync(package, ct);
 
@@ -276,10 +276,10 @@ public class BookingService : IBookingService
         return _mapper.Map<PackageBookingDto>(package);
     }
 
-    public async Task<PackageBookingDto> UpdatePackageAsync(int fileId, int id, UpdatePackageRequest req, CancellationToken ct)
+    public async Task<PackageBookingDto> UpdatePackageAsync(int reservaId, int id, UpdatePackageRequest req, CancellationToken ct)
     {
         var package = await _packageRepo.GetByIdAsync(id, ct);
-        if (package == null || package.TravelFileId != fileId) throw new KeyNotFoundException("Paquete no encontrado");
+        if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
         var oldNetCost = package.NetCost;
         var oldSupplierId = package.SupplierId;
@@ -321,10 +321,10 @@ public class BookingService : IBookingService
         return _mapper.Map<PackageBookingDto>(package);
     }
 
-    public async Task DeletePackageAsync(int fileId, int id, CancellationToken ct)
+    public async Task DeletePackageAsync(int reservaId, int id, CancellationToken ct)
     {
         var package = await _packageRepo.GetByIdAsync(id, ct);
-        if (package == null || package.TravelFileId != fileId) throw new KeyNotFoundException("Paquete no encontrado");
+        if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
         if (package.SupplierId > 0)
         {
@@ -343,22 +343,22 @@ public class BookingService : IBookingService
 
     #region Transfers
 
-    public async Task<IEnumerable<TransferBookingDto>> GetTransfersAsync(int fileId, CancellationToken ct)
+    public async Task<IEnumerable<TransferBookingDto>> GetTransfersAsync(int reservaId, CancellationToken ct)
     {
         return await _transferRepo.Query()
-            .Where(t => t.TravelFileId == fileId)
+            .Where(t => t.ReservaId == reservaId)
             .OrderBy(t => t.PickupDateTime)
             .ProjectTo<TransferBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
     }
 
-    public async Task<TransferBookingDto> CreateTransferAsync(int fileId, CreateTransferRequest req, CancellationToken ct)
+    public async Task<TransferBookingDto> CreateTransferAsync(int reservaId, CreateTransferRequest req, CancellationToken ct)
     {
-        var file = await _fileRepo.GetByIdAsync(fileId, ct);
-        if (file == null) throw new KeyNotFoundException("File no encontrado");
+        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         var transfer = _mapper.Map<TransferBooking>(req);
-        transfer.TravelFileId = fileId;
+        transfer.ReservaId = reservaId;
 
         await _transferRepo.AddAsync(transfer, ct);
 
@@ -375,10 +375,10 @@ public class BookingService : IBookingService
         return _mapper.Map<TransferBookingDto>(transfer);
     }
 
-    public async Task<TransferBookingDto> UpdateTransferAsync(int fileId, int id, UpdateTransferRequest req, CancellationToken ct)
+    public async Task<TransferBookingDto> UpdateTransferAsync(int reservaId, int id, UpdateTransferRequest req, CancellationToken ct)
     {
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
-        if (transfer == null || transfer.TravelFileId != fileId) throw new KeyNotFoundException("Traslado no encontrado");
+        if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
         var oldNetCost = transfer.NetCost;
         var oldSupplierId = transfer.SupplierId;
@@ -420,10 +420,10 @@ public class BookingService : IBookingService
         return _mapper.Map<TransferBookingDto>(transfer);
     }
 
-    public async Task DeleteTransferAsync(int fileId, int id, CancellationToken ct)
+    public async Task DeleteTransferAsync(int reservaId, int id, CancellationToken ct)
     {
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
-        if (transfer == null || transfer.TravelFileId != fileId) throw new KeyNotFoundException("Traslado no encontrado");
+        if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
         if (transfer.SupplierId > 0)
         {

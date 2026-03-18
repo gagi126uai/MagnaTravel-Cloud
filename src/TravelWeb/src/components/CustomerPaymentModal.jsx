@@ -4,13 +4,13 @@ import { api } from "../api";
 import Swal from "sweetalert2";
 import { X, CreditCard, Calendar, FileText, DollarSign, AlignLeft, CheckCircle2 } from "lucide-react";
 
-export default function CustomerPaymentModal({ isOpen, onClose, customerId, paymentToEdit, onSave, availableFiles = [] }) {
+export default function CustomerPaymentModal({ isOpen, onClose, customerId, paymentToEdit, onSave, availableReservas = [] }) {
     const [formData, setFormData] = useState({
         amount: "",
         method: "Transfer",
         paidAt: new Date().toISOString().split("T")[0],
         notes: "",
-        travelFileId: ""
+        reservaId: ""
     });
     const [loading, setLoading] = useState(false);
 
@@ -22,7 +22,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                     method: paymentToEdit.method,
                     paidAt: paymentToEdit.paymentDate ? new Date(paymentToEdit.paymentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
                     notes: paymentToEdit.notes || "",
-                    travelFileId: paymentToEdit.travelFileId?.toString() || ""
+                    reservaId: paymentToEdit.reservaId?.toString() || ""
                 });
             } else {
                 setFormData({
@@ -30,18 +30,18 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                     method: "Transfer",
                     paidAt: new Date().toISOString().split("T")[0],
                     notes: "",
-                    travelFileId: availableFiles.length > 0 ? availableFiles[0].id.toString() : ""
+                    reservaId: availableReservas.length > 0 ? availableReservas[0].id.toString() : ""
                 });
             }
         }
-    }, [isOpen, paymentToEdit, availableFiles]);
+    }, [isOpen, paymentToEdit, availableReservas]);
 
     if (!isOpen) return null;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.travelFileId) {
-            Swal.fire("Error", "Debe seleccionar un expediente", "error");
+        if (!formData.reservaId) {
+            Swal.fire("Error", "Debe seleccionar una reserva", "error");
             return;
         }
 
@@ -56,10 +56,10 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
 
             if (paymentToEdit) {
                 // Edit existing payment
-                await api.put(`/travelfiles/${formData.travelFileId}/payments/${paymentToEdit.id}`, payload);
+                await api.put(`/reservas/${formData.reservaId}/payments/${paymentToEdit.id}`, payload);
             } else {
                 // Create new payment
-                await api.post(`/travelfiles/${formData.travelFileId}/payments`, payload);
+                await api.post(`/reservas/${formData.reservaId}/payments`, payload);
             }
 
             onSave();
@@ -98,24 +98,24 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
                     {/* File Selection */}
                     <div className="space-y-1.5">
-                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Expediente a Imputar</label>
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Reserva a Imputar</label>
                         <div className="relative">
                             <FileText className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                             <select
                                 disabled={!!paymentToEdit} // Cannot change file when editing
-                                value={formData.travelFileId}
-                                onChange={(e) => setFormData({ ...formData, travelFileId: e.target.value })}
+                                value={formData.reservaId}
+                                onChange={(e) => setFormData({ ...formData, reservaId: e.target.value })}
                                 className="w-full rounded-md border border-input bg-background pl-9 pr-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                             >
-                                <option value="">Seleccionar Expediente...</option>
-                                {availableFiles.map(file => (
-                                    <option key={file.id} value={file.id}>
-                                        {file.fileNumber} - {file.name} (Saldo: {formatCurrency(file.balance)})
+                                <option value="">Seleccionar Reserva...</option>
+                                {availableReservas.map(reserva => (
+                                    <option key={reserva.id} value={reserva.id}>
+                                        {reserva.numeroReserva} - {reserva.name} (Saldo: {formatCurrency(reserva.balance)})
                                     </option>
                                 ))}
                             </select>
                         </div>
-                        {paymentToEdit && <p className="text-xs text-muted-foreground">No se puede cambiar el expediente de un pago ya registrado.</p>}
+                        {paymentToEdit && <p className="text-xs text-muted-foreground">No se puede cambiar la reserva de un pago ya registrado.</p>}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">

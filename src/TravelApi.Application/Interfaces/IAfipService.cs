@@ -13,7 +13,7 @@ public interface IAfipService
     Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, byte[]? certificateData, string? certificateFileName, string? password);
 
     // Core
-    Task<Invoice> CreatePendingInvoice(int travelFileId, CreateInvoiceRequest request);
+    Task<Invoice> CreatePendingInvoice(int ReservaId, CreateInvoiceRequest request);
     Task ProcessInvoiceJob(int invoiceId);
     Task<AfipVoucherDetails?> GetVoucherDetails(int cbteTipo, int ptoVta, long cbteNro);
 }

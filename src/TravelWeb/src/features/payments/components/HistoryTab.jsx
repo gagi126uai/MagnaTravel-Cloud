@@ -67,7 +67,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                 <tr className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider w-16 text-center">#</th>
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider">Fecha</th>
-                                    <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider">Detalle / File</th>
+                                    <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider">Detalle / Reserva</th>
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider">Método</th>
                                     <th className="px-6 py-4 text-[11px] uppercase font-bold text-slate-500 tracking-wider text-right pr-10">Importe</th>
                                 </tr>
@@ -84,7 +84,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <span className="text-sm font-bold text-slate-900 dark:text-white">Pago Recibido</span>
-                                                    <a href={`/files/${p.travelFile?.id}`} className="text-xs text-indigo-500 hover:underline font-mono">FILE: {p.travelFile?.fileNumber || '---'}</a>
+                                                    <a href={`/reservas/${p.reserva?.id}`} className="text-xs text-indigo-500 hover:underline font-mono uppercase tracking-tight">RES: {p.reserva?.numeroReserva || '---'}</a>
                                                 </div>
                                             </div>
                                         </td>
@@ -113,7 +113,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                         <ArrowUpRight className="w-4 h-4" />
                                     </div>
                                     <div>
-                                        <div className="text-sm font-bold text-slate-900 dark:text-white">{p.travelFile?.fileNumber}</div>
+                                        <div className="text-sm font-bold text-slate-900 dark:text-white">{p.reserva?.numeroReserva}</div>
                                         <div className="text-[10px] text-slate-400 uppercase font-black">{new Date(p.paidAt).toLocaleDateString()} • {p.method}</div>
                                     </div>
                                 </div>
@@ -152,8 +152,8 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                             </td>
                                             <td className="px-6 py-4">
                                                 <div className="text-sm font-medium text-slate-900 dark:text-white">{new Date(i.createdAt).toLocaleDateString()}</div>
-                                                <a href={`/files/${i.travelFile?.id}`} className="text-[10px] text-indigo-500 hover:underline font-bold uppercase tracking-tighter">
-                                                    FILE: {i.travelFile?.fileNumber || '---'}
+                                                <a href={`/reservas/${i.reserva?.id}`} className="text-[10px] text-indigo-500 hover:underline font-bold uppercase tracking-tighter">
+                                                    RES: {i.reserva?.numeroReserva || '---'}
                                                 </a>
                                             </td>
                                             <td className="px-6 py-4 text-right">
@@ -223,7 +223,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                                             REINTENTAR
                                                         </button>
                                                     )}
-                                                    <a href={`/files/${i.travelFile?.id}`} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-300 hover:text-indigo-600 transition-all">
+                                                    <a href={`/reservas/${i.reserva?.id}`} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-300 hover:text-indigo-600 transition-all">
                                                         <ExternalLink className="w-4.5 h-4.5" />
                                                     </a>
                                                 </div>
@@ -259,8 +259,8 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                 <div className="flex justify-between items-start mb-4">
                                     <div>
                                         <div className="text-[10px] font-black text-slate-400 uppercase mb-1">{getInvoiceLabel(i.tipoComprobante)}</div>
-                                        <div className="text-sm font-bold text-slate-900 dark:text-white capitalize">{i.travelFile?.payer?.fullName || 'Cliente S/D'}</div>
-                                        <div className="text-[10px] font-mono text-indigo-500 font-bold">{i.travelFile?.fileNumber}</div>
+                                        <div className="text-sm font-bold text-slate-900 dark:text-white capitalize">{i.reserva?.payer?.fullName || 'Cliente S/D'}</div>
+                                        <div className="text-[10px] font-mono text-indigo-500 font-bold uppercase tracking-tight">{i.reserva?.numeroReserva}</div>
                                     </div>
                                     <div className="text-right">
                                         <div className="text-base font-black text-slate-900 dark:text-white">${i.importeTotal?.toLocaleString()}</div>
@@ -276,7 +276,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                     ) : (
                                         <button onClick={() => onRetryInvoice(i)} className="flex-1 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold">REINTENTAR</button>
                                     )}
-                                    <a href={`/files/${i.travelFile?.id}`} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 rounded-lg"><ExternalLink className="w-4 h-4" /></a>
+                                    <a href={`/reservas/${i.reserva?.id}`} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 rounded-lg"><ExternalLink className="w-4 h-4" /></a>
                                 </div>
 
                                 {i.resultado === 'R' && (

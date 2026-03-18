@@ -8,7 +8,7 @@ export const statusConfig = {
     'Cancelado': { color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800', icon: '❌' },
 };
 
-export function FileStatusBadge({ status }) {
+export function ReservaStatusBadge({ status }) {
     const cfg = statusConfig[status] || statusConfig['Presupuesto'];
     return (
         <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>

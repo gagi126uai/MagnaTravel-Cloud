@@ -1,8 +1,8 @@
 import React from 'react';
 import { DollarSign, User, FileText, ArrowRight, Wallet } from "lucide-react";
 
-export function CollectionsTab({ files, onPay }) {
-    const filtered = files.filter(f => f.pendingCollection > 0);
+export function CollectionsTab({ reservas, onPay }) {
+    const filtered = reservas.filter(r => r.pendingCollection > 0);
 
     return (
         <div className="space-y-6">
@@ -20,35 +20,35 @@ export function CollectionsTab({ files, onPay }) {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filtered.map((file, idx) => (
+                        {filtered.map((reserva, idx) => (
                             <tr key={file.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-6 py-4 text-center text-xs text-slate-400 font-mono">{(idx + 1).toString().padStart(2, '0')}</td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col">
-                                        <a href={`/files/${file.id}`} className="font-bold text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-2">
+                                        <a href={`/reservas/${reserva.id}`} className="font-bold text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-2">
                                             <FileText className="w-3.5 h-3.5 opacity-40" />
-                                            {file.fileNumber}
+                                            {reserva.numeroReserva}
                                         </a>
                                         <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mt-0.5">
                                             <User className="w-3 h-3 opacity-40" />
-                                            {file.payer?.fullName || file.customerName || "Consumidor Final"}
+                                            {reserva.payer?.fullName || reserva.customerName || "Consumidor Final"}
                                         </span>
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 text-right text-sm font-medium text-slate-600 dark:text-slate-400">
-                                    ${file.totalSaleAmount?.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                    ${reserva.totalSaleAmount?.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                                 </td>
                                 <td className="px-6 py-4 text-right text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                                    ${file.computedPaid?.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                    ${reserva.computedPaid?.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="text-base font-bold text-rose-600 dark:text-rose-400">
-                                        ${file.pendingCollection?.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                        ${reserva.pendingCollection?.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 text-right pr-8">
                                     <button
-                                        onClick={() => onPay(file)}
+                                        onClick={() => onPay(reserva)}
                                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm"
                                     >
                                         <DollarSign className="w-4 h-4" />
@@ -63,21 +63,21 @@ export function CollectionsTab({ files, onPay }) {
 
             {/* Mobile View */}
             <div className="md:hidden space-y-4">
-                {filtered.map(file => (
-                    <div key={file.id} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+                {filtered.map(reserva => (
+                    <div key={reserva.id} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
                         <div className="flex justify-between items-start mb-4">
                             <div>
                                 <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full mb-2 inline-block">
-                                    {file.fileNumber}
+                                    {reserva.numeroReserva}
                                 </span>
                                 <h3 className="font-bold text-slate-900 dark:text-white line-clamp-1">
-                                    {file.payer?.fullName || file.customerName || "Sin Cliente"}
+                                    {reserva.payer?.fullName || reserva.customerName || "Sin Cliente"}
                                 </h3>
                             </div>
                             <div className="text-right">
                                 <div className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">Pendiente</div>
                                 <div className="text-lg font-black text-rose-600 dark:text-rose-400">
-                                    ${file.pendingCollection?.toLocaleString('es-AR')}
+                                    ${reserva.pendingCollection?.toLocaleString('es-AR')}
                                 </div>
                             </div>
                         </div>
@@ -85,16 +85,16 @@ export function CollectionsTab({ files, onPay }) {
                         <div className="grid grid-cols-2 gap-4 py-3 border-y border-slate-50 dark:border-slate-800/50 mb-4">
                             <div>
                                 <div className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">Total Venta</div>
-                                <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">${file.totalSaleAmount?.toLocaleString()}</div>
+                                <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">${reserva.totalSaleAmount?.toLocaleString()}</div>
                             </div>
                             <div>
                                 <div className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">Cobrado</div>
-                                <div className="text-sm font-semibold text-emerald-600">${file.computedPaid?.toLocaleString()}</div>
+                                <div className="text-sm font-semibold text-emerald-600">${reserva.computedPaid?.toLocaleString()}</div>
                             </div>
                         </div>
 
                         <button
-                            onClick={() => onPay(file)}
+                            onClick={() => onPay(reserva)}
                             className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-medium hover:bg-slate-800 transition-colors shadow-sm"
                         >
                             <Wallet className="w-5 h-5" />

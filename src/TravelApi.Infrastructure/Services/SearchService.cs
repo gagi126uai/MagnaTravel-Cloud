@@ -32,21 +32,20 @@ public class SearchService : ISearchService
             .Select(c => new CustomerSearchResult(c.Id, c.FullName, c.Email, c.Phone))
             .ToListAsync(cancellationToken);
 
-        var files = await _dbContext.TravelFiles
+        var reservas = await _dbContext.Reservas
             .AsNoTracking()
             .Include(f => f.Payer)
-            .Where(f => f.FileNumber.ToLower().Contains(normalized) ||
+            .Where(f => f.NumeroReserva.ToLower().Contains(normalized) ||
                 f.Name.ToLower().Contains(normalized) ||
                 (f.Payer != null && f.Payer.FullName.ToLower().Contains(normalized)))
             .OrderByDescending(f => f.CreatedAt)
             .Take(5)
-            .Select(f => new FileSearchResult(f.Id, f.FileNumber, f.Name, f.Status.ToString(), f.Payer != null ? f.Payer.FullName : null))
+            .Select(f => new ReservaSearchResult(f.Id, f.NumeroReserva, f.Name, f.Status.ToString(), f.Payer != null ? f.Payer.FullName : null))
             .ToListAsync(cancellationToken);
 
         var payments = await _dbContext.Payments
             .AsNoTracking()
-            .Include(p => p.Reservation)
-            .ThenInclude(r => r!.TravelFile)
+            .Include(p => p.Reserva)
             .Where(p => p.Method.ToLower().Contains(normalized) ||
                 p.Status.ToString().ToLower().Contains(normalized))
             .OrderByDescending(p => p.PaidAt)
@@ -56,9 +55,9 @@ public class SearchService : ISearchService
                 p.Amount, 
                 p.Status.ToString(), 
                 p.Method, 
-                p.Reservation != null && p.Reservation.TravelFile != null ? p.Reservation.TravelFile.FileNumber : null))
+                p.Reserva != null ? p.Reserva.NumeroReserva : null))
             .ToListAsync(cancellationToken);
 
-        return new SearchResultsResponse(query, customers, files, payments);
+        return new SearchResultsResponse(query, customers, reservas, payments);
     }
 }

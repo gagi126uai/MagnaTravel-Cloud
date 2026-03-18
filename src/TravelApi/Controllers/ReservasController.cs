@@ -7,26 +7,26 @@ using TravelApi.Domain.Entities;
 namespace TravelApi.Controllers;
 
 [ApiController]
-[Route("api/travelfiles")]
+[Route("api/reservas")]
 [Authorize]
-public class TravelFilesController : ControllerBase
+public class ReservasController : ControllerBase
 {
-    private readonly ITravelFileService _travelFileService;
+    private readonly IReservaService _reservaService;
     private readonly IVoucherService _voucherService;
 
-    public TravelFilesController(ITravelFileService travelFileService, IVoucherService voucherService)
+    public ReservasController(IReservaService reservaService, IVoucherService voucherService)
     {
-        _travelFileService = travelFileService;
+        _reservaService = reservaService;
         _voucherService = voucherService;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetFiles()
+    public async Task<IActionResult> GetReservas()
     {
         try
         {
-            var files = await _travelFileService.GetFilesAsync();
-            return Ok(files);
+            var reservas = await _reservaService.GetReservasAsync();
+            return Ok(reservas);
         }
         catch (Exception ex)
         {
@@ -35,11 +35,11 @@ public class TravelFilesController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetFile(int id)
+    public async Task<IActionResult> GetReserva(int id)
     {
         try 
         {
-            var dto = await _travelFileService.GetFileAsync(id);
+            var dto = await _reservaService.GetReservaByIdAsync(id);
             return Ok(dto);
         }
         catch (KeyNotFoundException ex)
@@ -53,12 +53,12 @@ public class TravelFilesController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateFile(CreateFileRequest request)
+    public async Task<IActionResult> CreateReserva(CreateReservaRequest request)
     {
         try 
         {
-            var file = await _travelFileService.CreateFileAsync(request);
-            return CreatedAtAction(nameof(GetFile), new { id = file.Id }, file);
+            var reserva = await _reservaService.CreateReservaAsync(request);
+            return CreatedAtAction(nameof(GetReserva), new { id = reserva.Id }, reserva);
         }
         catch (Exception ex)
         {
@@ -71,11 +71,11 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var (reservation, warning) = await _travelFileService.AddServiceAsync(id, request);
+            var (servicio, warning) = await _reservaService.AddServiceAsync(id, request);
             if (warning != null)
-                return Ok(new { reservation, Warning = warning });
+                return Ok(new { servicio, Warning = warning });
                 
-            return Ok(reservation);
+            return Ok(servicio);
         }
         catch (KeyNotFoundException ex)
         {
@@ -96,7 +96,7 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var service = await _travelFileService.UpdateServiceAsync(serviceId, request);
+            var service = await _reservaService.UpdateServiceAsync(serviceId, request);
             return Ok(service);
         }
         catch (KeyNotFoundException ex)
@@ -118,7 +118,7 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            await _travelFileService.RemoveServiceAsync(serviceId);
+            await _reservaService.RemoveServiceAsync(serviceId);
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -131,11 +131,11 @@ public class TravelFilesController : ControllerBase
         }
     }
 
-    // ==================== PASSENGERS ====================
+    // ==================== PASAJEROS ====================
     [HttpGet("{id}/passengers")]
     public async Task<ActionResult> GetPassengers(int id)
     {
-        var passengers = await _travelFileService.GetPassengersAsync(id);
+        var passengers = await _reservaService.GetPassengersAsync(id);
         return Ok(passengers);
     }
 
@@ -144,8 +144,8 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var dto = await _travelFileService.AddPassengerAsync(id, passenger);
-            return CreatedAtAction(nameof(GetFile), new { id }, dto);
+            var dto = await _reservaService.AddPassengerAsync(id, passenger);
+            return CreatedAtAction(nameof(GetReserva), new { id }, dto);
         }
         catch (KeyNotFoundException ex)
         {
@@ -166,7 +166,7 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var dto = await _travelFileService.UpdatePassengerAsync(passengerId, updated);
+            var dto = await _reservaService.UpdatePassengerAsync(passengerId, updated);
             return Ok(dto);
         }
         catch (KeyNotFoundException ex)
@@ -188,7 +188,7 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            await _travelFileService.RemovePassengerAsync(passengerId);
+            await _reservaService.RemovePassengerAsync(passengerId);
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -201,11 +201,11 @@ public class TravelFilesController : ControllerBase
         }
     }
 
-    // ==================== PAYMENTS ====================
+    // ==================== PAGOS ====================
     [HttpGet("{id}/payments")]
-    public async Task<ActionResult> GetFilePayments(int id)
+    public async Task<ActionResult> GetReservaPayments(int id)
     {
-        var payments = await _travelFileService.GetFilePaymentsAsync(id);
+        var payments = await _reservaService.GetReservaPaymentsAsync(id);
         return Ok(payments);
     }
 
@@ -214,8 +214,8 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var dto = await _travelFileService.AddPaymentAsync(id, payment);
-            return CreatedAtAction(nameof(GetFile), new { id }, dto);
+            var dto = await _reservaService.AddPaymentAsync(id, payment);
+            return CreatedAtAction(nameof(GetReserva), new { id }, dto);
         }
         catch (KeyNotFoundException ex)
         {
@@ -236,7 +236,7 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            var dto = await _travelFileService.UpdatePaymentAsync(id, paymentId, updatedPayment);
+            var dto = await _reservaService.UpdatePaymentAsync(id, paymentId, updatedPayment);
             return Ok(dto);
         }
         catch (KeyNotFoundException ex)
@@ -258,7 +258,7 @@ public class TravelFilesController : ControllerBase
     {
         try
         {
-            await _travelFileService.DeletePaymentAsync(id, paymentId);
+            await _reservaService.DeletePaymentAsync(id, paymentId);
             return Ok();
         }
         catch (KeyNotFoundException ex)
@@ -275,14 +275,14 @@ public class TravelFilesController : ControllerBase
         }
     }
 
-    // ==================== STATUS ====================
+    // ==================== ESTADOS ====================
     [HttpPut("{id}/status")]
     public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateStatusDto request)
     {
         try
         {
-            var file = await _travelFileService.UpdateStatusAsync(id, request.Status);
-            return Ok(file);
+            var reserva = await _reservaService.UpdateStatusAsync(id, request.Status);
+            return Ok(reserva);
         }
         catch (KeyNotFoundException ex)
         {
@@ -303,12 +303,12 @@ public class TravelFilesController : ControllerBase
     }
 
     [HttpPut("{id}/archive")]
-    public async Task<IActionResult> ArchiveFile(int id)
+    public async Task<IActionResult> ArchiveReserva(int id)
     {
         try
         {
-            var file = await _travelFileService.ArchiveFileAsync(id);
-            return Ok(file);
+            var reserva = await _reservaService.ArchiveReservaAsync(id);
+            return Ok(reserva);
         }
         catch (KeyNotFoundException ex)
         {
@@ -316,16 +316,16 @@ public class TravelFilesController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error archivando file: {ex.Message}");
+            return StatusCode(500, $"Error archivando reserva: {ex.Message}");
         }
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteFile(int id)
+    public async Task<IActionResult> DeleteReserva(int id)
     {
         try
         {
-            await _travelFileService.DeleteFileAsync(id);
+            await _reservaService.DeleteReservaAsync(id);
             return Ok();
         }
         catch (KeyNotFoundException ex)

@@ -1,10 +1,10 @@
 import React from 'react';
 import { User, Users, Archive, MessageCircle, CreditCard, DollarSign } from "lucide-react";
 import { Button } from "../../../components/ui/button";
-import { FileStatusBadge } from "./FileStatusBadge";
+import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 
-export function FileTable({ files, onRowClick, onArchive }) {
+export function ReservaTable({ reservas, onRowClick, onArchive }) {
     return (
         <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
@@ -19,24 +19,24 @@ export function FileTable({ files, onRowClick, onArchive }) {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {files.map((file) => (
+                        {reservas.map((reserva) => (
                             <tr
-                                key={file.id}
-                                onClick={() => onRowClick(file.id)}
+                                key={reserva.id}
+                                onClick={() => onRowClick(reserva.id)}
                                 className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-all cursor-pointer"
                             >
                                 <td className="px-4 py-4">
                                     <div className="flex flex-col">
                                         <span className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                                            #{file.fileNumber}
+                                            #{reserva.numeroReserva}
                                         </span>
                                         <span className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">
-                                            {file.name}
+                                            {reserva.name}
                                         </span>
-                                        {file.startDate && (
+                                        {reserva.startDate && (
                                             <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 mt-1 flex items-center gap-1">
                                                 <span className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse"></span>
-                                                Viaja: {formatDate(file.startDate)}
+                                                Viaja: {formatDate(reserva.startDate)}
                                             </span>
                                         )}
                                     </div>
@@ -45,29 +45,29 @@ export function FileTable({ files, onRowClick, onArchive }) {
                                     <div className="flex flex-col gap-1.5">
                                         <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
                                             <User className="h-3.5 w-3.5 text-slate-400" />
-                                            <span className="font-medium truncate max-w-[180px]">{file.customerName}</span>
+                                            <span className="font-medium truncate max-w-[180px]">{reserva.customerName}</span>
                                         </div>
                                         <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
                                             <Users className="h-3.5 w-3.5" />
-                                            <span>{file.passengerCount || 0} pax</span>
-                                            {file.destinations && (
-                                                <span className="before:content-['•'] before:mx-1 truncate">{file.destinations}</span>
+                                            <span>{reserva.passengerCount || 0} pax</span>
+                                            {reserva.destinations && (
+                                                <span className="before:content-['•'] before:mx-1 truncate">{reserva.destinations}</span>
                                             )}
                                         </div>
                                     </div>
                                 </td>
                                 <td className="px-4 py-4">
-                                    <FileStatusBadge status={file.status} />
+                                    <ReservaStatusBadge status={reserva.status} />
                                 </td>
                                 <td className="px-4 py-4 text-right">
                                     <div className="flex flex-col items-end gap-1">
                                         <span className="text-sm font-bold text-slate-900 dark:text-white">
-                                            {formatCurrency(file.totalSale)}
+                                            {formatCurrency(reserva.totalSale)}
                                         </span>
-                                        {file.balance > 0 ? (
+                                        {reserva.balance > 0 ? (
                                             <div className="flex items-center gap-1 text-[10px] font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 px-1.5 py-0.5 rounded">
                                                 <DollarSign className="h-2.5 w-2.5" />
-                                                Debe: {formatCurrency(file.balance)}
+                                                Debe: {formatCurrency(reserva.balance)}
                                             </div>
                                         ) : (
                                             <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded">
@@ -82,7 +82,7 @@ export function FileTable({ files, onRowClick, onArchive }) {
                                             variant="ghost"
                                             size="icon"
                                             className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
-                                            onClick={() => onRowClick(file.id)}
+                                            onClick={() => onRowClick(reserva.id)}
                                             title="Ver Detalles"
                                         >
                                             <MessageCircle className="h-4 w-4" />
@@ -91,7 +91,7 @@ export function FileTable({ files, onRowClick, onArchive }) {
                                             variant="ghost"
                                             size="icon"
                                             className="h-8 w-8 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20"
-                                            onClick={() => onArchive(file.id)}
+                                            onClick={() => onArchive(reserva.id)}
                                             title="Archivar"
                                         >
                                             <Archive className="h-4 w-4" />
@@ -100,7 +100,7 @@ export function FileTable({ files, onRowClick, onArchive }) {
                                 </td>
                             </tr>
                         ))}
-                        {files.length === 0 && (
+                        {reservas.length === 0 && (
                             <tr>
                                 <td colSpan="5" className="px-4 py-12 text-center">
                                     <div className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-600">

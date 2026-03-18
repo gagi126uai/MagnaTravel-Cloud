@@ -8,7 +8,7 @@ import { showError, showSuccess } from "../alerts";
 const inputClass = "w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors";
 const labelClass = "block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1";
 
-export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess, passengerToEdit }) {
+export default function PassengerFormModal({ isOpen, onClose, reservaId, onSuccess, passengerToEdit }) {
     const [formData, setFormData] = useState({
         fullName: "",
         documentType: "DNI",
@@ -51,10 +51,10 @@ export default function PassengerFormModal({ isOpen, onClose, fileId, onSuccess,
 
         try {
             if (passengerToEdit) {
-                await api.put(`/travelfiles/passengers/${passengerToEdit.id}`, payload);
+                await api.put(`/reservas/passengers/${passengerToEdit.id}`, payload);
                 showSuccess("Pasajero actualizado");
             } else {
-                await api.post(`/travelfiles/${fileId}/passengers`, payload);
+                await api.post(`/reservas/${reservaId}/passengers`, payload);
                 showSuccess("Pasajero agregado");
             }
             onSuccess();

@@ -28,11 +28,11 @@ public class PaymentService : IPaymentService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<IEnumerable<PaymentDto>> GetPaymentsForReservationAsync(int reservationId, CancellationToken cancellationToken)
+    public async Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken)
     {
         return await _dbContext.Payments
             .AsNoTracking()
-            .Where(p => p.ReservationId == reservationId)
+            .Where(p => p.ReservaId == ReservaId)
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(cancellationToken);
@@ -40,16 +40,15 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken)
     {
-        var reservation = await _dbContext.Reservations
-            .Include(r => r.TravelFile)
-            .FirstOrDefaultAsync(r => r.Id == request.ReservationId, cancellationToken);
+        var reserva = await _dbContext.Reservas
+            .FirstOrDefaultAsync(r => r.Id == request.ReservaId, cancellationToken);
 
-        if (reservation == null)
+        if (reserva == null)
             throw new ArgumentException("Reserva no encontrada.");
 
         var payment = new Payment
         {
-            ReservationId = request.ReservationId,
+            ReservaId = request.ReservaId,
             Amount = request.Amount,
             Method = request.Method,
             Reference = request.Reference,
@@ -77,13 +76,13 @@ public class PaymentService : IPaymentService
                 p.Status,
                 p.PaidAt,
                 p.DeletedAt,
-                p.TravelFileId,
-                FileNumber = p.Reservation != null && p.Reservation.TravelFile != null 
-                    ? p.Reservation.TravelFile.FileNumber : null,
-                FileName = p.Reservation != null && p.Reservation.TravelFile != null 
-                    ? p.Reservation.TravelFile.Name : null,
-                CustomerName = p.Reservation != null && p.Reservation.TravelFile != null && p.Reservation.TravelFile.Payer != null
-                    ? p.Reservation.TravelFile.Payer.FullName : null
+                p.ReservaId,
+                NumeroReserva = p.Reserva != null 
+                    ? p.Reserva.NumeroReserva : null,
+                FileName = p.Reserva != null 
+                    ? p.Reserva.Name : null,
+                CustomerName = p.Reserva != null && p.Reserva.Payer != null
+                    ? p.Reserva.Payer.FullName : null
             })
             .ToListAsync(cancellationToken);
     }

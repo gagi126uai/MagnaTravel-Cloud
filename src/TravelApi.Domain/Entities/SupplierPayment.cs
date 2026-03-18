@@ -13,11 +13,11 @@ public class SupplierPayment
     public Supplier Supplier { get; set; } = null!;
 
     // Optional links
-    public int? TravelFileId { get; set; }
-    public TravelFile? TravelFile { get; set; }
+    public int? ReservaId { get; set; }
+    public Reserva? Reserva { get; set; }
 
-    public int? ReservationId { get; set; }
-    public Reservation? Reservation { get; set; }
+    public int? ServicioReservaId { get; set; }
+    public ServicioReserva? ServicioReserva { get; set; }
 
     [Column(TypeName = "decimal(18,2)")]
     public decimal Amount { get; set; }

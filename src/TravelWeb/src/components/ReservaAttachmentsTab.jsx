@@ -141,7 +141,7 @@ const AttachmentRow = ({ file, onDelete, onDownload }) => {
     );
 };
 
-export const FileAttachmentsTab = ({ travelFileId }) => {
+export const ReservaAttachmentsTab = ({ reservaId }) => {
     const [attachments, setAttachments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isDragging, setIsDragging] = useState(false);
@@ -150,7 +150,7 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
     const fetchAttachments = useCallback(async () => {
         try {
             setLoading(true);
-            const data = await api.get(`/attachments/file/${travelFileId}`);
+            const data = await api.get(`/attachments/reserva/${reservaId}`);
             setAttachments(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error("Error loading attachments:", error);
@@ -158,7 +158,7 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
         } finally {
             setLoading(false);
         }
-    }, [travelFileId]);
+    }, [reservaId]);
 
     useEffect(() => {
         fetchAttachments();
@@ -198,7 +198,7 @@ export const FileAttachmentsTab = ({ travelFileId }) => {
 
         try {
             setUploading(true);
-            await api.post(`/attachments/upload/${travelFileId}`, formData);
+            await api.post(`/attachments/upload/${reservaId}`, formData);
             toast.success("Archivo subido correctamente.");
             fetchAttachments();
         } catch (error) {

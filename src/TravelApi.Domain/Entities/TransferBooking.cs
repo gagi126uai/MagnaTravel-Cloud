@@ -8,8 +8,8 @@ public class TransferBooking
     public int Id { get; set; }
     
     // Relaciones
-    public int TravelFileId { get; set; }
-    public TravelFile? TravelFile { get; set; }
+    public int ReservaId { get; set; }
+    public Reserva? Reserva { get; set; }
     
     public int SupplierId { get; set; }
     public Supplier? Supplier { get; set; }

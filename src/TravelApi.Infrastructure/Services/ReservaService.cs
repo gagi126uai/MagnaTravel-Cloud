@@ -9,25 +9,25 @@ using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
 
-public class TravelFileService : ITravelFileService
+public class ReservaService : IReservaService
 {
     private readonly AppDbContext _context;
     private readonly IMapper _mapper;
 
-    public TravelFileService(AppDbContext context, IMapper mapper)
+    public ReservaService(AppDbContext context, IMapper mapper)
     {
         _context = context;
         _mapper = mapper;
     }
 
-    public async Task<IEnumerable<TravelFileListDto>> GetFilesAsync()
+    public async Task<IEnumerable<ReservaListDto>> GetReservasAsync()
     {
-        return await _context.TravelFiles
+        return await _context.Reservas
             .OrderByDescending(f => f.CreatedAt)
-            .Select(f => new TravelFileListDto 
+            .Select(f => new ReservaListDto 
             {
                 Id = f.Id,
-                FileNumber = f.FileNumber,
+                NumeroReserva = f.NumeroReserva,
                 Name = f.Name,
                 Status = f.Status,
                 CustomerName = f.Payer != null ? f.Payer.FullName : "",
@@ -39,31 +39,31 @@ public class TravelFileService : ITravelFileService
                             (f.HotelBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
                             (f.TransferBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
                             (f.PackageBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                            (f.Reservations.Sum(x => (decimal?)x.NetCost) ?? 0),
+                            (f.Servicios.Sum(x => (decimal?)x.NetCost) ?? 0),
                 TotalPaid = f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0,
                 TotalSale = (f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                             (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                             (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                             (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                            (f.Reservations.Sum(x => (decimal?)x.SalePrice) ?? 0),
+                            (f.Servicios.Sum(x => (decimal?)x.SalePrice) ?? 0),
                 Balance = ((f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                            (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                            (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
                            (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                           (f.Reservations.Sum(x => (decimal?)x.SalePrice) ?? 0)) -
+                           (f.Servicios.Sum(x => (decimal?)x.SalePrice) ?? 0)) -
                            (f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
             })
             .ToListAsync();
     }
 
-    public async Task<TravelFileDto> GetFileAsync(int id)
+    public async Task<ReservaDto> GetReservaByIdAsync(int id)
     {
-        var file = await _context.TravelFiles
+        var file = await _context.Reservas
             .Include(f => f.Payer)
             .Include(f => f.Passengers)
             .Include(f => f.Payments)
             .Include(f => f.Invoices)
-            .Include(f => f.Reservations)
+            .Include(f => f.Servicios)
             .Include(f => f.FlightSegments).ThenInclude(fs => fs.Supplier)
             .Include(f => f.HotelBookings).ThenInclude(hb => hb.Supplier)
             .Include(f => f.TransferBookings).ThenInclude(tb => tb.Supplier)
@@ -80,14 +80,14 @@ public class TravelFileService : ITravelFileService
             (file.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
             (file.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
             (file.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
-            (file.Reservations?.Sum(r => r.SalePrice) ?? 0);
+            (file.Servicios?.Sum(r => r.SalePrice) ?? 0);
 
         var totalCost = 
             (file.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
             (file.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
             (file.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
             (file.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
-            (file.Reservations?.Sum(r => r.NetCost) ?? 0);
+            (file.Servicios?.Sum(r => r.NetCost) ?? 0);
 
         var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled").Sum(p => p.Amount) ?? 0;
 
@@ -95,37 +95,37 @@ public class TravelFileService : ITravelFileService
         file.TotalCost = totalCost;
         file.Balance = totalSale - totalPaid;
 
-        return _mapper.Map<TravelFileDto>(file);
+        return _mapper.Map<ReservaDto>(file);
     }
 
-    public async Task<TravelFile> CreateFileAsync(CreateFileRequest request)
+    public async Task<Reserva> CreateReservaAsync(CreateReservaRequest request)
     {
-        var nextId = await _context.TravelFiles.CountAsync() + 1000;
-        var fileNumber = $"F-{DateTime.Now.Year}-{nextId}";
+        var nextId = await _context.Reservas.CountAsync() + 1000;
+        var NumeroReserva = $"F-{DateTime.Now.Year}-{nextId}";
         
         var fileName = !string.IsNullOrWhiteSpace(request.Name) 
             ? request.Name 
-            : $"File {fileNumber}";
+            : $"Reserva {NumeroReserva}";
 
-        var file = new TravelFile
+        var file = new Reserva
         {
             Name = fileName,
-            FileNumber = fileNumber,
+            NumeroReserva = NumeroReserva,
             PayerId = request.PayerId,
             StartDate = request.StartDate,
             Description = request.Description,
-            Status = FileStatus.Reserved
+            Status = EstadoReserva.Reserved
         };
         
-        _context.TravelFiles.Add(file);
+        _context.Reservas.Add(file);
         await _context.SaveChangesAsync();
         
         return file;
     }
 
-    public async Task<(Reservation Reservation, string? Warning)> AddServiceAsync(int fileId, AddServiceRequest request)
+    public async Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request)
     {
-        var file = await _context.TravelFiles.FindAsync(fileId);
+        var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
@@ -139,9 +139,9 @@ public class TravelFileService : ITravelFileService
             warning = $"Atención: el costo ({request.NetCost:C}) supera el precio de venta ({request.SalePrice:C}). Se está vendiendo a pérdida.";
         }
 
-        var reservation = new Reservation
+        var reservation = new ServicioReserva
         {
-            TravelFileId = fileId,
+            ReservaId = reservaId,
             ServiceType = request.ServiceType,
             ProductType = request.ServiceType,
             SupplierId = request.SupplierId,
@@ -157,16 +157,16 @@ public class TravelFileService : ITravelFileService
             CreatedAt = DateTime.UtcNow
         };
 
-        _context.Reservations.Add(reservation);
+        _context.Servicios.Add(reservation);
         await _context.SaveChangesAsync();
 
         return (reservation, warning);
     }
 
-    public async Task<Reservation> UpdateServiceAsync(int serviceId, AddServiceRequest request)
+    public async Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request)
     {
-        var service = await _context.Reservations
-            .Include(r => r.TravelFile)
+        var service = await _context.Servicios
+            .Include(r => r.Reserva)
             .FirstOrDefaultAsync(r => r.Id == serviceId);
 
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
@@ -191,28 +191,28 @@ public class TravelFileService : ITravelFileService
 
     public async Task RemoveServiceAsync(int serviceId)
     {
-        var service = await _context.Reservations
-            .Include(r => r.TravelFile)
+        var service = await _context.Servicios
+            .Include(r => r.Reserva)
             .FirstOrDefaultAsync(r => r.Id == serviceId);
             
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
 
-        _context.Reservations.Remove(service);
+        _context.Servicios.Remove(service);
         await _context.SaveChangesAsync();
     }
 
-    public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(int fileId)
+    public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId)
     {
         return await _context.Passengers
-            .Where(p => p.TravelFileId == fileId)
+            .Where(p => p.ReservaId == reservaId)
             .OrderBy(p => p.FullName)
             .ProjectTo<PassengerDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
     }
 
-    public async Task<PassengerDto> AddPassengerAsync(int fileId, Passenger passenger)
+    public async Task<PassengerDto> AddPassengerAsync(int reservaId, Passenger passenger)
     {
-        var file = await _context.TravelFiles.FindAsync(fileId);
+        var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
@@ -223,7 +223,7 @@ public class TravelFileService : ITravelFileService
             passenger.BirthDate = DateTime.SpecifyKind(passenger.BirthDate.Value, DateTimeKind.Utc);
         }
 
-        passenger.TravelFileId = fileId;
+        passenger.ReservaId = reservaId;
         passenger.CreatedAt = DateTime.UtcNow;
 
         _context.Passengers.Add(passenger);
@@ -272,24 +272,24 @@ public class TravelFileService : ITravelFileService
         await _context.SaveChangesAsync();
     }
 
-    public async Task<IEnumerable<PaymentDto>> GetFilePaymentsAsync(int fileId)
+    public async Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(int reservaId)
     {
         return await _context.Payments
-            .Where(p => p.TravelFileId == fileId)
+            .Where(p => p.ReservaId == reservaId)
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
     }
 
-    public async Task<PaymentDto> AddPaymentAsync(int fileId, Payment payment)
+    public async Task<PaymentDto> AddPaymentAsync(int reservaId, Payment payment)
     {
-        var file = await _context.TravelFiles.FindAsync(fileId);
+        var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (payment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
         if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un método de pago");
         
-        payment.TravelFileId = fileId;
+        payment.ReservaId = reservaId;
         payment.PaidAt = DateTime.UtcNow;
         payment.Status = "Paid";
 
@@ -299,15 +299,15 @@ public class TravelFileService : ITravelFileService
         return _mapper.Map<PaymentDto>(payment);
     }
 
-    public async Task<PaymentDto> UpdatePaymentAsync(int fileId, int paymentId, Payment updatedPayment)
+    public async Task<PaymentDto> UpdatePaymentAsync(int reservaId, int paymentId, Payment updatedPayment)
     {
         var payment = await _context.Payments.FindAsync(paymentId);
         if (payment == null) throw new KeyNotFoundException("Pago no encontrado");
         
-        if (payment.TravelFileId != fileId) throw new ArgumentException("El pago no corresponde al File");
+        if (payment.ReservaId != reservaId) throw new ArgumentException("El pago no corresponde a la Reserva");
 
-        var file = await _context.TravelFiles.FindAsync(fileId);
-        if (file == null) throw new KeyNotFoundException("File no encontrado");
+        var file = await _context.Reservas.FindAsync(reservaId);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (updatedPayment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
         
@@ -320,15 +320,15 @@ public class TravelFileService : ITravelFileService
         return _mapper.Map<PaymentDto>(payment);
     }
 
-    public async Task DeletePaymentAsync(int fileId, int paymentId)
+    public async Task DeletePaymentAsync(int reservaId, int paymentId)
     {
         var payment = await _context.Payments.FindAsync(paymentId);
         if (payment == null) throw new KeyNotFoundException("Pago no encontrado");
         
-        if (payment.TravelFileId != fileId) throw new ArgumentException("El pago no corresponde al File");
+        if (payment.ReservaId != reservaId) throw new ArgumentException("El pago no corresponde a la Reserva");
 
-        var file = await _context.TravelFiles.FindAsync(fileId);
-        if (file == null) throw new KeyNotFoundException("File no encontrado");
+        var file = await _context.Reservas.FindAsync(reservaId);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;
@@ -336,48 +336,48 @@ public class TravelFileService : ITravelFileService
         await _context.SaveChangesAsync();
     }
 
-    public async Task<TravelFile> UpdateStatusAsync(int id, string status)
+    public async Task<Reserva> UpdateStatusAsync(int id, string status)
     {
-        var file = await _context.TravelFiles.FindAsync(id);
+        var file = await _context.Reservas.FindAsync(id);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-        var validStatuses = new[] { FileStatus.Budget, FileStatus.Reserved, FileStatus.Operational, FileStatus.Closed, FileStatus.Cancelled };
+        var validStatuses = new[] { EstadoReserva.Budget, EstadoReserva.Reserved, EstadoReserva.Operational, EstadoReserva.Closed, EstadoReserva.Cancelled };
         if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no válido");
 
-        if (file.Status == FileStatus.Reserved && status == FileStatus.Budget)
+        if (file.Status == EstadoReserva.Reserved && status == EstadoReserva.Budget)
         {
-             var hasPayments = await _context.Payments.AnyAsync(p => p.TravelFileId == id);
+             var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id);
              if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. Elimínalos primero.");
 
-             var hasInvoices = await _context.Invoices.AnyAsync(i => i.TravelFileId == id);
+             var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id);
              if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Crédito).");
         }
 
         file.Status = status;
-        if (status == FileStatus.Closed) file.ClosedAt = DateTime.UtcNow;
+        if (status == EstadoReserva.Closed) file.ClosedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
         return file;
     }
 
-    public async Task<TravelFile> ArchiveFileAsync(int id)
+    public async Task<Reserva> ArchiveReservaAsync(int id)
     {
-        var file = await _context.TravelFiles.FindAsync(id);
-        if (file == null) throw new KeyNotFoundException("File no encontrado");
+        var file = await _context.Reservas.FindAsync(id);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
         
         file.Status = "Archived";
         await _context.SaveChangesAsync();
         return file;
     }
 
-    public async Task DeleteFileAsync(int id)
+    public async Task DeleteReservaAsync(int id)
     {
         using var transaction = await _context.Database.BeginTransactionAsync();
         try
         {
-            var file = await _context.TravelFiles
+            var file = await _context.Reservas
                 .Include(f => f.Payments)
-                .Include(f => f.Reservations)
+                .Include(f => f.Servicios)
                 .Include(f => f.Passengers)
                 .Include(f => f.FlightSegments)
                 .Include(f => f.HotelBookings)
@@ -385,26 +385,26 @@ public class TravelFileService : ITravelFileService
                 .Include(f => f.PackageBookings)
                 .FirstOrDefaultAsync(f => f.Id == id);
 
-            if (file == null) throw new KeyNotFoundException("File no encontrado");
+            if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-            if (file.Status != FileStatus.Reserved && file.Status != FileStatus.Budget)
+            if (file.Status != EstadoReserva.Reserved && file.Status != EstadoReserva.Budget)
             {
-                throw new InvalidOperationException("Solo se pueden eliminar Files en estado Reservado (o Presupuesto heredado).");
+                throw new InvalidOperationException("Solo se pueden eliminar Reservas en estado Reservado (o Presupuesto heredado).");
             }
 
             if (file.Payments.Any())
             {
-                throw new InvalidOperationException("No se puede eliminar un File con pagos registrados. Elimine los pagos primero.");
+                throw new InvalidOperationException("No se puede eliminar una Reserva con pagos registrados. Elimine los pagos primero.");
             }
 
-            if (file.Reservations.Any()) _context.Reservations.RemoveRange(file.Reservations);
+            if (file.Servicios.Any()) _context.Servicios.RemoveRange(file.Servicios);
             if (file.Passengers.Any()) _context.Passengers.RemoveRange(file.Passengers);
             if (file.FlightSegments.Any()) _context.FlightSegments.RemoveRange(file.FlightSegments);
             if (file.HotelBookings.Any()) _context.HotelBookings.RemoveRange(file.HotelBookings);
             if (file.TransferBookings.Any()) _context.TransferBookings.RemoveRange(file.TransferBookings);
             if (file.PackageBookings.Any()) _context.PackageBookings.RemoveRange(file.PackageBookings);
 
-            _context.TravelFiles.Remove(file);
+            _context.Reservas.Remove(file);
             
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();

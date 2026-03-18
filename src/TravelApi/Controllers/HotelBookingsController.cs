@@ -6,7 +6,7 @@ using TravelApi.Application.Interfaces;
 namespace TravelApi.Controllers;
 
 [ApiController]
-[Route("api/files/{fileId}/hotels")]
+[Route("api/reservas/{reservaId}/hotels")]
 [Authorize]
 public class HotelBookingsController : ControllerBase
 {
@@ -18,18 +18,18 @@ public class HotelBookingsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll(int fileId, CancellationToken ct)
+    public async Task<IActionResult> GetAll(int reservaId, CancellationToken ct)
     {
-        var hotels = await _bookingService.GetHotelsAsync(fileId, ct);
+        var hotels = await _bookingService.GetHotelsAsync(reservaId, ct);
         return Ok(hotels);
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetById(int fileId, int id, CancellationToken ct)
+    public async Task<IActionResult> GetById(int reservaId, int id, CancellationToken ct)
     {
         try
         {
-            var hotel = await _bookingService.GetHotelByIdAsync(fileId, id, ct);
+            var hotel = await _bookingService.GetHotelByIdAsync(reservaId, id, ct);
             return Ok(hotel);
         }
         catch (KeyNotFoundException)
@@ -40,11 +40,11 @@ public class HotelBookingsController : ControllerBase
 
     [HttpPost]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Create(int fileId, [FromBody] CreateHotelRequest req, CancellationToken ct)
+    public async Task<IActionResult> Create(int reservaId, [FromBody] CreateHotelRequest req, CancellationToken ct)
     {
         try
         {
-            var hotel = await _bookingService.CreateHotelAsync(fileId, req, ct);
+            var hotel = await _bookingService.CreateHotelAsync(reservaId, req, ct);
             return Ok(hotel);
         }
         catch (KeyNotFoundException ex)
@@ -59,11 +59,11 @@ public class HotelBookingsController : ControllerBase
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Update(int fileId, int id, [FromBody] UpdateHotelRequest req, CancellationToken ct)
+    public async Task<IActionResult> Update(int reservaId, int id, [FromBody] UpdateHotelRequest req, CancellationToken ct)
     {
         try
         {
-            var hotel = await _bookingService.UpdateHotelAsync(fileId, id, req, ct);
+            var hotel = await _bookingService.UpdateHotelAsync(reservaId, id, req, ct);
             return Ok(hotel);
         }
         catch (KeyNotFoundException)
@@ -78,11 +78,11 @@ public class HotelBookingsController : ControllerBase
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(int fileId, int id, CancellationToken ct)
+    public async Task<IActionResult> Delete(int reservaId, int id, CancellationToken ct)
     {
         try
         {
-            await _bookingService.DeleteHotelAsync(fileId, id, ct);
+            await _bookingService.DeleteHotelAsync(reservaId, id, ct);
             return Ok();
         }
         catch (KeyNotFoundException)

@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
 
-public static class FileStatus
+public static class EstadoReserva
 {
     public const string Budget = "Presupuesto";
     public const string Reserved = "Reservado";
@@ -12,13 +12,13 @@ public static class FileStatus
     public const string Cancelled = "Cancelado";
 }
 
-public class TravelFile
+public class Reserva
 {
     public int Id { get; set; }
     
     [Required]
     [MaxLength(50)]
-    public string FileNumber { get; set; } = string.Empty;
+    public string NumeroReserva { get; set; } = string.Empty;
     
     [Required]
     [MaxLength(200)]
@@ -28,7 +28,7 @@ public class TravelFile
     
     [Required]
     [MaxLength(50)]
-    public string Status { get; set; } = FileStatus.Budget;
+    public string Status { get; set; } = EstadoReserva.Budget;
     
     // Dates
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -51,7 +51,7 @@ public class TravelFile
     public decimal Balance { get; set; } = 0;
 
     // Navigation
-    public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
+    public ICollection<ServicioReserva> Servicios { get; set; } = new List<ServicioReserva>();
     public ICollection<Passenger> Passengers { get; set; } = new List<Passenger>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
     
@@ -61,5 +61,5 @@ public class TravelFile
     public ICollection<PackageBooking> PackageBookings { get; set; } = new List<PackageBooking>();
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
     public ICollection<FlightSegment> FlightSegments { get; set; } = new List<FlightSegment>();
-    public ICollection<TravelFileAttachment> Attachments { get; set; } = new List<TravelFileAttachment>();
+    public ICollection<ReservaAttachment> Attachments { get; set; } = new List<ReservaAttachment>();
 }

@@ -20,7 +20,7 @@ const TRIBUTE_TYPES = [
     { id: 4, label: 'Impuestos Internos' }
 ];
 
-export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId, initialAmount, clientName, clientCuit }) {
+export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, reservaId, initialAmount, clientName, clientCuit }) {
     const [loading, setLoading] = useState(false);
     const [fetchingSettings, setFetchingSettings] = useState(true);
     const [afipSettings, setAfipSettings] = useState(null);
@@ -132,7 +132,7 @@ export default function CreateInvoiceModal({ isOpen, onClose, onSuccess, fileId,
         try {
             // Transform items to DTO structure
             const payload = {
-                travelFileId: fileId,
+                reservaId: reservaId,
                 items: items.map(i => ({
                     description: i.description,
                     quantity: Number(i.quantity),

@@ -5,5 +5,5 @@ namespace TravelApi.Application.Interfaces;
 
 public interface IInvoicePdfService
 {
-    byte[] GenerateInvoicePdf(Invoice invoice, TravelFile travelFile, AfipSettings afipSettings, AgencySettings agencySettings);
+    byte[] GenerateInvoicePdf(Invoice invoice, Reserva reserva, AfipSettings afipSettings, AgencySettings agencySettings);
 }

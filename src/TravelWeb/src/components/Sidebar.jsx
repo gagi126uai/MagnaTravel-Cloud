@@ -23,7 +23,7 @@ import { useAlerts } from "../contexts/AlertsContext";
 const mainLinks = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/crm", label: "CRM Pipeline", icon: UserPlus, adminOnly: true },
-    { to: "/files", label: "Reservas", icon: FolderOpen },
+    { to: "/reservas", label: "Reservas", icon: FolderOpen },
     { to: "/quotes", label: "Cotizaciones", icon: FileText },
     { to: "/customers", label: "Clientes", icon: Users },
     { to: "/suppliers", label: "Proveedores", icon: Building2 },

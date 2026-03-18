@@ -21,31 +21,31 @@ public class ReportService : IReportService
         var now = DateTime.UtcNow;
         var startOfMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        var filesByStatus = await _dbContext.TravelFiles
+        var filesByStatus = await _dbContext.Reservas
             .GroupBy(f => f.Status)
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync(cancellationToken);
 
-        var presupuestos = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Budget)?.Count ?? 0;
-        var reservados = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Reserved)?.Count ?? 0;
-        var operativos = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Operational)?.Count ?? 0;
-        var cerrados = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Closed)?.Count ?? 0;
-        var cancelados = filesByStatus.FirstOrDefault(x => x.Status == FileStatus.Cancelled)?.Count ?? 0;
+        var presupuestos = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Budget)?.Count ?? 0;
+        var reservados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Reserved)?.Count ?? 0;
+        var operativos = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Operational)?.Count ?? 0;
+        var cerrados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Closed)?.Count ?? 0;
+        var cancelados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Cancelled)?.Count ?? 0;
 
         var paymentsThisMonth = await _dbContext.Payments
             .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted)
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
 
-        var outstandingBalance = await _dbContext.TravelFiles
-            .Where(f => f.Status != FileStatus.Closed && f.Status != FileStatus.Cancelled && f.Status != FileStatus.Budget)
+        var outstandingBalance = await _dbContext.Reservas
+            .Where(f => f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled && f.Status != EstadoReserva.Budget)
             .SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
 
-        var salesThisMonth = await _dbContext.TravelFiles
-            .Where(f => f.CreatedAt >= startOfMonth && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+        var salesThisMonth = await _dbContext.Reservas
+            .Where(f => f.CreatedAt >= startOfMonth && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .SumAsync(f => (decimal?)f.TotalSale, cancellationToken) ?? 0m;
 
-        var costsThisMonth = await _dbContext.TravelFiles
-            .Where(f => f.CreatedAt >= startOfMonth && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+        var costsThisMonth = await _dbContext.Reservas
+            .Where(f => f.CreatedAt >= startOfMonth && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
 
         var supplierPaymentsThisMonth = await _dbContext.SupplierPayments
@@ -54,25 +54,25 @@ public class ReportService : IReportService
 
         var grossMarginThisMonth = salesThisMonth - costsThisMonth;
 
-        var pendingFiles = await _dbContext.TravelFiles
-            .Where(f => f.Balance > 0 && f.Status != FileStatus.Closed && f.Status != FileStatus.Cancelled)
+        var pendingReservas = await _dbContext.Reservas
+            .Where(f => f.Balance > 0 && f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled)
             .OrderByDescending(f => f.Balance)
             .Take(5)
-            .Select(f => new PendingFileDto(f.Id, f.FileNumber, f.Name, f.Balance, f.Status.ToString()))
+            .Select(f => new PendingReservaDto(f.Id, f.NumeroReserva, f.Name, f.Balance, f.Status.ToString()))
             .ToListAsync(cancellationToken);
 
         var next7Days = now.AddDays(7);
-        var upcomingTrips = await _dbContext.TravelFiles
-            .Where(f => f.StartDate >= now && f.StartDate <= next7Days && f.Status != FileStatus.Cancelled)
+        var upcomingTrips = await _dbContext.Reservas
+            .Where(f => f.StartDate >= now && f.StartDate <= next7Days && f.Status != EstadoReserva.Cancelled)
             .OrderBy(f => f.StartDate)
             .Take(5)
-            .Select(f => new UpcomingTripDto(f.Id, f.FileNumber, f.Name, f.StartDate!.Value, f.Status.ToString()))
+            .Select(f => new UpcomingTripDto(f.Id, f.NumeroReserva, f.Name, f.StartDate!.Value, f.Status.ToString()))
             .ToListAsync(cancellationToken);
 
         var sixMonthsAgo = startOfMonth.AddMonths(-5);
         
-        var monthlyData = await _dbContext.TravelFiles
-            .Where(f => f.CreatedAt >= sixMonthsAgo && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+        var monthlyData = await _dbContext.Reservas
+            .Where(f => f.CreatedAt >= sixMonthsAgo && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .GroupBy(f => new { f.CreatedAt.Year, f.CreatedAt.Month })
             .Select(g => new
             {
@@ -115,7 +115,7 @@ public class ReportService : IReportService
             CostosDelMes: costsThisMonth,
             MargenBruto: grossMarginThisMonth,
             PagosProveedores: supplierPaymentsThisMonth,
-            ExpedientesPendientes: pendingFiles,
+            ReservasPendientes: pendingReservas,
             ProximosViajes: upcomingTrips,
             TendenciaHistorica: historicalTrend,
             DistribucionEstados: statusDistribution
@@ -125,19 +125,19 @@ public class ReportService : IReportService
     public async Task<ReportsSummaryResponse> GetSummaryAsync(CancellationToken cancellationToken)
     {
         var totalCustomers = await _dbContext.Customers.CountAsync(cancellationToken);
-        var totalFiles = await _dbContext.TravelFiles.CountAsync(cancellationToken);
-        var totalReservations = await _dbContext.Reservations.CountAsync(cancellationToken);
+        var totalReservas = await _dbContext.Reservas.CountAsync(cancellationToken);
+        var totalReservations = await _dbContext.Servicios.CountAsync(cancellationToken);
         
         var totalRevenue = await _dbContext.Payments.Where(p => !p.IsDeleted).SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
-        var totalCosts = await _dbContext.TravelFiles.SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
+        var totalCosts = await _dbContext.Reservas.SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
         var totalSupplierPayments = await _dbContext.SupplierPayments.SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
-        var outstandingBalance = await _dbContext.TravelFiles.SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
-        var totalSales = await _dbContext.TravelFiles.SumAsync(f => (decimal?)f.TotalSale, cancellationToken) ?? 0m;
+        var outstandingBalance = await _dbContext.Reservas.SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
+        var totalSales = await _dbContext.Reservas.SumAsync(f => (decimal?)f.TotalSale, cancellationToken) ?? 0m;
         var grossMargin = totalSales - totalCosts;
 
         return new ReportsSummaryResponse(
             totalCustomers,
-            totalFiles,
+            totalReservas,
             totalReservations,
             totalRevenue,
             outstandingBalance,
@@ -152,9 +152,9 @@ public class ReportService : IReportService
         var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
 
-        var filesInPeriod = await _dbContext.TravelFiles
+        var filesInPeriod = await _dbContext.Reservas
             .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
-                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+                && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .Select(f => new { f.TotalSale, f.TotalCost, f.Balance, f.Status })
             .ToListAsync(cancellationToken);
 
@@ -177,9 +177,9 @@ public class ReportService : IReportService
             .Select(s => new { s.Id, s.Name, s.CurrentBalance })
             .ToListAsync(cancellationToken);
 
-        var topCustomers = await _dbContext.TravelFiles
+        var topCustomers = await _dbContext.Reservas
             .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
-                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled
+                && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled
                 && f.PayerId != null)
             .GroupBy(f => new { f.PayerId, f.Payer!.FullName })
             .Select(g => new { 
@@ -192,9 +192,9 @@ public class ReportService : IReportService
             .Take(10)
             .ToListAsync(cancellationToken);
 
-        var monthlyBreakdown = await _dbContext.TravelFiles
+        var monthlyBreakdown = await _dbContext.Reservas
             .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
-                && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+                && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .GroupBy(f => new { f.CreatedAt.Year, f.CreatedAt.Month })
             .Select(g => new {
                 Year = g.Key.Year,
@@ -208,15 +208,15 @@ public class ReportService : IReportService
 
         var monthlyData = monthlyBreakdown.Select(m => new {
             Month = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(m.Month) + " " + m.Year,
-            m.Sales,
-            m.Costs,
+            Sales = m.Sales,
+            Costs = m.Costs,
             Margin = m.Sales - m.Costs,
-            m.FileCount
+            ReservaCount = m.FileCount
         });
 
         return new {
             Period = new { From = dateFrom, To = dateTo },
-            Summary = new { TotalSales = totalSales, TotalCosts = totalCosts, GrossMargin = grossMargin, MarginPercent = marginPercent, CustomerPayments = customerPayments, SupplierPayments = supplierPayments, FilesCount = filesInPeriod.Count },
+            Summary = new { TotalSales = totalSales, TotalCosts = totalCosts, GrossMargin = grossMargin, MarginPercent = marginPercent, CustomerPayments = customerPayments, SupplierPayments = supplierPayments, ReservasCount = filesInPeriod.Count },
             SupplierDebts = supplierDebts,
             TopCustomers = topCustomers,
             MonthlyBreakdown = monthlyData
@@ -234,7 +234,7 @@ public class ReportService : IReportService
                 c.FullName,
                 c.DocumentNumber,
                 c.CurrentBalance,
-                LastMovementDate = _dbContext.TravelFiles
+                LastMovementDate = _dbContext.Reservas
                     .Where(f => f.PayerId == c.Id)
                     .OrderByDescending(f => f.CreatedAt)
                     .Select(f => f.CreatedAt)
@@ -253,7 +253,7 @@ public class ReportService : IReportService
         if (includeSales)
         {
             var salesSheet = workbook.Worksheets.Add("Ventas");
-            salesSheet.Cell(1, 1).Value = "Expediente";
+            salesSheet.Cell(1, 1).Value = "Reserva";
             salesSheet.Cell(1, 2).Value = "Cliente";
             salesSheet.Cell(1, 3).Value = "Fecha";
             salesSheet.Cell(1, 4).Value = "Estado";
@@ -261,17 +261,17 @@ public class ReportService : IReportService
             salesSheet.Cell(1, 6).Value = "Costo";
             salesSheet.Cell(1, 7).Value = "Margen";
 
-            var files = await _dbContext.TravelFiles
+            var files = await _dbContext.Reservas
                 .Include(f => f.Payer)
                 .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
-                    && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+                    && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
                 .OrderByDescending(f => f.CreatedAt)
                 .ToListAsync(cancellationToken);
 
             int row = 2;
             foreach (var file in files)
             {
-                salesSheet.Cell(row, 1).Value = file.FileNumber;
+                salesSheet.Cell(row, 1).Value = file.NumeroReserva;
                 salesSheet.Cell(row, 2).Value = file.Payer?.FullName ?? "Cliente Ocasional";
                 salesSheet.Cell(row, 3).Value = file.CreatedAt;
                 salesSheet.Cell(row, 4).Value = file.Status.ToString();
@@ -387,15 +387,15 @@ public class ReportService : IReportService
 
         // Get file creation events from audit logs to attribute files to sellers
         var fileCreations = await _dbContext.AuditLogs
-            .Where(a => a.Action == "Create" && a.EntityName == "TravelFile" 
+            .Where(a => a.Action == "Create" && a.EntityName == "Reserva" 
                 && a.Timestamp >= dateFrom && a.Timestamp <= dateTo)
             .Select(a => new { a.UserId, a.UserName, FileId = a.EntityId })
             .ToListAsync(cancellationToken);
 
         var fileIds = fileCreations.Select(fc => int.TryParse(fc.FileId, out var id) ? id : 0).Where(id => id > 0).ToList();
 
-        var files = await _dbContext.TravelFiles
-            .Where(f => fileIds.Contains(f.Id) && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+        var files = await _dbContext.Reservas
+            .Where(f => fileIds.Contains(f.Id) && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .Select(f => new { f.Id, f.TotalSale, f.TotalCost })
             .ToListAsync(cancellationToken);
 
@@ -526,14 +526,14 @@ public class ReportService : IReportService
         var previousYearStart = new DateTime(now.Year - 1, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var previousYearEnd = new DateTime(now.Year - 1, 12, 31, 23, 59, 59, DateTimeKind.Utc);
 
-        var currentYearData = await _dbContext.TravelFiles
-            .Where(f => f.CreatedAt >= currentYearStart && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+        var currentYearData = await _dbContext.Reservas
+            .Where(f => f.CreatedAt >= currentYearStart && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .GroupBy(f => f.CreatedAt.Month)
             .Select(g => new { Month = g.Key, Sales = g.Sum(f => f.TotalSale), Costs = g.Sum(f => f.TotalCost), Count = g.Count() })
             .ToListAsync(cancellationToken);
 
-        var previousYearData = await _dbContext.TravelFiles
-            .Where(f => f.CreatedAt >= previousYearStart && f.CreatedAt <= previousYearEnd && f.Status != FileStatus.Budget && f.Status != FileStatus.Cancelled)
+        var previousYearData = await _dbContext.Reservas
+            .Where(f => f.CreatedAt >= previousYearStart && f.CreatedAt <= previousYearEnd && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .GroupBy(f => f.CreatedAt.Month)
             .Select(g => new { Month = g.Key, Sales = g.Sum(f => f.TotalSale), Costs = g.Sum(f => f.TotalCost), Count = g.Count() })
             .ToListAsync(cancellationToken);

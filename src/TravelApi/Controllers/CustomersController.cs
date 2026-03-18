@@ -83,7 +83,7 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
-    /// Cuenta corriente del cliente: expedientes, pagos y saldo
+    /// Cuenta corriente del cliente: reservas, pagos y saldo
     /// </summary>
     [HttpGet("{id:int}/account")]
     public async Task<ActionResult> GetCustomerAccount(int id, CancellationToken cancellationToken)

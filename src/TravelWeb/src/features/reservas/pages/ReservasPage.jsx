@@ -2,18 +2,18 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
 
-import { useTravelFiles } from "../hooks/useTravelFiles";
+import { useReservas } from "../hooks/useReservas";
 import { Button } from "../../../components/ui/button";
-import CreateFileModal from "../../../components/CreateFileModal";
+import CreateReservaModal from "../../../components/CreateReservaModal";
 import { FilesPageSkeleton } from "../../../components/ui/skeleton";
 
-import { FileKPIs } from "../components/FileKPIs";
-import { FileTable } from "../components/FileTable";
-import { FileMobileList } from "../components/FileMobileList";
+import { ReservaKPIs } from "../components/ReservaKPIs";
+import { ReservaTable } from "../components/ReservaTable";
+import { ReservaMobileList } from "../components/ReservaMobileList";
 
-export default function FilesPage() {
+export default function ReservasPage() {
     const navigate = useNavigate();
-    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [isModalOpen, setIsModalOpen] = useState(false);
 
     const {
         loading,
@@ -21,19 +21,19 @@ export default function FilesPage() {
         setSearchTerm,
         viewFilter,
         setViewFilter,
-        loadFiles,
+        loadReservas,
         handleArchive,
-        sortedFiles,
+        sortedReservas,
         tabCounts,
         stats
-    } = useTravelFiles();
+    } = useReservas();
 
-    const handleCreateSuccess = () => {
-        setIsCreateModalOpen(false);
-        loadFiles();
+    const refresh = () => {
+        setIsModalOpen(false);
+        loadReservas();
     };
 
-    if (loading && sortedFiles.length === 0) {
+    if (loading && sortedReservas.length === 0) {
         return <FilesPageSkeleton />;
     }
 
@@ -45,13 +45,13 @@ export default function FilesPage() {
                     <h2 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Reservas</h2>
                     <p className="text-sm text-slate-500 dark:text-slate-400">Administra tus reservas, presupuestos y ventas.</p>
                 </div>
-                <Button onClick={() => setIsCreateModalOpen(true)} className="w-full sm:w-auto shadow-sm">
+                <Button onClick={() => setIsModalOpen(true)} className="w-full sm:w-auto shadow-sm">
                     <Plus className="h-4 w-4 mr-2" /> Nueva Reserva
                 </Button>
             </div>
 
             {/* Quick KPI Strip */}
-            <FileKPIs stats={stats} />
+            <ReservaKPIs stats={stats} />
 
             {/* Toolbar */}
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -85,26 +85,26 @@ export default function FilesPage() {
 
             {/* Data Table (Desktop) */}
             <div className="hidden md:block">
-                <FileTable
-                    files={sortedFiles}
-                    onRowClick={(id) => navigate(`/files/${id}`)}
+                <ReservaTable
+                    reservas={sortedReservas}
+                    onRowClick={(id) => navigate(`/reservas/${id}`)}
                     onArchive={handleArchive}
                 />
             </div>
 
             {/* Mobile Card View */}
             <div className="md:hidden">
-                <FileMobileList
-                    files={sortedFiles}
-                    onRowClick={(id) => navigate(`/files/${id}`)}
+                <ReservaMobileList
+                    reservas={sortedReservas}
+                    onRowClick={(id) => navigate(`/reservas/${id}`)}
                 />
             </div>
 
             {/* Create Modal */}
-            <CreateFileModal
-                isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
-                onSuccess={handleCreateSuccess}
+            <CreateReservaModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                onSuccess={refresh}
             />
         </div>
     );

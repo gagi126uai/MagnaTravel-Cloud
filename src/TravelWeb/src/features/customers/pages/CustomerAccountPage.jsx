@@ -100,7 +100,7 @@ export default function CustomerAccountPage() {
 
         if (result.isConfirmed) {
             try {
-                await api.delete(`/travelfiles/${payment.travelFileId}/payments/${payment.id}`);
+                await api.delete(`/reservas/${payment.reservaId}/payments/${payment.id}`);
                 Swal.fire("Eliminado", "El pago ha sido eliminado.", "success");
                 loadAccount();
             } catch (error) {
@@ -122,7 +122,7 @@ export default function CustomerAccountPage() {
         );
     }
 
-    const { customer, files, payments, summary } = data;
+    const { customer, reservas, payments, summary } = data;
 
     // --- Unified Ledger Logic (Cuenta Corriente Real) ---
     // 1. Map Files (Ventas) -> DEBITS
@@ -130,14 +130,14 @@ export default function CustomerAccountPage() {
     // 3. Sort Chronologically
     // 4. Calculate Running Balance
 
-    const debitMovements = (files || []).map(f => ({
-        id: f.id,
-        type: 'FILE',
-        date: f.startDate || f.createdAt, // Use startDate as fallback for transaction date
-        concept: `File ${f.fileNumber} - ${f.name}`,
-        debit: f.totalSale,
+    const debitMovements = (reservas || []).map(r => ({
+        id: r.id,
+        type: 'RESERVA',
+        date: r.startDate || r.createdAt, // Use startDate as fallback for transaction date
+        concept: `Reserva ${r.numeroReserva} - ${r.name}`,
+        debit: r.totalSale,
         credit: 0,
-        originalData: f
+        originalData: r
     }));
 
     const creditMovements = (payments || []).map(p => ({
@@ -263,7 +263,7 @@ export default function CustomerAccountPage() {
                                                     {move.concept}
                                                 </div>
                                                 <div className="text-xs text-slate-500 mt-0.5">
-                                                    {move.type === 'FILE' ? (
+                                                    {move.type === 'RESERVA' ? (
                                                         <span className="inline-flex items-center gap-1 text-rose-500/80">
                                                             <ArrowUpRight className="h-3 w-3" /> Nuevo Cargo
                                                         </span>
@@ -295,8 +295,8 @@ export default function CustomerAccountPage() {
                                                             </button>
                                                         </>
                                                     )}
-                                                    {move.type === 'FILE' && (
-                                                        <Link to={`/files/${move.originalData.id}`} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Reserva">
+                                                    {move.type === 'RESERVA' && (
+                                                        <Link to={`/reservas/${move.originalData.id}`} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Reserva">
                                                             <FileText className="h-3.5 w-3.5" />
                                                         </Link>
                                                     )}
@@ -328,9 +328,9 @@ export default function CustomerAccountPage() {
                                             )}
                                         </div>
                                         <div className="flex gap-2">
-                                            {move.type === 'FILE' ? (
-                                                <Link to={`/files/${move.originalData.id}`} className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600">
-                                                    Ver File
+                                            {move.type === 'RESERVA' ? (
+                                                <Link to={`/reservas/${move.originalData.id}`} className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600">
+                                                    Ver Reserva
                                                 </Link>
                                             ) : (
                                                 <button onClick={() => handleOpenModal(move.originalData)} className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600">
@@ -358,7 +358,7 @@ export default function CustomerAccountPage() {
                 onClose={() => setIsModalOpen(false)}
                 paymentToEdit={paymentToEdit}
                 customerId={id}
-                availableFiles={files.filter(f => f.status !== "Cancelado")}
+                availableReservas={reservas.filter(f => f.status !== "Cancelado")}
                 onSave={loadAccount}
             />
         </div>

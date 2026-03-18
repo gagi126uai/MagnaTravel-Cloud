@@ -16,10 +16,11 @@ public class MappingProfile : Profile
         
         // Financials
         CreateMap<Payment, PaymentDto>()
-            .ForMember(dest => dest.TravelFileId, opt => opt.MapFrom(src => src.TravelFileId ?? (src.Reservation != null ? src.Reservation.TravelFileId : null)))
-            .ForMember(dest => dest.FileNumber, opt => opt.MapFrom(src => src.TravelFile != null ? src.TravelFile.FileNumber : (src.Reservation != null && src.Reservation.TravelFile != null ? src.Reservation.TravelFile.FileNumber : null)));
+            .ForMember(dest => dest.ReservaId, opt => opt.MapFrom(src => src.ReservaId))
+            .ForMember(dest => dest.NumeroReserva, opt => opt.MapFrom(src => src.Reserva != null ? src.Reserva.NumeroReserva : null));
+            
         CreateMap<Invoice, InvoiceDto>()
-            .ForMember(dest => dest.TravelFile, opt => opt.MapFrom(src => src.TravelFile))
+            .ForMember(dest => dest.Reserva, opt => opt.MapFrom(src => src.Reserva))
             .ForMember(dest => dest.InvoiceType, opt => opt.MapFrom(src => 
                 src.TipoComprobante == 1 || src.TipoComprobante == 2 || src.TipoComprobante == 3 ? "A" :
                 src.TipoComprobante == 6 || src.TipoComprobante == 7 || src.TipoComprobante == 8 ? "B" :
@@ -59,28 +60,28 @@ public class MappingProfile : Profile
         // Customers
         CreateMap<Customer, CustomerDto>();
 
-        // Travel File
-        CreateMap<TravelFile, TravelFileDto>()
+        // Reserva
+        CreateMap<Reserva, ReservaDto>()
             .ForMember(dest => dest.CustomerId, opt => opt.MapFrom(src => src.PayerId))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer))
-            .ForMember(dest => dest.Invoices, opt => opt.Ignore()); // BREAK CIRCULARITY: TravelFile -> Invoices -> TravelFile
+            .ForMember(dest => dest.Invoices, opt => opt.Ignore()); 
 
-        CreateMap<TravelFile, TravelFileListDto>()
+        CreateMap<Reserva, ReservaListDto>()
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.TotalSale, opt => opt.MapFrom(src => 
                 (src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
                 (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +
                 (src.TransferBookings.Sum(t => (decimal?)t.SalePrice) ?? 0) +
                 (src.PackageBookings.Sum(p => (decimal?)p.SalePrice) ?? 0) +
-                (src.Reservations.Sum(r => (decimal?)r.SalePrice) ?? 0)
+                (src.Servicios.Sum(r => (decimal?)r.SalePrice) ?? 0)
             ))
             .ForMember(dest => dest.Balance, opt => opt.MapFrom(src => 
                 ((src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
                  (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +
                  (src.TransferBookings.Sum(t => (decimal?)t.SalePrice) ?? 0) +
                  (src.PackageBookings.Sum(p => (decimal?)p.SalePrice) ?? 0) +
-                 (src.Reservations.Sum(r => (decimal?)r.SalePrice) ?? 0)) 
+                 (src.Servicios.Sum(r => (decimal?)r.SalePrice) ?? 0)) 
                 - 
                 (src.Payments.Where(p => p.Status != "Cancelled" &&  !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
             ));

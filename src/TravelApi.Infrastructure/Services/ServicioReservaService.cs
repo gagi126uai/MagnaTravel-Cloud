@@ -5,18 +5,18 @@ using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
 
-public class ReservationService : IReservationService
+public class ServicioReservaService : IServicioReservaService
 {
     private readonly AppDbContext _dbContext;
 
-    public ReservationService(AppDbContext dbContext)
+    public ServicioReservaService(AppDbContext dbContext)
     {
         _dbContext = dbContext;
     }
 
-    public async Task<IEnumerable<Reservation>> GetReservationsAsync(CancellationToken cancellationToken)
+    public async Task<IEnumerable<ServicioReserva>> GetServiciosAsync(CancellationToken cancellationToken)
     {
-        return await _dbContext.Reservations
+        return await _dbContext.Servicios
             .AsNoTracking()
             .Include(r => r.Customer)
             .Include(r => r.Supplier)
@@ -24,9 +24,9 @@ public class ReservationService : IReservationService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<Reservation?> GetReservationAsync(int id, CancellationToken cancellationToken)
+    public async Task<ServicioReserva?> GetServicioByIdAsync(int id, CancellationToken cancellationToken)
     {
-        return await _dbContext.Reservations
+        return await _dbContext.Servicios
             .AsNoTracking()
             .Include(r => r.Customer)
             .Include(r => r.Supplier)
@@ -35,24 +35,24 @@ public class ReservationService : IReservationService
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     }
 
-    public async Task<FlightSegment> CreateSegmentAsync(int reservationId, FlightSegment segment, CancellationToken cancellationToken)
+    public async Task<FlightSegment> CreateSegmentAsync(int servicioId, FlightSegment segment, CancellationToken cancellationToken)
     {
-        var reservation = await _dbContext.Reservations
-            .FirstOrDefaultAsync(r => r.Id == reservationId, cancellationToken);
-
-        if (reservation is null)
-            throw new ArgumentException("Reserva no encontrada.");
-
+        var servicio = await _dbContext.Servicios
+            .FirstOrDefaultAsync(r => r.Id == servicioId, cancellationToken);
+ 
+        if (servicio is null)
+            throw new ArgumentException("Servicio no encontrado.");
+ 
         if (segment.ArrivalTime < segment.DepartureTime)
             throw new ArgumentException("La fecha de llegada no puede ser anterior a la de salida.");
-
-        segment.ReservationId = reservationId;
+ 
+        segment.ServicioReservaId = servicioId;
         segment.DepartureTime = NormalizeUtc(segment.DepartureTime);
         segment.ArrivalTime = NormalizeUtc(segment.ArrivalTime);
-
+ 
         _dbContext.FlightSegments.Add(segment);
         await _dbContext.SaveChangesAsync(cancellationToken);
-
+ 
         return segment;
     }
 

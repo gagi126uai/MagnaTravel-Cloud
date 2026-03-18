@@ -8,8 +8,8 @@ public class FlightSegment
     public int Id { get; set; }
     
     // Relaciones
-    public int TravelFileId { get; set; }
-    public TravelFile? TravelFile { get; set; }
+    public int ReservaId { get; set; }
+    public Reserva? Reserva { get; set; }
     
     public int SupplierId { get; set; }
     public Supplier? Supplier { get; set; }
@@ -82,6 +82,6 @@ public class FlightSegment
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
     // Legacy - mantener compatibilidad temporal
-    public int? ReservationId { get; set; }
-    public Reservation? Reservation { get; set; }
+    public int? ServicioReservaId { get; set; }
+    public ServicioReserva? ServicioReserva { get; set; }
 }

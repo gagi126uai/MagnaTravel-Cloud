@@ -551,7 +551,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate }) {
 }
 
 // ================== MODAL PRINCIPAL ==================
-export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, onSuccess, initialServiceType, serviceToEdit }) {
+export default function ServiceFormModal({ isOpen, onClose, reservaId, suppliers, onSuccess, initialServiceType, serviceToEdit }) {
     const [serviceType, setServiceType] = useState(initialServiceType || "Aereo");
     const [form, setForm] = useState({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1, checkIn: "", checkOut: "" });
     const [selectedRate, setSelectedRate] = useState(null); // Validar selectedRate para recálculos
@@ -708,10 +708,10 @@ export default function ServiceFormModal({ isOpen, onClose, fileId, suppliers, o
             let endpoint = "";
             let method = "post";
 
-            if (serviceType === "Aereo") endpoint = `/files/${fileId}/flights`;
-            else if (serviceType === "Hotel") endpoint = `/files/${fileId}/hotels`;
-            else if (serviceType === "Traslado") endpoint = `/files/${fileId}/transfers`;
-            else if (serviceType === "Paquete") endpoint = `/files/${fileId}/packages`;
+            if (serviceType === "Aereo") endpoint = `/reservas/${reservaId}/flights`;
+            else if (serviceType === "Hotel") endpoint = `/reservas/${reservaId}/hotels`;
+            else if (serviceType === "Traslado") endpoint = `/reservas/${reservaId}/transfers`;
+            else if (serviceType === "Paquete") endpoint = `/reservas/${reservaId}/packages`;
 
             // If editing, append ID and change method to PUT
             if (serviceToEdit) {

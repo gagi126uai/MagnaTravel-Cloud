@@ -55,10 +55,10 @@ public class InvoicesController : ControllerBase
         }
     }
 
-    [HttpGet("file/{travelFileId}")]
-    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByTravelFile(int travelFileId, CancellationToken ct)
+    [HttpGet("reserva/{reservaId}")]
+    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByReservaId(int reservaId, CancellationToken ct)
     {
-        var invoices = await _invoiceService.GetByTravelFileAsync(travelFileId, ct);
+        var invoices = await _invoiceService.GetByReservaIdAsync(reservaId, ct);
         return Ok(invoices);
     }
 
