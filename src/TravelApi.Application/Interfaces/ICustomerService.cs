@@ -14,7 +14,8 @@ public interface ICustomerService
 public class CustomerAccountDto
 {
     public object Customer { get; set; } = null!;
-    public IEnumerable<object> Files { get; set; } = new List<object>();
+    public IEnumerable<object> Reservas { get; set; } = new List<object>();
     public IEnumerable<object> Payments { get; set; } = new List<object>();
+    public IEnumerable<object> Invoices { get; set; } = new List<object>();
     public object Summary { get; set; } = null!;
 }

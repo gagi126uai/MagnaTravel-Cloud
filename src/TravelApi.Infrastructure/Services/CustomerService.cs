@@ -146,9 +146,29 @@ public class CustomerService : ICustomerService
             })
             .ToListAsync(cancellationToken);
 
-        var totalSales = files.Sum(f => f.TotalSale);
-        var totalPaid = files.Sum(f => f.Paid);
-        var totalBalance = files.Sum(f => f.Balance);
+        var totalSales = files.Sum(f => (decimal)f.TotalSale);
+        var totalPaid = files.Sum(f => (decimal)f.Paid);
+        var totalBalance = files.Sum(f => (decimal)f.Balance);
+
+        // Facturas asociadas a sus reservas
+        var invoices = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(i => i.ReservaId != null && fileIds.Contains(i.ReservaId.Value))
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(i => new
+            {
+                i.Id,
+                i.NumeroComprobante,
+                i.PuntoDeVenta,
+                i.TipoComprobante,
+                i.ImporteTotal,
+                i.CreatedAt,
+                i.Resultado,
+                i.CAE,
+                ReservaId = i.ReservaId,
+                NumeroReserva = i.Reserva != null ? i.Reserva.NumeroReserva : null
+            })
+            .ToListAsync(cancellationToken);
 
         return new CustomerAccountDto
         {
@@ -162,15 +182,17 @@ public class CustomerService : ICustomerService
                 customer.CreditLimit,
                 customer.CurrentBalance
             },
-            Files = files.Cast<object>(),
+            Reservas = files.Cast<object>(),
             Payments = payments.Cast<object>(),
+            Invoices = invoices.Cast<object>(),
             Summary = new
             {
                 TotalSales = totalSales,
                 TotalPaid = totalPaid,
                 TotalBalance = totalBalance,
                 FileCount = files.Count,
-                PaymentCount = payments.Count
+                PaymentCount = payments.Count,
+                InvoiceCount = invoices.Count
             }
         };
     }
