@@ -362,7 +362,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // Quotes
         modelBuilder.Entity<Quote>(entity =>
         {
-            entity.Property(q => q.ConvertedReservaId).HasColumnName("ConvertedTravelFileId");
+            entity.Property(q => q.ConvertedReservaId).HasColumnName("ConvertedFileId");
         });
 
         // ReservaAttachment
