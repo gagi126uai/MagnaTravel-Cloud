@@ -45,10 +45,6 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        loadDashboard();
-    }, []);
-
     const loadDashboard = async () => {
         try {
             const data = await api.get("/reports/dashboard");
@@ -59,6 +55,13 @@ export default function DashboardPage() {
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        loadDashboard();
+        // Polling cada 60s
+        const interval = setInterval(loadDashboard, 60000);
+        return () => clearInterval(interval);
+    }, []);
 
     if (loading) {
         return <DashboardSkeleton />;
@@ -74,11 +77,11 @@ export default function DashboardPage() {
 
     // Prepare data for charts
     const statusData = [
-        { name: 'Presupuesto', value: dashboard.distribucionEstados?.budgets || 0, color: '#94a3b8' }, // Slate-400
-        { name: 'Reservado', value: dashboard.distribucionEstados?.reserved || 0, color: '#f59e0b' }, // Amber-500
-        { name: 'Operativo', value: dashboard.distribucionEstados?.operational || 0, color: '#10b981' }, // Emerald-500
-        { name: 'Cerrado', value: dashboard.distribucionEstados?.closed || 0, color: '#6366f1' }, // Indigo-500
-        { name: 'Cancelado', value: dashboard.distribucionEstados?.cancelled || 0, color: '#ef4444' }, // Red-500
+        { name: 'Presupuesto', value: dashboard.distribucionEstados?.budgets ?? dashboard.distribucionEstados?.Budgets ?? 0, color: '#94a3b8' }, // Slate-400
+        { name: 'Reservado', value: dashboard.distribucionEstados?.reserved ?? dashboard.distribucionEstados?.Reserved ?? 0, color: '#f59e0b' }, // Amber-500
+        { name: 'Operativo', value: dashboard.distribucionEstados?.operational ?? dashboard.distribucionEstados?.Operational ?? 0, color: '#10b981' }, // Emerald-500
+        { name: 'Cerrado', value: dashboard.distribucionEstados?.closed ?? dashboard.distribucionEstados?.Closed ?? 0, color: '#6366f1' }, // Indigo-500
+        { name: 'Cancelado', value: dashboard.distribucionEstados?.cancelled ?? dashboard.distribucionEstados?.Cancelled ?? 0, color: '#ef4444' }, // Red-500
     ].filter(item => item.value > 0);
 
     return (

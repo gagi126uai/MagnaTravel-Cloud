@@ -60,9 +60,10 @@ public class WebhooksController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Phone))
             return BadRequest(new { message = "Nombre y teléfono son obligatorios." });
 
-        // Verificar duplicados
+        // Verificar duplicados (búsqueda flexible por teléfono)
+        var phoneToSearch = dto.Phone.Replace("+", "").Trim();
         var existingLead = await _db.Leads
-            .Where(l => l.Phone == dto.Phone && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
+            .Where(l => (l.Phone == dto.Phone || l.Phone == phoneToSearch) && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (existingLead != null)
@@ -135,13 +136,26 @@ public class WebhooksController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Phone) || string.IsNullOrWhiteSpace(dto.Message))
             return BadRequest(new { message = "Phone y message son obligatorios." });
 
-        // Buscar lead activo con ese teléfono
+        // Buscar lead activo con ese teléfono (búsqueda flexible)
+        var phoneToSearch = dto.Phone.Replace("+", "").Trim();
         var lead = await _db.Leads
-            .Where(l => l.Phone == dto.Phone && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
+            .Where(l => (l.Phone == dto.Phone || l.Phone == phoneToSearch) && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (lead == null)
-            return Ok(new { message = "No hay lead activo con ese teléfono, mensaje ignorado." });
+        {
+            // AUTO-CREAR LEAD si no existe (para no perder el contacto inicial)
+            _logger.LogInformation("Auto-creando lead para mensaje entrante de: {Phone}", dto.Phone);
+            lead = new Lead
+            {
+                FullName = $"Nuevo contacto WhatsApp ({dto.Phone})",
+                Phone = dto.Phone,
+                Source = "WhatsApp",
+                Status = LeadStatus.New,
+                Notes = "Lead creado automáticamente al recibir un mensaje sin proceso de bot completado."
+            };
+            lead = await _leadService.CreateAsync(lead, cancellationToken);
+        }
 
         // Guardar como actividad
         await _leadService.AddActivityAsync(lead.Id, new LeadActivity
@@ -151,7 +165,7 @@ public class WebhooksController : ControllerBase
             CreatedBy = dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"
         }, cancellationToken);
 
-        return Ok(new { leadId = lead.Id });
+        return Ok(new { leadId = lead.Id, autoCreated = lead.FullName.StartsWith("Nuevo contacto") });
     }
 
     /// <summary>

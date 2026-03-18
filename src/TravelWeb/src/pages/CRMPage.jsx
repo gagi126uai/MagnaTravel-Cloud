@@ -65,6 +65,14 @@ export default function CRMPage() {
 
     useEffect(() => { loadLeads(); }, [loadLeads]);
 
+    // Polling para "tiempo real" (cada 30s)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            loadLeads();
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [loadLeads]);
+
     const loadDetail = async (id) => {
         // Clear previous detail to avoid "flicker" of old data
         // but only if it's a different lead
