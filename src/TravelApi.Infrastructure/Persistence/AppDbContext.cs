@@ -341,6 +341,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(i => i.ReservaId).HasColumnName("TravelFileId");
         });
 
+        // InvoiceItem (Singular table from Program.cs)
+        modelBuilder.Entity<InvoiceItem>(entity =>
+        {
+            entity.ToTable("InvoiceItem");
+        });
+
+        // InvoiceTribute (Singular table from Program.cs)
+        modelBuilder.Entity<InvoiceTribute>(entity =>
+        {
+            entity.ToTable("InvoiceTribute");
+        });
+
         // HotelBooking
         modelBuilder.Entity<HotelBooking>(entity =>
         {
@@ -370,6 +382,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.ToTable("ReservaAttachments");
             entity.Property(a => a.ReservaId).HasColumnName("TravelFileId");
+        });
+
+        // SupplierPayment (Egresos)
+        modelBuilder.Entity<SupplierPayment>(entity =>
+        {
+            entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
+            entity.Property(p => p.ServicioReservaId).HasColumnName("ReservationId");
         });
     }
 }
