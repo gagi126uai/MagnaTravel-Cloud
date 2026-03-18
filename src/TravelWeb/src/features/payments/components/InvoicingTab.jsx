@@ -21,7 +21,7 @@ export function InvoicingTab({ reservas, onInvoice }) {
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                         {filtered.map((reserva, idx) => (
-                            <tr key={file.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                            <tr key={reserva.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-6 py-4 text-center text-xs text-slate-400 font-mono">{(idx + 1).toString().padStart(2, '0')}</td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col">
