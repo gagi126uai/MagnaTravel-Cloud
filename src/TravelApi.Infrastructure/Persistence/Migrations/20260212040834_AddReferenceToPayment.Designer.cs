@@ -1433,7 +1433,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Models.FlightSegment", b =>
                 {
-                    b.HasOne("TravelApi.Models.Reservation", "Reservation")
+                    b.HasOne("TravelApi.Models.Reservation", "ServicioReserva")
                         .WithMany("Segments")
                         .HasForeignKey("ReservationId")
                         .OnDelete(DeleteBehavior.Cascade);
@@ -1444,17 +1444,17 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany("FlightSegments")
                         .HasForeignKey("TravelFileId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Reservation");
+                    b.Navigation("ServicioReserva");
 
                     b.Navigation("Supplier");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.HotelBooking", b =>
@@ -1465,7 +1465,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany("HotelBookings")
                         .HasForeignKey("TravelFileId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1473,16 +1473,16 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Supplier");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.Invoice", b =>
                 {
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany("Invoices")
                         .HasForeignKey("TravelFileId");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.PackageBooking", b =>
@@ -1493,7 +1493,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany("PackageBookings")
                         .HasForeignKey("TravelFileId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1501,35 +1501,35 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Supplier");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.Passenger", b =>
                 {
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany("Passengers")
                         .HasForeignKey("TravelFileId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.Payment", b =>
                 {
-                    b.HasOne("TravelApi.Models.Reservation", "Reservation")
+                    b.HasOne("TravelApi.Models.Reservation", "ServicioReserva")
                         .WithMany("Payments")
                         .HasForeignKey("ReservationId")
                         .OnDelete(DeleteBehavior.Cascade);
 
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany("Payments")
                         .HasForeignKey("TravelFileId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.Navigation("Reservation");
+                    b.Navigation("ServicioReserva");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.Rate", b =>
@@ -1544,7 +1544,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TravelApi.Models.Reservation", b =>
                 {
                     b.HasOne("TravelApi.Models.Customer", "Customer")
-                        .WithMany("Reservations")
+                        .WithMany("Servicios")
                         .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Restrict);
 
@@ -1553,8 +1553,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasForeignKey("SupplierId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
-                        .WithMany("Reservations")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
+                        .WithMany("Servicios")
                         .HasForeignKey("TravelFileId")
                         .OnDelete(DeleteBehavior.Restrict);
 
@@ -1562,12 +1562,12 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Supplier");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.SupplierPayment", b =>
                 {
-                    b.HasOne("TravelApi.Models.Reservation", "Reservation")
+                    b.HasOne("TravelApi.Models.Reservation", "ServicioReserva")
                         .WithMany()
                         .HasForeignKey("ReservationId");
 
@@ -1577,15 +1577,15 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany()
                         .HasForeignKey("TravelFileId");
 
-                    b.Navigation("Reservation");
+                    b.Navigation("ServicioReserva");
 
                     b.Navigation("Supplier");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.TransferBooking", b =>
@@ -1596,7 +1596,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("TravelApi.Models.TravelFile", "TravelFile")
+                    b.HasOne("TravelApi.Models.TravelFile", "Reserva")
                         .WithMany("TransferBookings")
                         .HasForeignKey("TravelFileId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1604,13 +1604,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Supplier");
 
-                    b.Navigation("TravelFile");
+                    b.Navigation("Reserva");
                 });
 
             modelBuilder.Entity("TravelApi.Models.TravelFile", b =>
                 {
                     b.HasOne("TravelApi.Models.Customer", "Payer")
-                        .WithMany("TravelFiles")
+                        .WithMany("Reservas")
                         .HasForeignKey("PayerId")
                         .OnDelete(DeleteBehavior.Restrict);
 
@@ -1619,9 +1619,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Models.Customer", b =>
                 {
-                    b.Navigation("Reservations");
+                    b.Navigation("Servicios");
 
-                    b.Navigation("TravelFiles");
+                    b.Navigation("Reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Models.Reservation", b =>
@@ -1645,7 +1645,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Payments");
 
-                    b.Navigation("Reservations");
+                    b.Navigation("Servicios");
 
                     b.Navigation("TransferBookings");
                 });

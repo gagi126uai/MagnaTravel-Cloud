@@ -12,15 +12,15 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
         {
             migrationBuilder.DropForeignKey(
                 name: "FK_TravelFiles_Customers_CustomerId",
-                table: "TravelFiles");
+                table: "Reservas");
 
             migrationBuilder.DropIndex(
                 name: "IX_TravelFiles_CustomerId",
-                table: "TravelFiles");
+                table: "Reservas");
 
             migrationBuilder.DropColumn(
                 name: "CustomerId",
-                table: "TravelFiles");
+                table: "Reservas");
         }
 
         /// <inheritdoc />
@@ -28,18 +28,18 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
         {
             migrationBuilder.AddColumn<int>(
                 name: "CustomerId",
-                table: "TravelFiles",
+                table: "Reservas",
                 type: "integer",
                 nullable: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_TravelFiles_CustomerId",
-                table: "TravelFiles",
+                table: "Reservas",
                 column: "CustomerId");
 
             migrationBuilder.AddForeignKey(
                 name: "FK_TravelFiles_Customers_CustomerId",
-                table: "TravelFiles",
+                table: "Reservas",
                 column: "CustomerId",
                 principalTable: "Customers",
                 principalColumn: "Id");

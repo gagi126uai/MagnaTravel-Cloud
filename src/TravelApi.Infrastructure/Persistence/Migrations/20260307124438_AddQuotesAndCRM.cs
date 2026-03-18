@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -65,7 +65,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     ""Notes"" character varying(500),
                     CONSTRAINT ""PK_Quotes"" PRIMARY KEY (""Id""),
                     CONSTRAINT ""FK_Quotes_Customers_CustomerId"" FOREIGN KEY (""CustomerId"") REFERENCES ""Customers"" (""Id""),
-                    CONSTRAINT ""FK_Quotes_TravelFiles_ConvertedFileId"" FOREIGN KEY (""ConvertedFileId"") REFERENCES ""TravelFiles"" (""Id"")
+                    CONSTRAINT ""FK_Quotes_TravelFiles_ConvertedFileId"" FOREIGN KEY (""ConvertedFileId"") REFERENCES ""Reservas"" (""Id"")
                 );
             ");
 

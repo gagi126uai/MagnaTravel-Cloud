@@ -60,11 +60,16 @@ public class MappingProfile : Profile
         // Customers
         CreateMap<Customer, CustomerDto>();
 
+        // Servicios
+        CreateMap<ServicioReserva, ServicioReservaDto>()
+            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : src.SupplierName));
+
         // Reserva
         CreateMap<Reserva, ReservaDto>()
             .ForMember(dest => dest.CustomerId, opt => opt.MapFrom(src => src.PayerId))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer))
+            .ForMember(dest => dest.Servicios, opt => opt.MapFrom(src => src.Servicios))
             .ForMember(dest => dest.Invoices, opt => opt.Ignore()); 
 
         CreateMap<Reserva, ReservaListDto>()

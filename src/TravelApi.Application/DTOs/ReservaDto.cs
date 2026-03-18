@@ -24,6 +24,7 @@ public class ReservaDto
     public List<HotelBookingDto> HotelBookings { get; set; } = new();
     public List<TransferBookingDto> TransferBookings { get; set; } = new();
     public List<PackageBookingDto> PackageBookings { get; set; } = new();
+    public List<ServicioReservaDto> Servicios { get; set; } = new();
     public List<PaymentDto> Payments { get; set; } = new();
     public List<InvoiceDto> Invoices { get; set; } = new();    
 }

@@ -228,11 +228,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(c => c.Address).HasMaxLength(300);
         });
 
-        // Reserva (Master)
+        // Reserva (Master) - Mapeado a TravelFiles (Legacy)
         modelBuilder.Entity<Reserva>(entity =>
         {
-            entity.ToTable("Reservas"); // Rename table
-            entity.Property(f => f.NumeroReserva).HasMaxLength(50).IsRequired();
+            entity.ToTable("TravelFiles"); 
+            entity.Property(f => f.NumeroReserva).HasColumnName("FileNumber").HasMaxLength(50).IsRequired();
             entity.Property(f => f.Name).HasMaxLength(200).IsRequired();
             entity.Property(f => f.Status).HasMaxLength(50).IsRequired();
 
@@ -244,6 +244,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasMany(f => f.Servicios)
                   .WithOne(r => r.Reserva)
                   .HasForeignKey(r => r.ReservaId)
+                  .HasConstraintName("FK_Reservations_TravelFiles_TravelFileId")
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasMany(f => f.Passengers)
@@ -260,6 +261,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // Passenger
         modelBuilder.Entity<Passenger>(entity =>
         {
+            entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
             entity.Property(p => p.FullName).HasMaxLength(200).IsRequired();
             entity.Property(p => p.DocumentType).HasMaxLength(20);
             entity.Property(p => p.DocumentNumber).HasMaxLength(50);
@@ -272,7 +274,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // ServicioReserva (Item)
         modelBuilder.Entity<ServicioReserva>(entity =>
         {
-            entity.ToTable("ServiciosReserva"); // Rename table
+            entity.ToTable("Reservations"); 
+            entity.Property(r => r.ReservaId).HasColumnName("TravelFileId");
             entity.Property(r => r.Status).HasMaxLength(50).IsRequired();
             entity.Property(r => r.SupplierName).HasMaxLength(200);
 
@@ -295,6 +298,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // Payment
         modelBuilder.Entity<Payment>(entity =>
         {
+            entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
+            entity.Property(p => p.ServicioReservaId).HasColumnName("ReservationId");
             entity.Property(p => p.Amount).HasPrecision(12, 2);
             entity.Property(p => p.Method).HasMaxLength(50).IsRequired();
             entity.Property(p => p.Status).HasMaxLength(50).IsRequired();
@@ -316,6 +321,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // FlightSegment
         modelBuilder.Entity<FlightSegment>(entity =>
         {
+            entity.Property(s => s.ReservaId).HasColumnName("TravelFileId");
+            entity.Property(s => s.ServicioReservaId).HasColumnName("ReservationId");
             entity.Property(s => s.AirlineCode).HasMaxLength(3).IsRequired();
             entity.Property(s => s.FlightNumber).HasMaxLength(10).IsRequired();
             entity.Property(s => s.Origin).HasMaxLength(3).IsRequired();
@@ -326,6 +333,19 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany(r => r.FlightSegments)
                   .HasForeignKey(s => s.ReservaId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Invoice
+        modelBuilder.Entity<Invoice>(entity =>
+        {
+            entity.Property(i => i.ReservaId).HasColumnName("TravelFileId");
+        });
+
+        // ReservaAttachment
+        modelBuilder.Entity<ReservaAttachment>(entity =>
+        {
+            entity.ToTable("ReservaAttachments");
+            entity.Property(a => a.ReservaId).HasColumnName("TravelFileId");
         });
     }
 }

@@ -326,7 +326,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "TravelFiles",
+                name: "Reservas",
                 columns: table => new
                 {
                     Id = table.Column<int>(type: "integer", nullable: false)
@@ -486,7 +486,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "Reservations",
+                name: "Servicios",
                 columns: table => new
                 {
                     Id = table.Column<int>(type: "integer", nullable: false)
@@ -767,12 +767,12 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             migrationBuilder.CreateIndex(
                 name: "IX_Reservations_CustomerId",
-                table: "Reservations",
+                table: "Servicios",
                 column: "CustomerId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_Reservations_TravelFileId",
-                table: "Reservations",
+                table: "Servicios",
                 column: "TravelFileId");
 
             migrationBuilder.CreateIndex(
@@ -782,7 +782,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             migrationBuilder.CreateIndex(
                 name: "IX_TravelFiles_PayerId",
-                table: "TravelFiles",
+                table: "Reservas",
                 column: "PayerId");
 
             migrationBuilder.CreateIndex(
@@ -866,7 +866,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 name: "Tariffs");
 
             migrationBuilder.DropTable(
-                name: "Reservations");
+                name: "Servicios");
 
             migrationBuilder.DropTable(
                 name: "TreasuryReceipts");
@@ -878,7 +878,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 name: "BspImportBatches");
 
             migrationBuilder.DropTable(
-                name: "TravelFiles");
+                name: "Reservas");
 
             migrationBuilder.DropTable(
                 name: "Customers");
