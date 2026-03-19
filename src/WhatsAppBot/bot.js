@@ -203,24 +203,26 @@ cleanLockFiles();
 
 const client = new Client({
     authStrategy: new LocalAuth(),
+    authTimeoutMs: 60000,
     puppeteer: {
-        headless: true,
+        headless: "new",
         args: [
             "--no-sandbox", 
             "--disable-setuid-sandbox", 
             "--disable-dev-shm-usage", 
-            "--disable-gpu",
-            "--disable-features=SharedArrayBuffer",
+            "--disable-accelerated-2d-canvas",
             "--no-first-run",
             "--no-zygote",
-            "--single-process"
+            "--disable-gpu"
         ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium"
     }
 });
 
 botLog("📦 Cargando cliente de WhatsApp...");
-client.initialize().catch(err => {
+client.initialize().then(() => {
+    botLog("🏁 client.initialize() ejecutado con éxito.");
+}).catch(err => {
     botLog(`❌ ERROR FATAL AL LANZAR CHROMIUM: ${err.message}`);
     botLog("💡 Sugerencia: Revisa que no haya otros procesos de Chrome corriendo en el servidor.");
 });

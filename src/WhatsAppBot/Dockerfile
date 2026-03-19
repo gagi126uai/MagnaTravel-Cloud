@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon0 \
     libxrandr2 \
     libasound2 \
+    libpangocairo-1.0-0 \
+    libxshmfence1 \
+    ca-certificates \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
