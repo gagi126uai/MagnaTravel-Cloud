@@ -20,7 +20,6 @@ import QuotesPage from "./pages/QuotesPage";
 import CRMPage from "./pages/CRMPage";
 
 import PaymentsTrashPage from "./features/payments/pages/PaymentsTrashPage";
-import AlertsPage from "./pages/AlertsPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
@@ -111,10 +110,6 @@ export default function App() {
                   <Route
                     path="/payments/trash"
                     element={adminUser ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
-                  />
-                  <Route
-                    path="/alerts"
-                    element={adminUser ? <AlertsPage /> : <Navigate to="/dashboard" replace />}
                   />
                   <Route
                     path="/notifications"

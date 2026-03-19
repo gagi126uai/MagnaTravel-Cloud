@@ -66,19 +66,6 @@ export default function AnalyticsPage() {
 
     return (
         <div className="space-y-8 pb-12">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Business Intelligence</h1>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Analíticas avanzadas de tu operación</p>
-                </div>
-                <button
-                    onClick={loadData}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl text-sm font-bold shadow-lg hover:opacity-90 transition-all"
-                >
-                    <RefreshCw className="w-4 h-4" /> Actualizar
-                </button>
-            </div>
 
             {/* Summary Cards */}
             {cashflow && yoy && (

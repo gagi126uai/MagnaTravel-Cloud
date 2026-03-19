@@ -4,6 +4,8 @@ import { Loader2, XCircle, Download, FileText, ArrowUpRight, History, Receipt, A
 export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnnulInvoice, onRetryInvoice }) {
     const [expandedInvoice, setExpandedInvoice] = useState(null);
     const [activeSubTab, setActiveSubTab] = useState('afip'); // 'collections' or 'afip'
+    const [visibleCountPayments, setVisibleCountPayments] = useState(25);
+    const [visibleCountInvoices, setVisibleCountInvoices] = useState(25);
 
     const getInvoiceLabel = (type) => {
         const labels = {
@@ -73,7 +75,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                {payments.slice(0, 15).map((p, idx) => (
+                                {payments.slice(0, visibleCountPayments).map((p, idx) => (
                                     <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
                                         <td className="px-6 py-4 text-center text-[10px] font-mono text-slate-400">{(idx + 1).toString().padStart(2, '0')}</td>
                                         <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{new Date(p.paidAt).toLocaleDateString()}</td>
@@ -106,7 +108,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
 
                     {/* Mobile Collections */}
                     <div className="md:hidden space-y-3">
-                        {payments.slice(0, 10).map(p => (
+                        {payments.slice(0, visibleCountPayments).map(p => (
                             <div key={p.id} className="bg-white dark:bg-slate-900 rounded-xl p-4 border border-slate-200 dark:border-slate-800 flex justify-between items-center">
                                 <div className="flex items-center gap-3">
                                     <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600">
@@ -123,6 +125,17 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                             </div>
                         ))}
                     </div>
+
+                    {payments.length > visibleCountPayments && (
+                        <div className="p-4 text-center">
+                            <button
+                                onClick={() => setVisibleCountPayments(visibleCountPayments + 25)}
+                                className="px-6 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+                            >
+                                Cargar más cobranzas ({payments.length - visibleCountPayments} restantes)
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -141,7 +154,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                {invoices.slice(0, 15).map((i) => (
+                                {invoices.slice(0, visibleCountInvoices).map((i) => (
                                     <React.Fragment key={i.id}>
                                         <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                                             <td className="px-6 py-4">
@@ -254,7 +267,7 @@ export function HistoryTab({ payments, invoices, onDownloadPdf, onViewPdf, onAnn
 
                     {/* Mobile Invoices */}
                     <div className="md:hidden space-y-4">
-                        {invoices.slice(0, 10).map(i => (
+                        {invoices.slice(0, visibleCountInvoices).map(i => (
                             <div key={i.id} className="bg-white dark:bg-slate-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800">
                                 <div className="flex justify-between items-start mb-4">
                                     <div>

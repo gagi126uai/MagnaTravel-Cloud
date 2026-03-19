@@ -89,7 +89,7 @@ export default function PaymentsPage() {
       <div className="flex gap-6 border-b border-slate-100 dark:border-slate-800">
         {[
           { id: 'collections', label: 'Cobranzas', icon: Banknote },
-          { id: 'invoicing', label: 'Emisión AFIP', icon: FileText },
+          { id: 'invoicing', label: 'Facturación AFIP', icon: FileText },
           { id: 'history', label: 'Historial', icon: Clock },
         ].map(tab => (
           <button

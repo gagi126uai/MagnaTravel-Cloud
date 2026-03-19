@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FilePlus, User, AlertCircle, ArrowRight, CheckCircle2, Receipt } from "lucide-react";
 
 export function InvoicingTab({ reservas, onInvoice }) {
+    const [visibleCount, setVisibleCount] = useState(25);
     const filtered = reservas.filter(r => r.pendingBilling > 0);
+    const visibleReservas = filtered.slice(0, visibleCount);
 
     return (
         <div className="space-y-6">
@@ -20,7 +22,7 @@ export function InvoicingTab({ reservas, onInvoice }) {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filtered.map((reserva, idx) => (
+                        {visibleReservas.map((reserva, idx) => (
                             <tr key={reserva.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-6 py-4 text-center text-xs text-slate-400 font-mono">{(idx + 1).toString().padStart(2, '0')}</td>
                                 <td className="px-6 py-4">
@@ -62,11 +64,22 @@ export function InvoicingTab({ reservas, onInvoice }) {
                         ))}
                     </tbody>
                 </table>
+                
+                {filtered.length > visibleCount && (
+                    <div className="p-4 border-t border-slate-100 dark:border-slate-800 text-center">
+                        <button 
+                            onClick={() => setVisibleCount(visibleCount + 25)}
+                            className="px-6 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+                        >
+                            Cargar más reservas ({filtered.length - visibleCount} restantes)
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Mobile View */}
             <div className="md:hidden space-y-4">
-                {filtered.map(reserva => (
+                {visibleReservas.map(reserva => (
                     <div key={reserva.id} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
                         <div className="flex justify-between items-start mb-4">
                             <div>

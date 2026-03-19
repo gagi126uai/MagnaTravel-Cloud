@@ -89,7 +89,7 @@ public class ReservaService : IReservaService
             (file.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
             (file.Servicios?.Sum(r => r.NetCost) ?? 0);
 
-        var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled").Sum(p => p.Amount) ?? 0;
+        var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => p.Amount) ?? 0;
 
         file.TotalSale = totalSale;
         file.TotalCost = totalCost;

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Mail, Phone, Wallet, Pencil, Power } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { Badge } from "../../../components/ui/badge";
@@ -6,6 +6,13 @@ import { Badge } from "../../../components/ui/badge";
 export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClick }) {
     const getInitials = (name) => {
         return name?.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) || "??";
+    };
+
+    const [visibleCount, setVisibleCount] = useState(50);
+    const visibleCustomers = customers.slice(0, visibleCount);
+
+    const handleLoadMore = () => {
+        setVisibleCount(prev => prev + 50);
     };
 
     return (
@@ -22,7 +29,7 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                         </tr>
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0 divide-y divide-slate-100 dark:divide-slate-800">
-                        {customers.map((customer) => (
+                        {visibleCustomers.map((customer) => (
                             <tr key={customer.id} className={`transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-900/50 ${!customer.isActive ? 'opacity-60 bg-slate-50/30' : ''}`}>
                                 <td className="p-4 align-middle">
                                     <div className="flex items-center gap-3">
@@ -90,6 +97,16 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                     </tbody>
                 </table>
             </div>
+            {customers.length > visibleCount && (
+                <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-center">
+                    <button 
+                        onClick={handleLoadMore}
+                        className="text-sm font-semibold text-slate-600 dark:text-slate-300 w-full sm:w-auto px-4 py-2 border rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                        Cargar más resultados ({customers.length - visibleCount} restantes)
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

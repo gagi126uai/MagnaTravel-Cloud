@@ -1,10 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { User, Users, Archive, MessageCircle, CreditCard, DollarSign } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 
 export function ReservaTable({ reservas, onRowClick, onArchive }) {
+    const [visibleCount, setVisibleCount] = useState(50);
+    const visibleReservas = reservas.slice(0, visibleCount);
+
+    const handleLoadMore = () => {
+        setVisibleCount(prev => prev + 50);
+    };
+
     return (
         <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
@@ -19,7 +26,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {reservas.map((reserva) => (
+                        {visibleReservas.map((reserva) => (
                             <tr
                                 key={reserva.id}
                                 onClick={() => onRowClick(reserva.id)}
@@ -114,6 +121,17 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                     </tbody>
                 </table>
             </div>
+            {reservas.length > visibleCount && (
+                <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-center">
+                    <Button 
+                        variant="outline" 
+                        onClick={handleLoadMore}
+                        className="text-sm font-semibold text-slate-600 dark:text-slate-300 w-full sm:w-auto"
+                    >
+                        Cargar más resultados ({reservas.length - visibleCount} restantes)
+                    </Button>
+                </div>
+            )}
         </div>
     );
 }

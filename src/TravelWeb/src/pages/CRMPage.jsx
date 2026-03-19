@@ -52,6 +52,10 @@ export default function CRMPage() {
     const [chatMessage, setChatMessage] = useState("");
     const [sendingChat, setSendingChat] = useState(false);
 
+    // Front-end pagination
+    const [visibleCount, setVisibleCount] = useState(50);
+    const handleLoadMore = () => setVisibleCount(v => v + 50);
+
     const fmt = (n) => `$${(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 0 })}`;
 
     const loadLeads = useCallback(async () => {
@@ -143,6 +147,8 @@ export default function CRMPage() {
         return true;
     });
 
+    const visibleLeads = filteredLeads.slice(0, visibleCount);
+
     if (loading) {
         return <div className="flex items-center justify-center h-[60vh]"><Loader2 className="w-8 h-8 animate-spin text-indigo-500" /></div>;
     }
@@ -217,7 +223,7 @@ export default function CRMPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100/60 dark:divide-slate-800/60">
-                                {filteredLeads.map(lead => {
+                                {visibleLeads.map(lead => {
                                     const sc = getStatusConfig(lead.status);
                                     return (
                                         <tr key={lead.id} onClick={() => loadDetail(lead.id)}
@@ -263,6 +269,16 @@ export default function CRMPage() {
                                 })}
                             </tbody>
                         </table>
+                    </div>
+                )}
+                {filteredLeads.length > visibleCount && (
+                    <div className="p-4 border-t border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-slate-900 text-center rounded-b-3xl">
+                        <button 
+                            onClick={handleLoadMore}
+                            className="text-sm font-semibold text-slate-600 dark:text-slate-300 w-full sm:w-auto px-4 py-2 border rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                        >
+                            Cargar más resultados ({filteredLeads.length - visibleCount} restantes)
+                        </button>
                     </div>
                 )}
             </div>

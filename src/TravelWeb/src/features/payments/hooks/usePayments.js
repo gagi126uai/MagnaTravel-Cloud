@@ -23,8 +23,8 @@ export function usePayments() {
             const enhancedReservas = reservasRes.map(r => {
                 const reservaInvoices = invoicesRes.filter(i => i.reservaId === r.id);
 
-                const totalSale = r.totalSale || 0;
-                const totalPaid = r.totalPaid || 0;
+                const totalSale = Number(r.totalSale || 0);
+                const totalPaid = Number(r.totalPaid || 0);
 
                 const totalInvoiced = reservaInvoices.reduce((acc, i) => {
                     if (i.resultado !== 'A') return acc;

@@ -1,10 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { User, Users, Calendar, AlertCircle, CheckCircle2, FolderOpen, MessageCircle } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 
 export function ReservaMobileList({ reservas, onRowClick }) {
+    const [visibleCount, setVisibleCount] = useState(50);
+    const visibleReservas = reservas.slice(0, visibleCount);
+
+    const handleLoadMore = () => {
+        setVisibleCount(prev => prev + 50);
+    };
+
     if (reservas.length === 0) {
         return (
             <div className="text-center py-12 bg-slate-50 dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
@@ -15,7 +22,7 @@ export function ReservaMobileList({ reservas, onRowClick }) {
 
     return (
         <div className="space-y-3">
-            {reservas.map((reserva) => {
+            {visibleReservas.map((reserva) => {
                 const hasPendingBalance = reserva.balance > 0;
                 const isPaid = reserva.totalSale > 0 && reserva.balance <= 0;
                 return (
@@ -81,6 +88,18 @@ export function ReservaMobileList({ reservas, onRowClick }) {
                     </div>
                 );
             })}
+            
+            {reservas.length > visibleCount && (
+                <div className="pt-2 pb-4 text-center">
+                    <Button 
+                        variant="outline" 
+                        onClick={handleLoadMore}
+                        className="text-sm font-semibold text-slate-600 dark:text-slate-300 w-full"
+                    >
+                        Cargar más resultados ({reservas.length - visibleCount} restantes)
+                    </Button>
+                </div>
+            )}
         </div>
     );
 }

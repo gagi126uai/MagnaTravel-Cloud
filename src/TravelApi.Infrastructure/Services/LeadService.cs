@@ -17,7 +17,7 @@ public class LeadService : ILeadService
     public async Task<List<Lead>> GetAllAsync(CancellationToken cancellationToken)
     {
         return await _db.Leads
-            .Include(l => l.Activities.OrderByDescending(a => a.CreatedAt).Take(3))
+            .Include(l => l.Activities.OrderByDescending(a => a.CreatedAt))
             .OrderByDescending(l => l.CreatedAt)
             .ToListAsync(cancellationToken);
     }

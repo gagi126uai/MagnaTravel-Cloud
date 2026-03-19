@@ -45,6 +45,7 @@ import { ReportsSkeleton } from "../components/ui/skeleton";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import Swal from "sweetalert2";
+import AnalyticsPage from "./AnalyticsPage";
 
 export default function ReportsPage() {
   const [report, setReport] = useState(null);
@@ -287,7 +288,12 @@ export default function ReportsPage() {
         <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
           <TabsTrigger value="sales" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Ventas y Margen</TabsTrigger>
           <TabsTrigger value="finance" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Finanzas y Deudas</TabsTrigger>
+          <TabsTrigger value="intelligence" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Inteligencia Analítica</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="intelligence" className="space-y-6">
+           <AnalyticsPage />
+        </TabsContent>
 
         <TabsContent value="sales" className="space-y-6">
           {/* KPI Cards */}
