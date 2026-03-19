@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { User, Mail, Phone, XCircle, Search, Loader2, FileText } from "lucide-react";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
+import { showError, showSuccess, showWarning } from "../../../alerts";
 
 
 export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
@@ -25,7 +25,6 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
     // Flag to prevent searching right after selecting a result
     const [justSelected, setJustSelected] = useState(false);
 
-    const debouncedName = useDebounce(formData.fullName, 500);
     const debouncedTaxId = useDebounce(formData.taxId, 500);
 
     if (!isOpen) return null;
@@ -42,34 +41,16 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
             const data = await api.get(`/fiscal/search?q=${encodeURIComponent(query)}`);
             setAfipResults(data);
             if (data.length === 0) {
-                showError("No se encontraron resultados en AFIP.");
+                showWarning("No se encontraron resultados con ese CUIT/DNI.", "Padrón AFIP");
             }
         } catch (error) {
             console.error(error);
-            showError("Error al consultar AFIP.");
+            const errorMsg = error.response?.data?.message || error.response?.data || "Servicio no disponible temporalmente";
+            showWarning(typeof errorMsg === 'string' ? errorMsg : "Error al consultar AFIP.", "Servicio AFIP");
         } finally {
             setLoadingAfip(false);
         }
     };
-
-    // Auto-search for Area: Name
-    useEffect(() => {
-        if (!isOpen) return;
-        if (justSelected) {
-             setJustSelected(false); // Reset flag
-             return;
-        }
-
-        if (debouncedName && debouncedName.length >= 3) {
-            // Only auto-search if not currently viewing results for taxId
-            if (searchingField !== 'taxId') {
-                 handleAfipSearch(debouncedName, 'name');
-            }
-        } else if (!debouncedName || debouncedName.length < 3) {
-            if (searchingField === 'name') setAfipResults([]);
-        }
-    }, [debouncedName, isOpen]);
-
     // Auto-search for Area: Tax ID
     useEffect(() => {
         if (!isOpen) return;
@@ -137,10 +118,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         type="text"
                                         required
                                         value={formData.fullName}
-                                        onChange={(e) => {
-                                            setFormData({ ...formData, fullName: e.target.value });
-                                            if (searchingField === 'name') setSearchingField(null); // Reset to re-trigger
-                                        }}
+                                        onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                                         className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-10 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
                                         placeholder="Ej. Juan Pérez"
                                     />

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Save, User, Search, Loader2 } from "lucide-react";
 import { useDebounce } from "../hooks/useDebounce";
 import { api } from "../api";
-import { showError, showSuccess } from "../alerts";
+import { showError, showSuccess, showWarning } from "../alerts";
 
 // Clases reutilizables
 const inputClass = "w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors";
@@ -28,13 +28,12 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
     // Flag to prevent searching right after selecting a result
     const [justSelected, setJustSelected] = useState(false);
 
-    const debouncedName = useDebounce(formData.fullName, 500);
     const debouncedDocument = useDebounce(formData.documentNumber, 500);
 
     const handleAfipSearch = async (query, field) => {
         if (!query) return;
         if (query.length < 3) {
-            showError("Ingresá al menos 3 caracteres.");
+            showWarning("Ingresá al menos 3 caracteres.", "Padrón AFIP");
             return;
         }
         setLoadingAfip(true);
@@ -43,34 +42,16 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             const data = await api.get(`/fiscal/search?q=${encodeURIComponent(query)}`);
             setAfipResults(data);
             if (data.length === 0) {
-                showError("No se encontraron resultados en AFIP.");
+                showWarning("No se encontraron resultados con ese DNI.", "Padrón AFIP");
             }
         } catch (error) {
             console.error(error);
-            showError("Error al consultar AFIP.");
+            const errorMsg = error.response?.data?.message || error.response?.data || "Servicio no disponible temporalmente";
+            showWarning(typeof errorMsg === 'string' ? errorMsg : "Error al consultar AFIP.", "Servicio AFIP");
         } finally {
             setLoadingAfip(false);
         }
     };
-
-    // Auto-search for Area: Name
-    useEffect(() => {
-        if (!isOpen) return;
-        if (justSelected) {
-             setJustSelected(false); // Reset flag
-             return;
-        }
-
-        if (debouncedName && debouncedName.length >= 3) {
-            // Only auto-search if not currently viewing results for document
-            if (searchingField !== 'document') {
-                 handleAfipSearch(debouncedName, 'name');
-            }
-        } else if (!debouncedName || debouncedName.length < 3) {
-            if (searchingField === 'name') setAfipResults([]);
-        }
-    }, [debouncedName, isOpen]);
-
     // Auto-search for Area: Document
     useEffect(() => {
         if (!isOpen) return;
@@ -177,7 +158,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                     value={formData.fullName || ""}
                                     onChange={(e) => {
                                         setFormData({ ...formData, fullName: e.target.value });
-                                        if (searchingField === 'name') setSearchingField(null);
+                                        // Removed: if (searchingField === 'name') setSearchingField(null);
                                     }}
                                 />
                                 <button

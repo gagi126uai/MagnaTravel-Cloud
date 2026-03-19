@@ -102,8 +102,8 @@ public class FiscalController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in Fiscal search for query {Query}", q);
-            return StatusCode(500, $"Error interno en la búsqueda fiscal: {ex.Message}");
+            _logger.LogWarning("AFIP search failed for query {Query}. Reason: {Msg}", q, ex.Message);
+            return BadRequest(new { message = $"AFIP: {ex.Message}" });
         }
     }
 
