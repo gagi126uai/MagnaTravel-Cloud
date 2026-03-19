@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { X, Save, User, Search, Loader2 } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
-import AfipSearchModal from "./AfipSearchModal";
 
 // Clases reutilizables
 const inputClass = "w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors";
@@ -20,8 +19,22 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         gender: "M",
         notes: ""
     });
-    const [isAfipModalOpen, setIsAfipModalOpen] = useState(false);
+    const [afipResults, setAfipResults] = useState([]);
+    const [loadingAfip, setLoadingAfip] = useState(false);
     const [loading, setLoading] = useState(false);
+
+    const handleAfipSearch = async (query) => {
+        if (!query || query.length < 3) return;
+        setLoadingAfip(true);
+        try {
+            const data = await api.get(`/fiscal/search?q=${encodeURIComponent(query)}`);
+            setAfipResults(data);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoadingAfip(false);
+        }
+    };
 
     const handleAfipSelect = (persona) => {
         setFormData(prev => ({
@@ -29,7 +42,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             fullName: persona.razonSocial || `${persona.apellido || ''} ${persona.nombre || ''}`.trim(),
             documentNumber: persona.id || prev.documentNumber
         }));
-        setIsAfipModalOpen(false);
+        setAfipResults([]);
         showSuccess("Datos de AFIP aplicados.");
     };
 
@@ -53,9 +66,8 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         e.preventDefault();
         setLoading(true);
 
-        // Sanitize Payload
         const payload = { ...formData };
-        if (!payload.birthDate) payload.birthDate = null; // Fix for empty string => validation error
+        if (!payload.birthDate) payload.birthDate = null;
         if (payload.nationality === "") payload.nationality = null;
         if (payload.phone === "") payload.phone = null;
         if (payload.email === "") payload.email = null;
@@ -100,16 +112,50 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                     <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
                         {/* Name - Full Width */}
-                        <div className="md:col-span-2">
+                        <div className="md:col-span-2 relative">
                             <label className={labelClass}>Nombre Completo *</label>
-                            <input
-                                required
-                                type="text"
-                                className={inputClass}
-                                placeholder="Ej: Juan Pérez"
-                                value={formData.fullName}
-                                onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                            />
+                            <div className="relative">
+                                <input
+                                    required
+                                    type="text"
+                                    className={`${inputClass} pr-10`}
+                                    placeholder="Ej: Juan Pérez"
+                                    value={formData.fullName}
+                                    onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => handleAfipSearch(formData.fullName)}
+                                    className="absolute right-2 top-1.5 p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                                    title="Buscar en AFIP"
+                                >
+                                    {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> : <Search className="h-4 w-4" />}
+                                </button>
+                            </div>
+
+                            {afipResults.length > 0 && (
+                                <div className="absolute z-[60] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase">Sugerencias AFIP</span>
+                                        <button onClick={() => setAfipResults([])} className="text-gray-400 hover:text-gray-600"><X className="h-3 w-3" /></button>
+                                    </div>
+                                    <div className="max-h-40 overflow-y-auto">
+                                        {afipResults.map((p, idx) => (
+                                            <button
+                                                key={idx}
+                                                type="button"
+                                                onClick={() => handleAfipSelect(p)}
+                                                className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/40 border-b last:border-0 border-gray-50 dark:border-slate-800 transition-colors group"
+                                            >
+                                                <div className="font-medium text-sm text-gray-900 dark:text-white group-hover:text-blue-600 truncate">
+                                                    {p.razonSocial || `${p.apellido} ${p.nombre}`}
+                                                </div>
+                                                <div className="text-[10px] text-gray-500">{p.id} • {p.taxCondition}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div>
@@ -126,27 +172,25 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                             </select>
                         </div>
                         <div>
-                            <div className="flex items-center justify-between mb-1">
-                                <label className={labelClass}>Número de Documento</label>
-                                <button
-                                    type="button"
-                                    onClick={() => setIsAfipModalOpen(true)}
-                                    className="text-[10px] font-bold uppercase tracking-wider text-blue-600 hover:text-blue-700 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded transition-all"
-                                >
-                                    <Search className="h-3 w-3" />
-                                    Consultar AFIP
-                                </button>
-                            </div>
+                            <label className={labelClass}>Número de Documento</label>
                             <div className="relative">
                                 <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                                 <input
                                     type="text"
-                                    className={`${inputClass} pl-10`}
+                                    className={`${inputClass} pl-10 pr-10`}
                                     placeholder="DNI o CUIT"
                                     value={formData.documentNumber || ""}
                                     onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
                                     required
                                 />
+                                <button
+                                    type="button"
+                                    onClick={() => handleAfipSearch(formData.documentNumber)}
+                                    className="absolute right-2 top-2 p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                                    title="Buscar en AFIP"
+                                >
+                                    {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> : <Search className="h-4 w-4" />}
+                                </button>
                             </div>
                         </div>
 
@@ -241,13 +285,6 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                     </form>
                 </div>
             </div>
-
-            <AfipSearchModal 
-                isOpen={isAfipModalOpen}
-                onClose={() => setIsAfipModalOpen(false)}
-                onSelect={handleAfipSelect}
-                initialQuery={formData.documentNumber || formData.fullName}
-            />
         </div>
     );
 }

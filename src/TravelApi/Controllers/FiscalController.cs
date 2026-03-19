@@ -68,19 +68,33 @@ public class FiscalController : ControllerBase
             }
 
             // If it's a name or part of it, search by name
+            _logger.LogInformation("Searching AFIP personas by name: {Query}", q);
             var cuits = await FetchPersonasByName(q);
-            if (cuits == null || !cuits.Any()) return Ok(new List<object>());
+            if (cuits == null || !cuits.Any()) {
+                 _logger.LogWarning("No CUITS found for name: {Query}", q);
+                 return Ok(new List<object>());
+            }
 
-            // Fetch details for the first 5 to show names in the selection list
-            var detailTasks = cuits.Take(5).Select(FetchFromAfip);
-            var results = await Task.WhenAll(detailTasks);
+            // Fetch details for the first 5
+            var detailTasks = cuits.Take(5).Select(async id => {
+                try {
+                    return await FetchFromAfip(id);
+                } catch (Exception ex) {
+                    _logger.LogWarning(ex, "Error fetching details for CUIT {Cuit} during search", id);
+                    return null;
+                }
+            });
             
-            return Ok(results.Where(r => r != null).ToList());
+            var results = await Task.WhenAll(detailTasks);
+            var validResults = results.Where(r => r != null).ToList();
+            
+            _logger.LogInformation("Found {Count} valid results for name: {Query}", validResults.Count, q);
+            return Ok(validResults);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in Fiscal search");
-            return StatusCode(500, "Error interno en la búsqueda fiscal");
+            _logger.LogError(ex, "Error in Fiscal search for query {Query}", q);
+            return StatusCode(500, $"Error interno en la búsqueda fiscal: {ex.Message}");
         }
     }
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { User, Mail, Phone, XCircle, Search, Loader2, FileText } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
-import AfipSearchModal from "../../../components/AfipSearchModal";
+import { showError, showSuccess } from "../../../alerts";
 
 export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
     const [formData, setFormData] = useState({
@@ -17,9 +17,23 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
         isActive: customer?.isActive ?? true,
         taxConditionId: customer?.taxConditionId || 5, // Default Conf. Final
     });
-    const [isAfipModalOpen, setIsAfipModalOpen] = useState(false);
+    const [afipResults, setAfipResults] = useState([]);
+    const [loadingAfip, setLoadingAfip] = useState(false);
 
     if (!isOpen) return null;
+
+    const handleAfipSearch = async (query) => {
+        if (!query || query.length < 3) return;
+        setLoadingAfip(true);
+        try {
+            const data = await api.get(`/fiscal/search?q=${encodeURIComponent(query)}`);
+            setAfipResults(data);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoadingAfip(false);
+        }
+    };
 
     const handleAfipSelect = (persona) => {
         setFormData(prev => ({
@@ -28,7 +42,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
             taxConditionId: persona.taxConditionId || prev.taxConditionId,
             taxId: persona.id || prev.taxId
         }));
-        setIsAfipModalOpen(false);
+        setAfipResults([]);
         showSuccess("Datos de AFIP aplicados.");
     };
 
@@ -69,11 +83,46 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         type="text"
                                         required
                                         value={formData.fullName}
-                                        onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                                        className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
+                                        onChange={(e) => {
+                                            setFormData({ ...formData, fullName: e.target.value });
+                                            // Optional: auto-search after some delay or characters
+                                        }}
+                                        className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-10 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
                                         placeholder="Ej. Juan Pérez"
                                     />
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAfipSearch(formData.fullName)}
+                                        className="absolute right-2 top-1.5 p-1 text-slate-400 hover:text-indigo-600 transition-colors"
+                                        title="Buscar en AFIP"
+                                    >
+                                        {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
+                                    </button>
                                 </div>
+                                
+                                {afipResults.length > 0 && (
+                                    <div className="absolute z-[60] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                        <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                                            <span className="text-[10px] font-bold text-slate-500 uppercase">Resultados AFIP</span>
+                                            <button onClick={() => setAfipResults([])} className="text-slate-400 hover:text-slate-600"><XCircle className="h-3 w-3" /></button>
+                                        </div>
+                                        <div className="max-h-48 overflow-y-auto">
+                                            {afipResults.map((p, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    type="button"
+                                                    onClick={() => handleAfipSelect(p)}
+                                                    className="w-full text-left px-4 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 border-b last:border-0 border-slate-50 dark:border-slate-800 transition-colors group"
+                                                >
+                                                    <div className="font-medium text-sm text-slate-900 dark:text-white group-hover:text-indigo-600">
+                                                        {p.razonSocial || `${p.apellido} ${p.nombre}`}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-500">{p.id} • {p.taxCondition}</div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="space-y-1.5">
@@ -104,10 +153,18 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                     <input
                                         type="text"
                                         placeholder="CUIT, CUIL o DNI"
-                                        className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono"
+                                        className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 pl-10 pr-10 text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono"
                                         value={formData.taxId}
                                         onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
                                     />
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAfipSearch(formData.taxId)}
+                                        className="absolute right-2 top-2 p-1 text-slate-400 hover:text-indigo-600 transition-colors"
+                                        title="Buscar en AFIP"
+                                    >
+                                        {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
+                                    </button>
                                 </div>
                             </div>
 
@@ -181,13 +238,6 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                     </div>
                 </form>
             </div>
-
-            <AfipSearchModal 
-                isOpen={isAfipModalOpen}
-                onClose={() => setIsAfipModalOpen(false)}
-                onSelect={handleAfipSelect}
-                initialQuery={formData.taxId || formData.fullName}
-            />
         </div>
     );
 }
