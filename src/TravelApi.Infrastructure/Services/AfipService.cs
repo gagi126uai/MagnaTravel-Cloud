@@ -1027,6 +1027,15 @@ public class AfipService : IAfipService
 
     private async Task<(string token, string sign)> GetPadronAuth(AfipSettings settings)
     {
+        // 1. Check valid cached token
+        if (!string.IsNullOrEmpty(settings.PadronToken) && !string.IsNullOrEmpty(settings.PadronSign))
+        {
+            if (settings.PadronTokenExpiration.HasValue && settings.PadronTokenExpiration.Value > DateTime.UtcNow.AddMinutes(5))
+            {
+                return (settings.PadronToken, settings.PadronSign);
+            }
+        }
+
         var cert = new X509Certificate2(settings.CertificateData, settings.CertificatePassword, X509KeyStorageFlags.Exportable);
         var uniqueId = (uint)(DateTime.UtcNow.Ticks % uint.MaxValue);
         var argentinaTime = DateTime.UtcNow.AddHours(-3);
@@ -1065,18 +1074,59 @@ public class AfipService : IAfipService
         var response = await _httpClient.SendAsync(request);
         var responseXml = await response.Content.ReadAsStringAsync();
 
+        XDocument doc;
+        try 
+        {
+            doc = XDocument.Parse(responseXml);
+        }
+        catch
+        {
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"WSAA Error Padron: {response.StatusCode} {responseXml}");
+            throw;
+        }
+
+        // Check for faults
+        var fault = doc.Descendants(XName.Get("Fault", "http://schemas.xmlsoap.org/soap/envelope/")).FirstOrDefault();
+        if (fault != null)
+        {
+            var faultCode = fault.Element("faultcode")?.Value;
+            var faultString = fault.Element("faultstring")?.Value;
+
+            if (faultCode != null && faultCode.Contains("alreadyAuthenticated"))
+            {
+                 throw new Exception("AFIP Error: Ya existe un token generado recientemente para el Padron (posiblemente un intento anterior que no se guardó). Por seguridad de AFIP, debés esperar aproximadamente 12 horas para que el ticket actual expire y el sistema pueda generar y guardar uno nuevo automáticamente.");
+            }
+            throw new Exception($"Error de Autenticación AFIP Padron: {faultString}");
+        }
+
         if (!response.IsSuccessStatusCode)
             throw new Exception($"Error authenticating with WSAA for ws_sr_padron_a5: {response.StatusCode} {responseXml}");
 
-        var doc = XDocument.Parse(responseXml);
         var loginCmsReturn = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "loginCmsReturn")?.Value;
-        
         if (string.IsNullOrEmpty(loginCmsReturn))
             throw new Exception("WSAA Empty Response for ws_sr_padron_a5");
 
         var ticket = XDocument.Parse(loginCmsReturn);
         var token = ticket.Descendants("token").First().Value;
         var sign = ticket.Descendants("sign").First().Value;
+        
+        var expirationStr = ticket.Descendants("expirationTime").First().Value;
+        var expirationLocal = DateTime.Parse(expirationStr);
+        var expirationUtc = DateTime.SpecifyKind(expirationLocal.AddHours(3), DateTimeKind.Utc);
+
+        settings.PadronToken = token;
+        settings.PadronSign = sign;
+        settings.PadronTokenExpiration = expirationUtc;
+
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error guardando token de Padron en BD");
+        }
 
         return (token, sign);
     }

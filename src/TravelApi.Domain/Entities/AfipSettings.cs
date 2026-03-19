@@ -27,6 +27,11 @@ public class AfipSettings
     public string? Sign { get; set; }
     public DateTime? TokenExpiration { get; set; }
 
+    // Padron token caching fields
+    public string? PadronToken { get; set; }
+    public string? PadronSign { get; set; }
+    public DateTime? PadronTokenExpiration { get; set; }
+
     [MaxLength(50)]
     public string TaxCondition { get; set; } = "Responsable Inscripto"; // Monotributo, Exento
 }

@@ -321,6 +321,13 @@ using (var scope = app.Services.CreateScope())
 
     // Hotfixes for existing databases
     await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"AfipSettings\" ADD COLUMN IF NOT EXISTS \"PadronToken\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"AfipSettings\" ADD COLUMN IF NOT EXISTS \"PadronSign\" text;");
+    await dbContext.Database.ExecuteSqlRawAsync(
+        "ALTER TABLE \"AfipSettings\" ADD COLUMN IF NOT EXISTS \"PadronTokenExpiration\" timestamp with time zone;");
+
+    await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"TaxId\" character varying(20);");
     await dbContext.Database.ExecuteSqlRawAsync(
         "ALTER TABLE \"Suppliers\" ADD COLUMN IF NOT EXISTS \"ContactName\" character varying(100) DEFAULT '';");
