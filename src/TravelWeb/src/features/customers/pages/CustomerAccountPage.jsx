@@ -127,10 +127,10 @@ export default function CustomerAccountPage() {
             </div>
         );
     }
-
     const { customer, reservas = [], payments = [], summary = {}, invoices = [] } = data;
+    const [activeTab, setActiveTab] = useState("ledger");
 
-    // --- Unified Ledger Logic ---
+    // --- Ledger Calculation (Debits & Credits only) ---
     const debitMovements = (reservas || []).map(r => ({
         id: r.id,
         trackId: `res-${r.id}`,
@@ -153,31 +153,20 @@ export default function CustomerAccountPage() {
         originalData: p
     }));
 
-    const invoiceMovements = (invoices || []).map(i => ({
-        id: i.id,
-        trackId: `inv-${i.id}`,
-        type: 'INVOICE',
-        date: i.createdAt,
-        concept: `${i.tipoComprobante === 1 ? 'Factura A' : i.tipoComprobante === 6 ? 'Factura B' : 'Factura C'} ${String(i.puntoDeVenta).padStart(5, '0')}-${String(i.numeroComprobante).padStart(8, '0')}`,
-        debit: 0, 
-        credit: 0, // Informational only in ledger to avoid double counting
-        info: formatCurrency(i.importeTotal),
-        originalData: i
-    }));
+    // Merge and Sort for Financial Balance
+    const financialMovements = [...debitMovements, ...creditMovements].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-    // Merge and Sort
-    const allMovements = [...debitMovements, ...creditMovements, ...invoiceMovements].sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    // Calculate Balance (Invoices don't affect it here as the Reserva already did)
+    // Calculate Running Balance
     let runningBalance = 0;
-    const ledger = allMovements.map(m => {
-        if (m.type !== 'INVOICE') {
-            runningBalance += (m.debit - m.credit);
-        }
+    const ledger = financialMovements.map(m => {
+        runningBalance += (m.debit - m.credit);
         return { ...m, balance: runningBalance };
     });
 
     const displayLedger = [...ledger].reverse();
+
+    // --- Invoices Tab (Pure History) ---
+    const displayInvoices = (invoices || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
@@ -188,14 +177,16 @@ export default function CustomerAccountPage() {
                         <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div>
-                        <h1 className="text-2xl font-bold tracking-tight">Cuenta Corriente</h1>
+                        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Cuenta Corriente</h1>
                         <p className="text-muted-foreground">{customer.fullName}</p>
                     </div>
                 </div>
-                <Button onClick={() => handleOpenModal(null)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-500/20">
-                    <Plus className="h-4 w-4" />
-                    Nueva Cobranza
-                </Button>
+                <div className="flex gap-2">
+                    <Button onClick={() => handleOpenModal(null)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-500/20">
+                        <Plus className="h-4 w-4" />
+                        Nueva Cobranza
+                    </Button>
+                </div>
             </div>
 
             {/* Customer Info Card & Summary */}
@@ -235,27 +226,42 @@ export default function CustomerAccountPage() {
                     <div className={`text-3xl font-bold ${summary.totalBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                         {formatCurrency(summary.totalBalance)}
                     </div>
-                    <div className="text-xs text-slate-400 mt-2">
+                    <div className="text-xs text-slate-400 mt-2 font-medium">
                         {summary.totalBalance > 0 ? "Deuda Pendiente" : "Al día / A favor"}
                     </div>
                 </div>
             </div>
 
-            <div className="grid gap-6">
-                {/* Unified Ledger Table */}
-                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
-                    <div className="bg-slate-50/50 px-6 py-4 border-b border-slate-200 dark:bg-slate-800/20 dark:border-slate-800 flex items-center justify-between">
-                        <h3 className="font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
-                            <Wallet className="h-5 w-5 text-indigo-500" />
-                            Historial de Movimientos (Incluye Facturas AFIP)
-                        </h3>
-                        <div className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">
-                            Cuenta Corriente
-                        </div>
+            {/* Tabs Control */}
+            <div className="flex border-b border-slate-200 dark:border-slate-800 gap-8">
+                <button
+                    onClick={() => setActiveTab("ledger")}
+                    className={`pb-4 text-sm font-semibold transition-all relative ${activeTab === "ledger" ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                >
+                    <div className="flex items-center gap-2">
+                        <Wallet className="h-4 w-4" /> Movimientos
                     </div>
+                    {activeTab === "ledger" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600 dark:bg-indigo-400 rounded-full" />}
+                </button>
+                <button
+                    onClick={() => setActiveTab("invoices")}
+                    className={`pb-4 text-sm font-semibold transition-all relative ${activeTab === "invoices" ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                >
+                    <div className="flex items-center gap-2">
+                        <Receipt className="h-4 w-4" /> Facturación AFIP
+                        <span className="bg-slate-100 dark:bg-slate-800 text-[10px] px-1.5 py-0.5 rounded-full ml-1">
+                            {invoices.length}
+                        </span>
+                    </div>
+                    {activeTab === "invoices" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600 dark:bg-indigo-400 rounded-full" />}
+                </button>
+            </div>
 
-                    {displayLedger.length > 0 ? (
-                        <>
+            {/* Content per Tab */}
+            <div className="grid gap-6">
+                {activeTab === "ledger" ? (
+                    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        {displayLedger.length > 0 ? (
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm text-left">
                                     <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400">
@@ -270,7 +276,7 @@ export default function CustomerAccountPage() {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                         {displayLedger.map((move) => (
-                                            <tr key={move.trackId} className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group ${move.type === 'INVOICE' ? 'bg-slate-50/30 dark:bg-slate-800/10' : ''}`}>
+                                            <tr key={move.trackId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
                                                 <td className="px-6 py-4 text-slate-600 dark:text-slate-400 font-medium">
                                                     {formatDate(move.date)}
                                                 </td>
@@ -283,13 +289,9 @@ export default function CustomerAccountPage() {
                                                             <span className="text-rose-500 flex items-center gap-1">
                                                                 <ArrowUpRight className="h-3 w-3" /> Cargo por Servicios
                                                             </span>
-                                                        ) : move.type === 'PAYMENT' ? (
+                                                        ) : (
                                                             <span className="text-emerald-500 flex items-center gap-1">
                                                                 <ArrowDownLeft className="h-3 w-3" /> Cobranza Recibida
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-indigo-500 flex items-center gap-1">
-                                                                <Receipt className="h-3 w-3" /> Documento Fiscal AFIP ({move.info})
                                                             </span>
                                                         )}
                                                     </div>
@@ -301,7 +303,7 @@ export default function CustomerAccountPage() {
                                                     {move.credit > 0 ? formatCurrency(move.credit) : "-"}
                                                 </td>
                                                 <td className="px-6 py-4 text-right font-black text-slate-700 dark:text-slate-300 bg-slate-50/30 dark:bg-slate-800/10">
-                                                    {move.type !== 'INVOICE' ? formatCurrency(move.balance) : "---"}
+                                                    {formatCurrency(move.balance)}
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
                                                     <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -315,11 +317,6 @@ export default function CustomerAccountPage() {
                                                                 <Eye className="h-4 w-4" />
                                                             </Link>
                                                         )}
-                                                        {move.type === 'INVOICE' && (
-                                                            <button className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 transition-all">
-                                                                <Download className="w-4 h-4" />
-                                                            </button>
-                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -327,13 +324,72 @@ export default function CustomerAccountPage() {
                                     </tbody>
                                 </table>
                             </div>
-                        </>
-                    ) : (
-                        <div className="px-6 py-16 text-center text-slate-400 italic bg-slate-50/50 dark:bg-slate-800/10">
-                            No se registran movimientos en la cuenta.
-                        </div>
-                    )}
-                </div>
+                        ) : (
+                            <div className="px-6 py-16 text-center text-slate-400 italic bg-slate-50/50 dark:bg-slate-800/10">
+                                No se registran movimientos financieros en la cuenta.
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        {displayInvoices.length > 0 ? (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400">
+                                        <tr>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px]">Fecha Emisión</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px]">Nro de Comprobante</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px]">Tipo</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px] text-right">Importe Total</th>
+                                            <th className="px-6 py-3 font-bold uppercase text-[10px] text-center">Estado</th>
+                                            <th className="px-6 py-3 w-[100px]"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                        {displayInvoices.map((inv) => (
+                                            <tr key={inv.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
+                                                <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
+                                                    {formatDate(inv.createdAt)}
+                                                </td>
+                                                <td className="px-6 py-4 font-black tracking-tight text-slate-900 dark:text-white">
+                                                    {String(inv.puntoDeVenta).padStart(5, '0')}-{String(inv.numeroComprobante).padStart(8, '0')}
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <Receipt className="h-4 w-4 text-indigo-400" />
+                                                        <span className="font-semibold">{inv.tipoComprobante === 1 ? 'Factura A' : inv.tipoComprobante === 6 ? 'Factura B' : inv.tipoComprobante === 11 ? 'Factura C' : `Tipo ${inv.tipoComprobante}`}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 text-right font-black text-slate-900 dark:text-white">
+                                                    {formatCurrency(inv.importeTotal)}
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${inv.cae ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-slate-100 text-slate-600'}`}>
+                                                        {inv.cae ? 'Autorizado' : 'Pendiente'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-900 transition-colors" title="Descargar PDF">
+                                                            <Download className="h-4 w-4" />
+                                                        </button>
+                                                        <Link to={`/reservas/${inv.reservaId}`} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-900 transition-colors inline-block" title="Ir a Reserva">
+                                                            <ArrowUpRight className="h-4 w-4" />
+                                                        </Link>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : (
+                            <div className="px-6 py-16 text-center text-slate-400 italic bg-slate-50/50 dark:bg-slate-800/10">
+                                No se registran facturas emitidas ante AFIP para este cliente.
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <CustomerPaymentModal
