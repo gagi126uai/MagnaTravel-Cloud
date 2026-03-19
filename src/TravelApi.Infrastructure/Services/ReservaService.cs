@@ -456,6 +456,7 @@ public class ReservaService : IReservaService
 
         file.TotalSale = totalSale;
         file.TotalCost = totalCost;
+        file.TotalPaid = totalPaid;
         file.Balance = totalSale - totalPaid;
 
         await _context.SaveChangesAsync();

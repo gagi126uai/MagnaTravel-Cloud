@@ -381,7 +381,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<ReservaAttachment>(entity =>
         {
             entity.ToTable("ReservaAttachments");
-            entity.Property(a => a.ReservaId).HasColumnName("TravelFileId");
+            // Usamos ReservaId directamente (estándar nuevo)
+            entity.Property(a => a.ReservaId).IsRequired();
         });
 
         // SupplierPayment (Egresos)

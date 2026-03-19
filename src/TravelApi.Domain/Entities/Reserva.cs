@@ -50,6 +50,9 @@ public class Reserva
     [Column(TypeName = "decimal(18,2)")]
     public decimal Balance { get; set; } = 0;
 
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal TotalPaid { get; set; } = 0;
+
     // Navigation
     public ICollection<ServicioReserva> Servicios { get; set; } = new List<ServicioReserva>();
     public ICollection<Passenger> Passengers { get; set; } = new List<Passenger>();

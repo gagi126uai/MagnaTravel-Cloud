@@ -153,6 +153,7 @@ builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 // Pilar 1: Cotizador + CRM + Vouchers
 builder.Services.AddScoped<IQuoteService, QuoteService>();
 builder.Services.AddScoped<ILeadService, LeadService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IVoucherService, VoucherService>();
 
 // Load allowed origins from configuration (appsettings.json or ENV)
@@ -293,30 +294,7 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     
-    // HYBRID MIGRATION STRATEGY (Legacy -> EF Core)
-    await dbContext.Database.ExecuteSqlRawAsync(
-        """
-        CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
-            "MigrationId" character varying(150) NOT NULL,
-            "ProductVersion" character varying(32) NOT NULL,
-            CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")
-        );
-        """);
-
-    // Mark legacy migration as applied if tables exist
-    await dbContext.Database.ExecuteSqlRawAsync(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'Customers') THEN
-                INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
-                VALUES ('20260119202735_InitialRetailPivot', '8.0.0')
-                ON CONFLICT DO NOTHING;
-            END IF;
-        END
-        $$;
-        """);
-
+    // EF Core Migrations
     await dbContext.Database.MigrateAsync();
 
     // Hotfixes and schema updates are now managed by EF Core Migrations.

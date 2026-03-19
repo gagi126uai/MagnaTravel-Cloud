@@ -70,6 +70,7 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer))
             .ForMember(dest => dest.Servicios, opt => opt.MapFrom(src => src.Servicios))
+            .ForMember(dest => dest.TotalPaid, opt => opt.MapFrom(src => src.TotalPaid))
             .ForMember(dest => dest.Invoices, opt => opt.Ignore()); 
 
         CreateMap<Reserva, ReservaListDto>()
@@ -89,6 +90,7 @@ public class MappingProfile : Profile
                  (src.Servicios.Sum(r => (decimal?)r.SalePrice) ?? 0)) 
                 - 
                 (src.Payments.Where(p => p.Status != "Cancelled" &&  !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
-            ));
+            ))
+            .ForMember(dest => dest.TotalPaid, opt => opt.MapFrom(src => src.TotalPaid));
     }
 }

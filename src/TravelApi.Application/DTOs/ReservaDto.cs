@@ -12,6 +12,7 @@ public class ReservaDto
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience
     public decimal TotalCost { get; set; }
     public decimal TotalSale { get; set; }
+    public decimal TotalPaid { get; set; }
     public decimal Balance { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? StartDate { get; set; }
