@@ -1527,6 +1527,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("TotalCost")
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<decimal>("TotalPaid")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<decimal>("TotalSale")
                         .HasColumnType("decimal(18,2)");
 
@@ -1556,8 +1559,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint");
 
                     b.Property<int>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<string>("StoredFileName")
                         .IsRequired()
