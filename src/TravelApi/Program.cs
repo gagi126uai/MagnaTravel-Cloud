@@ -212,17 +212,29 @@ app.Use(async (context, next) =>
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    try 
+    int retries = 5;
+    while (retries > 0)
     {
-        app.Logger.LogInformation("Applying EF Core Migrations...");
-        await db.Database.MigrateAsync();
-        app.Logger.LogInformation("EF Core Migrations applied successfully.");
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogError(ex, "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS");
-        // We don't throw here to avoid an infinite restart loop if DB is temporarily down,
-        // but the app might fail later (as it is doing now).
+        try 
+        {
+            app.Logger.LogInformation("Applying EF Core Migrations (Attempts remaining: {Retries})...", retries);
+            await db.Database.MigrateAsync();
+            app.Logger.LogInformation("EF Core Migrations applied successfully.");
+            break;
+        }
+        catch (Exception ex)
+        {
+            retries--;
+            if (retries == 0)
+            {
+                app.Logger.LogError(ex, "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS AFTER MULTIPLE ATTEMPTS");
+            }
+            else
+            {
+                app.Logger.LogWarning("Migration failed, retrying in 5 seconds... Error: {Message}", ex.Message);
+                await Task.Delay(5000);
+            }
+        }
     }
 }
 
