@@ -36,6 +36,8 @@ public class AfipService : IAfipService
     private const string WsaaUrlProd = "https://wsaa.afip.gov.ar/ws/services/LoginCms";
     private const string WsfeUrlDev = "https://wswhomo.afip.gov.ar/wsfev1/service.asmx";
     private const string WsfeUrlProd = "https://servicios1.afip.gov.ar/wsfev1/service.asmx";
+    private const string WsPadronUrlDev = "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA5";
+    private const string WsPadronUrlProd = "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5";
 
     public AfipService(AppDbContext context, ILogger<AfipService> logger, HttpClient httpClient)
     {
@@ -904,5 +906,178 @@ public class AfipService : IAfipService
         if (string.IsNullOrEmpty(val)) return 0;
         if (decimal.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal d)) return d;
         return 0;
+    }
+
+    // --- Padron A5 Implementation ---
+
+    public async Task<object?> GetPersonaDetailsAsync(long cuit)
+    {
+        var settings = await _context.AfipSettings.FirstOrDefaultAsync();
+        if (settings == null || settings.CertificateData == null)
+            throw new Exception("AFIP no configurado o certificado faltante.");
+
+        // We need a specific token for ws_sr_padron_a5, not wsfe.
+        // We will authenticate dynamically for this call.
+        var (token, sign) = await GetPadronAuth(settings);
+
+        var url = settings.IsProduction ? WsPadronUrlProd : WsPadronUrlDev;
+        var action = "http://a5.soap.ws.server.puc.sr/"; // Note: AFIP SOAP actions can be tricky. Usually for A5 it's not strictly enforced in headers, but we'll set it empty if it fails.
+        // The namespace for PersonaServiceA5 is usually http://a5.soap.ws.server.puc.sr/
+        
+        var soapEnv = $@"<?xml version=""1.0"" encoding=""UTF-8""?>
+<soapenv:Envelope xmlns:soapenv=""http://schemas.xmlsoap.org/soap/envelope/"" xmlns:a5=""http://a5.soap.ws.server.puc.sr/"">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <a5:getPersona>
+         <sign>{sign}</sign>
+         <token>{token}</token>
+         <cuitRepresentada>{settings.Cuit}</cuitRepresentada>
+         <idPersona>{cuit}</idPersona>
+      </a5:getPersona>
+   </soapenv:Body>
+</soapenv:Envelope>";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("SOAPAction", "\"\""); // Usually empty or specific action
+        request.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseXml = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+             _logger.LogError("Error from ws_sr_padron_a5: {Response}", responseXml);
+             return null;
+        }
+
+        var doc = XDocument.Parse(responseXml);
+        
+        // Check for specific padron faults within the success response
+        var errorNode = doc.Descendants(XName.Get("errorConstancia", "http://a5.soap.ws.server.puc.sr/")).FirstOrDefault();
+        if (errorNode != null)
+        {
+            var errError = errorNode.Element(XName.Get("error", "http://a5.soap.ws.server.puc.sr/"))?.Value;
+            _logger.LogWarning("Padron Error for CUIT {Cuit}: {Error}", cuit, errError);
+            return null; // Not found or error
+        }
+
+        var personaReturn = doc.Descendants(XName.Get("personaReturn", "http://a5.soap.ws.server.puc.sr/")).FirstOrDefault();
+        if (personaReturn == null) return null;
+
+        var datosGenerales = personaReturn.Element(XName.Get("datosGenerales", "http://a5.soap.ws.server.puc.sr/"));
+        if (datosGenerales == null) return null;
+
+        var nombre = datosGenerales.Element(XName.Get("nombre", "http://a5.soap.ws.server.puc.sr/"))?.Value;
+        var apellido = datosGenerales.Element(XName.Get("apellido", "http://a5.soap.ws.server.puc.sr/"))?.Value;
+        var razonSocial = datosGenerales.Element(XName.Get("razonSocial", "http://a5.soap.ws.server.puc.sr/"))?.Value;
+        var tipoPersona = datosGenerales.Element(XName.Get("tipoPersona", "http://a5.soap.ws.server.puc.sr/"))?.Value; // FISICA or JURIDICA
+        var estadoClave = datosGenerales.Element(XName.Get("estadoClave", "http://a5.soap.ws.server.puc.sr/"))?.Value;
+
+        // Try to determine tax condition from datosMonotributo or datosRegimenGeneral
+        string taxCondDesc = "Consumidor Final";
+        int taxCondId = 5;
+
+        var monotributoNode = personaReturn.Element(XName.Get("datosMonotributo", "http://a5.soap.ws.server.puc.sr/"));
+        if (monotributoNode != null)
+        {
+            taxCondDesc = "Monotributo";
+            taxCondId = 6;
+        }
+        else
+        {
+            var regimenGeneral = personaReturn.Element(XName.Get("datosRegimenGeneral", "http://a5.soap.ws.server.puc.sr/"));
+            if (regimenGeneral != null)
+            {
+                var impuestos = regimenGeneral.Element(XName.Get("impuesto", "http://a5.soap.ws.server.puc.sr/")); // Note: it might be an array of <impuesto>
+                if (impuestos != null)
+                {
+                    // If they have any regimen general, usually Responsable Inscripto or Exento
+                    // More complex parsing needed for exact IVA status, robust default helps:
+                    taxCondDesc = "Responsable Inscripto";
+                    taxCondId = 1;
+
+                    // Try to find if IVA Exento (idImpuesto = 32 usually)
+                    var allImpuestos = regimenGeneral.Elements(XName.Get("impuesto", "http://a5.soap.ws.server.puc.sr/"));
+                    foreach (var imp in allImpuestos)
+                    {
+                        var desc = imp.Element(XName.Get("descripcionImpuesto", "http://a5.soap.ws.server.puc.sr/"))?.Value?.ToLower() ?? "";
+                        if (desc.Contains("exento"))
+                        {
+                            taxCondDesc = "Exento";
+                            taxCondId = 4;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        return new
+        {
+            Id = cuit.ToString(),
+            Nombre = nombre,
+            Apellido = apellido,
+            RazonSocial = razonSocial,
+            TipoPersona = tipoPersona,
+            Estado = estadoClave,
+            TaxCondition = taxCondDesc,
+            TaxConditionId = taxCondId
+        };
+    }
+
+    private async Task<(string token, string sign)> GetPadronAuth(AfipSettings settings)
+    {
+        var cert = new X509Certificate2(settings.CertificateData, settings.CertificatePassword, X509KeyStorageFlags.Exportable);
+        var uniqueId = (uint)(DateTime.UtcNow.Ticks % uint.MaxValue);
+        var argentinaTime = DateTime.UtcNow.AddHours(-3);
+        
+        var xml = new XElement("loginTicketRequest",
+            new XAttribute("version", "1.0"),
+            new XElement("header",
+                new XElement("uniqueId", uniqueId),
+                new XElement("generationTime", argentinaTime.AddMinutes(-10).ToString("yyyy-MM-ddTHH:mm:ss")),
+                new XElement("expirationTime", argentinaTime.AddMinutes(+10).ToString("yyyy-MM-ddTHH:mm:ss"))
+            ),
+            new XElement("service", "ws_sr_padron_a5") // IMPORTANT: Target service is different
+        );
+
+        var cms = new SignedCms(new ContentInfo(Encoding.UTF8.GetBytes(xml.ToString())));
+        var signer = new CmsSigner(cert);
+        signer.IncludeOption = X509IncludeOption.EndCertOnly;
+        cms.ComputeSignature(signer);
+        var signatureBase64 = Convert.ToBase64String(cms.Encode());
+
+        var soapEnv = $@"<?xml version=""1.0"" encoding=""UTF-8""?>
+<soapenv:Envelope xmlns:soapenv=""http://schemas.xmlsoap.org/soap/envelope/"" xmlns:ser=""http://wsaa.view.sua.dnet.fpm.afip.gov.ar/report/LoginCms"">
+<soapenv:Header/>
+<soapenv:Body>
+    <ser:loginCms>
+        <in0>{signatureBase64}</in0>
+    </ser:loginCms>
+</soapenv:Body>
+</soapenv:Envelope>";
+
+        var url = settings.IsProduction ? WsaaUrlProd : WsaaUrlDev;
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("SOAPAction", "\"\""); 
+        request.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseXml = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+            throw new Exception($"Error authenticating with WSAA for ws_sr_padron_a5: {response.StatusCode} {responseXml}");
+
+        var doc = XDocument.Parse(responseXml);
+        var loginCmsReturn = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "loginCmsReturn")?.Value;
+        
+        if (string.IsNullOrEmpty(loginCmsReturn))
+            throw new Exception("WSAA Empty Response for ws_sr_padron_a5");
+
+        var ticket = XDocument.Parse(loginCmsReturn);
+        var token = ticket.Descendants("token").First().Value;
+        var sign = ticket.Descendants("sign").First().Value;
+
+        return (token, sign);
     }
 }

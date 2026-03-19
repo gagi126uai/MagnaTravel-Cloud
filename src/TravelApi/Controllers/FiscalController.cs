@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http;
 using System.Text.Json;
+using TravelApi.Application.Interfaces;
 
 namespace TravelApi.Controllers;
 
@@ -12,11 +13,13 @@ public class FiscalController : ControllerBase
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<FiscalController> _logger;
+    private readonly IAfipService _afipService;
 
-    public FiscalController(HttpClient httpClient, ILogger<FiscalController> logger)
+    public FiscalController(HttpClient httpClient, ILogger<FiscalController> logger, IAfipService afipService)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _afipService = afipService;
     }
 
     [HttpGet("persona/{id}")]
@@ -90,40 +93,9 @@ public class FiscalController : ControllerBase
                 }
             }
 
-            // 3. Search by Name (always try this if it doesn't look like a FULL CUIT)
-            _logger.LogInformation("Searching AFIP personas by name/query: {Query}", q);
-            var cuitsByName = await FetchPersonasByName(q);
-            if (cuitsByName != null && cuitsByName.Any())
-            {
-                // Fetch details for the first 5 unique CUITS we haven't found yet
-                var detailTasks = cuitsByName
-                    .Where(c => !foundCuits.Contains(c))
-                    .Take(5)
-                    .Select(async id => {
-                        try {
-                            return await FetchFromAfip(id);
-                        } catch (Exception ex) {
-                            _logger.LogWarning(ex, "Error fetching details for CUIT {Cuit} during search", id);
-                            return null;
-                        }
-                    });
-                
-                var results = await Task.WhenAll(detailTasks);
-                foreach (var r in results)
-                {
-                    if (r != null)
-                    {
-                        // Use reflection or dynamic to get 'Id' property from the anonymous object
-                        var idProp = r.GetType().GetProperty("Id");
-                        var idVal = idProp?.GetValue(r)?.ToString();
-                        if (idVal != null && !foundCuits.Contains(idVal))
-                        {
-                            finalResults.Add(r);
-                            foundCuits.Add(idVal);
-                        }
-                    }
-                }
-            }
+            // 3. Search by Name (Disabled for official Padron A5)
+            // The official AFIP ws_sr_padron_a5 only supports exact CUIT searches.
+            // Name searching requires a paid third-party service like Nosis.
             
             _logger.LogInformation("Fiscal search for '{Query}' returned {Count} results.", q, finalResults.Count);
             return Ok(finalResults);
@@ -135,53 +107,13 @@ public class FiscalController : ControllerBase
         }
     }
 
-    private async Task<List<string>?> FetchPersonasByName(string name)
-    {
-        var url = $"https://soa.afip.gob.ar/sr-padron/v2/personas/{Uri.EscapeDataString(name)}";
-        var response = await _httpClient.GetAsync(url);
-        if (!response.IsSuccessStatusCode) return null;
-
-        var content = await response.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(content);
-        
-        if (!doc.RootElement.GetProperty("success").GetBoolean()) return null;
-
-        var data = doc.RootElement.GetProperty("data");
-        if (data.ValueKind != JsonValueKind.Array) return null;
-
-        var list = new List<string>();
-        foreach (var item in data.EnumerateArray())
-        {
-            list.Add(item.GetString() ?? "");
-        }
-        return list;
-    }
-
     private async Task<object?> FetchFromAfip(string id)
     {
-        var url = $"https://soa.afip.gob.ar/sr-padron/v2/persona/{id}";
-        var response = await _httpClient.GetAsync(url);
-        if (!response.IsSuccessStatusCode) return null;
-
-        var content = await response.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(content);
-        
-        if (!doc.RootElement.GetProperty("success").GetBoolean()) return null;
-
-        var data = doc.RootElement.GetProperty("data");
-        var taxConditionInfo = MapTaxCondition(data);
-
-        return new
+        if (long.TryParse(id, out long cuit))
         {
-            Id = id,
-            Nombre = data.TryGetProperty("nombre", out var n) ? n.GetString() : null,
-            Apellido = data.TryGetProperty("apellido", out var a) ? a.GetString() : null,
-            RazonSocial = data.TryGetProperty("razonSocial", out var rs) ? rs.GetString() : null,
-            TipoPersona = data.TryGetProperty("tipoPersona", out var tp) ? tp.GetString() : null,
-            Estado = data.TryGetProperty("estado", out var e) ? e.GetString() : null,
-            TaxCondition = taxConditionInfo.description,
-            TaxConditionId = taxConditionInfo.id
-        };
+            return await _afipService.GetPersonaDetailsAsync(cuit);
+        }
+        return null;
     }
 
     private string CalculateCuil(string dni, string prefix)

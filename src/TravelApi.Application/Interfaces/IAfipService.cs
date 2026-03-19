@@ -16,4 +16,5 @@ public interface IAfipService
     Task<Invoice> CreatePendingInvoice(int ReservaId, CreateInvoiceRequest request);
     Task ProcessInvoiceJob(int invoiceId);
     Task<AfipVoucherDetails?> GetVoucherDetails(int cbteTipo, int ptoVta, long cbteNro);
+    Task<object?> GetPersonaDetailsAsync(long cuit);
 }
