@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { User, Mail, Phone, XCircle, Search, Loader2, FileText } from "lucide-react";
+import { useDebounce } from "../../../hooks/useDebounce";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 
@@ -20,6 +21,12 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
     const [afipResults, setAfipResults] = useState([]);
     const [loadingAfip, setLoadingAfip] = useState(false);
     const [searchingField, setSearchingField] = useState(null); // 'name' or 'taxId'
+    
+    // Flag to prevent searching right after selecting a result
+    const [justSelected, setJustSelected] = useState(false);
+
+    const debouncedName = useDebounce(formData.fullName, 500);
+    const debouncedTaxId = useDebounce(formData.taxId, 500);
 
     if (!isOpen) return null;
 
@@ -45,6 +52,41 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
         }
     };
 
+    // Auto-search for Area: Name
+    useEffect(() => {
+        if (!isOpen) return;
+        if (justSelected) {
+             setJustSelected(false); // Reset flag
+             return;
+        }
+
+        if (debouncedName && debouncedName.length >= 3) {
+            // Only auto-search if not currently viewing results for taxId
+            if (searchingField !== 'taxId') {
+                 handleAfipSearch(debouncedName, 'name');
+            }
+        } else if (!debouncedName || debouncedName.length < 3) {
+            if (searchingField === 'name') setAfipResults([]);
+        }
+    }, [debouncedName, isOpen]);
+
+    // Auto-search for Area: Tax ID
+    useEffect(() => {
+        if (!isOpen) return;
+        if (justSelected) {
+            setJustSelected(false); // Reset flag
+            return;
+        }
+
+        if (debouncedTaxId && debouncedTaxId.length >= 3) {
+            if (searchingField !== 'name') {
+                 handleAfipSearch(debouncedTaxId, 'taxId');
+            }
+        } else if (!debouncedTaxId || debouncedTaxId.length < 3) {
+            if (searchingField === 'taxId') setAfipResults([]);
+        }
+    }, [debouncedTaxId, isOpen]);
+
     const handleAfipSelect = (persona) => {
         setFormData(prev => ({
             ...prev,
@@ -54,6 +96,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
         }));
         setAfipResults([]);
         setSearchingField(null);
+        setJustSelected(true); // Prevent immediate re-trigger
         showSuccess("Datos de AFIP aplicados.");
     };
 
@@ -96,12 +139,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         value={formData.fullName}
                                         onChange={(e) => {
                                             setFormData({ ...formData, fullName: e.target.value });
-                                        }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                handleAfipSearch(formData.fullName, 'name');
-                                            }
+                                            if (searchingField === 'name') setSearchingField(null); // Reset to re-trigger
                                         }}
                                         className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-10 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
                                         placeholder="Ej. Juan Pérez"
@@ -161,12 +199,9 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         placeholder="CUIT, CUIL o DNI"
                                         className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 pl-10 pr-10 text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono"
                                         value={formData.taxId}
-                                        onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                handleAfipSearch(formData.taxId, 'taxId');
-                                            }
+                                        onChange={(e) => {
+                                            setFormData({ ...formData, taxId: e.target.value });
+                                            if (searchingField === 'taxId') setSearchingField(null);
                                         }}
                                     />
                                     <button

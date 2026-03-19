@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { X, Save, User, Search, Loader2 } from "lucide-react";
+import { useDebounce } from "../hooks/useDebounce";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 
@@ -23,6 +24,12 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
     const [loadingAfip, setLoadingAfip] = useState(false);
     const [searchingField, setSearchingField] = useState(null); // 'name' or 'document'
     const [loading, setLoading] = useState(false);
+    
+    // Flag to prevent searching right after selecting a result
+    const [justSelected, setJustSelected] = useState(false);
+
+    const debouncedName = useDebounce(formData.fullName, 500);
+    const debouncedDocument = useDebounce(formData.documentNumber, 500);
 
     const handleAfipSearch = async (query, field) => {
         if (!query) return;
@@ -46,6 +53,41 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         }
     };
 
+    // Auto-search for Area: Name
+    useEffect(() => {
+        if (!isOpen) return;
+        if (justSelected) {
+             setJustSelected(false); // Reset flag
+             return;
+        }
+
+        if (debouncedName && debouncedName.length >= 3) {
+            // Only auto-search if not currently viewing results for document
+            if (searchingField !== 'document') {
+                 handleAfipSearch(debouncedName, 'name');
+            }
+        } else if (!debouncedName || debouncedName.length < 3) {
+            if (searchingField === 'name') setAfipResults([]);
+        }
+    }, [debouncedName, isOpen]);
+
+    // Auto-search for Area: Document
+    useEffect(() => {
+        if (!isOpen) return;
+        if (justSelected) {
+            setJustSelected(false); // Reset flag
+            return;
+        }
+
+        if (debouncedDocument && debouncedDocument.length >= 3) {
+            if (searchingField !== 'name') {
+                 handleAfipSearch(debouncedDocument, 'document');
+            }
+        } else if (!debouncedDocument || debouncedDocument.length < 3) {
+            if (searchingField === 'document') setAfipResults([]);
+        }
+    }, [debouncedDocument, isOpen]);
+
     const handleAfipSelect = (persona) => {
         setFormData(prev => ({
             ...prev,
@@ -54,6 +96,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         }));
         setAfipResults([]);
         setSearchingField(null);
+        setJustSelected(true); // Prevent immediate re-trigger
         showSuccess("Datos de AFIP aplicados.");
     };
 
@@ -132,12 +175,9 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                     className={`${inputClass} pr-10`}
                                     placeholder="Nombre del pasajero"
                                     value={formData.fullName || ""}
-                                    onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            handleAfipSearch(formData.fullName, 'name');
-                                        }
+                                    onChange={(e) => {
+                                        setFormData({ ...formData, fullName: e.target.value });
+                                        if (searchingField === 'name') setSearchingField(null);
                                     }}
                                 />
                                 <button
@@ -197,12 +237,9 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                     className={`${inputClass} pl-10 pr-10`}
                                     placeholder="DNI o CUIT"
                                     value={formData.documentNumber || ""}
-                                    onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            handleAfipSearch(formData.documentNumber, 'document');
-                                        }
+                                    onChange={(e) => {
+                                        setFormData({ ...formData, documentNumber: e.target.value });
+                                        if (searchingField === 'document') setSearchingField(null);
                                     }}
                                     required
                                 />
