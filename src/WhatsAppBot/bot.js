@@ -93,20 +93,26 @@ function cleanLockFiles() {
     try {
         if (!fs.existsSync(AUTH_PATH)) return;
         
-        const deleteLock = (dirPath) => {
-            const files = fs.readdirSync(dirPath);
-            for (const file of files) {
-                const fullPath = path.join(dirPath, file);
-                if (fs.statSync(fullPath).isDirectory()) {
-                    deleteLock(fullPath);
-                } else if (file === "SingletonLock") {
-                    botLog(`🧹 Limpiando bloqueo de Chromium: ${fullPath}`);
-                    fs.unlinkSync(fullPath);
+        const deletePattern = (dirPath) => {
+            if (!fs.existsSync(dirPath)) return;
+            const entries = fs.readdirSync(dirPath);
+            for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry);
+                try {
+                    const stat = fs.lstatSync(fullPath);
+                    if (stat.isDirectory()) {
+                        deletePattern(fullPath);
+                    } else if (entry.includes("Singleton") || entry.includes("Lock")) {
+                        botLog(`🧹 Limpiando bloqueo detectado: ${fullPath}`);
+                        fs.unlinkSync(fullPath);
+                    }
+                } catch (e) {
+                    // Ignorar si el archivo desapareció (carrera de procesos)
                 }
             }
         };
         
-        deleteLock(AUTH_PATH);
+        deletePattern(AUTH_PATH);
     } catch (err) {
         botLog(`❌ Error limpiando locks: ${err.message}`);
     }
@@ -220,12 +226,28 @@ const client = new Client({
 });
 
 botLog("📦 Cargando cliente de WhatsApp...");
-client.initialize().then(() => {
-    botLog("🏁 client.initialize() ejecutado con éxito.");
-}).catch(err => {
-    botLog(`❌ ERROR FATAL AL LANZAR CHROMIUM: ${err.message}`);
-    botLog("💡 Sugerencia: Revisa que no haya otros procesos de Chrome corriendo en el servidor.");
-});
+
+async function startBot(retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            botLog(`🚀 Iniciando motor del bot (Intento ${i + 1}/${retries})...`);
+            cleanLockFiles();
+            await client.initialize();
+            botLog("🏁 client.initialize() ejecutado con éxito.");
+            return;
+        } catch (err) {
+            botLog(`❌ ERROR AL LANZAR CHROMIUM (Intento ${i + 1}): ${err.message}`);
+            if (i < retries - 1) {
+                botLog("⏳ Reintentando en 10 segundos...");
+                await new Promise(r => setTimeout(r, 10000));
+            } else {
+                botLog("💡 Sugerencia final: Revisa que no haya otros procesos de Chrome o permisos en .wwebjs_auth");
+            }
+        }
+    }
+}
+
+startBot();
 
 client.on("qr", (qr) => {
     lastQR = qr;
