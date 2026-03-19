@@ -212,6 +212,19 @@ app.Use(async (context, next) =>
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    
+    // --- MOGOLICA MODE: Direct SQL Hotfix ---
+    try 
+    {
+        app.Logger.LogInformation("Checking/Adding TotalPaid column via Raw SQL...");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"TotalPaid\" numeric(18,2) NOT NULL DEFAULT 0.0;");
+        app.Logger.LogInformation("Raw SQL migration finished.");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning("Raw SQL migration skipped or failed (might already exist): {Message}", ex.Message);
+    }
+
     int retries = 5;
     while (retries > 0)
     {
