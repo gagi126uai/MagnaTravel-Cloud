@@ -59,14 +59,17 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
             return;
         }
 
-        if (debouncedTaxId && debouncedTaxId.length >= 3) {
-            if (searchingField !== 'name') {
-                 handleAfipSearch(debouncedTaxId, 'taxId');
+        // Only auto-search if we are creating a new customer
+        if (!customer) {
+            if (debouncedTaxId && debouncedTaxId.length >= 3) {
+                if (searchingField !== 'name') {
+                     handleAfipSearch(debouncedTaxId, 'taxId');
+                }
+            } else if (!debouncedTaxId || debouncedTaxId.length < 3) {
+                if (searchingField === 'taxId') setAfipResults([]);
             }
-        } else if (!debouncedTaxId || debouncedTaxId.length < 3) {
-            if (searchingField === 'taxId') setAfipResults([]);
         }
-    }, [debouncedTaxId, isOpen]);
+    }, [debouncedTaxId, isOpen, customer]);
 
     const handleAfipSelect = (persona) => {
         setFormData(prev => ({
@@ -122,38 +125,6 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-10 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
                                         placeholder="Ej. Juan Pérez"
                                     />
-                                    <button
-                                        type="button"
-                                        onClick={() => handleAfipSearch(formData.fullName, 'name')}
-                                        className="absolute right-2 top-1.5 p-1 text-slate-400 hover:text-indigo-600 transition-colors"
-                                        title="Buscar en AFIP"
-                                    >
-                                        {loadingAfip && searchingField === 'name' ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
-                                    </button>
-
-                                    {afipResults.length > 0 && searchingField === 'name' && (
-                                        <div className="absolute left-0 right-0 z-[100] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                            <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
-                                                <span className="text-[10px] font-bold text-slate-500 uppercase">Resultados AFIP</span>
-                                                <button onClick={() => { setAfipResults([]); setSearchingField(null); }} className="text-slate-400 hover:text-slate-600"><XCircle className="h-3 w-3" /></button>
-                                            </div>
-                                            <div className="max-h-48 overflow-y-auto">
-                                                {afipResults.map((p, idx) => (
-                                                    <button
-                                                        key={idx}
-                                                        type="button"
-                                                        onClick={() => handleAfipSelect(p)}
-                                                        className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/40 border-b last:border-0 border-slate-50 dark:border-slate-800 transition-colors group"
-                                                    >
-                                                        <div className="font-medium text-sm text-slate-900 dark:text-white group-hover:text-indigo-600 truncate">
-                                                            {p.razonSocial || `${p.apellido} ${p.nombre}`}
-                                                        </div>
-                                                        <div className="text-[10px] text-slate-500">{p.id} • {p.taxCondition}</div>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
 
