@@ -408,4 +408,4 @@ app.listen(HTTP_PORT, "0.0.0.0", () => {
     fetchConfig(); // Cargar configuración al iniciar el servidor HTTP
 });
 
-client.initialize();
+// client.initialize(); // Removed double initialization

@@ -136,7 +136,6 @@ builder.Services.AddScoped<IReservaService, ReservaService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IReportService, ReportService>();
-builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IServicioReservaService, ServicioReservaService>();
 builder.Services.AddScoped<ICommissionService, CommissionService>();
 builder.Services.AddScoped<IAlertService, AlertService>();
