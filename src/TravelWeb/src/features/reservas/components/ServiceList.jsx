@@ -62,7 +62,7 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                             ${svc.totalSalePrice?.toLocaleString()}
                                         </td>
                                         <td className="py-4 align-middle text-right pr-4">
-                                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="flex justify-end gap-1 transition-opacity">
                                                 <button onClick={() => onEditService(svc)} className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
                                                     <Edit2 className="w-4 h-4" />
                                                 </button>

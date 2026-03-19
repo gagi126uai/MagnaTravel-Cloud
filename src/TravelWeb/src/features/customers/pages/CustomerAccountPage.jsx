@@ -306,7 +306,7 @@ export default function CustomerAccountPage() {
                                                     {formatCurrency(move.balance)}
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
-                                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <div className="flex justify-end gap-1 transition-opacity">
                                                         {move.type === 'PAYMENT' && (
                                                             <button onClick={() => handleDeletePayment(move.originalData)} className="p-1.5 hover:bg-rose-50 rounded-lg text-rose-400 hover:text-rose-600 transition-colors" title="Anular Pago">
                                                                 <Trash2 className="h-4 w-4" />
@@ -369,7 +369,7 @@ export default function CustomerAccountPage() {
                                                     </span>
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
-                                                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <div className="flex justify-end gap-1 transition-opacity">
                                                         <button className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-900 transition-colors" title="Descargar PDF">
                                                             <Download className="h-4 w-4" />
                                                         </button>

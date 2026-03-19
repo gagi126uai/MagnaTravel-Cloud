@@ -253,7 +253,7 @@ export default function CRMPage() {
                                             </td>
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex justify-end">
-                                                    <div className="w-8 h-8 rounded-full flex items-center justify-center group-hover:bg-white dark:group-hover:bg-slate-800 shadow-sm opacity-0 group-hover:opacity-100 transition-all">
+                                                    <div className="w-8 h-8 rounded-full flex items-center justify-center bg-white dark:bg-slate-800 shadow-sm transition-all">
                                                         <ChevronRight className="w-4 h-4 text-indigo-600" />
                                                     </div>
                                                 </div>

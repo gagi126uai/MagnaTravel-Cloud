@@ -36,7 +36,7 @@ export function PassengerList({ passengers, onAddPassenger, onEditPassenger, onD
                                     </div>
                                 </div>
                             </div>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="flex gap-1 transition-opacity">
                                 <button onClick={() => onEditPassenger(pax)} className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
                                     <Edit2 className="w-4 h-4" />
                                 </button>

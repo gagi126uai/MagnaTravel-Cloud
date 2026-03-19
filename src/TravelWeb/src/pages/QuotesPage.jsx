@@ -282,7 +282,7 @@ export default function QuotesPage() {
                                             <div className="text-[10px] text-slate-400">Neto: {fmt(q.totalCost)}</div>
                                         </td>
                                         <td className="px-4 py-3 align-middle text-right pr-4 whitespace-nowrap">
-                                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="flex justify-end gap-1 transition-opacity">
                                                 <button onClick={e => { e.stopPropagation(); setEditingQuote(q); setShowModal(true); }} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded">
                                                     <Edit className="w-4 h-4" />
                                                 </button>
