@@ -25,7 +25,11 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
     const [loading, setLoading] = useState(false);
 
     const handleAfipSearch = async (query, field) => {
-        if (!query || query.length < 3) return;
+        if (!query) return;
+        if (query.length < 3) {
+            showError("Ingresá al menos 3 caracteres.");
+            return;
+        }
         setLoadingAfip(true);
         setSearchingField(field);
         try {
@@ -126,9 +130,15 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                     required
                                     type="text"
                                     className={`${inputClass} pr-10`}
-                                    placeholder="Ej: Juan Pérez"
-                                    value={formData.fullName}
+                                    placeholder="Nombre del pasajero"
+                                    value={formData.fullName || ""}
                                     onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleAfipSearch(formData.fullName, 'name');
+                                        }
+                                    }}
                                 />
                                 <button
                                     type="button"
@@ -138,31 +148,31 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                 >
                                     {loadingAfip && searchingField === 'name' ? <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> : <Search className="h-4 w-4" />}
                                 </button>
-                            </div>
 
-                            {afipResults.length > 0 && searchingField === 'name' && (
-                                <div className="absolute z-[60] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                    <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center">
-                                        <span className="text-[10px] font-bold text-gray-500 uppercase">Sugerencias AFIP</span>
-                                        <button onClick={() => { setAfipResults([]); setSearchingField(null); }} className="text-gray-400 hover:text-gray-600"><X className="h-3 w-3" /></button>
+                                {afipResults.length > 0 && searchingField === 'name' && (
+                                    <div className="absolute left-0 right-0 z-[100] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                        <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center">
+                                            <span className="text-[10px] font-bold text-gray-500 uppercase">Sugerencias AFIP</span>
+                                            <button onClick={() => { setAfipResults([]); setSearchingField(null); }} className="text-gray-400 hover:text-gray-600"><X className="h-3 w-3" /></button>
+                                        </div>
+                                        <div className="max-h-40 overflow-y-auto">
+                                            {afipResults.map((p, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    type="button"
+                                                    onClick={() => handleAfipSelect(p)}
+                                                    className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/40 border-b last:border-0 border-gray-50 dark:border-slate-800 transition-colors group"
+                                                >
+                                                    <div className="font-medium text-sm text-gray-900 dark:text-white group-hover:text-blue-600 truncate">
+                                                        {p.razonSocial || `${p.apellido} ${p.nombre}`}
+                                                    </div>
+                                                    <div className="text-[10px] text-gray-500">{p.id} • {p.taxCondition}</div>
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <div className="max-h-40 overflow-y-auto">
-                                        {afipResults.map((p, idx) => (
-                                            <button
-                                                key={idx}
-                                                type="button"
-                                                onClick={() => handleAfipSelect(p)}
-                                                className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/40 border-b last:border-0 border-gray-50 dark:border-slate-800 transition-colors group"
-                                            >
-                                                <div className="font-medium text-sm text-gray-900 dark:text-white group-hover:text-blue-600 truncate">
-                                                    {p.razonSocial || `${p.apellido} ${p.nombre}`}
-                                                </div>
-                                                <div className="text-[10px] text-gray-500">{p.id} • {p.taxCondition}</div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                )}
+                            </div>
                         </div>
 
                         <div>
@@ -188,6 +198,12 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                     placeholder="DNI o CUIT"
                                     value={formData.documentNumber || ""}
                                     onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleAfipSearch(formData.documentNumber, 'document');
+                                        }
+                                    }}
                                     required
                                 />
                                 <button
@@ -198,31 +214,31 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                 >
                                     {loadingAfip && searchingField === 'document' ? <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> : <Search className="h-4 w-4" />}
                                 </button>
-                            </div>
 
-                            {afipResults.length > 0 && searchingField === 'document' && (
-                                <div className="absolute z-[60] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                    <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center">
-                                        <span className="text-[10px] font-bold text-gray-500 uppercase">Sugerencias AFIP</span>
-                                        <button onClick={() => { setAfipResults([]); setSearchingField(null); }} className="text-gray-400 hover:text-gray-600"><X className="h-3 w-3" /></button>
+                                {afipResults.length > 0 && searchingField === 'document' && (
+                                    <div className="absolute left-0 right-0 z-[100] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                        <div className="px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center">
+                                            <span className="text-[10px] font-bold text-gray-500 uppercase">Sugerencias AFIP</span>
+                                            <button onClick={() => { setAfipResults([]); setSearchingField(null); }} className="text-gray-400 hover:text-gray-600"><X className="h-3 w-3" /></button>
+                                        </div>
+                                        <div className="max-h-40 overflow-y-auto">
+                                            {afipResults.map((p, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    type="button"
+                                                    onClick={() => handleAfipSelect(p)}
+                                                    className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/40 border-b last:border-0 border-gray-50 dark:border-slate-800 transition-colors group"
+                                                >
+                                                    <div className="font-medium text-sm text-gray-900 dark:text-white group-hover:text-blue-600 truncate">
+                                                        {p.razonSocial || `${p.apellido} ${p.nombre}`}
+                                                    </div>
+                                                    <div className="text-[10px] text-gray-500">{p.id} • {p.taxCondition}</div>
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <div className="max-h-40 overflow-y-auto">
-                                        {afipResults.map((p, idx) => (
-                                            <button
-                                                key={idx}
-                                                type="button"
-                                                onClick={() => handleAfipSelect(p)}
-                                                className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/40 border-b last:border-0 border-gray-50 dark:border-slate-800 transition-colors group"
-                                            >
-                                                <div className="font-medium text-sm text-gray-900 dark:text-white group-hover:text-blue-600 truncate">
-                                                    {p.razonSocial || `${p.apellido} ${p.nombre}`}
-                                                </div>
-                                                <div className="text-[10px] text-gray-500">{p.id} • {p.taxCondition}</div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                )}
+                            </div>
                         </div>
 
                         {/* Personal Info */}
