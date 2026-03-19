@@ -26,18 +26,6 @@ public class FiscalController : ControllerBase
         {
             var cleanId = id.Replace("-", "").Replace(".", "").Trim();
             
-            // If it contains letters, it's a Name/TaxId search
-            if (System.Text.RegularExpressions.Regex.IsMatch(cleanId, @"[a-zA-Z]"))
-            {
-                var personas = await FetchPersonasByName(cleanId);
-                if (personas == null || !personas.Any()) return NotFound("No se encontraron coincidencias por nombre en AFIP");
-                
-                // For simplicity, fetch full data of the first one
-                var firstId = personas.First();
-                var searchData = await FetchFromAfip(firstId);
-                return Ok(searchData);
-            }
-
             // If it's a DNI (7-8 digits), try possible CUILs
             if (cleanId.Length >= 7 && cleanId.Length <= 8)
             {
@@ -60,6 +48,38 @@ public class FiscalController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in Fiscal lookup");
+            return StatusCode(500, "Error interno en la búsqueda fiscal");
+        }
+    }
+
+    [HttpGet("search")]
+    public async Task<IActionResult> Search(string q)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(q)) return BadRequest("Consulta vacía");
+            var cleanQuery = q.Replace("-", "").Replace(".", "").Trim();
+
+            // If it's pure numeric and 11 chars, it's a CUIT. Just fetch one.
+            if (cleanQuery.Length == 11 && long.TryParse(cleanQuery, out _))
+            {
+                var data = await FetchFromAfip(cleanQuery);
+                return Ok(data != null ? new List<object> { data } : new List<object>());
+            }
+
+            // If it's a name or part of it, search by name
+            var cuits = await FetchPersonasByName(q);
+            if (cuits == null || !cuits.Any()) return Ok(new List<object>());
+
+            // Fetch details for the first 5 to show names in the selection list
+            var detailTasks = cuits.Take(5).Select(FetchFromAfip);
+            var results = await Task.WhenAll(detailTasks);
+            
+            return Ok(results.Where(r => r != null).ToList());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in Fiscal search");
             return StatusCode(500, "Error interno en la búsqueda fiscal");
         }
     }

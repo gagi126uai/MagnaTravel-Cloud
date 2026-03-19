@@ -1,8 +1,8 @@
-
 import { useState, useEffect } from "react";
 import { X, Save, User, Search, Loader2 } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
+import AfipSearchModal from "./AfipSearchModal";
 
 // Clases reutilizables
 const inputClass = "w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors";
@@ -20,42 +20,17 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         gender: "M",
         notes: ""
     });
+    const [isAfipModalOpen, setIsAfipModalOpen] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [loadingFiscal, setLoadingFiscal] = useState(false);
 
-    const handleFiscalLookup = async () => {
-        if (!formData.documentNumber || formData.documentNumber.length < 7) {
-            showError("Ingrese un DNI o CUIT válido");
-            return;
-        }
-
-        setLoadingFiscal(true);
-        try {
-            const idToSearch = formData.documentNumber;
-            const result = await api.get(`/fiscal/persona/${encodeURIComponent(idToSearch)}`);
-            
-            // Format result
-            let fullResultName = "";
-            if (result.razonSocial) {
-                fullResultName = result.razonSocial;
-            } else if (result.nombre || result.apellido) {
-                fullResultName = `${result.apellido || ''} ${result.nombre || ''}`.trim();
-            }
-
-            if (fullResultName) {
-                setFormData(prev => ({
-                    ...prev,
-                    fullName: fullResultName,
-                    documentNumber: result.id || prev.documentNumber
-                }));
-                showSuccess("Datos de AFIP: " + fullResultName);
-            }
-        } catch (error) {
-            console.error(error);
-            showError(error.response?.data || "No se pudo obtener información fiscal de AFIP (intente con CUIT o DNI)");
-        } finally {
-            setLoadingFiscal(false);
-        }
+    const handleAfipSelect = (persona) => {
+        setFormData(prev => ({
+            ...prev,
+            fullName: persona.razonSocial || `${persona.apellido || ''} ${persona.nombre || ''}`.trim(),
+            documentNumber: persona.id || prev.documentNumber
+        }));
+        setIsAfipModalOpen(false);
+        showSuccess("Datos de AFIP aplicados.");
     };
 
     useEffect(() => {
@@ -151,24 +126,27 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                             </select>
                         </div>
                         <div>
-                            <label className={labelClass}>Número Documento</label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    className={inputClass}
-                                    placeholder="DNI o CUIT"
-                                    value={formData.documentNumber}
-                                    onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
-                                />
+                            <div className="flex items-center justify-between mb-1">
+                                <label className={labelClass}>Número de Documento</label>
                                 <button
                                     type="button"
-                                    onClick={handleFiscalLookup}
-                                    disabled={loadingFiscal || !formData.documentNumber}
-                                    className="px-3 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
-                                    title="Consultar AFIP"
+                                    onClick={() => setIsAfipModalOpen(true)}
+                                    className="text-[10px] font-bold uppercase tracking-wider text-blue-600 hover:text-blue-700 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded transition-all"
                                 >
-                                    {loadingFiscal ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Search className="w-4 h-4 text-slate-500" />}
+                                    <Search className="h-3 w-3" />
+                                    Consultar AFIP
                                 </button>
+                            </div>
+                            <div className="relative">
+                                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                                <input
+                                    type="text"
+                                    className={`${inputClass} pl-10`}
+                                    placeholder="DNI o CUIT"
+                                    value={formData.documentNumber || ""}
+                                    onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
+                                    required
+                                />
                             </div>
                         </div>
 
@@ -263,6 +241,13 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                     </form>
                 </div>
             </div>
+
+            <AfipSearchModal 
+                isOpen={isAfipModalOpen}
+                onClose={() => setIsAfipModalOpen(false)}
+                onSelect={handleAfipSelect}
+                initialQuery={formData.documentNumber || formData.fullName}
+            />
         </div>
     );
 }
