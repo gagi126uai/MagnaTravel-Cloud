@@ -60,36 +60,73 @@ public class FiscalController : ControllerBase
             if (string.IsNullOrWhiteSpace(q)) return BadRequest("Consulta vacía");
             var cleanQuery = q.Replace("-", "").Replace(".", "").Trim();
 
-            // If it's pure numeric and 11 chars, it's a CUIT. Just fetch one.
+            var finalResults = new List<object>();
+            var foundCuits = new HashSet<string>();
+
+            // 1. If it's pure numeric and 11 chars, it's a CUIT. 
             if (cleanQuery.Length == 11 && long.TryParse(cleanQuery, out _))
             {
                 var data = await FetchFromAfip(cleanQuery);
-                return Ok(data != null ? new List<object> { data } : new List<object>());
+                if (data != null) return Ok(new List<object> { data });
+                return Ok(new List<object>());
             }
 
-            // If it's a name or part of it, search by name
-            _logger.LogInformation("Searching AFIP personas by name: {Query}", q);
-            var cuits = await FetchPersonasByName(q);
-            if (cuits == null || !cuits.Any()) {
-                 _logger.LogWarning("No CUITS found for name: {Query}", q);
-                 return Ok(new List<object>());
-            }
-
-            // Fetch details for the first 5
-            var detailTasks = cuits.Take(5).Select(async id => {
-                try {
-                    return await FetchFromAfip(id);
-                } catch (Exception ex) {
-                    _logger.LogWarning(ex, "Error fetching details for CUIT {Cuit} during search", id);
-                    return null;
+            // 2. If it's numeric and 7-8 chars, it's likely a DNI.
+            if ((cleanQuery.Length == 7 || cleanQuery.Length == 8) && long.TryParse(cleanQuery, out _))
+            {
+                _logger.LogInformation("Input looks like a DNI ({Dni}). Trying possible CUILs.", cleanQuery);
+                var prefixes = new[] { "20", "27", "23" };
+                foreach (var prefix in prefixes)
+                {
+                    var cuil = CalculateCuil(cleanQuery, prefix);
+                    if (foundCuits.Contains(cuil)) continue;
+                    
+                    var data = await FetchFromAfip(cuil);
+                    if (data != null)
+                    {
+                        finalResults.Add(data);
+                        foundCuits.Add(cuil);
+                    }
                 }
-            });
+            }
+
+            // 3. Search by Name (always try this if it doesn't look like a FULL CUIT)
+            _logger.LogInformation("Searching AFIP personas by name/query: {Query}", q);
+            var cuitsByName = await FetchPersonasByName(q);
+            if (cuitsByName != null && cuitsByName.Any())
+            {
+                // Fetch details for the first 5 unique CUITS we haven't found yet
+                var detailTasks = cuitsByName
+                    .Where(c => !foundCuits.Contains(c))
+                    .Take(5)
+                    .Select(async id => {
+                        try {
+                            return await FetchFromAfip(id);
+                        } catch (Exception ex) {
+                            _logger.LogWarning(ex, "Error fetching details for CUIT {Cuit} during search", id);
+                            return null;
+                        }
+                    });
+                
+                var results = await Task.WhenAll(detailTasks);
+                foreach (var r in results)
+                {
+                    if (r != null)
+                    {
+                        // Use reflection or dynamic to get 'Id' property from the anonymous object
+                        var idProp = r.GetType().GetProperty("Id");
+                        var idVal = idProp?.GetValue(r)?.ToString();
+                        if (idVal != null && !foundCuits.Contains(idVal))
+                        {
+                            finalResults.Add(r);
+                            foundCuits.Add(idVal);
+                        }
+                    }
+                }
+            }
             
-            var results = await Task.WhenAll(detailTasks);
-            var validResults = results.Where(r => r != null).ToList();
-            
-            _logger.LogInformation("Found {Count} valid results for name: {Query}", validResults.Count, q);
-            return Ok(validResults);
+            _logger.LogInformation("Fiscal search for '{Query}' returned {Count} results.", q, finalResults.Count);
+            return Ok(finalResults);
         }
         catch (Exception ex)
         {
