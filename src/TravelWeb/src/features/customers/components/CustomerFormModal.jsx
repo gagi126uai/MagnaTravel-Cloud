@@ -29,7 +29,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
 
         setLoadingFiscal(true);
         try {
-            const result = await api.get(`/fiscal/persona/${idToSearch}`);
+            const result = await api.get(`/fiscal/persona/${encodeURIComponent(idToSearch)}`);
             
             let fullResultName = "";
             if (result.razonSocial) {
@@ -39,23 +39,17 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
             }
 
             if (fullResultName) {
-                // Map tax condition
-                let tcId = 5; // Default
-                if (result.taxCondition === "Monotributo") tcId = 6;
-                else if (result.taxCondition === "Responsable Inscripto") tcId = 1;
-                else if (result.taxCondition === "Exento") tcId = 4;
-
                 setFormData(prev => ({
                     ...prev,
                     fullName: fullResultName,
-                    taxConditionId: tcId,
+                    taxConditionId: result.taxConditionId || prev.taxConditionId,
                     taxId: result.id || prev.taxId
                 }));
-                showSuccess("Datos de AFIP obtenidos (CUIT: " + result.id + ")");
+                showSuccess("Datos de AFIP obtenidos" + (result.id ? " (ID: " + result.id + ")" : ""));
             }
         } catch (error) {
             console.error(error);
-            showError(error.response?.data || "No se pudo obtener información fiscal");
+            showError(error.response?.data || "No se pudo obtener información fiscal de AFIP (intente con CUIT o DNI)");
         } finally {
             setLoadingFiscal(false);
         }

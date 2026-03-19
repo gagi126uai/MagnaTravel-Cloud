@@ -26,6 +26,18 @@ public class FiscalController : ControllerBase
         {
             var cleanId = id.Replace("-", "").Replace(".", "").Trim();
             
+            // If it contains letters, it's a Name/TaxId search
+            if (System.Text.RegularExpressions.Regex.IsMatch(cleanId, @"[a-zA-Z]"))
+            {
+                var personas = await FetchPersonasByName(cleanId);
+                if (personas == null || !personas.Any()) return NotFound("No se encontraron coincidencias por nombre en AFIP");
+                
+                // For simplicity, fetch full data of the first one
+                var firstId = personas.First();
+                var data = await FetchFromAfip(firstId);
+                return Ok(data);
+            }
+
             // If it's a DNI (7-8 digits), try possible CUILs
             if (cleanId.Length >= 7 && cleanId.Length <= 8)
             {
@@ -52,6 +64,28 @@ public class FiscalController : ControllerBase
         }
     }
 
+    private async Task<List<string>?> FetchPersonasByName(string name)
+    {
+        var url = $"https://soa.afip.gob.ar/sr-padron/v2/personas/{Uri.EscapeDataString(name)}";
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return null;
+
+        var content = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(content);
+        
+        if (!doc.RootElement.GetProperty("success").GetBoolean()) return null;
+
+        var data = doc.RootElement.GetProperty("data");
+        if (data.ValueKind != JsonValueKind.Array) return null;
+
+        var list = new List<string>();
+        foreach (var item in data.EnumerateArray())
+        {
+            list.Add(item.GetString() ?? "");
+        }
+        return list;
+    }
+
     private async Task<object?> FetchFromAfip(string id)
     {
         var url = $"https://soa.afip.gob.ar/sr-padron/v2/persona/{id}";
@@ -64,6 +98,8 @@ public class FiscalController : ControllerBase
         if (!doc.RootElement.GetProperty("success").GetBoolean()) return null;
 
         var data = doc.RootElement.GetProperty("data");
+        var taxConditionInfo = MapTaxCondition(data);
+
         return new
         {
             Id = id,
@@ -72,7 +108,8 @@ public class FiscalController : ControllerBase
             RazonSocial = data.TryGetProperty("razonSocial", out var rs) ? rs.GetString() : null,
             TipoPersona = data.TryGetProperty("tipoPersona", out var tp) ? tp.GetString() : null,
             Estado = data.TryGetProperty("estado", out var e) ? e.GetString() : null,
-            TaxCondition = MapTaxCondition(data)
+            TaxCondition = taxConditionInfo.description,
+            TaxConditionId = taxConditionInfo.id
         };
     }
 
@@ -96,19 +133,37 @@ public class FiscalController : ControllerBase
         if (checkDigit == 10)
         {
             // Special cases (Prefix 23)
-            if (prefix == "20") return CalculateCuil(dni, "23"); // Use 23 instead of 20
-            if (prefix == "27") return CalculateCuil(dni, "23"); // Use 23 instead of 27
-            // If already 23, it might need to handle specific logic, but 10 is rare
-            checkDigit = 9; // Fallback/Error prev
+            if (prefix == "20") return CalculateCuil(dni, "23"); 
+            if (prefix == "27") return CalculateCuil(dni, "23"); 
+            checkDigit = 9; 
         }
 
         return baseStr + checkDigit;
     }
 
-    private string MapTaxCondition(JsonElement data)
+    private (string description, int id) MapTaxCondition(JsonElement data)
     {
-        if (data.TryGetProperty("monotributo", out var m) && m.ValueKind != JsonValueKind.Null) return "Monotributo";
-        if (data.TryGetProperty("ganancias", out var g) && g.ValueKind != JsonValueKind.Null) return "Responsable Inscripto";
-        return "Consumidor Final";
+        // Check for Monotributo
+        if (data.TryGetProperty("monotributo", out var m) && m.ValueKind != JsonValueKind.Null && m.ValueKind != JsonValueKind.String)
+        {
+             return ("Monotributo", 6);
+        }
+        
+        // Check for Ganancias (Responsable Inscripto)
+        if (data.TryGetProperty("ganancias", out var g) && g.ValueKind != JsonValueKind.Null && g.ValueKind != JsonValueKind.String)
+        {
+             return ("Responsable Inscripto", 1);
+        }
+
+        // Check for IVA (if available in some patterns)
+        if (data.TryGetProperty("iva", out var iva) && iva.ValueKind == JsonValueKind.String)
+        {
+            var ivaStr = iva.GetString()?.ToLower() ?? "";
+            if (ivaStr.Contains("exento")) return ("Exento", 4);
+            if (ivaStr.Contains("inscripto")) return ("Responsable Inscripto", 1);
+            if (ivaStr.Contains("monotributo")) return ("Monotributo", 6);
+        }
+
+        return ("Consumidor Final", 5);
     }
 }

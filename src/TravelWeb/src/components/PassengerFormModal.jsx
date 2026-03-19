@@ -31,7 +31,8 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
 
         setLoadingFiscal(true);
         try {
-            const result = await api.get(`/fiscal/persona/${formData.documentNumber}`);
+            const idToSearch = formData.documentNumber;
+            const result = await api.get(`/fiscal/persona/${encodeURIComponent(idToSearch)}`);
             
             // Format result
             let fullResultName = "";
@@ -51,7 +52,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             }
         } catch (error) {
             console.error(error);
-            showError(error.response?.data || "No se pudo obtener información fiscal");
+            showError(error.response?.data || "No se pudo obtener información fiscal de AFIP (intente con CUIT o DNI)");
         } finally {
             setLoadingFiscal(false);
         }
