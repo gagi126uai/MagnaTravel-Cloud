@@ -35,6 +35,7 @@ import { QRCodeCanvas } from "qrcode.react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 import AfipSettingsTab from "../components/AfipSettingsTab";
+import LogsDashboard from "../components/LogsDashboard";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
@@ -146,7 +147,7 @@ const tabs = [
   { id: "commissions", label: "Comisiones", icon: Briefcase },
   { id: "afip", label: "Facturación", icon: FileText },
   { id: "whatsapp", label: "WhatsApp Bot", icon: Smartphone },
-  { id: "programming", label: "Programación", icon: Clock },
+  { id: "logs", label: "Logs y Programación", icon: TerminalSquare },
 ];
 
 export default function SettingsPage() {
@@ -549,7 +550,7 @@ export default function SettingsPage() {
       <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-1 shadow-sm overflow-x-auto">
         <nav className="flex space-x-1 min-w-max" aria-label="Tabs">
           {tabs.map((tab) => {
-            if (tab.id === 'programming' && !isAdmin()) return null;
+            if ((tab.id === 'programming' || tab.id === 'logs') && !isAdmin()) return null;
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
@@ -976,19 +977,8 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* --- PROGRAMMING TAB (Hangfire) --- */}
-        {activeTab === "programming" && (
-          <div className="h-[calc(100vh-250px)] min-h-[600px] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden relative">
-            <div className="absolute inset-0 flex items-center justify-center bg-slate-50 dark:bg-slate-900 -z-10">
-              <span className="text-slate-400 animate-pulse">Cargando panel de control...</span>
-            </div>
-            <iframe
-              src={`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/auth/hangfire-login?token=${localStorage.getItem("token")}`}
-              className="w-full h-full border-none"
-              title="Hangfire Dashboard"
-            />
-          </div>
-        )}
+        {/* --- LOGS TAB --- */}
+        {activeTab === "logs" && <LogsDashboard />}
 
       </div>
 

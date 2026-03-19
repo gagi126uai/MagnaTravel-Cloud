@@ -17,6 +17,10 @@ using Hangfire.PostgreSql;
 using TravelApi.Filters;
 using TravelApi.Application.Interfaces;
 
+using TravelApi.Infrastructure.Logging;
+using TravelApi.Hubs;
+using TravelApi.Services;
+
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -25,6 +29,7 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
     .WriteTo.File("logs/log-.txt", rollingInterval: RollingInterval.Day, outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .WriteTo.Sink(new SignalRSink())
     .CreateLogger();
 
 try
@@ -148,6 +153,11 @@ builder.Services.AddScoped<IAttachmentService, AttachmentService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+
+builder.Services.AddSignalR();
+builder.Services.AddHttpClient();
+builder.Services.AddHostedService<LogStreamingService>();
+builder.Services.AddHostedService<BotLogMonitorService>();
 
 // Pilar 1: Cotizador + CRM + Vouchers
 builder.Services.AddScoped<IQuoteService, QuoteService>();
@@ -382,6 +392,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapControllers();
+app.MapHub<LogsHub>("/hubs/logs");
 
     app.Run();
 }

@@ -281,7 +281,8 @@ client.on("disconnected", (reason) => {
 
 // ─── Message Handler ─────────────────────────────────────
 client.on("message", async (message) => {
-    if (message.from.includes("@g.us") || message.fromMe) return;
+    // IGNORAR: Grupos, Mensajes Propios, Estados (status@broadcast) y otros broadcasts
+    if (message.from.includes("@g.us") || message.fromMe || message.from === "status@broadcast" || message.from.includes("broadcast")) return;
 
     const chatId = message.from;
     const body = message.body?.trim();
