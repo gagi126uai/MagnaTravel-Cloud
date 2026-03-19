@@ -145,7 +145,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                 </div>
 
                 {/* Body */}
-                <div className="p-6">
+                <div className="p-6 max-h-[80vh] overflow-y-auto custom-scrollbar">
                     <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
                         {/* Name - Full Width */}

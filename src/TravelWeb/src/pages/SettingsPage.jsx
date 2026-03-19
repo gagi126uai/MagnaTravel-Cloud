@@ -891,75 +891,49 @@ export default function SettingsPage() {
                         </Button>
                     )}
                 </div>
-            </div>
-
-            {/* Connection Dashboard (BIG QR) */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
-                <div className="grid md:grid-cols-2">
-                    {/* Visual QR Part */}
-                    <div className="p-8 md:p-12 flex flex-col items-center justify-center bg-slate-50/50 dark:bg-slate-800/10 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800 min-h-[400px]">
-                        {botStatus === "READY" ? (
-                            <div className="text-center space-y-6">
-                                <div className="h-48 w-48 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400 shadow-2xl">
-                                    <Check className="h-24 w-24" />
-                                </div>
-                                <div className="inline-flex items-center gap-2 px-6 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full border border-emerald-200 dark:border-emerald-800">
-                                    <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
-                                    <span className="font-bold uppercase tracking-widest text-sm">BOT CONECTADO</span>
-                                </div>
-                                <p className="text-slate-500 font-medium">¡Todo listo! El bot está operando normalmente.</p>
+            </div>            {/* Connection Dashboard (BIG QR - Centered) */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden max-w-2xl mx-auto">
+                <div className="flex flex-col items-center justify-center p-8 md:p-16 bg-slate-50/50 dark:bg-slate-800/10 min-h-[450px]">
+                    {botStatus === "READY" ? (
+                        <div className="text-center space-y-6">
+                            <div className="h-48 w-48 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400 shadow-2xl">
+                                <Check className="h-24 w-24" />
                             </div>
-                        ) : (botStatus === "SCAN_QR" || qrCode) ? (
-                            <div className="text-center space-y-8">
-                                <div className="bg-white p-6 rounded-[32px] shadow-2xl inline-block border-8 border-white/50 relative">
-                                    <QRCodeCanvas value={qrCode} size={280} level="H" />
-                                    <div className="absolute -top-4 -right-4 bg-indigo-600 text-white p-3 rounded-2xl shadow-lg ring-4 ring-white">
-                                        <Smartphone className="h-6 w-6" />
-                                    </div>
-                                </div>
-                                <div className="space-y-3">
-                                    <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded-full border border-indigo-200 dark:border-indigo-800">
-                                        <div className="w-3 h-3 rounded-full bg-indigo-500 animate-pulse"></div>
-                                        <span className="font-bold uppercase tracking-widest text-sm">ESCANEÁ EL CÓDIGO</span>
-                                    </div>
-                                    <p className="text-sm text-slate-500 italic">Vincular dispositivo en la app de WhatsApp</p>
+                            <div className="inline-flex items-center gap-2 px-6 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full border border-emerald-200 dark:border-emerald-800">
+                                <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                                <span className="font-bold uppercase tracking-widest text-sm">BOT CONECTADO</span>
+                            </div>
+                            <p className="text-slate-500 font-medium">¡Todo listo! El bot está operando normalmente.</p>
+                        </div>
+                    ) : (botStatus === "SCAN_QR" || qrCode) ? (
+                        <div className="text-center space-y-8">
+                            <div className="bg-white p-6 rounded-[32px] shadow-2xl inline-block border-8 border-white/50 relative">
+                                <QRCodeCanvas value={qrCode} size={300} level="H" />
+                                <div className="absolute -top-4 -right-4 bg-indigo-600 text-white p-3 rounded-2xl shadow-lg ring-4 ring-white">
+                                    <Smartphone className="h-6 w-6" />
                                 </div>
                             </div>
-                        ) : (
-                            <div className="text-center space-y-6 py-12">
-                                <div className="h-32 w-32 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
-                                    <RefreshCcw className="h-12 w-12 animate-spin-slow" />
+                            <div className="space-y-3">
+                                <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded-full border border-indigo-200 dark:border-indigo-800">
+                                    <div className="w-3 h-3 rounded-full bg-indigo-500 animate-pulse"></div>
+                                    <span className="font-bold uppercase tracking-widest text-sm">ESCANEÁ EL CÓDIGO</span>
                                 </div>
-                                <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full">
-                                    <span className="text-xs font-bold uppercase tracking-widest leading-none">
-                                        {botStatus === "OFFLINE" ? "BOT FUERA DE LÍNEA" : "INICIANDO MOTOR..."}
-                                    </span>
-                                </div>
-                                <p className="text-sm text-slate-400 max-w-[200px]">Esperando respuesta del servidor del bot...</p>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Live Console Part */}
-                    <div className="p-8 flex flex-col bg-slate-900 dark:bg-slate-950">
-                        <div className="flex items-center justify-between mb-4">
-                            <span className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                <TerminalSquare className="h-4 w-4 text-emerald-500" />
-                                Consola del Servidor (Real-Time)
-                            </span>
-                            <div className="flex gap-1">
-                                <div className="w-2 h-2 rounded-full bg-rose-500/50"></div>
-                                <div className="w-2 h-2 rounded-full bg-amber-500/50"></div>
-                                <div className="w-2 h-2 rounded-full bg-emerald-500/50"></div>
+                                <p className="text-sm text-slate-500 italic">Vincular dispositivo en la app de WhatsApp</p>
                             </div>
                         </div>
-                        <Terminal logs={botLogs} />
-                        <div className="mt-4 p-4 bg-slate-800/30 rounded-xl border border-slate-800/50">
-                            <p className="text-[11px] text-slate-400 leading-relaxed">
-                                <b className="text-indigo-400">💡 Tip:</b> Si el QR no aparece después de 30 segundos, hacé clic en el botón <b>Refrescar</b> arriba para forzar una nueva comprobación.
-                            </p>
+                    ) : (
+                        <div className="text-center space-y-6 py-12">
+                            <div className="h-32 w-32 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
+                                <RefreshCcw className="h-12 w-12 animate-spin-slow" />
+                            </div>
+                            <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full">
+                                <span className="text-xs font-bold uppercase tracking-widest leading-none">
+                                    {botStatus === "OFFLINE" ? "BOT FUERA DE LÍNEA" : "INICIANDO MOTOR..."}
+                                </span>
+                            </div>
+                            <p className="text-sm text-slate-400 max-w-[200px] mx-auto">Esperando respuesta del servidor del bot...</p>
                         </div>
-                    </div>
+                    )}
                 </div>
             </div>
 

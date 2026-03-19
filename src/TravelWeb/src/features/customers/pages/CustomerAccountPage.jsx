@@ -135,7 +135,7 @@ export default function CustomerAccountPage() {
         id: r.id,
         trackId: `res-${r.id}`,
         type: 'RESERVA',
-        date: r.startDate || r.createdAt,
+        date: r.createdAt || r.startDate,
         concept: `Reserva ${r.numeroReserva} - ${r.name}`,
         debit: r.totalSale,
         credit: 0,

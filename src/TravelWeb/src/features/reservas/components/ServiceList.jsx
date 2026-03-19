@@ -1,7 +1,10 @@
 import React from 'react';
-import { Plus, Plane, Hotel, Car, Package, Edit2, Trash2 } from "lucide-react";
+import { Plus, Plane, Hotel, Car, Package, Edit2, Trash2, TrendingUp, ShieldCheck } from "lucide-react";
+import { isAdmin } from "../../../auth";
 
 export function ServiceList({ services, onAddService, onEditService, onDeleteService }) {
+    const admin = isAdmin();
+
     return (
         <div>
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
@@ -30,82 +33,124 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Descripción</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
+                                    {admin && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right">Neto Cto</th>}
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right">Venta</th>
+                                    {admin && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right text-emerald-500">Utilidad</th>}
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {services.map((svc) => (
-                                    <tr key={`${svc._type}-${svc.id}`} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
-                                        <td className="py-4 align-middle whitespace-nowrap pr-4">
-                                            <div className="flex items-center">
-                                                {svc._type === 'Flight' && <Plane className="w-4 h-4 text-slate-400 mr-2" />}
-                                                {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-slate-400 mr-2" />}
-                                                {svc._type === 'Transfer' && <Car className="w-4 h-4 text-slate-400 mr-2" />}
-                                                {svc._type === 'Package' && <Package className="w-4 h-4 text-slate-400 mr-2" />}
-                                                <span className="text-sm font-medium text-gray-700 dark:text-slate-300">{svc._type}</span>
-                                            </div>
-                                        </td>
-                                        <td className="py-4 align-middle">
-                                            <div className="text-sm font-medium text-gray-900 dark:text-white line-clamp-1">{svc.name}</div>
-                                            {svc.confirmationNumber && <div className="text-xs text-gray-500 dark:text-slate-500">Conf: {svc.confirmationNumber}</div>}
-                                        </td>
-                                        <td className="py-4 align-middle whitespace-nowrap text-sm text-gray-600 dark:text-slate-400">
-                                            {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
-                                        </td>
-                                        <td className="py-4 align-middle whitespace-nowrap">
-                                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${svc.status === 'Confirmed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
-                                                {svc.status || 'Pnd'}
-                                            </span>
-                                        </td>
-                                        <td className="py-4 align-middle text-right text-sm font-semibold text-gray-900 dark:text-white">
-                                            ${svc.totalSalePrice?.toLocaleString()}
-                                        </td>
-                                        <td className="py-4 align-middle text-right pr-4">
-                                            <div className="flex justify-end gap-1 transition-opacity">
-                                                <button onClick={() => onEditService(svc)} className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
-                                                    <Edit2 className="w-4 h-4" />
-                                                </button>
-                                                <button onClick={() => onDeleteService(svc)} className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {services.map((svc) => {
+                                    const netCost = svc.netCost || 0;
+                                    const salePrice = svc.totalSalePrice || 0;
+                                    const margin = salePrice - netCost;
+                                    const marginPercent = salePrice > 0 ? (margin / salePrice) * 100 : 0;
+
+                                    return (
+                                        <tr key={`${svc._type}-${svc.id}`} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                                            <td className="py-4 align-middle whitespace-nowrap pr-4">
+                                                <div className="flex items-center">
+                                                    {svc._type === 'Flight' && <Plane className="w-4 h-4 text-slate-400 mr-2" />}
+                                                    {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-slate-400 mr-2" />}
+                                                    {svc._type === 'Transfer' && <Car className="w-4 h-4 text-slate-400 mr-2" />}
+                                                    {svc._type === 'Package' && <Package className="w-4 h-4 text-slate-400 mr-2" />}
+                                                    <span className="text-sm font-medium text-gray-700 dark:text-slate-300">{svc._type}</span>
+                                                </div>
+                                            </td>
+                                            <td className="py-4 align-middle">
+                                                <div className="text-sm font-medium text-gray-900 dark:text-white line-clamp-1">{svc.name}</div>
+                                                {svc.confirmationNumber && <div className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5"><ShieldCheck className="w-3 h-3" /> Conf: {svc.confirmationNumber}</div>}
+                                            </td>
+                                            <td className="py-4 align-middle whitespace-nowrap text-sm text-gray-600 dark:text-slate-400">
+                                                {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
+                                            </td>
+                                            <td className="py-4 align-middle whitespace-nowrap">
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${svc.status === 'Confirmed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
+                                                    {svc.status || 'Pnd'}
+                                                </span>
+                                            </td>
+                                            {admin && (
+                                                <td className="py-4 align-middle text-right text-xs text-slate-500 font-mono">
+                                                    ${netCost.toLocaleString()}
+                                                </td>
+                                            )}
+                                            <td className="py-4 align-middle text-right text-sm font-bold text-gray-900 dark:text-white">
+                                                <span className="text-[10px] text-slate-400 font-normal mr-1">VENTA</span>
+                                                ${salePrice.toLocaleString()}
+                                            </td>
+                                            {admin && (
+                                                <td className="py-4 align-middle text-right">
+                                                    <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex flex-col items-end">
+                                                        <span>${margin.toLocaleString()}</span>
+                                                        <span className="text-[9px] opacity-70 flex items-center gap-0.5"><TrendingUp className="w-2 h-2" /> {marginPercent.toFixed(1)}%</span>
+                                                    </div>
+                                                </td>
+                                            )}
+                                            <td className="py-4 align-middle text-right pr-4">
+                                                <div className="flex justify-end gap-1 transition-opacity">
+                                                    <button onClick={() => onEditService(svc)} className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
+                                                        <Edit2 className="w-4 h-4" />
+                                                    </button>
+                                                    <button onClick={() => onDeleteService(svc)} className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
 
                     {/* Mobile View */}
                     <div className="md:hidden space-y-4">
-                        {services.map((svc) => (
-                            <div key={`${svc._type}-${svc.id}`} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
-                                <div className="flex justify-between mb-2">
-                                    <div className="flex items-center gap-2">
-                                        {svc._type === 'Flight' && <Plane className="w-4 h-4 text-blue-500" />}
-                                        {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-emerald-500" />}
-                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">{svc._type}</span>
+                        {services.map((svc) => {
+                            const salePrice = svc.totalSalePrice || 0;
+                            const netCost = svc.netCost || 0;
+                            const margin = salePrice - netCost;
+
+                            return (
+                                <div key={`${svc._type}-${svc.id}`} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                                    <div className="flex justify-between mb-2">
+                                        <div className="flex items-center gap-2">
+                                            {svc._type === 'Flight' && <Plane className="w-4 h-4 text-blue-500" />}
+                                            {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-emerald-500" />}
+                                            {svc._type === 'Transfer' && <Car className="w-4 h-4 text-amber-500" />}
+                                            {svc._type === 'Package' && <Package className="w-4 h-4 text-purple-500" />}
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">{svc._type}</span>
+                                        </div>
+                                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${svc.status === 'Confirmed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' : 'bg-amber-100 text-amber-700'}`}>
+                                            {svc.status || 'Pnd'}
+                                        </span>
                                     </div>
-                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${svc.status === 'Confirmed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' : 'bg-amber-100 text-amber-700'}`}>
-                                        {svc.status || 'Pnd'}
-                                    </span>
-                                </div>
-                                <div className="font-medium text-slate-900 dark:text-white mb-1">{svc.name}</div>
-                                <div className="flex justify-between items-end">
-                                    <div className="text-xs text-slate-500">
-                                        {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="font-bold text-slate-900 dark:text-white">${svc.totalSalePrice?.toLocaleString()}</span>
-                                        <div className="flex gap-1">
-                                            <button onClick={() => onEditService(svc)} className="p-2 text-slate-400 rounded-full bg-slate-50 dark:bg-slate-800"><Edit2 className="w-3.5 h-3.5" /></button>
-                                            <button onClick={() => onDeleteService(svc)} className="p-2 text-red-400 rounded-full bg-red-50 dark:bg-red-900/20"><Trash2 className="w-3.5 h-3.5" /></button>
+                                    <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>
+                                    <div className="flex justify-between items-end">
+                                        <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
+                                            <span>{svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}</span>
+                                            {admin && <span className="text-[9px] opacity-70">Neto: ${netCost.toLocaleString()}</span>}
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1">
+                                            <div className="flex items-center gap-2">
+                                                <div className="text-right">
+                                                    <div className="text-[9px] text-slate-400 leading-none">VENTA TOTAL</div>
+                                                    <div className="font-bold text-slate-900 dark:text-white">${salePrice.toLocaleString()}</div>
+                                                </div>
+                                                <div className="flex gap-1 ml-2">
+                                                    <button onClick={() => onEditService(svc)} className="p-2 text-slate-400 rounded-lg bg-slate-50 dark:bg-slate-800"><Edit2 className="w-3.5 h-3.5" /></button>
+                                                    <button onClick={() => onDeleteService(svc)} className="p-2 text-red-400 rounded-lg bg-red-50 dark:bg-red-900/20"><Trash2 className="w-3.5 h-3.5" /></button>
+                                                </div>
+                                            </div>
+                                            {admin && margin !== 0 && (
+                                                <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                                    Utilidad: ${margin.toLocaleString()}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </>
             )}
