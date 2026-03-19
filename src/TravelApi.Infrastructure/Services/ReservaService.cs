@@ -189,7 +189,7 @@ public class ReservaService : IReservaService
         service.Commission = request.SalePrice - request.NetCost;
 
         await _context.SaveChangesAsync();
-        await UpdateBalanceAsync(service.ReservaId);
+        if (service.ReservaId.HasValue) await UpdateBalanceAsync(service.ReservaId.Value);
         return service;
     }
 
@@ -204,7 +204,7 @@ public class ReservaService : IReservaService
         _context.Servicios.Remove(service);
         var resId = service.ReservaId;
         await _context.SaveChangesAsync();
-        await UpdateBalanceAsync(resId);
+        if (resId.HasValue) await UpdateBalanceAsync(resId.Value);
     }
 
     public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId)

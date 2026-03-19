@@ -433,7 +433,7 @@ public class ReportService : IReportService
                     marginPercent
                 );
             })
-            .Where(s => s.FilesCreated > 0)
+            .Where(s => s.ReservasCreated > 0)
             .OrderByDescending(s => s.TotalSales)
             .ToList();
 
