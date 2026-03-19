@@ -2,7 +2,7 @@ import { useState } from "react";
 import { User, Mail, Phone, XCircle, Search, Loader2, FileText } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
-import { showError, showSuccess } from "../../../alerts";
+
 
 export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
     const [formData, setFormData] = useState({
