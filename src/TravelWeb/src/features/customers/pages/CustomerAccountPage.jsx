@@ -71,6 +71,7 @@ export default function CustomerAccountPage() {
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [paymentToEdit, setPaymentToEdit] = useState(null);
+    const [activeTab, setActiveTab] = useState("ledger");
 
     useEffect(() => {
         loadAccount();
@@ -128,7 +129,6 @@ export default function CustomerAccountPage() {
         );
     }
     const { customer, reservas = [], payments = [], summary = {}, invoices = [] } = data;
-    const [activeTab, setActiveTab] = useState("ledger");
 
     // --- Ledger Calculation (Debits & Credits only) ---
     const debitMovements = (reservas || []).map(r => ({
