@@ -212,7 +212,18 @@ app.Use(async (context, next) =>
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
+    try 
+    {
+        app.Logger.LogInformation("Applying EF Core Migrations...");
+        await db.Database.MigrateAsync();
+        app.Logger.LogInformation("EF Core Migrations applied successfully.");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS");
+        // We don't throw here to avoid an infinite restart loop if DB is temporarily down,
+        // but the app might fail later (as it is doing now).
+    }
 }
 
 // 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy) - MUST BE FIRST
