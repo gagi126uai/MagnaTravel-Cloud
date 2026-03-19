@@ -34,8 +34,8 @@ public class FiscalController : ControllerBase
                 
                 // For simplicity, fetch full data of the first one
                 var firstId = personas.First();
-                var data = await FetchFromAfip(firstId);
-                return Ok(data);
+                var searchData = await FetchFromAfip(firstId);
+                return Ok(searchData);
             }
 
             // If it's a DNI (7-8 digits), try possible CUILs
@@ -45,17 +45,17 @@ public class FiscalController : ControllerBase
                 foreach (var prefix in prefixes)
                 {
                     var cuil = CalculateCuil(cleanId, prefix);
-                    var result = await FetchFromAfip(cuil);
-                    if (result != null) return Ok(result);
+                    var resultByDni = await FetchFromAfip(cuil);
+                    if (resultByDni != null) return Ok(resultByDni);
                 }
                 return NotFound("No se encontró información fiscal para este DNI en AFIP");
             }
 
             // Otherwise assume it's a CUIT/CUIL
-            var data = await FetchFromAfip(cleanId);
-            if (data == null) return NotFound("No se encontró información para el identificador proporcionado");
+            var directData = await FetchFromAfip(cleanId);
+            if (directData == null) return NotFound("No se encontró información para el identificador proporcionado");
             
-            return Ok(data);
+            return Ok(directData);
         }
         catch (Exception ex)
         {
