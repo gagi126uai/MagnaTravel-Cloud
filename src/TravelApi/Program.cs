@@ -201,6 +201,11 @@ app.Use(async (context, next) =>
     {
         await next();
     }
+    catch (OperationCanceledException)
+    {
+        // Don't log as error, just return 499 (Client Closed Request)
+        context.Response.StatusCode = 499;
+    }
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "Unhandled exception");
@@ -329,12 +334,6 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     
-    // EF Core Migrations
-    await dbContext.Database.MigrateAsync();
-
-    // Hotfixes and schema updates are now managed by EF Core Migrations.
-
-
     // Seed roles
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();

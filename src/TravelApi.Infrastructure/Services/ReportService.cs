@@ -346,12 +346,12 @@ public class ReportService : IReportService
 
     public async Task<AgencySettings?> GetAgencySettingsAsync(CancellationToken cancellationToken)
     {
-        return await _dbContext.AgencySettings.FirstOrDefaultAsync(cancellationToken);
+        return await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken);
     }
 
     public async Task<AgencySettings> UpdateAgencySettingsAsync(AgencySettings updated, CancellationToken cancellationToken)
     {
-        var settings = await _dbContext.AgencySettings.FirstOrDefaultAsync(cancellationToken);
+        var settings = await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken);
         if (settings == null)
         {
             _dbContext.AgencySettings.Add(updated);
