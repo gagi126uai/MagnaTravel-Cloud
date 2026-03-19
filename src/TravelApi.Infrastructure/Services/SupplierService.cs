@@ -138,7 +138,7 @@ public class SupplierService : ISupplierService
                 Confirmation = f.PNR ?? f.TicketNumber,
                 NetCost = f.NetCost,
                 SalePrice = f.SalePrice,
-                Date = f.DepartureTime,
+                Date = f.CreatedAt,
                 Status = f.Status,
                 NumeroReserva = f.Reserva!.NumeroReserva,
                 FileName = f.Reserva!.Name
@@ -158,7 +158,7 @@ public class SupplierService : ISupplierService
                 Confirmation = h.ConfirmationNumber,
                 NetCost = h.NetCost,
                 SalePrice = h.SalePrice,
-                Date = h.CheckIn,
+                Date = h.CreatedAt,
                 Status = h.Status,
                 NumeroReserva = h.Reserva!.NumeroReserva,
                 FileName = h.Reserva!.Name
@@ -178,7 +178,7 @@ public class SupplierService : ISupplierService
                 Confirmation = t.ConfirmationNumber,
                 NetCost = t.NetCost,
                 SalePrice = t.SalePrice,
-                Date = t.PickupDateTime,
+                Date = t.CreatedAt,
                 Status = t.Status,
                 NumeroReserva = t.Reserva!.NumeroReserva,
                 FileName = t.Reserva!.Name
@@ -198,7 +198,7 @@ public class SupplierService : ISupplierService
                 Confirmation = p.ConfirmationNumber,
                 NetCost = p.NetCost,
                 SalePrice = p.SalePrice,
-                Date = p.StartDate,
+                Date = p.CreatedAt,
                 Status = p.Status,
                 NumeroReserva = p.Reserva!.NumeroReserva,
                 FileName = p.Reserva!.Name
@@ -218,7 +218,7 @@ public class SupplierService : ISupplierService
                 Confirmation = r.ConfirmationNumber,
                 NetCost = r.NetCost,
                 SalePrice = r.SalePrice,
-                Date = r.DepartureDate,
+                Date = r.CreatedAt,
                 Status = r.Status,
                 NumeroReserva = r.Reserva!.NumeroReserva,
                 FileName = r.Reserva!.Name
