@@ -21,11 +21,11 @@ import {
     Receipt,
     Wallet,
     Info,
-    Download,
     Eye,
     History
 } from "lucide-react";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
+import InvoicePreviewModal from "../components/InvoicePreviewModal";
 import Swal from "sweetalert2";
 import { Button } from "../../../components/ui/button";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
@@ -72,6 +72,7 @@ export default function CustomerAccountPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [paymentToEdit, setPaymentToEdit] = useState(null);
     const [activeTab, setActiveTab] = useState("ledger");
+    const [invoiceToPreview, setInvoiceToPreview] = useState(null);
 
     useEffect(() => {
         loadAccount();
@@ -92,6 +93,14 @@ export default function CustomerAccountPage() {
     const handleOpenModal = (payment = null) => {
         setPaymentToEdit(payment);
         setIsModalOpen(true);
+    };
+
+    const handleOpenInvoicePreview = (invoice) => {
+        setInvoiceToPreview(invoice);
+    };
+
+    const handleCloseInvoicePreview = () => {
+        setInvoiceToPreview(null);
     };
 
     const handleDeletePayment = async (payment) => {
@@ -369,14 +378,15 @@ export default function CustomerAccountPage() {
                                                     </span>
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
-                                                    <div className="flex justify-end gap-1 transition-opacity">
-                                                        <button className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-900 transition-colors" title="Descargar PDF">
-                                                            <Download className="h-4 w-4" />
-                                                        </button>
-                                                        <Link to={`/reservas/${inv.reservaId}`} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-900 transition-colors inline-block" title="Ir a Reserva">
-                                                            <ArrowUpRight className="h-4 w-4" />
-                                                        </Link>
-                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleOpenInvoicePreview(inv)}
+                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                                                        title="Ver factura"
+                                                    >
+                                                        <Eye className="h-4 w-4" />
+                                                        Ver
+                                                    </button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -399,6 +409,12 @@ export default function CustomerAccountPage() {
                 customerId={id}
                 availableReservas={reservas.filter(f => f.status !== "Cancelado")}
                 onSave={loadAccount}
+            />
+
+            <InvoicePreviewModal
+                isOpen={Boolean(invoiceToPreview)}
+                invoice={invoiceToPreview}
+                onClose={handleCloseInvoicePreview}
             />
         </div>
     );
