@@ -25,7 +25,6 @@ import {
     History
 } from "lucide-react";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
-import InvoicePreviewModal from "../components/InvoicePreviewModal";
 import Swal from "sweetalert2";
 import { Button } from "../../../components/ui/button";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
@@ -64,6 +63,162 @@ const methodLabels = {
     "Card": "Tarjeta"
 };
 
+const formatInvoiceNumber = (invoice) => {
+    if (!invoice) return "";
+    return `${String(invoice.puntoDeVenta ?? 0).padStart(5, "0")}-${String(invoice.numeroComprobante ?? 0).padStart(8, "0")}`;
+};
+
+const formatInvoiceType = (invoice) => {
+    if (!invoice) return "";
+
+    switch (invoice.tipoComprobante) {
+        case 1:
+            return "Factura A";
+        case 6:
+            return "Factura B";
+        case 11:
+            return "Factura C";
+        default:
+            return `Tipo ${invoice.tipoComprobante}`;
+    }
+};
+
+const escapeHtml = (value) => String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+
+const renderInvoiceTab = (previewWindow, { title, body }) => {
+    if (!previewWindow || previewWindow.closed) {
+        return;
+    }
+
+    previewWindow.document.open();
+    previewWindow.document.write(`<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+        :root {
+            color-scheme: light;
+            font-family: Inter, system-ui, sans-serif;
+            background: #e2e8f0;
+            color: #0f172a;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+        }
+        .shell {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #cbd5e1;
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(10px);
+        }
+        .eyebrow {
+            margin: 0 0 6px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #6366f1;
+        }
+        .title {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 700;
+        }
+        .subtitle {
+            margin: 6px 0 0;
+            font-size: 14px;
+            color: #475569;
+        }
+        .content {
+            flex: 1;
+            padding: 20px;
+        }
+        .panel {
+            height: calc(100vh - 117px);
+            border: 1px solid #cbd5e1;
+            border-radius: 18px;
+            overflow: hidden;
+            background: #ffffff;
+            box-shadow: 0 20px 50px rgba(15, 23, 42, 0.15);
+        }
+        .state {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 24px;
+            text-align: center;
+        }
+        .state-title {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .state-text {
+            margin: 0;
+            max-width: 480px;
+            color: #475569;
+            line-height: 1.5;
+        }
+        .spinner {
+            width: 42px;
+            height: 42px;
+            border: 4px solid #cbd5e1;
+            border-top-color: #4f46e5;
+            border-radius: 999px;
+            animation: spin 0.9s linear infinite;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: #ffffff;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        @media (max-width: 768px) {
+            .header {
+                padding: 14px 16px;
+            }
+            .content {
+                padding: 12px;
+            }
+            .panel {
+                height: calc(100vh - 101px);
+                border-radius: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    ${body}
+</body>
+</html>`);
+    previewWindow.document.close();
+};
+
 export default function CustomerAccountPage() {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -72,7 +227,6 @@ export default function CustomerAccountPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [paymentToEdit, setPaymentToEdit] = useState(null);
     const [activeTab, setActiveTab] = useState("ledger");
-    const [invoiceToPreview, setInvoiceToPreview] = useState(null);
 
     useEffect(() => {
         loadAccount();
@@ -95,12 +249,100 @@ export default function CustomerAccountPage() {
         setIsModalOpen(true);
     };
 
-    const handleOpenInvoicePreview = (invoice) => {
-        setInvoiceToPreview(invoice);
-    };
+    const handleOpenInvoicePreview = async (invoice) => {
+        const previewWindow = window.open("", "_blank");
 
-    const handleCloseInvoicePreview = () => {
-        setInvoiceToPreview(null);
+        if (!previewWindow) {
+            showError("El navegador bloqueo la apertura de la factura.");
+            return;
+        }
+
+        previewWindow.opener = null;
+
+        const invoiceTitle = `${formatInvoiceType(invoice)} ${formatInvoiceNumber(invoice)}`;
+
+        renderInvoiceTab(previewWindow, {
+            title: invoiceTitle,
+            body: `
+                <div class="shell">
+                    <div class="header">
+                        <p class="eyebrow">Facturacion AFIP</p>
+                        <h1 class="title">${escapeHtml(invoiceTitle)}</h1>
+                        <p class="subtitle">Preparando la factura para mostrarla en esta pestaña.</p>
+                    </div>
+                    <div class="content">
+                        <div class="panel">
+                            <div class="state">
+                                <div class="spinner"></div>
+                                <p class="state-title">Cargando factura...</p>
+                                <p class="state-text">Estamos obteniendo el PDF autenticado para abrirlo fuera de la cuenta corriente.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `
+        });
+
+        try {
+            const blob = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: "blob" });
+
+            if (!(blob instanceof Blob) || blob.size === 0) {
+                throw new Error("La factura no devolvio un PDF valido.");
+            }
+
+            const pdfUrl = URL.createObjectURL(blob);
+
+            if (previewWindow.closed) {
+                URL.revokeObjectURL(pdfUrl);
+                return;
+            }
+
+            const releaseTimer = window.setInterval(() => {
+                if (previewWindow.closed) {
+                    URL.revokeObjectURL(pdfUrl);
+                    window.clearInterval(releaseTimer);
+                }
+            }, 1000);
+
+            renderInvoiceTab(previewWindow, {
+                title: invoiceTitle,
+                body: `
+                    <div class="shell">
+                        <div class="header">
+                            <p class="eyebrow">Facturacion AFIP</p>
+                            <h1 class="title">${escapeHtml(invoiceTitle)}</h1>
+                            <p class="subtitle">Vista de la factura emitida en AFIP.</p>
+                        </div>
+                        <div class="content">
+                            <div class="panel">
+                                <iframe src="${pdfUrl}" title="${escapeHtml(invoiceTitle)}"></iframe>
+                            </div>
+                        </div>
+                    </div>
+                `
+            });
+        } catch (error) {
+            renderInvoiceTab(previewWindow, {
+                title: invoiceTitle,
+                body: `
+                    <div class="shell">
+                        <div class="header">
+                            <p class="eyebrow">Facturacion AFIP</p>
+                            <h1 class="title">${escapeHtml(invoiceTitle)}</h1>
+                            <p class="subtitle">No fue posible abrir la factura.</p>
+                        </div>
+                        <div class="content">
+                            <div class="panel">
+                                <div class="state">
+                                    <p class="state-title">No se pudo cargar la factura</p>
+                                    <p class="state-text">${escapeHtml(error?.message || "El servidor no devolvio un PDF valido.")}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `
+            });
+        }
     };
 
     const handleDeletePayment = async (payment) => {
@@ -409,12 +651,6 @@ export default function CustomerAccountPage() {
                 customerId={id}
                 availableReservas={reservas.filter(f => f.status !== "Cancelado")}
                 onSave={loadAccount}
-            />
-
-            <InvoicePreviewModal
-                isOpen={Boolean(invoiceToPreview)}
-                invoice={invoiceToPreview}
-                onClose={handleCloseInvoicePreview}
             />
         </div>
     );
