@@ -175,30 +175,21 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         onDelete: ReferentialAction.Restrict);
                 });
 
-            migrationBuilder.InsertData(
-                table: "OperationalFinanceSettings",
-                columns: new[]
-                {
-                    "Id",
-                    "RequireFullPaymentForOperativeStatus",
-                    "RequireFullPaymentForVoucher",
-                    "AfipInvoiceControlMode",
-                    "EnableUpcomingUnpaidReservationNotifications",
-                    "UpcomingUnpaidReservationAlertDays",
-                    "CreatedAt",
-                    "UpdatedAt"
-                },
-                values: new object[]
-                {
+            migrationBuilder.Sql(
+                """
+                INSERT INTO "OperationalFinanceSettings"
+                    ("Id", "RequireFullPaymentForOperativeStatus", "RequireFullPaymentForVoucher", "AfipInvoiceControlMode", "EnableUpcomingUnpaidReservationNotifications", "UpcomingUnpaidReservationAlertDays", "CreatedAt", "UpdatedAt")
+                SELECT
                     1,
-                    true,
-                    true,
-                    "AllowAgentOverrideWithReason",
-                    true,
+                    TRUE,
+                    TRUE,
+                    'AllowAgentOverrideWithReason',
+                    TRUE,
                     7,
-                    new DateTime(2026, 3, 22, 0, 0, 0, DateTimeKind.Utc),
-                    new DateTime(2026, 3, 22, 0, 0, 0, DateTimeKind.Utc)
-                });
+                    TIMESTAMPTZ '2026-03-22 00:00:00+00',
+                    TIMESTAMPTZ '2026-03-22 00:00:00+00'
+                WHERE NOT EXISTS (SELECT 1 FROM "OperationalFinanceSettings");
+                """);
 
             migrationBuilder.CreateIndex(
                 name: "IX_TravelFiles_ResponsibleUserId",

@@ -236,6 +236,7 @@ using (var scope = app.Services.CreateScope())
     {
         app.Logger.LogInformation("Bootstrapping operational finance schema via raw SQL...");
         await OperationalFinanceSchemaBootstrapper.EnsureAsync(db);
+        await OperationalFinanceSchemaBootstrapper.MarkOperationalFinanceMigrationAsAppliedAsync(db);
         app.Logger.LogInformation("Operational finance bootstrap finished.");
     }
     catch (Exception ex)

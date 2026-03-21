@@ -4,6 +4,9 @@ namespace TravelApi.Infrastructure.Persistence;
 
 public static class OperationalFinanceSchemaBootstrapper
 {
+    public const string OperationalFinanceMigrationId = "20260322010000_AddOperationalFinanceAndTreasury";
+    private const string EfProductVersion = "8.0.13";
+
     private static readonly string[] Statements =
     {
         @"ALTER TABLE ""TravelFiles"" ADD COLUMN IF NOT EXISTS ""TotalPaid"" numeric(18,2) NOT NULL DEFAULT 0.0;",
@@ -69,7 +72,71 @@ public static class OperationalFinanceSchemaBootstrapper
 
         @"CREATE INDEX IF NOT EXISTS ""IX_TravelFiles_ResponsibleUserId"" ON ""TravelFiles"" (""ResponsibleUserId"");",
         @"CREATE INDEX IF NOT EXISTS ""IX_Payments_OriginalPaymentId"" ON ""Payments"" (""OriginalPaymentId"");",
-        @"CREATE INDEX IF NOT EXISTS ""IX_Payments_RelatedInvoiceId"" ON ""Payments"" (""RelatedInvoiceId"");"
+        @"CREATE INDEX IF NOT EXISTS ""IX_Payments_RelatedInvoiceId"" ON ""Payments"" (""RelatedInvoiceId"");",
+
+        @"DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_ManualCashMovements_Suppliers_RelatedSupplierId') THEN
+                ALTER TABLE ""ManualCashMovements""
+                    ADD CONSTRAINT ""FK_ManualCashMovements_Suppliers_RelatedSupplierId""
+                    FOREIGN KEY (""RelatedSupplierId"") REFERENCES ""Suppliers"" (""Id"") ON DELETE SET NULL;
+            END IF;
+        END
+        $$;",
+        @"DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_ManualCashMovements_TravelFiles_RelatedReservaId') THEN
+                ALTER TABLE ""ManualCashMovements""
+                    ADD CONSTRAINT ""FK_ManualCashMovements_TravelFiles_RelatedReservaId""
+                    FOREIGN KEY (""RelatedReservaId"") REFERENCES ""TravelFiles"" (""Id"") ON DELETE SET NULL;
+            END IF;
+        END
+        $$;",
+        @"DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_PaymentReceipts_Payments_PaymentId') THEN
+                ALTER TABLE ""PaymentReceipts""
+                    ADD CONSTRAINT ""FK_PaymentReceipts_Payments_PaymentId""
+                    FOREIGN KEY (""PaymentId"") REFERENCES ""Payments"" (""Id"") ON DELETE RESTRICT;
+            END IF;
+        END
+        $$;",
+        @"DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_PaymentReceipts_TravelFiles_ReservaId') THEN
+                ALTER TABLE ""PaymentReceipts""
+                    ADD CONSTRAINT ""FK_PaymentReceipts_TravelFiles_ReservaId""
+                    FOREIGN KEY (""ReservaId"") REFERENCES ""TravelFiles"" (""Id"") ON DELETE RESTRICT;
+            END IF;
+        END
+        $$;",
+        @"DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_Payments_Invoices_RelatedInvoiceId') THEN
+                ALTER TABLE ""Payments""
+                    ADD CONSTRAINT ""FK_Payments_Invoices_RelatedInvoiceId""
+                    FOREIGN KEY (""RelatedInvoiceId"") REFERENCES ""Invoices"" (""Id"") ON DELETE SET NULL;
+            END IF;
+        END
+        $$;",
+        @"DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_Payments_Payments_OriginalPaymentId') THEN
+                ALTER TABLE ""Payments""
+                    ADD CONSTRAINT ""FK_Payments_Payments_OriginalPaymentId""
+                    FOREIGN KEY (""OriginalPaymentId"") REFERENCES ""Payments"" (""Id"") ON DELETE SET NULL;
+            END IF;
+        END
+        $$;",
+        @"DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_TravelFiles_AspNetUsers_ResponsibleUserId') THEN
+                ALTER TABLE ""TravelFiles""
+                    ADD CONSTRAINT ""FK_TravelFiles_AspNetUsers_ResponsibleUserId""
+                    FOREIGN KEY (""ResponsibleUserId"") REFERENCES ""AspNetUsers"" (""Id"") ON DELETE SET NULL;
+            END IF;
+        END
+        $$;"
     };
 
     public static async Task EnsureAsync(AppDbContext dbContext, CancellationToken cancellationToken = default)
@@ -78,5 +145,29 @@ public static class OperationalFinanceSchemaBootstrapper
         {
             await dbContext.Database.ExecuteSqlRawAsync(statement, cancellationToken);
         }
+    }
+
+    public static async Task MarkOperationalFinanceMigrationAsAppliedAsync(AppDbContext dbContext, CancellationToken cancellationToken = default)
+    {
+        var sql = $"""
+            CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+                "MigrationId" character varying(150) NOT NULL,
+                "ProductVersion" character varying(32) NOT NULL,
+                CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")
+            );
+
+            INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+            SELECT '{OperationalFinanceMigrationId}', '{EfProductVersion}'
+            WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'OperationalFinanceSettings')
+              AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'PaymentReceipts')
+              AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'ManualCashMovements')
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM "__EFMigrationsHistory"
+                    WHERE "MigrationId" = '{OperationalFinanceMigrationId}'
+              );
+            """;
+
+        await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 }
