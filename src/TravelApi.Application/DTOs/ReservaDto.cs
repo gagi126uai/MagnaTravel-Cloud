@@ -7,6 +7,9 @@ public class ReservaDto
     public string Name { get; set; } = string.Empty;
     public string Status { get; set; } = "Presupuesto";
     public int? CustomerId { get; set; }
+    public int? SourceLeadId { get; set; }
+    public int? SourceQuoteId { get; set; }
+    public string? WhatsAppPhoneOverride { get; set; }
 
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience

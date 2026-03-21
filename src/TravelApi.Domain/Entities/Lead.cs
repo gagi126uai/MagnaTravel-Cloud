@@ -67,4 +67,5 @@ public class Lead
     
     // Navigation
     public ICollection<LeadActivity> Activities { get; set; } = new List<LeadActivity>();
+    public ICollection<Quote> Quotes { get; set; } = new List<Quote>();
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import {
@@ -38,15 +38,18 @@ function timeAgo(dateStr) {
 
 export default function CRMPage() {
     const navigate = useNavigate();
+    const location = useLocation();
     const [allLeads, setAllLeads] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [detailLead, setDetailLead] = useState(null);
+    const [detailJourney, setDetailJourney] = useState(null);
     const [detailLoading, setDetailLoading] = useState(false);
     const [showActivityModal, setShowActivityModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [filterStatus, setFilterStatus] = useState("all");
     const [filterSource, setFilterSource] = useState("all");
+    const [creatingQuote, setCreatingQuote] = useState(false);
 
     // Chat
     const [chatMessage, setChatMessage] = useState("");
@@ -77,16 +80,30 @@ export default function CRMPage() {
         return () => clearInterval(interval);
     }, [loadLeads]);
 
-    const loadDetail = async (id) => {
-        // Clear previous detail to avoid "flicker" of old data
-        // but only if it's a different lead
-        if (detailLead?.id !== id) setDetailLoading(true);
+    const loadDetail = useCallback(async (id) => {
+        setDetailLoading(true);
         try {
-            const lead = await api.get(`/leads/${id}`);
+            const [lead, journey] = await Promise.all([
+                api.get(`/leads/${id}`),
+                api.get(`/leads/${id}/journey`).catch(() => null)
+            ]);
             setDetailLead(lead);
-        } catch (e) { console.error("Detail error:", e); showError("Error al cargar detalle"); }
-        finally { setDetailLoading(false); }
-    };
+            setDetailJourney(journey);
+        } catch (e) {
+            console.error("Detail error:", e);
+            showError("Error al cargar detalle");
+        } finally {
+            setDetailLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const openLeadId = location.state?.openLeadId;
+        if (!openLeadId) return;
+
+        loadDetail(openLeadId);
+        navigate(location.pathname, { replace: true, state: {} });
+    }, [loadDetail, location.pathname, location.state, navigate]);
 
     const handleCreate = async (data) => {
         try { await api.post("/leads", data); showSuccess("Lead creado"); setShowModal(false); loadLeads(); }
@@ -113,8 +130,24 @@ export default function CRMPage() {
     const handleDelete = async (id) => {
         const { isConfirmed } = await Swal.fire({ title: "¿Eliminar lead?", icon: "warning", showCancelButton: true, confirmButtonColor: "#ef4444" });
         if (!isConfirmed) return;
-        try { await api.delete(`/leads/${id}`); showSuccess("Lead eliminado"); loadLeads(); setDetailLead(null); }
+        try { await api.delete(`/leads/${id}`); showSuccess("Lead eliminado"); loadLeads(); setDetailLead(null); setDetailJourney(null); }
         catch { showError("Error al eliminar"); }
+    };
+
+    const handleCreateQuoteDraft = async (id) => {
+        try {
+            setCreatingQuote(true);
+            const res = await api.post(`/leads/${id}/quote-draft`);
+            showSuccess(`Cotizacion creada: ${res.quoteNumber || `#${res.quoteId}`}`);
+            setDetailLead(null);
+            setDetailJourney(null);
+            loadLeads();
+            navigate("/quotes", { state: { openQuoteId: res.quoteId } });
+        } catch (e) {
+            showError(e.message || "Error al crear cotizacion");
+        } finally {
+            setCreatingQuote(false);
+        }
     };
 
     const handleSendChat = async () => {
@@ -287,7 +320,7 @@ export default function CRMPage() {
 
             {/* DETAIL MODAL (Centered 2 Columns) */}
             {detailLead && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300" onClick={() => setDetailLead(null)}>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300" onClick={() => { setDetailLead(null); setDetailJourney(null); }}>
                     <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] w-full max-w-6xl h-[85vh] overflow-hidden shadow-2xl flex flex-col md:flex-row shadow-indigo-500/10 border border-white/20 dark:border-slate-800" onClick={e => e.stopPropagation()}>
                         
                         {detailLoading ? (
@@ -318,7 +351,7 @@ export default function CRMPage() {
                                                     <span className="flex items-center gap-1.5"><Info className="w-4 h-4" /> CRM ID: #{detailLead.id}</span>
                                                 </div>
                                             </div>
-                                            <button onClick={() => setDetailLead(null)} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-2xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors group">
+                                            <button onClick={() => { setDetailLead(null); setDetailJourney(null); }} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-2xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors group">
                                                 <X className="w-6 h-6 text-slate-400 group-hover:scale-110 transition-transform" />
                                             </button>
                                         </div>
@@ -343,6 +376,50 @@ export default function CRMPage() {
                                             <div className="bg-slate-50 dark:bg-slate-800/10 rounded-3xl p-5 text-sm text-slate-600 dark:text-slate-300 border border-slate-100 dark:border-slate-800 leading-relaxed min-h-[100px] shadow-inner">
                                                 {detailLead.notes || "No hay notas adicionales."}
                                             </div>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest pl-1">Journey Comercial</h3>
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                <JourneyCard
+                                                    label="Cliente"
+                                                    value={detailJourney?.convertedCustomerName || (detailLead.convertedCustomerId ? `Cliente #${detailLead.convertedCustomerId}` : "Pendiente")}
+                                                    actionLabel={detailLead.convertedCustomerId ? "Abrir cuenta" : "Convertir"}
+                                                    disabled={!detailLead.convertedCustomerId}
+                                                    onAction={() => detailLead.convertedCustomerId && navigate(`/customers/${detailLead.convertedCustomerId}/account`)}
+                                                />
+                                                <JourneyCard
+                                                    label="Cotizacion"
+                                                    value={detailJourney?.quotes?.[0]?.quoteNumber || "Sin cotizacion"}
+                                                    meta={detailJourney?.quotes?.[0]?.status || "Borrador aun no creado"}
+                                                    actionLabel={detailJourney?.latestQuoteId ? "Abrir" : "Crear"}
+                                                    disabled={!detailJourney?.latestQuoteId}
+                                                    onAction={() => detailJourney?.latestQuoteId && navigate("/quotes", { state: { openQuoteId: detailJourney.latestQuoteId } })}
+                                                />
+                                                <JourneyCard
+                                                    label="Reserva"
+                                                    value={detailJourney?.reservas?.[0]?.numeroReserva || "Sin reserva"}
+                                                    meta={detailJourney?.reservas?.[0]?.status || "Aun no convertida"}
+                                                    actionLabel={detailJourney?.latestReservaId ? "Abrir" : "Pendiente"}
+                                                    disabled={!detailJourney?.latestReservaId}
+                                                    onAction={() => detailJourney?.latestReservaId && navigate(`/reservas/${detailJourney.latestReservaId}`)}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="flex gap-3 flex-wrap items-center">
+                                            {!detailLead.convertedCustomerId && detailLead.status !== "Perdido" && (
+                                                <ActionBtnLg onClick={() => handleConvert(detailLead.id)} bg="bg-indigo-600" text="Convertir a Cliente" icon={User} />
+                                            )}
+                                            {detailLead.convertedCustomerId && (
+                                                <ActionBtnLg onClick={() => handleCreateQuoteDraft(detailLead.id)} bg="bg-violet-600" text={creatingQuote ? "Creando..." : "Crear Cotizacion"} icon={FileText} disabled={creatingQuote} />
+                                            )}
+                                            {detailJourney?.latestQuoteId && (
+                                                <ActionBtnLg onClick={() => navigate("/quotes", { state: { openQuoteId: detailJourney.latestQuoteId } })} bg="bg-slate-900" text="Abrir Cotizacion" icon={ArrowRight} />
+                                            )}
+                                            {detailJourney?.latestReservaId && (
+                                                <ActionBtnLg onClick={() => navigate(`/reservas/${detailJourney.latestReservaId}`)} bg="bg-emerald-600" text="Abrir Reserva" icon={ArrowRight} />
+                                            )}
                                         </div>
 
                                         {/* Primary Actions */}
@@ -474,11 +551,30 @@ function ContactChip({ icon: Icon, text, type, onCopy, href }) {
     );
 }
 
-function ActionBtnLg({ onClick, bg, text, icon: Icon }) {
+function ActionBtnLg({ onClick, bg, text, icon: Icon, disabled = false }) {
     return (
-        <button onClick={onClick} className={`flex items-center gap-2 px-5 py-3 ${bg} text-white rounded-2xl text-[11px] font-black uppercase tracking-widest shadow-lg hover:brightness-110 active:scale-95 transition-all`}>
+        <button onClick={onClick} disabled={disabled} className={`flex items-center gap-2 px-5 py-3 ${bg} text-white rounded-2xl text-[11px] font-black uppercase tracking-widest shadow-lg hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100`}>
             <Icon className="w-4 h-4" /> {text}
         </button>
+    );
+}
+
+function JourneyCard({ label, value, meta, actionLabel, disabled, onAction }) {
+    return (
+        <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3">
+            <div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</div>
+                <div className="mt-2 text-sm font-black text-slate-900 dark:text-white">{value}</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{meta || "Sin vinculacion todavia"}</div>
+            </div>
+            <button
+                onClick={onAction}
+                disabled={disabled}
+                className="w-full px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-black uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+                {actionLabel}
+            </button>
+        </div>
     );
 }
 

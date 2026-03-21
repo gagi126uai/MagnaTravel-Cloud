@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -124,6 +125,85 @@ public class LeadService : ILeadService
         await _db.SaveChangesAsync(cancellationToken);
 
         return customer.Id;
+    }
+
+    public async Task<Quote> CreateQuoteDraftAsync(int leadId, CancellationToken cancellationToken)
+    {
+        var lead = await _db.Leads
+            .FirstOrDefaultAsync(l => l.Id == leadId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Lead {leadId} no encontrado.");
+
+        if (!lead.ConvertedCustomerId.HasValue)
+            throw new InvalidOperationException("El lead debe estar convertido a cliente antes de crear una cotizacion.");
+
+        var count = await _db.Quotes.CountAsync(cancellationToken);
+        var quote = new Quote
+        {
+            QuoteNumber = $"COT-{(count + 1).ToString().PadLeft(5, '0')}",
+            Title = !string.IsNullOrWhiteSpace(lead.InterestedIn)
+                ? $"Cotizacion para {lead.FullName} - {lead.InterestedIn}"
+                : $"Cotizacion para {lead.FullName}",
+            Description = lead.Notes,
+            Status = QuoteStatus.Draft,
+            CustomerId = lead.ConvertedCustomerId,
+            LeadId = lead.Id,
+            Destination = lead.InterestedIn,
+            Notes = $"Cotizacion creada desde Lead #{lead.Id}",
+            CreatedAt = DateTime.UtcNow,
+            ValidUntil = DateTime.UtcNow.AddDays(15)
+        };
+
+        _db.Quotes.Add(quote);
+        await _db.SaveChangesAsync(cancellationToken);
+        return quote;
+    }
+
+    public async Task<LeadJourneyDto> GetJourneyAsync(int leadId, CancellationToken cancellationToken)
+    {
+        var lead = await _db.Leads
+            .Include(l => l.ConvertedCustomer)
+            .FirstOrDefaultAsync(l => l.Id == leadId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Lead {leadId} no encontrado.");
+
+        var quotes = await _db.Quotes
+            .Where(q => q.LeadId == leadId)
+            .OrderByDescending(q => q.CreatedAt)
+            .Select(q => new LeadJourneyQuoteDto
+            {
+                Id = q.Id,
+                QuoteNumber = q.QuoteNumber,
+                Title = q.Title,
+                Status = q.Status,
+                CustomerId = q.CustomerId,
+                ConvertedReservaId = q.ConvertedReservaId,
+                CreatedAt = q.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        var reservas = await _db.Reservas
+            .Where(r => r.SourceLeadId == leadId || (r.SourceQuote != null && r.SourceQuote.LeadId == leadId))
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new LeadJourneyReservaDto
+            {
+                Id = r.Id,
+                NumeroReserva = r.NumeroReserva,
+                Name = r.Name,
+                Status = r.Status,
+                SourceQuoteId = r.SourceQuoteId,
+                CreatedAt = r.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        return new LeadJourneyDto
+        {
+            LeadId = lead.Id,
+            ConvertedCustomerId = lead.ConvertedCustomerId,
+            ConvertedCustomerName = lead.ConvertedCustomer?.FullName,
+            LatestQuoteId = quotes.FirstOrDefault()?.Id,
+            LatestReservaId = reservas.FirstOrDefault()?.Id,
+            Quotes = quotes,
+            Reservas = reservas
+        };
     }
 
     public async Task<object> GetPipelineAsync(CancellationToken cancellationToken)

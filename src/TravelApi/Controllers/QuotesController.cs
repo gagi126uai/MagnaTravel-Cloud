@@ -77,8 +77,8 @@ public class QuotesController : ControllerBase
     [HttpPost("{id}/convert")]
     public async Task<ActionResult> ConvertToFile(int id, CancellationToken cancellationToken)
     {
-        var fileId = await _quoteService.ConvertToFileAsync(id, cancellationToken);
-        return Ok(new { fileId });
+        var reservaId = await _quoteService.ConvertToFileAsync(id, cancellationToken);
+        return Ok(new { reservaId, fileId = reservaId });
     }
 }
 

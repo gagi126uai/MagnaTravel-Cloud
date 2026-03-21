@@ -4,6 +4,7 @@ EXPOSE 8080
 
 # QuestPDF Dependencies (Fonts & Libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     libfontconfig1 \
     libfreetype6 \
     fonts-dejavu-core \

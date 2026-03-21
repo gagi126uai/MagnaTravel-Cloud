@@ -205,6 +205,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Lead> Leads => Set<Lead>();
     public DbSet<LeadActivity> LeadActivities => Set<LeadActivity>();
     public DbSet<WhatsAppBotConfig> WhatsAppBotConfigs => Set<WhatsAppBotConfig>();
+    public DbSet<WhatsAppDelivery> WhatsAppDeliveries => Set<WhatsAppDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -235,11 +236,22 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(f => f.NumeroReserva).HasColumnName("FileNumber").HasMaxLength(50).IsRequired();
             entity.Property(f => f.Name).HasMaxLength(200).IsRequired();
             entity.Property(f => f.Status).HasMaxLength(50).IsRequired();
+            entity.Property(f => f.WhatsAppPhoneOverride).HasMaxLength(50);
 
             entity.HasOne(f => f.Payer)
                   .WithMany(c => c.Reservas)
                   .HasForeignKey(f => f.PayerId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(f => f.SourceLead)
+                  .WithMany()
+                  .HasForeignKey(f => f.SourceLeadId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(f => f.SourceQuote)
+                  .WithMany()
+                  .HasForeignKey(f => f.SourceQuoteId)
+                  .OnDelete(DeleteBehavior.SetNull);
 
             entity.HasMany(f => f.Servicios)
                   .WithOne(r => r.Reserva)
@@ -375,6 +387,35 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<Quote>(entity =>
         {
             entity.Property(q => q.ConvertedReservaId).HasColumnName("ConvertedFileId");
+            entity.HasOne(q => q.Lead)
+                  .WithMany(l => l.Quotes)
+                  .HasForeignKey(q => q.LeadId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<WhatsAppDelivery>(entity =>
+        {
+            entity.ToTable("WhatsAppDeliveries");
+            entity.Property(d => d.Phone).HasMaxLength(50).IsRequired();
+            entity.Property(d => d.Kind).HasMaxLength(50).IsRequired();
+            entity.Property(d => d.Direction).HasMaxLength(20).IsRequired();
+            entity.Property(d => d.Status).HasMaxLength(30).IsRequired();
+            entity.Property(d => d.MessageText).HasMaxLength(2000);
+            entity.Property(d => d.AttachmentName).HasMaxLength(255);
+            entity.Property(d => d.BotMessageId).HasMaxLength(200);
+            entity.Property(d => d.CreatedBy).HasMaxLength(200);
+            entity.Property(d => d.SentBy).HasMaxLength(200);
+            entity.Property(d => d.Error).HasMaxLength(1000);
+
+            entity.HasOne(d => d.Reserva)
+                  .WithMany(r => r.WhatsAppDeliveries)
+                  .HasForeignKey(d => d.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(d => d.Customer)
+                  .WithMany()
+                  .HasForeignKey(d => d.CustomerId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // ReservaAttachment

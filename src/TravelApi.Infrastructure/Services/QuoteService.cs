@@ -18,6 +18,7 @@ public class QuoteService : IQuoteService
     {
         return await _db.Quotes
             .Include(q => q.Customer)
+            .Include(q => q.Lead)
             .Include(q => q.Items)
             .OrderByDescending(q => q.CreatedAt)
             .ToListAsync(cancellationToken);
@@ -27,6 +28,7 @@ public class QuoteService : IQuoteService
     {
         return await _db.Quotes
             .Include(q => q.Customer)
+            .Include(q => q.Lead)
             .Include(q => q.Items).ThenInclude(i => i.Supplier)
             .Include(q => q.ConvertedReserva)
             .FirstOrDefaultAsync(q => q.Id == id, cancellationToken);
@@ -126,6 +128,16 @@ public class QuoteService : IQuoteService
             ?? throw new KeyNotFoundException($"Cotización {id} no encontrada.");
 
         quote.Status = status;
+        if (quote.LeadId.HasValue && (status == QuoteStatus.Sent || status == QuoteStatus.Accepted))
+        {
+            var lead = await _db.Leads.FindAsync(new object[] { quote.LeadId.Value }, cancellationToken);
+            if (lead != null && lead.Status != LeadStatus.Won && lead.Status != LeadStatus.Lost)
+            {
+                lead.Status = LeadStatus.Quoted;
+                lead.ClosedAt = null;
+            }
+        }
+
         if (status == QuoteStatus.Accepted)
             quote.AcceptedAt = DateTime.UtcNow;
 
@@ -152,6 +164,8 @@ public class QuoteService : IQuoteService
             Description = quote.Description,
             Status = EstadoReserva.Reserved,
             PayerId = quote.CustomerId,
+            SourceLeadId = quote.LeadId,
+            SourceQuoteId = quote.Id,
             StartDate = quote.TravelStartDate,
             EndDate = quote.TravelEndDate,
             // Even though generic File Service calculates dynamically, we still populate DB bounds
@@ -191,6 +205,15 @@ public class QuoteService : IQuoteService
         quote.ConvertedReservaId = file.Id;
         quote.Status = QuoteStatus.Accepted;
         quote.AcceptedAt = DateTime.UtcNow;
+        if (quote.LeadId.HasValue)
+        {
+            var lead = await _db.Leads.FindAsync(new object[] { quote.LeadId.Value }, cancellationToken);
+            if (lead != null && lead.Status != LeadStatus.Lost)
+            {
+                lead.Status = LeadStatus.Won;
+                lead.ClosedAt = DateTime.UtcNow;
+            }
+        }
         await _db.SaveChangesAsync(cancellationToken);
 
         return file.Id;

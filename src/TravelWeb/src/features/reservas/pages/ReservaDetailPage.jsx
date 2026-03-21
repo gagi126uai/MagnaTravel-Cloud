@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
     FileText, Users, Clock, CreditCard, Paperclip, History
 } from "lucide-react";
-import { LucideIcon } from "lucide-react";
 
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import ServiceFormModal from "../../../components/ServiceFormModal";
@@ -69,6 +68,37 @@ export default function ReservaDetailPage() {
             <ReservaSummaryStrip reserva={reserva} />
 
             <CapacityWarning paxCount={reserva.passengers?.length || 0} hotelCapacity={hotelCapacity} />
+
+            {(reserva.sourceLeadId || reserva.sourceQuoteId) && (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                        <div>
+                            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Origen comercial</div>
+                            <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                                Esta reserva conserva la trazabilidad del pipeline comercial que la genero.
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                            {reserva.sourceLeadId && (
+                                <button
+                                    onClick={() => navigate('/crm', { state: { openLeadId: reserva.sourceLeadId } })}
+                                    className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                                >
+                                    Lead #{reserva.sourceLeadId}
+                                </button>
+                            )}
+                            {reserva.sourceQuoteId && (
+                                <button
+                                    onClick={() => navigate('/quotes', { state: { openQuoteId: reserva.sourceQuoteId } })}
+                                    className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors"
+                                >
+                                    Cotizacion #{reserva.sourceQuoteId}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* TABS NAVIGATION */}
             <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">

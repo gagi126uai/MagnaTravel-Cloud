@@ -59,6 +59,7 @@ public class MappingProfile : Profile
 
         // Customers
         CreateMap<Customer, CustomerDto>();
+        CreateMap<WhatsAppDelivery, WhatsAppDeliveryDto>();
 
         // Servicios
         CreateMap<ServicioReserva, ServicioReservaDto>()
@@ -67,6 +68,9 @@ public class MappingProfile : Profile
         // Reserva
         CreateMap<Reserva, ReservaDto>()
             .ForMember(dest => dest.CustomerId, opt => opt.MapFrom(src => src.PayerId))
+            .ForMember(dest => dest.SourceLeadId, opt => opt.MapFrom(src => src.SourceLeadId))
+            .ForMember(dest => dest.SourceQuoteId, opt => opt.MapFrom(src => src.SourceQuoteId))
+            .ForMember(dest => dest.WhatsAppPhoneOverride, opt => opt.MapFrom(src => src.WhatsAppPhoneOverride))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer))
             .ForMember(dest => dest.Servicios, opt => opt.MapFrom(src => src.Servicios))

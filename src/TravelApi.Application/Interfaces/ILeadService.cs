@@ -1,3 +1,4 @@
+using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Application.Interfaces;
@@ -12,5 +13,7 @@ public interface ILeadService
     Task<Lead> UpdateStatusAsync(int id, string status, CancellationToken cancellationToken);
     Task<LeadActivity> AddActivityAsync(int leadId, LeadActivity activity, CancellationToken cancellationToken);
     Task<int> ConvertToCustomerAsync(int leadId, CancellationToken cancellationToken);
+    Task<Quote> CreateQuoteDraftAsync(int leadId, CancellationToken cancellationToken);
+    Task<LeadJourneyDto> GetJourneyAsync(int leadId, CancellationToken cancellationToken);
     Task<object> GetPipelineAsync(CancellationToken cancellationToken);
 }

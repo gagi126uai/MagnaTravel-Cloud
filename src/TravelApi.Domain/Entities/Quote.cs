@@ -33,6 +33,10 @@ public class Quote
     // Client
     public int? CustomerId { get; set; }
     public Customer? Customer { get; set; }
+
+    // Commercial traceability
+    public int? LeadId { get; set; }
+    public Lead? Lead { get; set; }
     
     // Dates
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

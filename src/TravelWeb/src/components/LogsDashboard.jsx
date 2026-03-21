@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
+import { API_BASE_URL, buildApiUrl } from "../api";
 import { 
   Terminal as TerminalIcon, 
   Smartphone, 
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import LogTerminal from "./LogTerminal";
 
-const hubUrl = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "") + "/hubs/logs";
+const hubUrl = buildApiUrl("/hubs/logs");
 
 export default function LogsDashboard() {
   const [activeSubTab, setActiveSubTab] = useState("api");
@@ -33,8 +34,8 @@ export default function LogsDashboard() {
         const headers = { Authorization: `Bearer ${token}` };
         
         const [apiRes, botRes] = await Promise.all([
-          fetch(`${(import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "")}/api/logs/api-tail`, { headers }),
-          fetch(`${(import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "")}/api/logs/bot-tail`, { headers })
+          fetch(buildApiUrl("/api/logs/api-tail"), { headers }),
+          fetch(buildApiUrl("/api/logs/bot-tail"), { headers })
         ]);
 
         const apiLogs = await apiRes.json();
@@ -109,7 +110,7 @@ export default function LogsDashboard() {
         {activeSubTab === "programming" ? (
           <div className="h-[600px] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden relative">
             <iframe
-              src={`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/auth/hangfire-login?token=${localStorage.getItem("token")}`}
+              src={`${API_BASE_URL.replace(/\/$/, "")}/api/auth/hangfire-login?token=${localStorage.getItem("token")}`}
               className="w-full h-full border-none"
               title="Hangfire Dashboard"
             />

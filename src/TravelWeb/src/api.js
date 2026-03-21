@@ -1,4 +1,12 @@
-const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+export const API_BASE_URL =
+  (import.meta.env.VITE_API_URL || "").trim() ||
+  (typeof window !== "undefined" ? window.location.origin : "http://localhost:5000");
+
+export function buildApiUrl(path) {
+  const cleanBaseUrl = API_BASE_URL.replace(/\/$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${cleanBaseUrl}${cleanPath}`;
+}
 
 export async function apiRequest(path, options = {}) {
   const token = localStorage.getItem("token");
@@ -12,14 +20,12 @@ export async function apiRequest(path, options = {}) {
     headers["Content-Type"] = "application/json";
   }
 
-  // Ensure proper URL construction
-  const cleanBaseUrl = baseUrl.replace(/\/$/, "");
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
 
   // Auto-prepend /api if missing (Common issue with VITE_API_URL configuration)
   const finalPath = cleanPath.startsWith("/api") ? cleanPath : `/api${cleanPath}`;
 
-  const response = await fetch(`${cleanBaseUrl}${finalPath}`, {
+  const response = await fetch(buildApiUrl(finalPath), {
     ...options,
     headers,
   });

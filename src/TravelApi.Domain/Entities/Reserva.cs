@@ -40,6 +40,16 @@ public class Reserva
     public int? PayerId { get; set; }
     public Customer? Payer { get; set; }
 
+    // Commercial traceability
+    public int? SourceQuoteId { get; set; }
+    public Quote? SourceQuote { get; set; }
+
+    public int? SourceLeadId { get; set; }
+    public Lead? SourceLead { get; set; }
+
+    [MaxLength(50)]
+    public string? WhatsAppPhoneOverride { get; set; }
+
     // Financials
     [Column(TypeName = "decimal(18,2)")]
     public decimal TotalCost { get; set; } = 0;
@@ -65,4 +75,5 @@ public class Reserva
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
     public ICollection<FlightSegment> FlightSegments { get; set; } = new List<FlightSegment>();
     public ICollection<ReservaAttachment> Attachments { get; set; } = new List<ReservaAttachment>();
+    public ICollection<WhatsAppDelivery> WhatsAppDeliveries { get; set; } = new List<WhatsAppDelivery>();
 }

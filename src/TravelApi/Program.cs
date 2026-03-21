@@ -164,6 +164,7 @@ builder.Services.AddScoped<IQuoteService, QuoteService>();
 builder.Services.AddScoped<ILeadService, LeadService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IVoucherService, VoucherService>();
+builder.Services.AddScoped<IWhatsAppDeliveryService, WhatsAppDeliveryService>();
 
 // Load allowed origins from configuration (appsettings.json or ENV)
 var allowedOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Files;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 
@@ -13,11 +14,16 @@ public class ReservasController : ControllerBase
 {
     private readonly IReservaService _reservaService;
     private readonly IVoucherService _voucherService;
+    private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
 
-    public ReservasController(IReservaService reservaService, IVoucherService voucherService)
+    public ReservasController(
+        IReservaService reservaService,
+        IVoucherService voucherService,
+        IWhatsAppDeliveryService whatsAppDeliveryService)
     {
         _reservaService = reservaService;
         _voucherService = voucherService;
+        _whatsAppDeliveryService = whatsAppDeliveryService;
     }
 
     [HttpGet]
@@ -282,6 +288,10 @@ public class ReservasController : ControllerBase
         try
         {
             var reserva = await _reservaService.UpdateStatusAsync(id, request.Status);
+            if (request.Status == EstadoReserva.Operational)
+            {
+                await _whatsAppDeliveryService.PrepareVoucherDraftAsync(id, HttpContext.RequestAborted);
+            }
             return Ok(reserva);
         }
         catch (KeyNotFoundException ex)
@@ -348,7 +358,7 @@ public class ReservasController : ControllerBase
     {
         try
         {
-            var html = await _voucherService.GenerateVoucherAsync(id, cancellationToken);
+            var html = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
             return File(html, "text/html", $"voucher-{id}.html");
         }
         catch (KeyNotFoundException ex)
@@ -358,6 +368,106 @@ public class ReservasController : ControllerBase
         catch (Exception ex)
         {
             return StatusCode(500, $"Error generando voucher: {ex.Message}");
+        }
+    }
+
+    [HttpGet("{id}/voucher/pdf")]
+    public async Task<IActionResult> GenerateVoucherPdf(int id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var pdf = await _voucherService.GenerateVoucherPdfAsync(id, cancellationToken);
+            return File(pdf, "application/pdf", $"voucher-{id}.pdf");
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error generando voucher PDF: {ex.Message}");
+        }
+    }
+
+    [HttpPatch("{id}/whatsapp-contact")]
+    public async Task<IActionResult> UpdateWhatsAppContact(
+        int id,
+        [FromBody] UpdateReservaWhatsAppContactRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var preview = await _whatsAppDeliveryService.UpdateReservaWhatsAppContactAsync(
+                id,
+                request.WhatsAppPhoneOverride,
+                cancellationToken);
+            return Ok(preview);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error actualizando contacto WhatsApp: {ex.Message}");
+        }
+    }
+
+    [HttpGet("{id}/whatsapp/voucher-preview")]
+    public async Task<IActionResult> GetVoucherPreview(int id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var preview = await _whatsAppDeliveryService.GetVoucherPreviewAsync(id, cancellationToken);
+            return Ok(preview);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error obteniendo preview WhatsApp: {ex.Message}");
+        }
+    }
+
+    [HttpPost("{id}/whatsapp/send-voucher")]
+    public async Task<IActionResult> SendVoucher(
+        int id,
+        [FromBody] SendVoucherRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var performedBy = User.Identity?.Name ?? "Agente";
+            var delivery = await _whatsAppDeliveryService.SendVoucherAsync(id, request.Caption, performedBy, cancellationToken);
+            return Ok(delivery);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id}/whatsapp/history")]
+    public async Task<IActionResult> GetWhatsAppHistory(int id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var history = await _whatsAppDeliveryService.GetHistoryAsync(id, cancellationToken);
+            return Ok(history);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error obteniendo historial WhatsApp: {ex.Message}");
         }
     }
 }

@@ -80,4 +80,24 @@ public class LeadsController : ControllerBase
         var customerId = await _leadService.ConvertToCustomerAsync(id, cancellationToken);
         return Ok(new { customerId });
     }
+
+    [HttpPost("{id}/quote-draft")]
+    public async Task<ActionResult> CreateQuoteDraft(int id, CancellationToken cancellationToken)
+    {
+        var quote = await _leadService.CreateQuoteDraftAsync(id, cancellationToken);
+        return Ok(new
+        {
+            quoteId = quote.Id,
+            quoteNumber = quote.QuoteNumber,
+            customerId = quote.CustomerId,
+            leadId = quote.LeadId
+        });
+    }
+
+    [HttpGet("{id}/journey")]
+    public async Task<ActionResult> GetJourney(int id, CancellationToken cancellationToken)
+    {
+        var journey = await _leadService.GetJourneyAsync(id, cancellationToken);
+        return Ok(journey);
+    }
 }
