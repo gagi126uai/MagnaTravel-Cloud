@@ -281,9 +281,9 @@ export function MovementsTab({
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Movimientos de caja</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Caja</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Ingresos por cobranzas, egresos a proveedores y ajustes manuales.
+            Libro de caja con ingresos por cobranzas, egresos a proveedores y ajustes manuales.
           </p>
         </div>
         {isAdmin && (
@@ -443,7 +443,7 @@ export function MovementsTab({
           <div className="w-16 h-16 bg-white dark:bg-slate-900 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-slate-100 dark:border-slate-800">
             <Landmark className="w-8 h-8 text-slate-300" />
           </div>
-          <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">Sin movimientos</h3>
+          <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">Caja sin movimientos</h3>
           <p className="text-slate-500 dark:text-slate-400 text-sm">
             Todavía no hay ingresos o egresos registrados en caja.
           </p>

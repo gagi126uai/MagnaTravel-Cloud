@@ -74,10 +74,10 @@ export default function PaymentsPage() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-100 dark:border-slate-800/50">
         <div>
           <h1 className="text-3xl font-light tracking-tight text-slate-900 dark:text-white mb-1">
-            Cobranzas y Facturación
+            Cobranzas, Caja y Facturacion
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Gestioná cobranzas, movimientos de caja y facturación AFIP con control económico.
+            Gestiona cobranzas, caja y facturacion AFIP con control economico.
           </p>
         </div>
 
@@ -107,8 +107,8 @@ export default function PaymentsPage() {
       <div className="flex gap-6 border-b border-slate-100 dark:border-slate-800 overflow-x-auto">
         {[
           { id: "collections", label: "Cobranzas", icon: Banknote },
-          { id: "movements", label: "Movimientos", icon: ArrowLeftRight },
-          { id: "invoicing", label: "Facturación AFIP", icon: FileText },
+          { id: "movements", label: "Caja", icon: ArrowLeftRight },
+          { id: "invoicing", label: "Facturacion AFIP", icon: FileText },
           { id: "history", label: "Historial", icon: Clock },
         ].map((tab) => (
           <button

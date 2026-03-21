@@ -232,16 +232,15 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     
-    // --- MOGOLICA MODE: Direct SQL Hotfix ---
-    try 
+    try
     {
-        app.Logger.LogInformation("Checking/Adding TotalPaid column via Raw SQL...");
-        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"TravelFiles\" ADD COLUMN IF NOT EXISTS \"TotalPaid\" numeric(18,2) NOT NULL DEFAULT 0.0;");
-        app.Logger.LogInformation("Raw SQL migration finished.");
+        app.Logger.LogInformation("Bootstrapping operational finance schema via raw SQL...");
+        await OperationalFinanceSchemaBootstrapper.EnsureAsync(db);
+        app.Logger.LogInformation("Operational finance bootstrap finished.");
     }
     catch (Exception ex)
     {
-        app.Logger.LogWarning("Raw SQL migration skipped or failed (might already exist): {Message}", ex.Message);
+        app.Logger.LogWarning("Operational finance bootstrap skipped or failed: {Message}", ex.Message);
     }
 
     int retries = 5;

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -38,6 +39,19 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
     }
 
     public async Task<OperationalFinanceSettings> GetEntityAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await LoadOrCreateEntityAsync(cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            await OperationalFinanceSchemaBootstrapper.EnsureAsync(_dbContext, cancellationToken);
+            return await LoadOrCreateEntityAsync(cancellationToken);
+        }
+    }
+
+    private async Task<OperationalFinanceSettings> LoadOrCreateEntityAsync(CancellationToken cancellationToken)
     {
         var entity = await _dbContext.OperationalFinanceSettings
             .OrderBy(x => x.Id)
