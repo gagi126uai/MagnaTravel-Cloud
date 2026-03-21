@@ -17,4 +17,5 @@ public class WhatsAppMessageDto
     public string Phone { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string Sender { get; set; } = "Cliente"; // "Cliente" o "Agente"
+    public bool SkipLeadAutoCreation { get; set; }
 }

@@ -16,6 +16,7 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "CHANGE_THIS_SECRET";
 const SESSION_TIMEOUT = (parseInt(process.env.BOT_SESSION_TIMEOUT_MINUTES, 10) || 30) * 60 * 1000;
 const HTTP_PORT = parseInt(process.env.BOT_HTTP_PORT, 10) || 3001;
 const AUTH_PATH = path.join(__dirname, ".wwebjs_auth");
+const CLIENT_RESTART_DELAY_MS = (parseInt(process.env.BOT_RESTART_DELAY_SECONDS, 10) || 10) * 1000;
 
 let isShowingQR = false;
 let isBotReady = false;
@@ -28,6 +29,8 @@ const processedMessages = new Set();
 const MESSAGE_COOLDOWN_MS = 3000;
 const lastMessageTime = new Map();
 const sessions = new Map();
+let restartTimer = null;
+let isStartingClient = false;
 
 let agencyName = "MagnaTravel";
 let MSG = {
@@ -41,6 +44,8 @@ let MSG = {
     duplicate: "Tu consulta ya fue registrada y estamos trabajando en tu propuesta.",
     error: "Hubo un problema al registrar la consulta. Intenta nuevamente o llamanos por telefono."
 };
+
+const RECOVERABLE_BROWSER_ERRORS = /(Execution context was destroyed|Target closed|Session closed|Protocol error|frame was detached)/i;
 
 function botLog(msg) {
     const timestamp = new Date().toISOString().split("T")[1].split(".")[0];
@@ -149,6 +154,40 @@ function looksLikeName(text) {
     return true;
 }
 
+function looksLikeInterest(text) {
+    const trimmed = text.trim();
+    if (trimmed.length < 2) return false;
+    if (isGreeting(trimmed)) return false;
+    return /[a-z0-9]/i.test(trimmed);
+}
+
+function looksLikeDates(text) {
+    const trimmed = text.trim();
+    if (trimmed.length < 2) return false;
+    if (isGreeting(trimmed)) return false;
+    return /(\d|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|verano|invierno|primavera|otono|otoÃ±o|semana|mes|definir|flexible|proximo|pr[oÃ³]ximo)/i.test(trimmed) || trimmed.length >= 4;
+}
+
+function looksLikeTravelers(text) {
+    const trimmed = text.trim();
+    if (trimmed.length < 1) return false;
+    if (isGreeting(trimmed)) return false;
+    return /(\d+|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|adult|menor|nene|bebe|beb[eÃ©]|familia|pareja|amigos|persona|personas|pasajero|pasajeros|viajero|viajeros|solo|sola)/i.test(trimmed);
+}
+
+function buildTravelerRetryMessage() {
+    return "Necesito la cantidad de viajeros para cerrar la consulta. Por ejemplo: *2 adultos*, *familia de 4* o *3 pasajeros*.";
+}
+
+function buildSummaryMessage(session) {
+    const parts = [];
+    if (session.interest) parts.push(`destino: *${session.interest}*`);
+    if (session.dates) parts.push(`fechas: *${session.dates}*`);
+    if (session.travelers) parts.push(`viajeros: *${session.travelers}*`);
+    if (parts.length === 0) return null;
+    return `Resumen registrado:\n- ${parts.join("\n- ")}`;
+}
+
 function extractPhone(chatId) {
     const match = chatId.match(/^(\d+)@/);
     return match ? `+${match[1]}` : chatId;
@@ -173,7 +212,7 @@ async function sendToWebhook(phone, session) {
             headers: { "Content-Type": "application/json", "X-Webhook-Secret": WEBHOOK_SECRET },
             timeout: 10000
         });
-        botLog(`Lead ${res.data?.leadId || "?"} creado para ${phone}`);
+        botLog(`Lead ${res.data?.leadId || "?"} sincronizado para ${phone}`);
         return "ok";
     } catch (error) {
         if (error.response?.status === 409) return "duplicate";
@@ -182,15 +221,58 @@ async function sendToWebhook(phone, session) {
     }
 }
 
-async function sendMessageToWebhook(phone, message, sender) {
+async function sendMessageToWebhook(phone, message, sender, options = {}) {
     try {
-        await axios.post(`${WEBHOOK_URL}/message`, { phone, message, sender }, {
+        const res = await axios.post(`${WEBHOOK_URL}/message`, {
+            phone,
+            message,
+            sender,
+            skipLeadAutoCreation: options.skipLeadAutoCreation === true
+        }, {
             headers: { "Content-Type": "application/json", "X-Webhook-Secret": WEBHOOK_SECRET },
             timeout: 5000
         });
-    } catch {
-        // Silent logging failure.
+        return res.data || null;
+    } catch (err) {
+        botLog(`Webhook mensaje error: ${err.response?.status || err.message}`);
+        return null;
     }
+}
+
+function buildThanksMessage(session) {
+    const baseMessage = MSG.thanks(session.name);
+    const summary = buildSummaryMessage(session);
+    return summary ? `${baseMessage}\n\n${summary}` : baseMessage;
+}
+
+function isRecoverableBrowserError(error) {
+    const message = error?.message || String(error || "");
+    return RECOVERABLE_BROWSER_ERRORS.test(message);
+}
+
+async function restartClient(reason) {
+    if (restartTimer || isStartingClient) return;
+
+    botStatus = "RECOVERING";
+    isBotReady = false;
+    lastQR = null;
+    isShowingQR = false;
+    botLog(`Reiniciando cliente WhatsApp: ${reason}`);
+
+    restartTimer = setTimeout(async () => {
+        restartTimer = null;
+        try {
+            await client.destroy();
+        } catch {
+            // Ignore destroy failures; initialize below is the source of truth.
+        }
+
+        try {
+            await startBot();
+        } catch (err) {
+            botLog(`Reinicio fallido: ${err.message}`);
+        }
+    }, CLIENT_RESTART_DELAY_MS);
 }
 
 botLog("Iniciando motor del bot...");
@@ -215,11 +297,16 @@ const client = new Client({
 });
 
 async function startBot(retries = 3) {
+    if (isStartingClient) return;
+    isStartingClient = true;
+
     for (let attempt = 0; attempt < retries; attempt += 1) {
         try {
             cleanLockFiles();
+            botStatus = "STARTING";
             botLog(`Iniciando cliente WhatsApp (${attempt + 1}/${retries})...`);
             await client.initialize();
+            isStartingClient = false;
             return;
         } catch (err) {
             botLog(`Error lanzando Chromium: ${err.message}`);
@@ -228,9 +315,14 @@ async function startBot(retries = 3) {
             }
         }
     }
+
+    isStartingClient = false;
+    throw new Error("No se pudo inicializar el cliente de WhatsApp.");
 }
 
-startBot();
+startBot().catch((err) => {
+    botLog(`Fallo inicializando bot: ${err.message}`);
+});
 
 client.on("qr", (qr) => {
     lastQR = qr;
@@ -254,11 +346,21 @@ client.on("authenticated", () => {
     botLog("Sesion autenticada.");
 });
 
+client.on("auth_failure", (message) => {
+    botStatus = "AUTH_FAILURE";
+    isBotReady = false;
+    botLog(`Fallo de autenticacion: ${message}`);
+});
+
+client.on("change_state", (state) => {
+    botLog(`Estado de WhatsApp Web: ${state}`);
+});
+
 client.on("disconnected", (reason) => {
     botStatus = "DISCONNECTED";
     isBotReady = false;
     botLog(`Bot desconectado: ${reason}`);
-    process.exit(1);
+    restartClient(`desconexion (${reason})`);
 });
 
 client.on("message", async (message) => {
@@ -281,8 +383,13 @@ client.on("message", async (message) => {
 
     const phone = extractPhone(chatId);
     botLog(`[${phone}] ${body.substring(0, 50)}`);
+    const existingSession = getSession(chatId);
+    const webhookResult = await sendMessageToWebhook(phone, body, "Cliente", { skipLeadAutoCreation: true });
 
-    sendMessageToWebhook(phone, body, "Cliente");
+    if (webhookResult?.handledBy === "operational") {
+        botLog(`Mensaje operativo vinculado para ${phone}.`);
+        return;
+    }
 
     if (/nueva\s*consulta/i.test(body)) {
         const session = createSession(chatId);
@@ -294,7 +401,7 @@ client.on("message", async (message) => {
     }
 
     if (AGENT_REQUEST.test(body)) {
-        const session = getSession(chatId) || createSession(chatId);
+        const session = existingSession || createSession(chatId);
         const agentMessage = typeof MSG.agentRequest === "function" ? MSG.agentRequest(session.name) : MSG.agentRequest;
         await message.reply(agentMessage);
         session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${agentMessage}`);
@@ -303,9 +410,14 @@ client.on("message", async (message) => {
         return;
     }
 
-    let session = getSession(chatId);
+    let session = existingSession;
 
     try {
+        if (!session && webhookResult?.handledBy === "lead" && webhookResult?.allowBotCapture !== true) {
+            botLog(`Mensaje asociado a lead existente #${webhookResult.leadId}. Sin reiniciar flujo.`);
+            return;
+        }
+
         if (!session) {
             session = createSession(chatId);
             const welcome = typeof MSG.welcome === "function" ? MSG.welcome() : MSG.welcome;
@@ -324,6 +436,7 @@ client.on("message", async (message) => {
                     session.transcript.push(`[Bot]: ${MSG.badName}`);
                     return;
                 }
+
                 session.name = body;
                 session.state = "WAITING_INTEREST";
                 const nextMessage = MSG.askInterest(session.name);
@@ -333,6 +446,13 @@ client.on("message", async (message) => {
             }
 
             case "WAITING_INTEREST": {
+                if (!looksLikeInterest(body)) {
+                    const retryMessage = "Contame el destino o tipo de viaje que te interesa. Por ejemplo: *Brasil*, *Bariloche* o *playa en octubre*.";
+                    await message.reply(retryMessage);
+                    session.transcript.push(`[Bot]: ${retryMessage}`);
+                    return;
+                }
+
                 session.interest = body;
                 session.state = "WAITING_DATES";
                 const nextMessage = MSG.askDates(session.interest);
@@ -342,6 +462,13 @@ client.on("message", async (message) => {
             }
 
             case "WAITING_DATES": {
+                if (!looksLikeDates(body)) {
+                    const retryMessage = "Decime una fecha o rango aproximado. Por ejemplo: *octubre 2026*, *vacaciones de invierno* o *a definir*.";
+                    await message.reply(retryMessage);
+                    session.transcript.push(`[Bot]: ${retryMessage}`);
+                    return;
+                }
+
                 session.dates = body;
                 session.state = "WAITING_TRAVELERS";
                 const nextMessage = MSG.askTravelers();
@@ -351,16 +478,29 @@ client.on("message", async (message) => {
             }
 
             case "WAITING_TRAVELERS": {
+                if (!looksLikeTravelers(body)) {
+                    const retryMessage = buildTravelerRetryMessage();
+                    await message.reply(retryMessage);
+                    session.transcript.push(`[Bot]: ${retryMessage}`);
+                    return;
+                }
+
                 session.travelers = body;
                 session.state = "SENDING";
                 const result = await sendToWebhook(phone, session);
+
                 if (result === "duplicate") {
                     await message.reply(MSG.duplicate);
+                    session.transcript.push(`[Bot]: ${MSG.duplicate}`);
                 } else if (result === "ok") {
-                    await message.reply(MSG.thanks(session.name));
+                    const thanksMessage = buildThanksMessage(session);
+                    await message.reply(thanksMessage);
+                    session.transcript.push(`[Bot]: ${thanksMessage}`);
                 } else {
                     await message.reply(MSG.error);
+                    session.transcript.push(`[Bot]: ${MSG.error}`);
                 }
+
                 session.state = "DONE";
                 break;
             }
@@ -371,6 +511,27 @@ client.on("message", async (message) => {
     } catch (err) {
         botLog(`Flow error: ${err.message}`);
     }
+});
+
+process.on("unhandledRejection", (reason) => {
+    if (isRecoverableBrowserError(reason)) {
+        botLog(`Error recuperable detectado: ${reason.message || reason}`);
+        restartClient(reason.message || String(reason));
+        return;
+    }
+
+    botLog(`Unhandled rejection: ${reason?.message || reason}`);
+});
+
+process.on("uncaughtException", (error) => {
+    if (isRecoverableBrowserError(error)) {
+        botLog(`Excepcion recuperable detectada: ${error.message}`);
+        restartClient(error.message);
+        return;
+    }
+
+    botLog(`Uncaught exception: ${error.message}`);
+    process.exit(1);
 });
 
 const app = express();

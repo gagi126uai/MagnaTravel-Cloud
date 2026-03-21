@@ -42,6 +42,42 @@ public class WebhooksController : ControllerBase
         return !string.IsNullOrEmpty(provided) && provided == expected;
     }
 
+    private static string NormalizePhone(string phone) => phone.Replace("+", "").Trim();
+
+    private static bool IsPlaceholderLeadName(string? name) =>
+        string.IsNullOrWhiteSpace(name) ||
+        name.StartsWith("Nuevo contacto WhatsApp", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LeadNeedsQualification(Lead lead) =>
+        IsPlaceholderLeadName(lead.FullName) ||
+        string.IsNullOrWhiteSpace(lead.InterestedIn) ||
+        string.IsNullOrWhiteSpace(lead.TravelDates) ||
+        string.IsNullOrWhiteSpace(lead.Travelers);
+
+    private static void MergeStructuredWhatsAppCapture(Lead lead, WhatsAppWebhookDto dto)
+    {
+        if (!string.IsNullOrWhiteSpace(dto.Name) && IsPlaceholderLeadName(lead.FullName))
+            lead.FullName = dto.Name.Trim();
+
+        if (string.IsNullOrWhiteSpace(lead.Phone) && !string.IsNullOrWhiteSpace(dto.Phone))
+            lead.Phone = dto.Phone.Trim();
+
+        if (string.IsNullOrWhiteSpace(lead.Source))
+            lead.Source = "WhatsApp";
+
+        if (!string.IsNullOrWhiteSpace(dto.Interest))
+            lead.InterestedIn = dto.Interest.Trim();
+
+        if (!string.IsNullOrWhiteSpace(dto.Dates))
+            lead.TravelDates = dto.Dates.Trim();
+
+        if (!string.IsNullOrWhiteSpace(dto.Travelers))
+            lead.Travelers = dto.Travelers.Trim();
+
+        if (string.IsNullOrWhiteSpace(lead.Notes))
+            lead.Notes = "Lead capturado por WhatsApp Bot.";
+    }
+
     [HttpPost("whatsapp")]
     public async Task<ActionResult> WhatsAppLead(
         [FromBody] WhatsAppWebhookDto dto,
@@ -56,14 +92,17 @@ public class WebhooksController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Phone))
             return BadRequest(new { message = "Nombre y telefono son obligatorios." });
 
-        var phoneToSearch = dto.Phone.Replace("+", "").Trim();
+        var phoneToSearch = NormalizePhone(dto.Phone);
         var existingLead = await _db.Leads
             .Where(l => (l.Phone == dto.Phone || l.Phone == phoneToSearch) && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (existingLead != null)
         {
-            _logger.LogInformation("Lead duplicado WhatsApp: {Phone} -> Lead #{Id}", dto.Phone, existingLead.Id);
+            MergeStructuredWhatsAppCapture(existingLead, dto);
+            await _db.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Lead WhatsApp enriquecido: {Phone} -> Lead #{Id}", dto.Phone, existingLead.Id);
 
             if (!string.IsNullOrWhiteSpace(dto.Transcript))
             {
@@ -75,7 +114,12 @@ public class WebhooksController : ControllerBase
                 }, cancellationToken);
             }
 
-            return Conflict(new { message = "Ya existe un lead activo con este telefono.", leadId = existingLead.Id });
+            return Ok(new
+            {
+                message = "Lead actualizado exitosamente.",
+                leadId = existingLead.Id,
+                updated = true
+            });
         }
 
         var lead = new Lead
@@ -135,13 +179,23 @@ public class WebhooksController : ControllerBase
                 return Ok(new { handledBy = "operational" });
         }
 
-        var phoneToSearch = dto.Phone.Replace("+", "").Trim();
+        var phoneToSearch = NormalizePhone(dto.Phone);
         var lead = await _db.Leads
             .Where(l => (l.Phone == dto.Phone || l.Phone == phoneToSearch) && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (lead == null)
         {
+            if (dto.SkipLeadAutoCreation)
+            {
+                return Ok(new
+                {
+                    handledBy = "none",
+                    autoCreated = false,
+                    allowBotCapture = true
+                });
+            }
+
             _logger.LogInformation("Auto-creando lead para mensaje entrante de: {Phone}", dto.Phone);
             lead = new Lead
             {
@@ -161,7 +215,13 @@ public class WebhooksController : ControllerBase
             CreatedBy = dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"
         }, cancellationToken);
 
-        return Ok(new { leadId = lead.Id, autoCreated = lead.FullName.StartsWith("Nuevo contacto") });
+        return Ok(new
+        {
+            handledBy = "lead",
+            leadId = lead.Id,
+            autoCreated = lead.FullName.StartsWith("Nuevo contacto"),
+            allowBotCapture = LeadNeedsQualification(lead)
+        });
     }
 
     [HttpPost("/api/leads/{leadId}/whatsapp-message")]
