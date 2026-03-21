@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -63,7 +64,8 @@ public class ReservasController : ControllerBase
     {
         try 
         {
-            var reserva = await _reservaService.CreateReservaAsync(request);
+            var createdByUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var reserva = await _reservaService.CreateReservaAsync(request, createdByUserId);
             return CreatedAtAction(nameof(GetReserva), new { id = reserva.Id }, reserva);
         }
         catch (Exception ex)

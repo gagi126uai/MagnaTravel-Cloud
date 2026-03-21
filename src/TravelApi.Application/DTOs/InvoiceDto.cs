@@ -14,5 +14,11 @@ public class InvoiceDto
     public string? CAE { get; set; }
     public string? Resultado { get; set; }
     public string? Observaciones { get; set; }
+    public bool WasForced { get; set; }
+    public string? ForceReason { get; set; }
+    public string? ForcedByUserId { get; set; }
+    public string? ForcedByUserName { get; set; }
+    public DateTime? ForcedAt { get; set; }
+    public decimal OutstandingBalanceAtIssuance { get; set; }
     public string InvoiceType { get; set; } = string.Empty; // Keep for convenience if needed
 }

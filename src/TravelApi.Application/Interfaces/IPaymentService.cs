@@ -7,6 +7,8 @@ public interface IPaymentService
     Task<IEnumerable<PaymentDto>> GetAllPaymentsAsync(CancellationToken cancellationToken);
     Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken);
     Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);
+    Task<PaymentReceiptDto> IssueReceiptAsync(int paymentId, CancellationToken cancellationToken);
+    Task<byte[]> GetReceiptPdfAsync(int paymentId, CancellationToken cancellationToken);
     Task<IEnumerable<object>> GetDeletedPaymentsAsync(CancellationToken cancellationToken);
     Task<int> RestorePaymentAsync(int id, CancellationToken cancellationToken);
 }
@@ -17,4 +19,5 @@ public class CreatePaymentRequest
     public decimal Amount { get; set; }
     public string Method { get; set; } = string.Empty;
     public string? Reference { get; set; }
+    public string? Notes { get; set; }
 }

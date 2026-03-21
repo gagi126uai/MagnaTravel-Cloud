@@ -13,4 +13,8 @@ public class CreateInvoiceRequest
     public int? OriginalInvoiceId { get; set; } 
     public bool IsCreditNote { get; set; } 
     public bool IsDebitNote { get; set; } 
+    public bool ForceIssue { get; set; }
+    public string? ForceReason { get; set; }
+    public string? ForcedByUserId { get; set; }
+    public string? ForcedByUserName { get; set; }
 }

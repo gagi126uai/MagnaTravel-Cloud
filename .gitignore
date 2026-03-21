@@ -22,4 +22,12 @@ appsettings.*.json
 !appsettings.json
 node_modules/
 dist/
+.dotnet/
+.nuget/
+backend_build_diag.txt
+build_output*.txt
+msbuild_diagnostic.txt
+restore_*_diag.txt
+tests_build_output*.txt
+tests_corecompile.txt
 !.gitignore

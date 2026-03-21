@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -18,6 +19,8 @@ public class InvoiceService : IInvoiceService
     private readonly IMapper _mapper;
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly ILogger<InvoiceService> _logger;
+    private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
+    private readonly UserManager<ApplicationUser> _userManager;
 
     public InvoiceService(
         AppDbContext context, 
@@ -25,7 +28,9 @@ public class InvoiceService : IInvoiceService
         IInvoicePdfService pdfService,
         IMapper mapper,
         IBackgroundJobClient backgroundJobClient,
-        ILogger<InvoiceService> logger)
+        ILogger<InvoiceService> logger,
+        IOperationalFinanceSettingsService operationalFinanceSettingsService,
+        UserManager<ApplicationUser> userManager)
     {
         _context = context;
         _afipService = afipService;
@@ -33,6 +38,8 @@ public class InvoiceService : IInvoiceService
         _mapper = mapper;
         _backgroundJobClient = backgroundJobClient;
         _logger = logger;
+        _operationalFinanceSettingsService = operationalFinanceSettingsService;
+        _userManager = userManager;
     }
 
     public async Task<IEnumerable<InvoiceDto>> GetAllAsync(CancellationToken ct)
@@ -43,10 +50,41 @@ public class InvoiceService : IInvoiceService
             .ToListAsync(ct);
     }
 
-    public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, CancellationToken ct)
+    public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct)
     {
+        var reserva = await _context.Reservas
+            .FirstOrDefaultAsync(r => r.Id == request.ReservaId, ct)
+            ?? throw new InvalidOperationException("Reserva no encontrada.");
+
+        if (!request.IsCreditNote && !request.IsDebitNote)
+        {
+            var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+            var afip = EconomicRulesHelper.EvaluateAfip(reserva, settings);
+
+            if (!EconomicRulesHelper.IsEconomicallySettled(reserva))
+            {
+                if (!request.ForceIssue)
+                    throw new InvalidOperationException(afip.BlockReason ?? "La reserva tiene deuda y no puede emitirse en AFIP.");
+
+                if (settings.AfipInvoiceControlMode != AfipInvoiceControlModes.AllowAgentOverrideWithReason)
+                    throw new InvalidOperationException("La configuracion actual no permite emitir AFIP con deuda.");
+
+                if (string.IsNullOrWhiteSpace(request.ForceReason) || request.ForceReason.Trim().Length < 10)
+                    throw new InvalidOperationException("Debe indicar un motivo valido para emitir AFIP con deuda.");
+
+                request.ForceReason = request.ForceReason.Trim();
+                request.ForcedByUserId = userId;
+                request.ForcedByUserName = userName;
+            }
+        }
+
         // 1. Create Pending in DB
         var invoice = await _afipService.CreatePendingInvoice(request.ReservaId, request);
+
+        if (invoice.WasForced)
+        {
+            await NotifyAdminsOfForcedInvoiceAsync(invoice, request, ct);
+        }
         
         // 2. Enqueue Job
         _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(invoice.Id));
@@ -301,5 +339,29 @@ public class InvoiceService : IInvoiceService
             RelatedEntityType = "Invoice"
         });
         await _context.SaveChangesAsync();
+    }
+
+    private async Task NotifyAdminsOfForcedInvoiceAsync(Invoice invoice, CreateInvoiceRequest request, CancellationToken ct)
+    {
+        var adminUsers = await _userManager.GetUsersInRoleAsync("Admin");
+        if (adminUsers.Count == 0)
+            return;
+
+        var actor = string.IsNullOrWhiteSpace(request.ForcedByUserName) ? "Un agente" : request.ForcedByUserName;
+        var message = $"{actor} emitio AFIP por excepcion para la reserva #{invoice.ReservaId} con saldo pendiente de {invoice.OutstandingBalanceAtIssuance:C2}.";
+
+        foreach (var admin in adminUsers)
+        {
+            _context.Notifications.Add(new Notification
+            {
+                UserId = admin.Id,
+                Message = message,
+                Type = "Warning",
+                RelatedEntityId = invoice.Id,
+                RelatedEntityType = "Invoice"
+            });
+        }
+
+        await _context.SaveChangesAsync(ct);
     }
 }

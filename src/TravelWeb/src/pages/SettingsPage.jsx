@@ -36,6 +36,7 @@ import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 import AfipSettingsTab from "../components/AfipSettingsTab";
 import LogsDashboard from "../components/LogsDashboard";
+import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
@@ -145,6 +146,7 @@ const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
   { id: "users", label: "Usuarios", icon: User },
   { id: "commissions", label: "Comisiones", icon: Briefcase },
+  { id: "operations", label: "Operativa y Caja", icon: Settings2 },
   { id: "afip", label: "Facturación", icon: FileText },
   { id: "whatsapp", label: "WhatsApp Bot", icon: Smartphone },
   { id: "logs", label: "Logs y Programación", icon: TerminalSquare },
@@ -862,6 +864,9 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        {/* --- OPERATIONS TAB --- */}
+        {activeTab === "operations" && <OperationalFinanceSettingsTab />}
 
         {/* --- AFIP TAB --- */}
         {activeTab === "afip" && <AfipSettingsTab />}

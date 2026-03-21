@@ -30,6 +30,15 @@ public class Invoice
     [Column(TypeName = "decimal(18,2)")]
     public decimal ImporteIva { get; set; }
 
+    public bool WasForced { get; set; }
+    public string? ForceReason { get; set; }
+    public string? ForcedByUserId { get; set; }
+    public string? ForcedByUserName { get; set; }
+    public DateTime? ForcedAt { get; set; }
+
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal OutstandingBalanceAtIssuance { get; set; }
+
     // Snapshots (JSON) for Immutability
     public string? AgencySnapshot { get; set; }
     public string? CustomerSnapshot { get; set; }

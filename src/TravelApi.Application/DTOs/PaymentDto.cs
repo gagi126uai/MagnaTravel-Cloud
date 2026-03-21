@@ -11,4 +11,9 @@ public class PaymentDto
     public string Status { get; set; } = "Paid";
     public int? ReservaId { get; set; }
     public string? NumeroReserva { get; set; }
+    public string EntryType { get; set; } = string.Empty;
+    public bool AffectsCash { get; set; }
+    public int? RelatedInvoiceId { get; set; }
+    public int? OriginalPaymentId { get; set; }
+    public PaymentReceiptDto? Receipt { get; set; }
 }

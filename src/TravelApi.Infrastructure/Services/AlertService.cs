@@ -8,21 +8,24 @@ namespace TravelApi.Infrastructure.Services;
 public class AlertService : IAlertService
 {
     private readonly AppDbContext _context;
+    private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
-    public AlertService(AppDbContext context)
+    public AlertService(AppDbContext context, IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {
         _context = context;
+        _operationalFinanceSettingsService = operationalFinanceSettingsService;
     }
 
     public async Task<object> GetAlertsAsync(CancellationToken cancellationToken)
     {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
         var today = DateTime.UtcNow.Date;
-        var nextWeek = today.AddDays(7);
+        var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
         var urgentTrips = await _context.Reservas
             .Where(f => (f.Status == EstadoReserva.Reserved || f.Status == EstadoReserva.Operational) &&
                         f.StartDate >= today && 
-                        f.StartDate <= nextWeek && 
+                        f.StartDate <= threshold && 
                         f.Balance > 0)
             .Select(f => new
             {

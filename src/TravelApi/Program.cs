@@ -144,6 +144,9 @@ builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IServicioReservaService, ServicioReservaService>();
 builder.Services.AddScoped<ICommissionService, CommissionService>();
 builder.Services.AddScoped<IAlertService, AlertService>();
+builder.Services.AddScoped<IOperationalFinanceSettingsService, OperationalFinanceSettingsService>();
+builder.Services.AddScoped<ITreasuryService, TreasuryService>();
+builder.Services.AddScoped<OperationalFinanceMonitorService>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
 builder.Services.AddScoped<IUserService, UserService>();
@@ -322,6 +325,11 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
     Authorization = new[] { new TravelApi.Filters.HangfireAuthorizationFilter() } 
 });
+
+RecurringJob.AddOrUpdate<OperationalFinanceMonitorService>(
+    "upcoming-unpaid-reservas",
+    service => service.GenerateUpcomingUnpaidReservationNotificationsAsync(),
+    Cron.Daily());
 
 app.MapGet("/api/auth/hangfire-login", (string token, HttpContext context) => 
 {

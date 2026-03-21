@@ -47,6 +47,9 @@ public class Reserva
     public int? SourceLeadId { get; set; }
     public Lead? SourceLead { get; set; }
 
+    public string? ResponsibleUserId { get; set; }
+    public ApplicationUser? ResponsibleUser { get; set; }
+
     [MaxLength(50)]
     public string? WhatsAppPhoneOverride { get; set; }
 
@@ -76,4 +79,5 @@ public class Reserva
     public ICollection<FlightSegment> FlightSegments { get; set; } = new List<FlightSegment>();
     public ICollection<ReservaAttachment> Attachments { get; set; } = new List<ReservaAttachment>();
     public ICollection<WhatsAppDelivery> WhatsAppDeliveries { get; set; } = new List<WhatsAppDelivery>();
+    public ICollection<ManualCashMovement> ManualCashMovements { get; set; } = new List<ManualCashMovement>();
 }

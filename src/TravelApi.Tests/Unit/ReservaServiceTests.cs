@@ -4,6 +4,7 @@ using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using TravelApi.Application.Contracts.Files;
+using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
@@ -15,6 +16,7 @@ public class ReservaServiceTests
 {
     private readonly DbContextOptions<AppDbContext> _dbOptions;
     private readonly Mock<IMapper> _mapperMock;
+    private readonly Mock<IOperationalFinanceSettingsService> _settingsServiceMock;
 
     public ReservaServiceTests()
     {
@@ -22,13 +24,17 @@ public class ReservaServiceTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
         _mapperMock = new Mock<IMapper>();
+        _settingsServiceMock = new Mock<IOperationalFinanceSettingsService>();
+        _settingsServiceMock
+            .Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings());
     }
 
     [Fact]
     public async Task CreateReservaAsync_ShouldCreateReserva_WithCorrectInitialValues()
     {
         using var context = new AppDbContext(_dbOptions);
-        var service = new ReservaService(context, _mapperMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
         var request = new CreateReservaRequest
         {
             Name = "Test Trip",
@@ -37,7 +43,7 @@ public class ReservaServiceTests
             Description = "Testing reserve creation"
         };
 
-        var result = await service.CreateReservaAsync(request);
+        var result = await service.CreateReservaAsync(request, "user-1");
 
         Assert.NotNull(result);
         Assert.Equal("Test Trip", result.Name);
@@ -53,7 +59,7 @@ public class ReservaServiceTests
         context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Budget });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
 
         var result = await service.UpdateStatusAsync(1, EstadoReserva.Reserved);
 
@@ -71,8 +77,81 @@ public class ReservaServiceTests
         context.Payments.Add(new Payment { Id = 1, ReservaId = 1, Amount = 100, Status = "Paid" });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Budget));
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_ShouldBlockOperational_WhenReservationHasDebt()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Reserved });
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 1,
+            ReservaId = 1,
+            ServiceType = "Hotel",
+            ProductType = "Hotel",
+            Description = "Servicio test",
+            ConfirmationNumber = "ABC123",
+            Status = "Confirmado",
+            DepartureDate = DateTime.UtcNow.AddDays(15),
+            SalePrice = 150m,
+            NetCost = 100m,
+            Commission = 50m,
+            CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        _settingsServiceMock
+            .Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings
+            {
+                RequireFullPaymentForOperativeStatus = true
+            });
+
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Operational));
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_ShouldAllowOperational_WhenReservationIsFullyPaid()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Reserved });
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 1,
+            ReservaId = 1,
+            ServiceType = "Hotel",
+            ProductType = "Hotel",
+            Description = "Servicio test",
+            ConfirmationNumber = "ABC123",
+            Status = "Confirmado",
+            DepartureDate = DateTime.UtcNow.AddDays(15),
+            SalePrice = 150m,
+            NetCost = 100m,
+            Commission = 50m,
+            CreatedAt = DateTime.UtcNow
+        });
+        context.Payments.Add(new Payment
+        {
+            Id = 1,
+            ReservaId = 1,
+            Amount = 150m,
+            Method = "Transfer",
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            AffectsCash = true
+        });
+        await context.SaveChangesAsync();
+
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
+
+        var result = await service.UpdateStatusAsync(1, EstadoReserva.Operational);
+
+        Assert.Equal(EstadoReserva.Operational, result.Status);
     }
 }

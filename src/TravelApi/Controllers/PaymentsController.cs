@@ -49,6 +49,42 @@ public class PaymentsController : ControllerBase
         }
     }
 
+    [HttpPost("{id:int}/receipt")]
+    public async Task<ActionResult<PaymentReceiptDto>> IssueReceipt(int id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var receipt = await _paymentService.IssueReceiptAsync(id, cancellationToken);
+            return Ok(receipt);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id:int}/receipt/pdf")]
+    public async Task<IActionResult> GetReceiptPdf(int id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var pdf = await _paymentService.GetReceiptPdfAsync(id, cancellationToken);
+            return File(pdf, "application/pdf", $"recibo-pago-{id}.pdf");
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     /// <summary>
     /// Listar pagos eliminados (papelera) - Solo Admin
     /// </summary>

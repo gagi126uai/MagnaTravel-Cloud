@@ -13,16 +13,23 @@ public class ReservaService : IReservaService
 {
     private readonly AppDbContext _context;
     private readonly IMapper _mapper;
+    private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
-    public ReservaService(AppDbContext context, IMapper mapper)
+    public ReservaService(
+        AppDbContext context,
+        IMapper mapper,
+        IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {
         _context = context;
         _mapper = mapper;
+        _operationalFinanceSettingsService = operationalFinanceSettingsService;
     }
 
     public async Task<IEnumerable<ReservaListDto>> GetReservasAsync()
     {
-        return await _context.Reservas
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
+
+        var reservas = await _context.Reservas
             .OrderByDescending(f => f.CreatedAt)
             .Select(f => new ReservaListDto 
             {
@@ -31,6 +38,8 @@ public class ReservaService : IReservaService
                 Name = f.Name,
                 Status = f.Status,
                 CustomerName = f.Payer != null ? f.Payer.FullName : "",
+                ResponsibleUserId = f.ResponsibleUserId,
+                ResponsibleUserName = f.ResponsibleUser != null ? f.ResponsibleUser.FullName : null,
                 CreatedAt = f.CreatedAt,
                 StartDate = f.StartDate,
                 EndDate = f.EndDate,
@@ -54,14 +63,24 @@ public class ReservaService : IReservaService
                            (f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
             })
             .ToListAsync();
+
+        foreach (var reserva in reservas)
+        {
+            ApplyEconomicFlags(reserva, settings);
+        }
+
+        return reservas;
     }
 
     public async Task<ReservaDto> GetReservaByIdAsync(int id)
     {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
         var file = await _context.Reservas
             .Include(f => f.Payer)
+            .Include(f => f.ResponsibleUser)
             .Include(f => f.Passengers)
             .Include(f => f.Payments)
+            .ThenInclude(p => p.Receipt)
             .Include(f => f.Invoices)
             .Include(f => f.Servicios)
             .Include(f => f.FlightSegments).ThenInclude(fs => fs.Supplier)
@@ -93,14 +112,17 @@ public class ReservaService : IReservaService
 
         file.TotalSale = totalSale;
         file.TotalCost = totalCost;
+        file.TotalPaid = totalPaid;
         file.Balance = totalSale - totalPaid;
 
         await _context.SaveChangesAsync();
 
-        return _mapper.Map<ReservaDto>(file);
+        var dto = _mapper.Map<ReservaDto>(file);
+        ApplyEconomicFlags(dto, settings);
+        return dto;
     }
 
-    public async Task<Reserva> CreateReservaAsync(CreateReservaRequest request)
+    public async Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId)
     {
         var nextId = await _context.Reservas.CountAsync() + 1000;
         var NumeroReserva = $"F-{DateTime.Now.Year}-{nextId}";
@@ -114,6 +136,7 @@ public class ReservaService : IReservaService
             Name = fileName,
             NumeroReserva = NumeroReserva,
             PayerId = request.PayerId,
+            ResponsibleUserId = createdByUserId,
             StartDate = request.StartDate,
             Description = request.Description,
             Status = EstadoReserva.Reserved
@@ -298,6 +321,8 @@ public class ReservaService : IReservaService
         payment.ReservaId = reservaId;
         payment.PaidAt = DateTime.UtcNow;
         payment.Status = "Paid";
+        payment.EntryType = PaymentEntryTypes.Payment;
+        payment.AffectsCash = true;
 
         _context.Payments.Add(payment);
         await _context.SaveChangesAsync();
@@ -350,6 +375,10 @@ public class ReservaService : IReservaService
         var file = await _context.Reservas.FindAsync(id);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
+        await UpdateBalanceAsync(id);
+        file = await _context.Reservas.FindAsync(id);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+
         var validStatuses = new[] { EstadoReserva.Budget, EstadoReserva.Reserved, EstadoReserva.Operational, EstadoReserva.Closed, EstadoReserva.Cancelled };
         if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no válido");
 
@@ -360,6 +389,14 @@ public class ReservaService : IReservaService
 
              var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id);
              if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Crédito).");
+        }
+
+        if (status == EstadoReserva.Operational)
+        {
+            var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
+            var blockReason = EconomicRulesHelper.GetOperativeBlockReason(file, settings);
+            if (!string.IsNullOrWhiteSpace(blockReason))
+                throw new InvalidOperationException(blockReason);
         }
 
         file.Status = status;
@@ -460,5 +497,27 @@ public class ReservaService : IReservaService
         file.Balance = totalSale - totalPaid;
 
         await _context.SaveChangesAsync();
+    }
+
+    private static void ApplyEconomicFlags(ReservaDto dto, OperationalFinanceSettings settings)
+    {
+        var reserva = new Reserva { Balance = dto.Balance };
+        dto.IsEconomicallySettled = EconomicRulesHelper.IsEconomicallySettled(reserva);
+        dto.CanMoveToOperativo = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetOperativeBlockReason(reserva, settings));
+        dto.CanEmitVoucher = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetVoucherBlockReason(reserva, settings));
+        var afip = EconomicRulesHelper.EvaluateAfip(reserva, settings);
+        dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
+        dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
+    }
+
+    private static void ApplyEconomicFlags(ReservaListDto dto, OperationalFinanceSettings settings)
+    {
+        var reserva = new Reserva { Balance = dto.Balance };
+        dto.IsEconomicallySettled = EconomicRulesHelper.IsEconomicallySettled(reserva);
+        dto.CanMoveToOperativo = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetOperativeBlockReason(reserva, settings));
+        dto.CanEmitVoucher = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetVoucherBlockReason(reserva, settings));
+        var afip = EconomicRulesHelper.EvaluateAfip(reserva, settings);
+        dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
+        dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
     }
 }

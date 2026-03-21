@@ -15,4 +15,11 @@ public class ReservaListDto
     public decimal TotalCost { get; set; }
     public decimal TotalPaid { get; set; }
     public int PassengerCount { get; set; }
+    public string? ResponsibleUserId { get; set; }
+    public string? ResponsibleUserName { get; set; }
+    public bool IsEconomicallySettled { get; set; }
+    public bool CanMoveToOperativo { get; set; }
+    public bool CanEmitVoucher { get; set; }
+    public bool CanEmitAfipInvoice { get; set; }
+    public string? EconomicBlockReason { get; set; }
 }

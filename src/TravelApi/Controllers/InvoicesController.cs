@@ -30,7 +30,9 @@ public class InvoicesController : ControllerBase
     {
         try
         {
-            var invoice = await _invoiceService.CreateAsync(request, ct);
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var userName = User.FindFirst(ClaimTypes.Name)?.Value;
+            var invoice = await _invoiceService.CreateAsync(request, userId, userName, ct);
             return Accepted(invoice);
         }
         catch (Exception ex)

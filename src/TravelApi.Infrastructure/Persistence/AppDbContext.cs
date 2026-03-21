@@ -185,6 +185,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Sprint 4: Egresos y Configuración
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
+    public DbSet<OperationalFinanceSettings> OperationalFinanceSettings => Set<OperationalFinanceSettings>();
     public DbSet<CommissionRule> CommissionRules => Set<CommissionRule>();
     
     // Sprint 5: Servicios específicos y Tarifario
@@ -196,6 +197,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Sprint 5: AFIP / Facturación
     public DbSet<AfipSettings> AfipSettings => Set<AfipSettings>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<PaymentReceipt> PaymentReceipts => Set<PaymentReceipt>();
+    public DbSet<ManualCashMovement> ManualCashMovements => Set<ManualCashMovement>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ReservaAttachment> ReservaAttachments => Set<ReservaAttachment>();
 
@@ -251,6 +254,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(f => f.SourceQuote)
                   .WithMany()
                   .HasForeignKey(f => f.SourceQuoteId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(f => f.ResponsibleUser)
+                  .WithMany()
+                  .HasForeignKey(f => f.ResponsibleUserId)
                   .OnDelete(DeleteBehavior.SetNull);
 
             entity.HasMany(f => f.Servicios)
@@ -315,6 +323,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Amount).HasPrecision(12, 2);
             entity.Property(p => p.Method).HasMaxLength(50).IsRequired();
             entity.Property(p => p.Status).HasMaxLength(50).IsRequired();
+            entity.Property(p => p.EntryType).HasMaxLength(50).IsRequired();
 
             // Filtro global: excluir pagos borrados de todas las consultas
             entity.HasQueryFilter(p => !p.IsDeleted);
@@ -328,6 +337,21 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany(s => s.Payments)
                   .HasForeignKey(p => p.ServicioReservaId)
                   .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(p => p.RelatedInvoice)
+                  .WithMany()
+                  .HasForeignKey(p => p.RelatedInvoiceId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(p => p.OriginalPayment)
+                  .WithMany(p => p.Reversals)
+                  .HasForeignKey(p => p.OriginalPaymentId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(p => p.Receipt)
+                  .WithOne(r => r.Payment)
+                  .HasForeignKey<PaymentReceipt>(r => r.PaymentId)
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // FlightSegment
@@ -351,6 +375,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<Invoice>(entity =>
         {
             entity.Property(i => i.ReservaId).HasColumnName("TravelFileId");
+            entity.Property(i => i.ForceReason).HasMaxLength(1000);
+            entity.Property(i => i.ForcedByUserId).HasMaxLength(200);
+            entity.Property(i => i.ForcedByUserName).HasMaxLength(200);
+            entity.Property(i => i.OutstandingBalanceAtIssuance).HasPrecision(18, 2);
         });
 
         // InvoiceItem (Singular table from Program.cs)
@@ -431,6 +459,44 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
             entity.Property(p => p.ServicioReservaId).HasColumnName("ReservationId");
+        });
+
+        modelBuilder.Entity<OperationalFinanceSettings>(entity =>
+        {
+            entity.Property(s => s.AfipInvoiceControlMode).HasMaxLength(50).IsRequired();
+        });
+
+        modelBuilder.Entity<PaymentReceipt>(entity =>
+        {
+            entity.Property(r => r.Amount).HasPrecision(18, 2);
+            entity.Property(r => r.ReceiptNumber).HasMaxLength(50).IsRequired();
+            entity.Property(r => r.Status).HasMaxLength(30).IsRequired();
+
+            entity.HasOne(r => r.Reserva)
+                  .WithMany()
+                  .HasForeignKey(r => r.ReservaId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ManualCashMovement>(entity =>
+        {
+            entity.Property(m => m.Direction).HasMaxLength(20).IsRequired();
+            entity.Property(m => m.Amount).HasPrecision(18, 2);
+            entity.Property(m => m.Method).HasMaxLength(50).IsRequired();
+            entity.Property(m => m.Category).HasMaxLength(100).IsRequired();
+            entity.Property(m => m.Description).HasMaxLength(500).IsRequired();
+            entity.Property(m => m.Reference).HasMaxLength(100);
+            entity.Property(m => m.CreatedBy).HasMaxLength(200).IsRequired();
+
+            entity.HasOne(m => m.RelatedReserva)
+                  .WithMany(r => r.ManualCashMovements)
+                  .HasForeignKey(m => m.RelatedReservaId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(m => m.RelatedSupplier)
+                  .WithMany()
+                  .HasForeignKey(m => m.RelatedSupplierId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

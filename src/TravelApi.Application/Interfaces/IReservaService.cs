@@ -8,7 +8,7 @@ public interface IReservaService
 {
     Task<IEnumerable<ReservaListDto>> GetReservasAsync();
     Task<ReservaDto> GetReservaByIdAsync(int id);
-    Task<Reserva> CreateReservaAsync(CreateReservaRequest request);
+    Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId);
     
     Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request);
     Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request);

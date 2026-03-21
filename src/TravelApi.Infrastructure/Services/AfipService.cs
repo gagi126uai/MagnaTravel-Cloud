@@ -463,6 +463,12 @@ public class AfipService : IAfipService
              ImporteNeto = net,
              ImporteIva = iva,
              CreatedAt = DateTime.UtcNow,
+             WasForced = request.ForceIssue,
+             ForceReason = request.ForceReason,
+             ForcedByUserId = request.ForcedByUserId,
+             ForcedByUserName = request.ForcedByUserName,
+             ForcedAt = request.ForceIssue ? DateTime.UtcNow : null,
+             OutstandingBalanceAtIssuance = reserva.Balance,
              AgencySnapshot = agencySettings != null ? System.Text.Json.JsonSerializer.Serialize(agencySettings) : null,
              CustomerSnapshot = System.Text.Json.JsonSerializer.Serialize(customer, new JsonSerializerOptions { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles }),
              Items = request.Items.Select(i => new InvoiceItem 
@@ -726,6 +732,11 @@ public class AfipService : IAfipService
             invoice.Observaciones = null;
             
             await _context.SaveChangesAsync();
+
+            if (IsCreditNote(invoice.TipoComprobante))
+            {
+                await ApplyCreditNoteEconomicReversalAsync(invoice.Id);
+            }
         }
         catch (Exception ex)
         {
@@ -751,6 +762,100 @@ public class AfipService : IAfipService
             "10074" => "CUIT del receptor inválido: El CUIT o DNI del cliente no es válido o no existe en los registros de AFIP.",
             _ => rawMsg ?? $"Error AFIP [{code}]"
         };
+    }
+
+    private static bool IsCreditNote(int tipoComprobante)
+    {
+        return tipoComprobante == 3 || tipoComprobante == 8 || tipoComprobante == 13 || tipoComprobante == 53;
+    }
+
+    private async Task ApplyCreditNoteEconomicReversalAsync(int invoiceId)
+    {
+        var existingReversal = await _context.Payments
+            .FirstOrDefaultAsync(p => p.RelatedInvoiceId == invoiceId && p.EntryType == PaymentEntryTypes.CreditNoteReversal);
+
+        if (existingReversal != null)
+            return;
+
+        var invoice = await _context.Invoices
+            .Include(i => i.Reserva)
+            .FirstOrDefaultAsync(i => i.Id == invoiceId);
+
+        if (invoice?.ReservaId == null || invoice.Reserva == null)
+            return;
+
+        var matchedPayment = await _context.Payments
+            .Include(p => p.Receipt)
+            .Where(p =>
+                p.ReservaId == invoice.ReservaId &&
+                p.EntryType == PaymentEntryTypes.Payment &&
+                !p.IsDeleted &&
+                p.Status != "Cancelled" &&
+                p.Amount == invoice.ImporteTotal)
+            .OrderByDescending(p => p.PaidAt)
+            .FirstOrDefaultAsync();
+
+        var reversal = new Payment
+        {
+            ReservaId = invoice.ReservaId,
+            Amount = -invoice.ImporteTotal,
+            PaidAt = DateTime.UtcNow,
+            Method = "CreditNote",
+            Reference = $"NC AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",
+            Notes = $"Reversion economica por nota de credito AFIP #{invoice.Id}.",
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.CreditNoteReversal,
+            AffectsCash = false,
+            RelatedInvoiceId = invoice.Id,
+            OriginalPaymentId = matchedPayment?.Id
+        };
+
+        _context.Payments.Add(reversal);
+
+        if (matchedPayment?.Receipt != null && matchedPayment.Receipt.Status != PaymentReceiptStatuses.Voided)
+        {
+            matchedPayment.Receipt.Status = PaymentReceiptStatuses.Voided;
+            matchedPayment.Receipt.VoidedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+        await RecalculateReservaBalanceAsync(invoice.ReservaId.Value);
+    }
+
+    private async Task RecalculateReservaBalanceAsync(int reservaId)
+    {
+        var reserva = await _context.Reservas
+            .Include(f => f.Payments)
+            .Include(f => f.Servicios)
+            .Include(f => f.FlightSegments)
+            .Include(f => f.HotelBookings)
+            .Include(f => f.TransferBookings)
+            .Include(f => f.PackageBookings)
+            .FirstOrDefaultAsync(f => f.Id == reservaId);
+
+        if (reserva == null)
+            return;
+
+        reserva.TotalSale =
+            (reserva.FlightSegments?.Sum(f => f.SalePrice) ?? 0) +
+            (reserva.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
+            (reserva.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
+            (reserva.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
+            (reserva.Servicios?.Sum(r => r.SalePrice) ?? 0);
+
+        reserva.TotalCost =
+            (reserva.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
+            (reserva.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
+            (reserva.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
+            (reserva.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
+            (reserva.Servicios?.Sum(r => r.NetCost) ?? 0);
+
+        reserva.TotalPaid = reserva.Payments
+            .Where(p => p.Status != "Cancelled" && !p.IsDeleted)
+            .Sum(p => p.Amount);
+
+        reserva.Balance = reserva.TotalSale - reserva.TotalPaid;
+        await _context.SaveChangesAsync();
     }
 
     private async Task<int> GetNextVoucherNumber(AfipSettings settings, int cbteTipo)

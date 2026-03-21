@@ -12,10 +12,12 @@ namespace TravelApi.Infrastructure.Services;
 public class VoucherService : IVoucherService
 {
     private readonly AppDbContext _db;
+    private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
-    public VoucherService(AppDbContext db)
+    public VoucherService(AppDbContext db, IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {
         _db = db;
+        _operationalFinanceSettingsService = operationalFinanceSettingsService;
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
@@ -73,6 +75,10 @@ public class VoucherService : IVoucherService
     public async Task<byte[]> GenerateVoucherPdfAsync(int reservaId, CancellationToken cancellationToken)
     {
         var (reserva, agency) = await LoadVoucherDataAsync(reservaId, cancellationToken);
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        var blockReason = EconomicRulesHelper.GetVoucherBlockReason(reserva, settings);
+        if (!string.IsNullOrWhiteSpace(blockReason))
+            throw new InvalidOperationException(blockReason);
 
         var document = Document.Create(container =>
         {

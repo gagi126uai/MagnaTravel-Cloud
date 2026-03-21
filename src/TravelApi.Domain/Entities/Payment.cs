@@ -2,6 +2,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
 
+public static class PaymentEntryTypes
+{
+    public const string Payment = "Payment";
+    public const string CreditNoteReversal = "CreditNoteReversal";
+}
+
 public class Payment
 {
     public int Id { get; set; }
@@ -18,6 +24,9 @@ public class Payment
 
     public string? Notes { get; set; }
 
+    public string EntryType { get; set; } = PaymentEntryTypes.Payment;
+    public bool AffectsCash { get; set; } = true;
+
     // Soft Delete
     public bool IsDeleted { get; set; } = false;
     public DateTime? DeletedAt { get; set; }
@@ -29,4 +38,13 @@ public class Payment
     // Link via Servicio (for backwards compatibility)
     public int? ServicioReservaId { get; set; }
     public ServicioReserva? ServicioReserva { get; set; }
+
+    public int? RelatedInvoiceId { get; set; }
+    public Invoice? RelatedInvoice { get; set; }
+
+    public int? OriginalPaymentId { get; set; }
+    public Payment? OriginalPayment { get; set; }
+    public ICollection<Payment> Reversals { get; set; } = new List<Payment>();
+
+    public PaymentReceipt? Receipt { get; set; }
 }

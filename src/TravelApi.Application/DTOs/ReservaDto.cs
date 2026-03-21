@@ -9,7 +9,14 @@ public class ReservaDto
     public int? CustomerId { get; set; }
     public int? SourceLeadId { get; set; }
     public int? SourceQuoteId { get; set; }
+    public string? ResponsibleUserId { get; set; }
+    public string? ResponsibleUserName { get; set; }
     public string? WhatsAppPhoneOverride { get; set; }
+    public bool IsEconomicallySettled { get; set; }
+    public bool CanMoveToOperativo { get; set; }
+    public bool CanEmitVoucher { get; set; }
+    public bool CanEmitAfipInvoice { get; set; }
+    public string? EconomicBlockReason { get; set; }
 
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience

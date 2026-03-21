@@ -21,6 +21,7 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
     private readonly IConfiguration _configuration;
     private readonly IMapper _mapper;
     private readonly ILogger<WhatsAppDeliveryService> _logger;
+    private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
     public WhatsAppDeliveryService(
         AppDbContext db,
@@ -28,7 +29,8 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
         IMapper mapper,
-        ILogger<WhatsAppDeliveryService> logger)
+        ILogger<WhatsAppDeliveryService> logger,
+        IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {
         _db = db;
         _voucherService = voucherService;
@@ -36,6 +38,7 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
         _configuration = configuration;
         _mapper = mapper;
         _logger = logger;
+        _operationalFinanceSettingsService = operationalFinanceSettingsService;
     }
 
     public async Task PrepareVoucherDraftAsync(int reservaId, CancellationToken cancellationToken)
@@ -91,20 +94,25 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
     public async Task<WhatsAppVoucherPreviewResponse> GetVoucherPreviewAsync(int reservaId, CancellationToken cancellationToken)
     {
         var reserva = await GetReservaForWhatsAppAsync(reservaId, cancellationToken);
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
         var (resolvedPhone, source) = ResolvePhone(reserva);
         var draft = await GetPendingVoucherDraftAsync(reservaId, cancellationToken);
+        var blockReason = EconomicRulesHelper.GetVoucherBlockReason(reserva, settings);
+        var canSend = string.IsNullOrWhiteSpace(blockReason) && !string.IsNullOrWhiteSpace(resolvedPhone);
 
         var response = new WhatsAppVoucherPreviewResponse
         {
-            CanSend = !string.IsNullOrWhiteSpace(resolvedPhone),
+            CanSend = canSend,
             ResolvedPhone = resolvedPhone,
             PhoneSource = source,
             PhoneOverride = reserva.WhatsAppPhoneOverride,
             Caption = draft?.MessageText ?? BuildVoucherCaption(reserva),
             AttachmentName = draft?.AttachmentName ?? BuildVoucherFileName(reserva),
-            Error = string.IsNullOrWhiteSpace(resolvedPhone)
-                ? "No hay un telefono de WhatsApp disponible para esta reserva."
-                : null
+            Error = !string.IsNullOrWhiteSpace(blockReason)
+                ? blockReason
+                : string.IsNullOrWhiteSpace(resolvedPhone)
+                    ? "No hay un telefono de WhatsApp disponible para esta reserva."
+                    : null
         };
 
         return response;
@@ -135,6 +143,11 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
     public async Task<WhatsAppDeliveryDto> SendVoucherAsync(int reservaId, string? caption, string performedBy, CancellationToken cancellationToken)
     {
         var reserva = await GetReservaForWhatsAppAsync(reservaId, cancellationToken);
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        var blockReason = EconomicRulesHelper.GetVoucherBlockReason(reserva, settings);
+        if (!string.IsNullOrWhiteSpace(blockReason))
+            throw new InvalidOperationException(blockReason);
+
         var (resolvedPhone, source) = ResolvePhone(reserva);
         if (string.IsNullOrWhiteSpace(resolvedPhone))
             throw new InvalidOperationException("No hay un telefono disponible para enviar el voucher por WhatsApp.");

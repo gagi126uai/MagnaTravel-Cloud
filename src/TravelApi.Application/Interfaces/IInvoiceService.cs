@@ -6,7 +6,7 @@ namespace TravelApi.Application.Interfaces;
 public interface IInvoiceService
 {
     Task<IEnumerable<InvoiceDto>> GetAllAsync(CancellationToken ct);
-    Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, CancellationToken ct);
+    Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct);
     Task<bool> RetryAsync(int id, CancellationToken ct);
     Task<IEnumerable<InvoiceDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct);
     Task<byte[]> GetPdfAsync(int id, CancellationToken ct);

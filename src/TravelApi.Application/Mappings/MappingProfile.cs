@@ -17,7 +17,10 @@ public class MappingProfile : Profile
         // Financials
         CreateMap<Payment, PaymentDto>()
             .ForMember(dest => dest.ReservaId, opt => opt.MapFrom(src => src.ReservaId))
-            .ForMember(dest => dest.NumeroReserva, opt => opt.MapFrom(src => src.Reserva != null ? src.Reserva.NumeroReserva : null));
+            .ForMember(dest => dest.NumeroReserva, opt => opt.MapFrom(src => src.Reserva != null ? src.Reserva.NumeroReserva : null))
+            .ForMember(dest => dest.Receipt, opt => opt.MapFrom(src => src.Receipt));
+
+        CreateMap<PaymentReceipt, PaymentReceiptDto>();
             
         CreateMap<Invoice, InvoiceDto>()
             .ForMember(dest => dest.Reserva, opt => opt.MapFrom(src => src.Reserva))
@@ -70,6 +73,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.CustomerId, opt => opt.MapFrom(src => src.PayerId))
             .ForMember(dest => dest.SourceLeadId, opt => opt.MapFrom(src => src.SourceLeadId))
             .ForMember(dest => dest.SourceQuoteId, opt => opt.MapFrom(src => src.SourceQuoteId))
+            .ForMember(dest => dest.ResponsibleUserId, opt => opt.MapFrom(src => src.ResponsibleUserId))
+            .ForMember(dest => dest.ResponsibleUserName, opt => opt.MapFrom(src => src.ResponsibleUser != null ? src.ResponsibleUser.FullName : null))
             .ForMember(dest => dest.WhatsAppPhoneOverride, opt => opt.MapFrom(src => src.WhatsAppPhoneOverride))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer))
@@ -79,6 +84,8 @@ public class MappingProfile : Profile
 
         CreateMap<Reserva, ReservaListDto>()
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
+            .ForMember(dest => dest.ResponsibleUserId, opt => opt.MapFrom(src => src.ResponsibleUserId))
+            .ForMember(dest => dest.ResponsibleUserName, opt => opt.MapFrom(src => src.ResponsibleUser != null ? src.ResponsibleUser.FullName : null))
             .ForMember(dest => dest.TotalSale, opt => opt.MapFrom(src => 
                 (src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
                 (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +
