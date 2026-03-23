@@ -246,6 +246,7 @@ export function MovementsTab({
   onCreateManualMovement,
   onUpdateManualMovement,
   onDeleteManualMovement,
+  showHeader = true,
 }) {
   const [visibleCount, setVisibleCount] = useState(25);
   const [editingMovement, setEditingMovement] = useState(null);
@@ -279,14 +280,29 @@ export function MovementsTab({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Caja</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Libro de caja con ingresos por cobranzas, egresos a proveedores y ajustes manuales.
-          </p>
+      {showHeader && (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Caja</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Libro de caja con ingresos por cobranzas, egresos a proveedores y ajustes manuales.
+            </p>
+          </div>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+            >
+              <Plus className="w-4 h-4" />
+              Nuevo ajuste manual
+            </button>
+          )}
         </div>
-        {isAdmin && (
+      )}
+
+      {!showHeader && isAdmin && (
+        <div className="flex justify-end">
           <button
             type="button"
             onClick={openCreate}
@@ -295,8 +311,8 @@ export function MovementsTab({
             <Plus className="w-4 h-4" />
             Nuevo ajuste manual
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
         <table className="w-full text-left border-collapse">

@@ -15,12 +15,125 @@ public class PaymentService : IPaymentService
 {
     private readonly AppDbContext _dbContext;
     private readonly IMapper _mapper;
+    private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
-    public PaymentService(AppDbContext dbContext, IMapper mapper)
+    private static readonly string[] ActiveCollectionStatuses =
+    {
+        EstadoReserva.Reserved,
+        EstadoReserva.Operational
+    };
+
+    public PaymentService(
+        AppDbContext dbContext,
+        IMapper mapper,
+        IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {
         _dbContext = dbContext;
         _mapper = mapper;
+        _operationalFinanceSettingsService = operationalFinanceSettingsService;
         QuestPDF.Settings.License = LicenseType.Community;
+    }
+
+    public async Task<CollectionsSummaryDto> GetCollectionsSummaryAsync(CancellationToken cancellationToken)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        var today = DateTime.UtcNow.Date;
+        var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
+        var currentMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var pendingReservations = await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0)
+            .Select(r => new
+            {
+                r.Id,
+                r.Balance,
+                r.StartDate
+            })
+            .ToListAsync(cancellationToken);
+
+        var pendingAmount = pendingReservations.Sum(r => EconomicRulesHelper.RoundCurrency(r.Balance));
+        var urgentReservations = pendingReservations
+            .Where(r => r.StartDate.HasValue && r.StartDate.Value.Date >= today && r.StartDate.Value.Date <= threshold)
+            .ToList();
+
+        var collectedThisMonth = await _dbContext.Payments
+            .AsNoTracking()
+            .Where(p =>
+                !p.IsDeleted &&
+                p.Status != "Cancelled" &&
+                p.EntryType == PaymentEntryTypes.Payment &&
+                p.Amount > 0 &&
+                p.PaidAt >= currentMonth)
+            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+
+        return new CollectionsSummaryDto
+        {
+            PendingAmount = EconomicRulesHelper.RoundCurrency(pendingAmount),
+            CollectedThisMonth = EconomicRulesHelper.RoundCurrency(collectedThisMonth),
+            UrgentReservationsCount = urgentReservations.Count,
+            UrgentPendingAmount = EconomicRulesHelper.RoundCurrency(urgentReservations.Sum(r => r.Balance)),
+            BlockedOperationalCount = settings.RequireFullPaymentForOperativeStatus ? pendingReservations.Count : 0,
+            BlockedVoucherCount = settings.RequireFullPaymentForVoucher ? pendingReservations.Count : 0
+        };
+    }
+
+    public async Task<IReadOnlyList<CollectionWorkItemDto>> GetCollectionsWorklistAsync(CancellationToken cancellationToken)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        var today = DateTime.UtcNow.Date;
+        var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
+
+        var reservations = await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0)
+            .Select(r => new
+            {
+                r.Id,
+                r.NumeroReserva,
+                CustomerName = r.Payer != null ? r.Payer.FullName : "Consumidor Final",
+                r.StartDate,
+                ResponsibleUserName = r.ResponsibleUser != null ? r.ResponsibleUser.FullName : null,
+                r.TotalSale,
+                r.TotalPaid,
+                r.Balance
+            })
+            .ToListAsync(cancellationToken);
+
+        return reservations
+            .Select(reserva =>
+            {
+                var balance = EconomicRulesHelper.RoundCurrency(reserva.Balance);
+                var totalPaid = EconomicRulesHelper.RoundCurrency(reserva.TotalPaid);
+                var totalSale = EconomicRulesHelper.RoundCurrency(reserva.TotalSale);
+                var isUrgent = reserva.StartDate.HasValue &&
+                    reserva.StartDate.Value.Date >= today &&
+                    reserva.StartDate.Value.Date <= threshold;
+                var syntheticReserva = new Reserva
+                {
+                    Balance = balance
+                };
+
+                return new CollectionWorkItemDto
+                {
+                    ReservaId = reserva.Id,
+                    NumeroReserva = reserva.NumeroReserva,
+                    CustomerName = reserva.CustomerName,
+                    StartDate = reserva.StartDate,
+                    ResponsibleUserName = reserva.ResponsibleUserName,
+                    TotalSale = totalSale,
+                    TotalPaid = totalPaid,
+                    Balance = balance,
+                    CollectionStatus = totalPaid > 0 ? "Parcial" : "Pendiente",
+                    UrgencyStatus = isUrgent ? "Urgente" : "Normal",
+                    BlocksOperational = EconomicRulesHelper.GetOperativeBlockReason(syntheticReserva, settings) != null,
+                    BlocksVoucher = EconomicRulesHelper.GetVoucherBlockReason(syntheticReserva, settings) != null
+                };
+            })
+            .OrderByDescending(item => item.UrgencyStatus == "Urgente")
+            .ThenBy(item => item.StartDate ?? DateTime.MaxValue)
+            .ThenByDescending(item => item.Balance)
+            .ToList();
     }
 
     public async Task<IEnumerable<PaymentDto>> GetAllPaymentsAsync(CancellationToken cancellationToken)

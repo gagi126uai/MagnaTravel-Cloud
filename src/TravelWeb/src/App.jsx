@@ -10,6 +10,11 @@ import CustomerAccountPage from "./features/customers/pages/CustomerAccountPage"
 import ReservasPage from "./features/reservas/pages/ReservasPage";
 import ReservaDetailPage from "./features/reservas/pages/ReservaDetailPage";
 import PaymentsPage from "./features/payments/pages/PaymentsPage";
+import PaymentsHomePage from "./features/payments/pages/PaymentsHomePage";
+import PaymentsCollectionsPage from "./features/payments/pages/PaymentsCollectionsPage";
+import PaymentsCashPage from "./features/payments/pages/PaymentsCashPage";
+import PaymentsInvoicingPage from "./features/payments/pages/PaymentsInvoicingPage";
+import PaymentsHistoryPage from "./features/payments/pages/PaymentsHistoryPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./features/suppliers/pages/SuppliersPage";
 import SupplierAccountPage from "./features/suppliers/pages/SupplierAccountPage";
@@ -89,7 +94,13 @@ export default function App() {
                   <Route path="/suppliers/:id/account" element={<SupplierAccountPage />} />
 
                   {/* Treasury */}
-                  <Route path="/payments" element={<PaymentsPage />} />
+                  <Route path="/payments" element={<PaymentsPage />}>
+                    <Route index element={<PaymentsHomePage />} />
+                    <Route path="collections" element={<PaymentsCollectionsPage />} />
+                    <Route path="cash" element={<PaymentsCashPage />} />
+                    <Route path="invoicing" element={<PaymentsInvoicingPage />} />
+                    <Route path="history" element={<PaymentsHistoryPage />} />
+                  </Route>
                   <Route path="/rates" element={<RatesPage />} />
                   <Route path="/quotes" element={<QuotesPage />} />
                   <Route path="/crm" element={adminUser ? <CRMPage /> : <Navigate to="/dashboard" replace />} />

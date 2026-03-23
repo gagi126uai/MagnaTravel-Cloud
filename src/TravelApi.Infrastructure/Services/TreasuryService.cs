@@ -57,6 +57,22 @@ public class TreasuryService : ITreasuryService
             });
         }
 
+        var cashSummary = await GetCashSummaryAsync(cancellationToken);
+
+        return new TreasurySummaryDto
+        {
+            AccountsReceivable = EconomicRulesHelper.RoundCurrency(accountsReceivable),
+            AfipEligiblePending = EconomicRulesHelper.RoundCurrency(afipEligiblePending),
+            CashInThisMonth = cashSummary.CashInThisMonth,
+            CashOutThisMonth = cashSummary.CashOutThisMonth,
+            NetCashThisMonth = cashSummary.NetCashThisMonth
+        };
+    }
+
+    public async Task<CashSummaryDto> GetCashSummaryAsync(CancellationToken cancellationToken)
+    {
+        var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
         var cashInPayments = await _dbContext.Payments
             .Where(p => !p.IsDeleted && p.AffectsCash && p.Status != "Cancelled" && p.PaidAt >= startOfMonth)
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
@@ -76,10 +92,8 @@ public class TreasuryService : ITreasuryService
         var cashInThisMonth = EconomicRulesHelper.RoundCurrency(cashInPayments + cashInManual);
         var cashOutThisMonth = EconomicRulesHelper.RoundCurrency(cashOutSuppliers + cashOutManual);
 
-        return new TreasurySummaryDto
+        return new CashSummaryDto
         {
-            AccountsReceivable = EconomicRulesHelper.RoundCurrency(accountsReceivable),
-            AfipEligiblePending = EconomicRulesHelper.RoundCurrency(afipEligiblePending),
             CashInThisMonth = cashInThisMonth,
             CashOutThisMonth = cashOutThisMonth,
             NetCashThisMonth = EconomicRulesHelper.RoundCurrency(cashInThisMonth - cashOutThisMonth)

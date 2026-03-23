@@ -24,6 +24,12 @@ public class TreasuryController : ControllerBase
         return Ok(await _treasuryService.GetSummaryAsync(cancellationToken));
     }
 
+    [HttpGet("cash-summary")]
+    public async Task<ActionResult<CashSummaryDto>> GetCashSummary(CancellationToken cancellationToken)
+    {
+        return Ok(await _treasuryService.GetCashSummaryAsync(cancellationToken));
+    }
+
     [HttpGet("movements")]
     public async Task<ActionResult<IReadOnlyList<CashMovementDto>>> GetMovements(CancellationToken cancellationToken)
     {

@@ -18,6 +18,18 @@ public class InvoicesController : ControllerBase
         _invoiceService = invoiceService;
     }
 
+    [HttpGet("summary")]
+    public async Task<ActionResult<InvoicingSummaryDto>> GetSummary(CancellationToken ct)
+    {
+        return Ok(await _invoiceService.GetInvoicingSummaryAsync(ct));
+    }
+
+    [HttpGet("worklist")]
+    public async Task<ActionResult<IReadOnlyList<InvoicingWorkItemDto>>> GetWorklist(CancellationToken ct)
+    {
+        return Ok(await _invoiceService.GetInvoicingWorklistAsync(ct));
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetInvoices(CancellationToken ct)
     {

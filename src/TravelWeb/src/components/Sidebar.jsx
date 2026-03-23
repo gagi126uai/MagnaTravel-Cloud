@@ -21,10 +21,10 @@ const mainLinks = [
   { to: "/reservas", label: "Reservas", icon: FolderOpen },
   { to: "/customers", label: "Clientes", icon: Users },
   { to: "/suppliers", label: "Proveedores", icon: Building2 },
-  { to: "/payments", label: "Cobranzas y Facturación", icon: CreditCard },
+  { to: "/payments", label: "Cobranzas, Caja y Facturacion", icon: CreditCard },
   { to: "/rates", label: "Tarifario", icon: DollarSign },
   { to: "/reports", label: "Reportes e Inteligencia", icon: BarChart3, adminOnly: true },
-  { to: "/settings", label: "Configuración", icon: Settings, adminOnly: true },
+  { to: "/settings", label: "Configuracion", icon: Settings, adminOnly: true },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onCloseMobile }) {
@@ -108,7 +108,7 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onClo
       <div className={cn("border-t border-slate-200 dark:border-slate-800", collapsed ? "p-2" : "p-3")}>
         <button
           onClick={onLogout}
-          title={collapsed ? "Cerrar sesión" : undefined}
+          title={collapsed ? "Cerrar sesion" : undefined}
           className={cn(
             "flex w-full items-center rounded-lg text-sm font-medium text-slate-500 transition-all",
             "hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20",
@@ -117,7 +117,7 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onClo
           type="button"
         >
           <LogOut className={cn("flex-shrink-0", collapsed ? "h-5 w-5" : "h-4 w-4")} />
-          {!collapsed && <span>Cerrar sesión</span>}
+          {!collapsed && <span>Cerrar sesion</span>}
         </button>
       </div>
     </aside>

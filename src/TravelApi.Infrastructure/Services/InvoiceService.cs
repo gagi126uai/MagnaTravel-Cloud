@@ -21,6 +21,11 @@ public class InvoiceService : IInvoiceService
     private readonly ILogger<InvoiceService> _logger;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly UserManager<ApplicationUser> _userManager;
+    private static readonly string[] ActiveInvoicingStatuses =
+    {
+        EstadoReserva.Reserved,
+        EstadoReserva.Operational
+    };
 
     public InvoiceService(
         AppDbContext context, 
@@ -48,6 +53,44 @@ public class InvoiceService : IInvoiceService
             .OrderByDescending(i => i.CreatedAt)
             .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+    }
+
+    public async Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        var workItems = await BuildInvoicingWorkItemsAsync(settings, ct);
+        var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var approvedInvoices = await _context.Invoices
+            .AsNoTracking()
+            .Where(i => i.Resultado == "A")
+            .Select(i => new
+            {
+                i.TipoComprobante,
+                i.ImporteTotal,
+                i.CreatedAt,
+                i.WasForced
+            })
+            .ToListAsync(ct);
+
+        return new InvoicingSummaryDto
+        {
+            ReadyAmount = EconomicRulesHelper.RoundCurrency(workItems
+                .Where(item => item.FiscalStatus == "ready")
+                .Sum(item => item.PendingFiscalAmount)),
+            ReadyCount = workItems.Count(item => item.FiscalStatus == "ready"),
+            BlockedCount = workItems.Count(item => item.FiscalStatus == "blocked" || item.FiscalStatus == "override"),
+            InvoicedThisMonth = EconomicRulesHelper.RoundCurrency(approvedInvoices
+                .Where(invoice => invoice.CreatedAt >= startOfMonth)
+                .Sum(invoice => GetNetInvoiceAmount(invoice.TipoComprobante, invoice.ImporteTotal))),
+            ForcedCount = approvedInvoices.Count(invoice => invoice.WasForced)
+        };
+    }
+
+    public async Task<IReadOnlyList<InvoicingWorkItemDto>> GetInvoicingWorklistAsync(CancellationToken ct)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        return await BuildInvoicingWorkItemsAsync(settings, ct);
     }
 
     public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct)
@@ -363,5 +406,116 @@ public class InvoiceService : IInvoiceService
         }
 
         await _context.SaveChangesAsync(ct);
+    }
+
+    private async Task<IReadOnlyList<InvoicingWorkItemDto>> BuildInvoicingWorkItemsAsync(OperationalFinanceSettings settings, CancellationToken ct)
+    {
+        var reservas = await _context.Reservas
+            .AsNoTracking()
+            .Where(r => ActiveInvoicingStatuses.Contains(r.Status))
+            .Select(r => new
+            {
+                r.Id,
+                r.NumeroReserva,
+                CustomerName = r.Payer != null ? r.Payer.FullName : "Consumidor Final",
+                r.TotalSale,
+                r.Balance
+            })
+            .ToListAsync(ct);
+
+        if (reservas.Count == 0)
+            return Array.Empty<InvoicingWorkItemDto>();
+
+        var reservaIds = reservas.Select(r => r.Id).ToList();
+
+        var approvedInvoices = await _context.Invoices
+            .AsNoTracking()
+            .Where(i => i.ReservaId.HasValue && reservaIds.Contains(i.ReservaId.Value) && i.Resultado == "A")
+            .Select(i => new
+            {
+                ReservaId = i.ReservaId!.Value,
+                i.TipoComprobante,
+                i.ImporteTotal,
+                i.WasForced,
+                i.ForcedByUserName,
+                i.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        var invoicedByReserva = approvedInvoices
+            .GroupBy(i => i.ReservaId)
+            .ToDictionary(
+                group => group.Key,
+                group => EconomicRulesHelper.RoundCurrency(group.Sum(i => GetNetInvoiceAmount(i.TipoComprobante, i.ImporteTotal))));
+
+        var latestForcedByReserva = approvedInvoices
+            .Where(i => i.WasForced)
+            .GroupBy(i => i.ReservaId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(i => i.CreatedAt).First().ForcedByUserName);
+
+        return reservas
+            .Select(reserva =>
+            {
+                var alreadyInvoiced = invoicedByReserva.TryGetValue(reserva.Id, out var value)
+                    ? value
+                    : 0m;
+                var pendingFiscalAmount = EconomicRulesHelper.RoundCurrency(Math.Max(reserva.TotalSale - alreadyInvoiced, 0m));
+
+                if (pendingFiscalAmount <= 0)
+                    return null;
+
+                var syntheticReserva = new Reserva
+                {
+                    Balance = reserva.Balance
+                };
+                var settled = EconomicRulesHelper.IsEconomicallySettled(syntheticReserva);
+                var afipEvaluation = EconomicRulesHelper.EvaluateAfip(syntheticReserva, settings);
+                var fiscalStatus = settled
+                    ? "ready"
+                    : afipEvaluation.RequiresOverride
+                        ? "override"
+                        : "blocked";
+
+                return new InvoicingWorkItemDto
+                {
+                    ReservaId = reserva.Id,
+                    NumeroReserva = reserva.NumeroReserva,
+                    CustomerName = reserva.CustomerName,
+                    TotalSale = EconomicRulesHelper.RoundCurrency(reserva.TotalSale),
+                    AlreadyInvoiced = alreadyInvoiced,
+                    PendingFiscalAmount = pendingFiscalAmount,
+                    FiscalStatus = fiscalStatus,
+                    FiscalStatusLabel = fiscalStatus switch
+                    {
+                        "ready" => "Lista para facturar",
+                        "override" => "Bloqueada por deuda",
+                        _ => "Bloqueada por deuda"
+                    },
+                    RequiresOverride = fiscalStatus == "override",
+                    EconomicBlockReason = settled ? null : afipEvaluation.BlockReason,
+                    ForcedByUserName = latestForcedByReserva.TryGetValue(reserva.Id, out var forcedByUserName)
+                        ? forcedByUserName
+                        : null
+                };
+            })
+            .Where(item => item != null)
+            .OrderBy(item => item!.FiscalStatus switch
+            {
+                "ready" => 0,
+                "override" => 1,
+                _ => 2
+            })
+            .ThenBy(item => item!.NumeroReserva)
+            .Cast<InvoicingWorkItemDto>()
+            .ToList();
+    }
+
+    private static decimal GetNetInvoiceAmount(int tipoComprobante, decimal importeTotal)
+    {
+        return tipoComprobante == 3 || tipoComprobante == 8 || tipoComprobante == 13 || tipoComprobante == 53
+            ? -importeTotal
+            : importeTotal;
     }
 }

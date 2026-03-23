@@ -4,6 +4,8 @@ namespace TravelApi.Application.Interfaces;
 
 public interface IPaymentService
 {
+    Task<CollectionsSummaryDto> GetCollectionsSummaryAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<CollectionWorkItemDto>> GetCollectionsWorklistAsync(CancellationToken cancellationToken);
     Task<IEnumerable<PaymentDto>> GetAllPaymentsAsync(CancellationToken cancellationToken);
     Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken);
     Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);

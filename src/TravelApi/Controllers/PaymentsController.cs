@@ -17,6 +17,18 @@ public class PaymentsController : ControllerBase
         _paymentService = paymentService;
     }
 
+    [HttpGet("collections-summary")]
+    public async Task<ActionResult<CollectionsSummaryDto>> GetCollectionsSummary(CancellationToken cancellationToken)
+    {
+        return Ok(await _paymentService.GetCollectionsSummaryAsync(cancellationToken));
+    }
+
+    [HttpGet("collections-worklist")]
+    public async Task<ActionResult<IReadOnlyList<CollectionWorkItemDto>>> GetCollectionsWorklist(CancellationToken cancellationToken)
+    {
+        return Ok(await _paymentService.GetCollectionsWorklistAsync(cancellationToken));
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<PaymentDto>>> GetAllPayments(CancellationToken cancellationToken)
     {
