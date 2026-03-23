@@ -1,10 +1,8 @@
 import { NavLink } from "react-router-dom";
-import { Banknote, ArrowLeftRight, FileText, Clock, Home } from "lucide-react";
+import { Banknote, FileText, Clock } from "lucide-react";
 
 const navItems = [
-  { to: "/payments", end: true, label: "Inicio", icon: Home },
   { to: "/payments/collections", label: "Cobranzas", icon: Banknote },
-  { to: "/payments/cash", label: "Caja", icon: ArrowLeftRight },
   { to: "/payments/invoicing", label: "Facturacion", icon: FileText },
   { to: "/payments/history", label: "Historial", icon: Clock },
 ];

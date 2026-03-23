@@ -7,10 +7,10 @@ export default function PaymentsPage() {
       <div className="space-y-4 pb-6 border-b border-slate-100 dark:border-slate-800/50">
         <div>
           <h1 className="text-3xl font-light tracking-tight text-slate-900 dark:text-white mb-1">
-            Cobranzas, Caja y Facturacion
+            Cobranzas y Facturacion
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Separa seguimiento de cobros, movimientos reales de caja y estado fiscal AFIP.
+            Seguimiento de pagos de reservas y estado fiscal AFIP, sin mezclar movimientos de caja.
           </p>
         </div>
 
