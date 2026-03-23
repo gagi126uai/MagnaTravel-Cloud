@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
 import Swal from "sweetalert2";
@@ -111,6 +111,7 @@ function MessageBubble({ message }) {
 
 export default function WhatsAppBotTab() {
   const navigate = useNavigate();
+  const selectedConversationKeyRef = useRef(null);
   const [botStatus, setBotStatus] = useState("STARTING");
   const [qrCode, setQrCode] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -120,6 +121,11 @@ export default function WhatsAppBotTab() {
   const [conversationDetail, setConversationDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+
+  const getConversationKey = useCallback(
+    (item) => (item ? `${item.conversationType}-${item.entityId}` : null),
+    []
+  );
 
   const loadBotStatus = useCallback(async () => {
     try {
@@ -135,6 +141,7 @@ export default function WhatsAppBotTab() {
   }, []);
 
   const loadConversationDetail = useCallback(async (item) => {
+    selectedConversationKeyRef.current = getConversationKey(item);
     setSelectedConversation(item);
     setLoadingDetail(true);
     try {
@@ -146,7 +153,7 @@ export default function WhatsAppBotTab() {
     } finally {
       setLoadingDetail(false);
     }
-  }, []);
+  }, [getConversationKey]);
 
   const loadConversations = useCallback(async (preferredKey = null) => {
     setLoadingConversations(true);
@@ -155,15 +162,16 @@ export default function WhatsAppBotTab() {
       const items = Array.isArray(data) ? data : [];
       setConversations(items);
 
-      const selectedKey = preferredKey || (selectedConversation ? `${selectedConversation.conversationType}-${selectedConversation.entityId}` : null);
+      const selectedKey = preferredKey ?? selectedConversationKeyRef.current;
       const nextSelected =
-        items.find((item) => `${item.conversationType}-${item.entityId}` === selectedKey) ||
+        items.find((item) => getConversationKey(item) === selectedKey) ||
         items[0] ||
         null;
 
       if (nextSelected) {
         await loadConversationDetail(nextSelected);
       } else {
+        selectedConversationKeyRef.current = null;
         setSelectedConversation(null);
         setConversationDetail(null);
       }
@@ -172,7 +180,7 @@ export default function WhatsAppBotTab() {
     } finally {
       setLoadingConversations(false);
     }
-  }, [loadConversationDetail, selectedConversation]);
+  }, [getConversationKey, loadConversationDetail]);
 
   useEffect(() => {
     loadBotStatus();
