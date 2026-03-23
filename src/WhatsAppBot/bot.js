@@ -34,15 +34,16 @@ let isStartingClient = false;
 
 let agencyName = "MagnaTravel";
 let MSG = {
-    welcome: () => `Hola! Bienvenido/a a *${agencyName}*.\n\nSoy tu asistente virtual y estoy para ayudarte con tu viaje.\n\nPara empezar, me decis tu nombre completo?`,
-    badName: "No pude captar tu nombre. Me decis tu nombre y apellido?",
-    askInterest: (name) => `Un placer, *${name}*.\n\nQue destino o tipo de viaje te gustaria hacer?`,
-    askDates: (interest) => `Perfecto, *${interest}*.\n\nTenes alguna fecha aproximada para viajar?`,
-    askTravelers: () => "Ultima pregunta: cuantas personas viajan?",
-    thanks: (name) => `Genial, *${name}*! Ya registre tu consulta y un asesor se va a comunicar con vos a la brevedad.`,
-    agentRequest: (name) => `Entendido, *${name || ""}*. Ya le avise a un asesor para que te contacte personalmente.`,
-    duplicate: "Tu consulta ya fue registrada y estamos trabajando en tu propuesta.",
-    error: "Hubo un problema al registrar la consulta. Intenta nuevamente o llamanos por telefono."
+    welcome: () => `Hola, soy el asistente de *${agencyName}*.\n\nPara ayudarte mejor, como te llamas?`,
+    badName: "No llegue a tomar tu nombre. Me lo repetis, por favor?",
+    askNameAfterInterest: (interest) => `Buenisimo, ya tomo que te interesa *${interest}*.\n\nAntes de seguir, como te llamas?`,
+    askInterest: (name) => `Gracias, *${shortName(name)}*.\n\nQue destino o tipo de viaje te interesa?`,
+    askDates: (interest) => `Perfecto.\n\nTenes una fecha o epoca estimada para *${interest}*?`,
+    askTravelers: () => "Y cuantas personas viajan?",
+    thanks: (name) => `Perfecto, *${shortName(name)}*.\n\nYa le comparti tu consulta a un asesor de *${agencyName}* y va a seguir la conversacion por aca.`,
+    agentRequest: (name) => `Perfecto${name ? `, *${shortName(name)}*` : ""}.\n\nLe aviso a un asesor de *${agencyName}* para que siga la conversacion por este medio.`,
+    duplicate: `Ya tengo tu consulta cargada.\n\nEn breve un asesor de *${agencyName}* sigue con vos por este medio.`,
+    error: `Tuve un problema para registrar la consulta.\n\nSi queres, escribime de nuevo en unos minutos o comunicate con *${agencyName}*.`
 };
 
 const RECOVERABLE_BROWSER_ERRORS = /(Execution context was destroyed|Target closed|Session closed|Protocol error|frame was detached)/i;
@@ -59,20 +60,10 @@ async function fetchConfig() {
     try {
         botLog("Sincronizando configuracion con API...");
         const res = await axios.get(`${API_URL}/api/whatsapp/config/env`);
-        const { config, agencyName: loadedAgencyName } = res.data;
+        const { agencyName: loadedAgencyName } = res.data;
 
         if (loadedAgencyName) {
             agencyName = loadedAgencyName;
-        }
-
-        if (config) {
-            MSG.welcome = () => (config.welcomeMessage || "Hola! Bienvenido/a a *{agencyName}*.").replace(/{agencyName}/g, agencyName);
-            MSG.askInterest = (name) => (config.askInterestMessage || "Un placer, *{name}*.").replace(/{name}/g, name);
-            MSG.askDates = (interest) => (config.askDatesMessage || "Perfecto, *{interest}*.").replace(/{interest}/g, interest);
-            MSG.askTravelers = () => config.askTravelersMessage || "Ultima pregunta: cuantas personas viajan?";
-            MSG.thanks = (name) => (config.thanksMessage || "Gracias, *{name}*.").replace(/{name}/g, name).replace(/{agencyName}/g, agencyName);
-            MSG.agentRequest = (name) => (config.agentRequestMessage || "Entendido, *{name}*.").replace(/{name}/g, name || "");
-            MSG.duplicate = config.duplicateMessage || MSG.duplicate;
         }
 
         botLog("Configuracion actualizada.");
@@ -140,16 +131,22 @@ function createSession(chatId) {
 
 const GREETINGS = /^(hola|buenas|buen[oa]s?\s*(tardes?|noches?|d[ií]as?)?|hey|hi|hello|ey|que\s*tal|holis|consulta|quiero\s*(viajar|info)|me\s*interesa)[\s!?.,]*$/i;
 const AGENT_REQUEST = /\b(asesor|persona\s*real|humano|agente|hablar\s*con\s*alguien|operador)\b/i;
+const TRAVEL_CONTEXT = /\b(brasil|bariloche|europa|cancun|disney|miami|caribe|crucero|mendoza|playa|viaje|vacaciones|pasajes?|paquete|hotel|octubre|noviembre|diciembre|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|familia|pareja|adultos?|pasajeros?|viajeros?|personas?)\b/i;
 
 function isGreeting(text) {
     return GREETINGS.test(text.trim());
 }
 
+function shortName(name) {
+    return (name || "").trim().split(/\s+/)[0] || name;
+}
+
 function looksLikeName(text) {
     const trimmed = text.trim();
     if (trimmed.length < 2 || trimmed.length > 200) return false;
-    if (/^\d+$/.test(trimmed)) return false;
+    if (/\d/.test(trimmed)) return false;
     if (isGreeting(trimmed)) return false;
+    if (TRAVEL_CONTEXT.test(trimmed)) return false;
     if (!/[a-záéíóúñü]/i.test(trimmed)) return false;
     return true;
 }
@@ -179,15 +176,6 @@ function buildTravelerRetryMessage() {
     return "Necesito la cantidad de viajeros para cerrar la consulta. Por ejemplo: *2 adultos*, *familia de 4* o *3 pasajeros*.";
 }
 
-function buildSummaryMessage(session) {
-    const parts = [];
-    if (session.interest) parts.push(`destino: *${session.interest}*`);
-    if (session.dates) parts.push(`fechas: *${session.dates}*`);
-    if (session.travelers) parts.push(`viajeros: *${session.travelers}*`);
-    if (parts.length === 0) return null;
-    return `Resumen registrado:\n- ${parts.join("\n- ")}`;
-}
-
 function extractPhone(chatId) {
     const match = chatId.match(/^(\d+)@/);
     return match ? `+${match[1]}` : chatId;
@@ -195,6 +183,10 @@ function extractPhone(chatId) {
 
 function phoneToChatId(phone) {
     return phone.replace(/^\+/, "").replace(/[^0-9]/g, "") + "@c.us";
+}
+
+async function sendChatText(chatId, text) {
+    return client.sendMessage(chatId, text);
 }
 
 async function sendToWebhook(phone, session) {
@@ -240,9 +232,7 @@ async function sendMessageToWebhook(phone, message, sender, options = {}) {
 }
 
 function buildThanksMessage(session) {
-    const baseMessage = MSG.thanks(session.name);
-    const summary = buildSummaryMessage(session);
-    return summary ? `${baseMessage}\n\n${summary}` : baseMessage;
+    return MSG.thanks(session.name);
 }
 
 function isRecoverableBrowserError(error) {
@@ -394,7 +384,7 @@ client.on("message", async (message) => {
     if (/nueva\s*consulta/i.test(body)) {
         const session = createSession(chatId);
         const welcome = typeof MSG.welcome === "function" ? MSG.welcome() : MSG.welcome;
-        await message.reply(welcome);
+        await sendChatText(chatId, welcome);
         session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${welcome}`);
         session.state = "WAITING_NAME";
         return;
@@ -403,7 +393,7 @@ client.on("message", async (message) => {
     if (AGENT_REQUEST.test(body)) {
         const session = existingSession || createSession(chatId);
         const agentMessage = typeof MSG.agentRequest === "function" ? MSG.agentRequest(session.name) : MSG.agentRequest;
-        await message.reply(agentMessage);
+        await sendChatText(chatId, agentMessage);
         session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${agentMessage}`);
         session.state = "DONE";
         if (session.name) await sendToWebhook(phone, session);
@@ -420,9 +410,29 @@ client.on("message", async (message) => {
 
         if (!session) {
             session = createSession(chatId);
+            session.transcript.push(`[Cliente]: ${body}`);
+
+            if (!isGreeting(body) && looksLikeInterest(body) && !looksLikeName(body)) {
+                session.interest = body;
+                session.state = "WAITING_NAME";
+                const nextMessage = MSG.askNameAfterInterest(session.interest);
+                await sendChatText(chatId, nextMessage);
+                session.transcript.push(`[Bot]: ${nextMessage}`);
+                return;
+            }
+
+            if (looksLikeName(body)) {
+                session.name = body;
+                session.state = "WAITING_INTEREST";
+                const nextMessage = MSG.askInterest(session.name);
+                await sendChatText(chatId, nextMessage);
+                session.transcript.push(`[Bot]: ${nextMessage}`);
+                return;
+            }
+
             const welcome = typeof MSG.welcome === "function" ? MSG.welcome() : MSG.welcome;
-            await message.reply(welcome);
-            session.transcript.push(`[Cliente]: ${body}`, `[Bot]: ${welcome}`);
+            await sendChatText(chatId, welcome);
+            session.transcript.push(`[Bot]: ${welcome}`);
             session.state = "WAITING_NAME";
             return;
         }
@@ -432,15 +442,17 @@ client.on("message", async (message) => {
         switch (session.state) {
             case "WAITING_NAME": {
                 if (!looksLikeName(body)) {
-                    await message.reply(MSG.badName);
+                    await sendChatText(chatId, MSG.badName);
                     session.transcript.push(`[Bot]: ${MSG.badName}`);
                     return;
                 }
 
                 session.name = body;
-                session.state = "WAITING_INTEREST";
-                const nextMessage = MSG.askInterest(session.name);
-                await message.reply(nextMessage);
+                const nextMessage = session.interest
+                    ? MSG.askDates(session.interest)
+                    : MSG.askInterest(session.name);
+                session.state = session.interest ? "WAITING_DATES" : "WAITING_INTEREST";
+                await sendChatText(chatId, nextMessage);
                 session.transcript.push(`[Bot]: ${nextMessage}`);
                 break;
             }
@@ -448,7 +460,7 @@ client.on("message", async (message) => {
             case "WAITING_INTEREST": {
                 if (!looksLikeInterest(body)) {
                     const retryMessage = "Contame el destino o tipo de viaje que te interesa. Por ejemplo: *Brasil*, *Bariloche* o *playa en octubre*.";
-                    await message.reply(retryMessage);
+                    await sendChatText(chatId, retryMessage);
                     session.transcript.push(`[Bot]: ${retryMessage}`);
                     return;
                 }
@@ -456,7 +468,7 @@ client.on("message", async (message) => {
                 session.interest = body;
                 session.state = "WAITING_DATES";
                 const nextMessage = MSG.askDates(session.interest);
-                await message.reply(nextMessage);
+                await sendChatText(chatId, nextMessage);
                 session.transcript.push(`[Bot]: ${nextMessage}`);
                 break;
             }
@@ -464,7 +476,7 @@ client.on("message", async (message) => {
             case "WAITING_DATES": {
                 if (!looksLikeDates(body)) {
                     const retryMessage = "Decime una fecha o rango aproximado. Por ejemplo: *octubre 2026*, *vacaciones de invierno* o *a definir*.";
-                    await message.reply(retryMessage);
+                    await sendChatText(chatId, retryMessage);
                     session.transcript.push(`[Bot]: ${retryMessage}`);
                     return;
                 }
@@ -472,7 +484,7 @@ client.on("message", async (message) => {
                 session.dates = body;
                 session.state = "WAITING_TRAVELERS";
                 const nextMessage = MSG.askTravelers();
-                await message.reply(nextMessage);
+                await sendChatText(chatId, nextMessage);
                 session.transcript.push(`[Bot]: ${nextMessage}`);
                 break;
             }
@@ -480,7 +492,7 @@ client.on("message", async (message) => {
             case "WAITING_TRAVELERS": {
                 if (!looksLikeTravelers(body)) {
                     const retryMessage = buildTravelerRetryMessage();
-                    await message.reply(retryMessage);
+                    await sendChatText(chatId, retryMessage);
                     session.transcript.push(`[Bot]: ${retryMessage}`);
                     return;
                 }
@@ -490,14 +502,14 @@ client.on("message", async (message) => {
                 const result = await sendToWebhook(phone, session);
 
                 if (result === "duplicate") {
-                    await message.reply(MSG.duplicate);
+                    await sendChatText(chatId, MSG.duplicate);
                     session.transcript.push(`[Bot]: ${MSG.duplicate}`);
                 } else if (result === "ok") {
                     const thanksMessage = buildThanksMessage(session);
-                    await message.reply(thanksMessage);
+                    await sendChatText(chatId, thanksMessage);
                     session.transcript.push(`[Bot]: ${thanksMessage}`);
                 } else {
-                    await message.reply(MSG.error);
+                    await sendChatText(chatId, MSG.error);
                     session.transcript.push(`[Bot]: ${MSG.error}`);
                 }
 

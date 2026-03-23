@@ -26,17 +26,15 @@ import {
   Briefcase,
   Clock,
   Smartphone,
-  RefreshCcw,
-  LogOut,
   TerminalSquare,
   Settings2
 } from "lucide-react";
-import { QRCodeCanvas } from "qrcode.react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 import AfipSettingsTab from "../components/AfipSettingsTab";
 import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
+import WhatsAppBotTab from "../components/WhatsAppBotTab";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
@@ -254,11 +252,7 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    if (activeTab === "whatsapp") {
-      loadBotStatus();
-      const interval = setInterval(loadBotStatus, 5000); // Poll cada 5s
-      return () => clearInterval(interval);
-    }
+    return undefined;
   }, [activeTab]);
 
   const loadBotConfig = async () => {
@@ -460,7 +454,6 @@ export default function SettingsPage() {
       loadCommissionRules();
       loadSuppliers();
     }
-    if (activeTab === "whatsapp") loadBotConfig();
   }, [activeTab, adminUser]);
 
   // Handlers
@@ -872,115 +865,7 @@ export default function SettingsPage() {
         {activeTab === "afip" && <AfipSettingsTab />}
 
         {/* --- WHATSAPP TAB --- */}
-        {activeTab === "whatsapp" && (
-          <div className="max-w-4xl mx-auto space-y-8">
-            {/* Header & Status */}
-            <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
-                        <Smartphone className="h-7 w-7 text-indigo-600" />
-                        Vinculación del Bot
-                    </h2>
-                    <p className="text-sm text-slate-500">Conecta tu WhatsApp para empezar a capturar leads automáticamente.</p>
-                </div>
-                <div className="flex gap-2">
-                    <button 
-                        onClick={() => { loadBotStatus(); reloadBot(); }} 
-                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-all text-slate-600 dark:text-slate-300 font-semibold text-sm"
-                    >
-                        <RefreshCcw className="h-4 w-4" />
-                        Refrescar
-                    </button>
-                    {botStatus === "READY" && (
-                        <Button variant="outline" className="text-rose-600 border-rose-100 hover:bg-rose-50 rounded-xl" onClick={handleLogoutBot}>
-                            Cerrar Sesión
-                        </Button>
-                    )}
-                </div>
-            </div>            {/* Connection Dashboard (BIG QR - Centered) */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden max-w-2xl mx-auto">
-                <div className="flex flex-col items-center justify-center p-8 md:p-16 bg-slate-50/50 dark:bg-slate-800/10 min-h-[450px]">
-                    {botStatus === "READY" ? (
-                        <div className="text-center space-y-6">
-                            <div className="h-48 w-48 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400 shadow-2xl">
-                                <Check className="h-24 w-24" />
-                            </div>
-                            <div className="inline-flex items-center gap-2 px-6 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-full border border-emerald-200 dark:border-emerald-800">
-                                <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
-                                <span className="font-bold uppercase tracking-widest text-sm">BOT CONECTADO</span>
-                            </div>
-                            <p className="text-slate-500 font-medium">¡Todo listo! El bot está operando normalmente.</p>
-                        </div>
-                    ) : (botStatus === "SCAN_QR" || qrCode) ? (
-                        <div className="text-center space-y-8">
-                            <div className="bg-white p-6 rounded-[32px] shadow-2xl inline-block border-8 border-white/50 relative">
-                                <QRCodeCanvas value={qrCode} size={300} level="H" />
-                                <div className="absolute -top-4 -right-4 bg-indigo-600 text-white p-3 rounded-2xl shadow-lg ring-4 ring-white">
-                                    <Smartphone className="h-6 w-6" />
-                                </div>
-                            </div>
-                            <div className="space-y-3">
-                                <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded-full border border-indigo-200 dark:border-indigo-800">
-                                    <div className="w-3 h-3 rounded-full bg-indigo-500 animate-pulse"></div>
-                                    <span className="font-bold uppercase tracking-widest text-sm">ESCANEÁ EL CÓDIGO</span>
-                                </div>
-                                <p className="text-sm text-slate-500 italic">Vincular dispositivo en la app de WhatsApp</p>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="text-center space-y-6 py-12">
-                            <div className="h-32 w-32 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
-                                <RefreshCcw className="h-12 w-12 animate-spin-slow" />
-                            </div>
-                            <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-full">
-                                <span className="text-xs font-bold uppercase tracking-widest leading-none">
-                                    {botStatus === "OFFLINE" ? "BOT FUERA DE LÍNEA" : "INICIANDO MOTOR..."}
-                                </span>
-                            </div>
-                            <p className="text-sm text-slate-400 max-w-[200px] mx-auto">Esperando respuesta del servidor del bot...</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Advanced Settings (Collapsed by default) */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-                <button 
-                    onClick={() => setShowAdvancedBot(!showAdvancedBot)}
-                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                >
-                    <div className="flex items-center gap-3">
-                        <Settings2 className="h-5 w-5 text-slate-400" />
-                        <span className="font-semibold text-slate-700 dark:text-slate-200">Configuración Avanzada de Mensajes</span>
-                    </div>
-                    <ChevronDown className={`h-5 w-5 text-slate-400 transition-transform ${showAdvancedBot ? 'rotate-180' : ''}`} />
-                </button>
-
-                {showAdvancedBot && (
-                    <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/10 space-y-6">
-                        <form onSubmit={saveBotConfig} className="space-y-6">
-                            <div className="grid gap-4 md:grid-cols-2">
-                                <div className="md:col-span-2">
-                                    <MsgInput label="Mensaje de Bienvenida" sub="Usa {agencyName} para tu nombre comercial." value={botConfig.welcomeMessage} onChange={v => setBotConfig({ ...botConfig, welcomeMessage: v })} />
-                                </div>
-                                <MsgInput label="Pregunta por Interés" sub="Usa {name} para el nombre del cliente." value={botConfig.askInterestMessage} onChange={v => setBotConfig({ ...botConfig, askInterestMessage: v })} />
-                                <MsgInput label="Pregunta por Fechas" sub="Usa {interest} para el destino capturado." value={botConfig.askDatesMessage} onChange={v => setBotConfig({ ...botConfig, askDatesMessage: v })} />
-                                <MsgInput label="Pregunta por Viajeros" sub="Mensaje final de calificación." value={botConfig.askTravelersMessage} onChange={v => setBotConfig({ ...botConfig, askTravelersMessage: v })} />
-                                <MsgInput label="Mensaje de Cierre" sub="Usa {name} para despedirte." value={botConfig.thanksMessage} onChange={v => setBotConfig({ ...botConfig, thanksMessage: v })} />
-                                <MsgInput label="Pedido de Agente" sub="Si el cliente pide hablar con alguien." value={botConfig.agentRequestMessage} onChange={v => setBotConfig({ ...botConfig, agentRequestMessage: v })} />
-                            </div>
-
-                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-700">
-                                <Button type="submit" disabled={savingBot} className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 rounded-xl font-bold">
-                                    {savingBot ? "Guardando..." : "Guardar & Aplicar"}
-                                </Button>
-                            </div>
-                        </form>
-                    </div>
-                )}
-            </div>
-          </div>
-        )}
+        {activeTab === "whatsapp" && <WhatsAppBotTab />}
 
         {/* --- LOGS TAB --- */}
         {activeTab === "logs" && <LogsDashboard />}
