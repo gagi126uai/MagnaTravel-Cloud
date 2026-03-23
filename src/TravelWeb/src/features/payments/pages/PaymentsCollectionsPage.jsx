@@ -28,14 +28,7 @@ export default function PaymentsCollectionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Cobranzas</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Seguimiento de pagos de reservas, alertas por deuda y bloqueos operativos.
-          </p>
-        </div>
-
+      <div className="flex flex-col sm:flex-row justify-end gap-3">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative min-w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
