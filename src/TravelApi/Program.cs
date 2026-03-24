@@ -352,7 +352,7 @@ app.Use(async (context, next) =>
 {
     context.Response.Headers["Content-Security-Policy"] =
         "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; " +
-        "img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https:; " +
+        "img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:; " +
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https: ws: wss:;";
     context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";

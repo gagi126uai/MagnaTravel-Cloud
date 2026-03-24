@@ -1,10 +1,48 @@
-export const API_BASE_URL =
-  (import.meta.env.VITE_API_URL || "").trim() ||
-  (typeof window !== "undefined" ? window.location.origin : "http://localhost:5000");
+const configuredApiUrl = (import.meta.env.VITE_API_URL || "").trim();
+
+function resolveApiBaseUrl() {
+  if (typeof window === "undefined") {
+    return configuredApiUrl || "http://localhost:5000";
+  }
+
+  const currentOrigin = window.location.origin;
+  const isLocalDevelopment =
+    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+  if (!configuredApiUrl) {
+    return currentOrigin;
+  }
+
+  try {
+    const configuredUrl = new URL(configuredApiUrl, currentOrigin);
+    const normalizedConfiguredBase = `${configuredUrl.origin}${configuredUrl.pathname.replace(/\/$/, "")}`;
+
+    // In production the app is served behind the web nginx proxy, so same-origin /api
+    // avoids fragile cross-origin CORS/proxy setups.
+    if (!isLocalDevelopment && configuredUrl.origin !== currentOrigin) {
+      return currentOrigin;
+    }
+
+    return normalizedConfiguredBase;
+  } catch {
+    return currentOrigin;
+  }
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export function buildApiUrl(path) {
   const cleanBaseUrl = API_BASE_URL.replace(/\/$/, "");
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
+
+  if (cleanBaseUrl.endsWith("/api") && cleanPath === "/api") {
+    return cleanBaseUrl;
+  }
+
+  if (cleanBaseUrl.endsWith("/api") && cleanPath.startsWith("/api/")) {
+    return `${cleanBaseUrl}${cleanPath.slice(4)}`;
+  }
+
   return `${cleanBaseUrl}${cleanPath}`;
 }
 
