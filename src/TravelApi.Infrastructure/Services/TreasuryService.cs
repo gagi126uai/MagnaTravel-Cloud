@@ -9,10 +9,12 @@ namespace TravelApi.Infrastructure.Services;
 public class TreasuryService : ITreasuryService
 {
     private readonly AppDbContext _dbContext;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public TreasuryService(AppDbContext dbContext)
+    public TreasuryService(AppDbContext dbContext, EntityReferenceResolver entityReferenceResolver)
     {
         _dbContext = dbContext;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     public async Task<TreasurySummaryDto> GetSummaryAsync(CancellationToken cancellationToken)
@@ -109,14 +111,14 @@ public class TreasuryService : ITreasuryService
             .Select(p => new CashMovementDto
             {
                 SourceType = "CustomerPayment",
-                SourceId = p.Id.ToString(),
+                SourceId = p.PublicId.ToString(),
                 Direction = CashMovementDirections.Income,
                 Amount = p.Amount,
                 OccurredAt = p.PaidAt,
                 Method = p.Method,
                 Description = p.Notes ?? "Cobranza de cliente",
                 Reference = p.Reference,
-                ReservaId = p.ReservaId,
+                ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null,
                 NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null,
                 IsManual = false
             })
@@ -129,16 +131,16 @@ public class TreasuryService : ITreasuryService
             .Select(p => new CashMovementDto
             {
                 SourceType = "SupplierPayment",
-                SourceId = p.Id.ToString(),
+                SourceId = p.PublicId.ToString(),
                 Direction = CashMovementDirections.Expense,
                 Amount = p.Amount,
                 OccurredAt = p.PaidAt,
                 Method = p.Method,
                 Description = p.Notes ?? "Pago a proveedor",
                 Reference = p.Reference,
-                ReservaId = p.ReservaId,
+                ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null,
                 NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null,
-                SupplierId = p.SupplierId,
+                SupplierPublicId = p.Supplier.PublicId,
                 SupplierName = p.Supplier.Name,
                 IsManual = false
             })
@@ -152,16 +154,16 @@ public class TreasuryService : ITreasuryService
             .Select(m => new CashMovementDto
             {
                 SourceType = "ManualAdjustment",
-                SourceId = m.Id.ToString(),
+                SourceId = m.PublicId.ToString(),
                 Direction = m.Direction,
                 Amount = m.Amount,
                 OccurredAt = m.OccurredAt,
                 Method = m.Method,
                 Description = m.Description,
                 Reference = m.Reference,
-                ReservaId = m.RelatedReservaId,
+                ReservaPublicId = m.RelatedReserva != null ? (Guid?)m.RelatedReserva.PublicId : null,
                 NumeroReserva = m.RelatedReserva != null ? m.RelatedReserva.NumeroReserva : null,
-                SupplierId = m.RelatedSupplierId,
+                SupplierPublicId = m.RelatedSupplier != null ? (Guid?)m.RelatedSupplier.PublicId : null,
                 SupplierName = m.RelatedSupplier != null ? m.RelatedSupplier.Name : null,
                 IsManual = true
             })
@@ -177,6 +179,8 @@ public class TreasuryService : ITreasuryService
     public async Task<ManualCashMovementDto> CreateManualMovementAsync(UpsertManualCashMovementRequest request, string createdBy, CancellationToken cancellationToken)
     {
         ValidateManualMovement(request);
+        var relatedReservaId = await ResolveReservaIdAsync(request.RelatedReservaPublicId, cancellationToken);
+        var relatedSupplierId = await ResolveSupplierIdAsync(request.RelatedSupplierPublicId, cancellationToken);
 
         var entity = new ManualCashMovement
         {
@@ -188,19 +192,21 @@ public class TreasuryService : ITreasuryService
             Description = request.Description.Trim(),
             Reference = request.Reference?.Trim(),
             CreatedBy = string.IsNullOrWhiteSpace(createdBy) ? "System" : createdBy,
-            RelatedReservaId = request.RelatedReservaId,
-            RelatedSupplierId = request.RelatedSupplierId
+            RelatedReservaId = relatedReservaId,
+            RelatedSupplierId = relatedSupplierId
         };
 
         _dbContext.ManualCashMovements.Add(entity);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        return MapManual(entity);
+        return await GetManualMovementDtoAsync(entity.Id, cancellationToken);
     }
 
     public async Task<ManualCashMovementDto> UpdateManualMovementAsync(int id, UpsertManualCashMovementRequest request, CancellationToken cancellationToken)
     {
         ValidateManualMovement(request);
+        var relatedReservaId = await ResolveReservaIdAsync(request.RelatedReservaPublicId, cancellationToken);
+        var relatedSupplierId = await ResolveSupplierIdAsync(request.RelatedSupplierPublicId, cancellationToken);
 
         var entity = await _dbContext.ManualCashMovements.FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
             ?? throw new KeyNotFoundException("Movimiento manual no encontrado.");
@@ -215,11 +221,11 @@ public class TreasuryService : ITreasuryService
         entity.Category = request.Category.Trim();
         entity.Description = request.Description.Trim();
         entity.Reference = request.Reference?.Trim();
-        entity.RelatedReservaId = request.RelatedReservaId;
-        entity.RelatedSupplierId = request.RelatedSupplierId;
+        entity.RelatedReservaId = relatedReservaId;
+        entity.RelatedSupplierId = relatedSupplierId;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
-        return MapManual(entity);
+        return await GetManualMovementDtoAsync(entity.Id, cancellationToken);
     }
 
     public async Task DeleteManualMovementAsync(int id, CancellationToken cancellationToken)
@@ -232,23 +238,47 @@ public class TreasuryService : ITreasuryService
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private static ManualCashMovementDto MapManual(ManualCashMovement entity)
+    private async Task<ManualCashMovementDto> GetManualMovementDtoAsync(int id, CancellationToken cancellationToken)
     {
-        return new ManualCashMovementDto
-        {
-            Id = entity.Id,
-            Direction = entity.Direction,
-            Amount = entity.Amount,
-            OccurredAt = entity.OccurredAt,
-            Method = entity.Method,
-            Category = entity.Category,
-            Description = entity.Description,
-            Reference = entity.Reference,
-            CreatedBy = entity.CreatedBy,
-            IsVoided = entity.IsVoided,
-            RelatedReservaId = entity.RelatedReservaId,
-            RelatedSupplierId = entity.RelatedSupplierId
-        };
+        return await _dbContext.ManualCashMovements
+            .AsNoTracking()
+            .Where(entity => entity.Id == id)
+            .Select(entity => new ManualCashMovementDto
+            {
+                PublicId = entity.PublicId,
+                Direction = entity.Direction,
+                Amount = entity.Amount,
+                OccurredAt = entity.OccurredAt,
+                Method = entity.Method,
+                Category = entity.Category,
+                Description = entity.Description,
+                Reference = entity.Reference,
+                CreatedBy = entity.CreatedBy,
+                IsVoided = entity.IsVoided,
+                RelatedReservaPublicId = entity.RelatedReserva != null ? (Guid?)entity.RelatedReserva.PublicId : null,
+                RelatedSupplierPublicId = entity.RelatedSupplier != null ? (Guid?)entity.RelatedSupplier.PublicId : null
+            })
+            .FirstAsync(cancellationToken);
+    }
+
+    private async Task<int?> ResolveReservaIdAsync(string? reservaPublicId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(reservaPublicId))
+            return null;
+
+        return await _dbContext.Reservas
+            .AsNoTracking()
+            .ResolveInternalIdAsync(reservaPublicId, cancellationToken);
+    }
+
+    private async Task<int?> ResolveSupplierIdAsync(string? supplierPublicId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(supplierPublicId))
+            return null;
+
+        return await _dbContext.Suppliers
+            .AsNoTracking()
+            .ResolveInternalIdAsync(supplierPublicId, cancellationToken);
     }
 
     private static void ValidateManualMovement(UpsertManualCashMovementRequest request)

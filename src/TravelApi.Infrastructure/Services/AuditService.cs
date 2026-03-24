@@ -18,6 +18,7 @@ public class AuditService : IAuditService
     public async Task<IEnumerable<AuditLog>> GetAuditLogsAsync(
         string? entityName,
         string? entityId,
+        string? alternateEntityId,
         DateTime? dateFrom,
         DateTime? dateTo,
         string? userId,
@@ -32,7 +33,14 @@ public class AuditService : IAuditService
 
         if (!string.IsNullOrEmpty(entityId))
         {
-            query = query.Where(l => l.EntityId == entityId);
+            if (string.IsNullOrEmpty(alternateEntityId))
+            {
+                query = query.Where(l => l.EntityId == entityId);
+            }
+            else
+            {
+                query = query.Where(l => l.EntityId == entityId || l.EntityId == alternateEntityId);
+            }
         }
 
         if (dateFrom.HasValue)

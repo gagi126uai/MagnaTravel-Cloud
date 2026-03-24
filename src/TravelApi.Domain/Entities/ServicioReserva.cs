@@ -22,9 +22,10 @@ public static class ReservationStatuses
     public const string Cancelled = "Cancelado";
 }
 
-public class ServicioReserva
+public class ServicioReserva : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     // Core Links
     public int? ReservaId { get; set; }

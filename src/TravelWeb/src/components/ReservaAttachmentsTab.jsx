@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { toast } from 'sonner';
+import { getPublicId } from '../lib/publicIds';
 
 function formatFileSize(bytes) {
     if (!bytes) return '0 B';
@@ -87,7 +88,7 @@ function downloadBlob(blob, fileName) {
 const AttachmentRow = ({ file, onDelete, onDownload }) => {
     const [previewUrl, setPreviewUrl] = useState(null);
 
-    const id = file.id || file.Id;
+    const id = getPublicId(file);
     const fileName = file.fileName || file.FileName;
     const fileSize = file.fileSize || file.FileSize;
     const contentType = file.contentType || file.ContentType;
@@ -372,7 +373,7 @@ export const ReservaAttachmentsTab = ({ reservaId }) => {
         try {
             await api.delete(`/attachments/${id}`);
             toast.success('Archivo eliminado.');
-            setAttachments((previous) => previous.filter((item) => (item.id || item.Id) !== id));
+            setAttachments((previous) => previous.filter((item) => getPublicId(item) !== id));
         } catch (error) {
             console.error('Error deleting:', error);
             toast.error('No se pudo eliminar el archivo.');
@@ -643,7 +644,7 @@ export const ReservaAttachmentsTab = ({ reservaId }) => {
                     <div className="divide-y divide-gray-100 dark:divide-slate-700">
                         {attachments.map((file) => (
                             <AttachmentRow
-                                key={file.id || file.Id}
+                                key={getPublicId(file)}
                                 file={file}
                                 onDelete={handleDelete}
                                 onDownload={handleDownload}

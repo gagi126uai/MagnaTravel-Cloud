@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -10,20 +12,29 @@ namespace TravelApi.Controllers;
 public class RatesController : ControllerBase
 {
     private readonly IRateService _rateService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public RatesController(IRateService rateService) => _rateService = rateService;
+    public RatesController(IRateService rateService, EntityReferenceResolver entityReferenceResolver)
+    {
+        _rateService = rateService;
+        _entityReferenceResolver = entityReferenceResolver;
+    }
 
     /// <summary>
     /// Listar tarifario con filtros opcionales
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> GetAll(
-        [FromQuery] int? supplierId, 
+        [FromQuery] string? supplierId, 
         [FromQuery] string? serviceType,
         [FromQuery] bool activeOnly = false,
         CancellationToken ct = default)
     {
-        var rates = await _rateService.GetAllAsync(supplierId, serviceType, activeOnly, ct);
+        var resolvedSupplierId = await ResolveOptionalSupplierIdAsync(supplierId, ct);
+        if (supplierId is not null && resolvedSupplierId is null)
+            return NotFound("Proveedor no encontrado.");
+
+        var rates = await _rateService.GetAllAsync(resolvedSupplierId, serviceType, activeOnly, ct);
         return Ok(rates);
     }
 
@@ -43,12 +54,16 @@ public class RatesController : ControllerBase
     /// </summary>
     [HttpGet("search")]
     public async Task<IActionResult> Search(
-        [FromQuery] int? supplierId,
+        [FromQuery] string? supplierId,
         [FromQuery] string? serviceType,
         [FromQuery] string? query,
         CancellationToken ct)
     {
-        var rates = await _rateService.SearchAsync(supplierId, serviceType, query, ct);
+        var resolvedSupplierId = await ResolveOptionalSupplierIdAsync(supplierId, ct);
+        if (supplierId is not null && resolvedSupplierId is null)
+            return NotFound("Proveedor no encontrado.");
+
+        var rates = await _rateService.SearchAsync(resolvedSupplierId, serviceType, query, ct);
         return Ok(rates);
     }
 
@@ -56,17 +71,31 @@ public class RatesController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create([FromBody] RateDto req, CancellationToken ct)
     {
-        var rate = await _rateService.CreateAsync(req, ct);
-        return Ok(rate);
+        try
+        {
+            var rate = await _rateService.CreateAsync(req, ct);
+            return Ok(rate);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(int id, [FromBody] RateDto req, CancellationToken ct)
     {
-        var rate = await _rateService.UpdateAsync(id, req, ct);
-        if (rate == null) return NotFound();
-        return Ok(rate);
+        try
+        {
+            var rate = await _rateService.UpdateAsync(id, req, ct);
+            if (rate == null) return NotFound();
+            return Ok(rate);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpDelete("{id}")]
@@ -76,5 +105,14 @@ public class RatesController : ControllerBase
         var deleted = await _rateService.DeleteAsync(id, ct);
         if (!deleted) return NotFound();
         return Ok();
+    }
+
+    private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicIdOrLegacyId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(supplierPublicIdOrLegacyId))
+            return null;
+
+        var supplier = await _entityReferenceResolver.FindAsync<Supplier>(supplierPublicIdOrLegacyId, ct);
+        return supplier?.Id;
     }
 }

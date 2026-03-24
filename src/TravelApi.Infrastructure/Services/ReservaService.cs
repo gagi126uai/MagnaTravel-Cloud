@@ -33,7 +33,7 @@ public class ReservaService : IReservaService
             .OrderByDescending(f => f.CreatedAt)
             .Select(f => new ReservaListDto 
             {
-                Id = f.Id,
+                PublicId = f.PublicId,
                 NumeroReserva = f.NumeroReserva,
                 Name = f.Name,
                 Status = f.Status,
@@ -126,6 +126,19 @@ public class ReservaService : IReservaService
     {
         var nextId = await _context.Reservas.CountAsync() + 1000;
         var NumeroReserva = $"F-{DateTime.Now.Year}-{nextId}";
+        int? payerId = null;
+
+        if (!string.IsNullOrWhiteSpace(request.PayerId))
+        {
+            payerId = await _context.Customers
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.PayerId, CancellationToken.None);
+
+            if (!payerId.HasValue)
+            {
+                throw new KeyNotFoundException("Cliente no encontrado");
+            }
+        }
         
         var fileName = !string.IsNullOrWhiteSpace(request.Name) 
             ? request.Name 
@@ -135,7 +148,7 @@ public class ReservaService : IReservaService
         {
             Name = fileName,
             NumeroReserva = NumeroReserva,
-            PayerId = request.PayerId,
+            PayerId = payerId,
             ResponsibleUserId = createdByUserId,
             StartDate = request.StartDate,
             Description = request.Description,
@@ -152,6 +165,19 @@ public class ReservaService : IReservaService
     {
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+        int? supplierId = null;
+
+        if (!string.IsNullOrWhiteSpace(request.SupplierId))
+        {
+            supplierId = await _context.Suppliers
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.SupplierId, CancellationToken.None);
+
+            if (!supplierId.HasValue)
+            {
+                throw new KeyNotFoundException("Proveedor no encontrado");
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
         if (request.DepartureDate == default) throw new ArgumentException("La fecha de salida es obligatoria");
@@ -169,7 +195,7 @@ public class ReservaService : IReservaService
             ReservaId = reservaId,
             ServiceType = request.ServiceType,
             ProductType = request.ServiceType,
-            SupplierId = request.SupplierId,
+            SupplierId = supplierId,
             CustomerId = file.PayerId,
             Description = request.Description ?? request.ServiceType,
             ConfirmationNumber = request.ConfirmationNumber ?? "PENDIENTE",
@@ -197,6 +223,19 @@ public class ReservaService : IReservaService
 
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
 
+        int? supplierId = null;
+        if (!string.IsNullOrWhiteSpace(request.SupplierId))
+        {
+            supplierId = await _context.Suppliers
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.SupplierId, CancellationToken.None);
+
+            if (!supplierId.HasValue)
+            {
+                throw new KeyNotFoundException("Proveedor no encontrado");
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
         if (request.SalePrice <= 0) throw new ArgumentException("El precio de venta debe ser mayor a 0");
 
@@ -206,7 +245,7 @@ public class ReservaService : IReservaService
         service.ConfirmationNumber = request.ConfirmationNumber ?? service.ConfirmationNumber;
         service.DepartureDate = request.DepartureDate.ToUniversalTime();
         service.ReturnDate = request.ReturnDate?.ToUniversalTime();
-        service.SupplierId = request.SupplierId;
+        service.SupplierId = supplierId;
         service.SalePrice = request.SalePrice;
         service.NetCost = request.NetCost;
         service.Commission = request.SalePrice - request.NetCost;

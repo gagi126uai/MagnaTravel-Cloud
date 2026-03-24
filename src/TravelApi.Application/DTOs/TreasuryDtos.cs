@@ -19,16 +19,16 @@ public class CashMovementDto
     public string Method { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string? Reference { get; set; }
-    public int? ReservaId { get; set; }
+    public Guid? ReservaPublicId { get; set; }
     public string? NumeroReserva { get; set; }
-    public int? SupplierId { get; set; }
+    public Guid? SupplierPublicId { get; set; }
     public string? SupplierName { get; set; }
     public bool IsManual { get; set; }
 }
 
 public class ManualCashMovementDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
     public string Direction { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public DateTime OccurredAt { get; set; }
@@ -38,8 +38,8 @@ public class ManualCashMovementDto
     public string? Reference { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public bool IsVoided { get; set; }
-    public int? RelatedReservaId { get; set; }
-    public int? RelatedSupplierId { get; set; }
+    public Guid? RelatedReservaPublicId { get; set; }
+    public Guid? RelatedSupplierPublicId { get; set; }
 }
 
 public class UpsertManualCashMovementRequest
@@ -51,6 +51,6 @@ public class UpsertManualCashMovementRequest
     public string Category { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string? Reference { get; set; }
-    public int? RelatedReservaId { get; set; }
-    public int? RelatedSupplierId { get; set; }
+    public string? RelatedReservaPublicId { get; set; }
+    public string? RelatedSupplierPublicId { get; set; }
 }

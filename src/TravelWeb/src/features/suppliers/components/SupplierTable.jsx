@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Wallet, Pencil, Power, Info } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { Badge } from "../../../components/ui/badge";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClick }) {
     const getInitials = (name) => {
@@ -54,7 +55,7 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                             </tr>
                         ) : (
                             visibleSuppliers.map((supplier) => (
-                                <tr key={supplier.id} className={`border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${!supplier.isActive ? 'opacity-60 bg-slate-50/50 dark:bg-slate-900/50' : ''}`}>
+                                <tr key={getPublicId(supplier)} className={`border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${!supplier.isActive ? 'opacity-60 bg-slate-50/50 dark:bg-slate-900/50' : ''}`}>
                                     <td className="p-4 align-middle font-medium">
                                         <div className="flex items-center gap-3">
                                             <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ${getRandomColor(supplier.name)}`}>
@@ -85,7 +86,7 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                                     <td className="p-4 align-middle text-right pr-4">
                                         <div className="flex items-center justify-end gap-1">
                                             <button
-                                                onClick={() => onAccountClick(supplier.id)}
+                                                onClick={() => onAccountClick(supplier)}
                                                 className="h-8 w-8 flex items-center justify-center rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
                                             >
                                                 <Wallet className="h-4 w-4" />

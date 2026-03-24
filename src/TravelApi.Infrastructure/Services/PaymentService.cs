@@ -14,6 +14,7 @@ namespace TravelApi.Infrastructure.Services;
 public class PaymentService : IPaymentService
 {
     private readonly AppDbContext _dbContext;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
     private readonly IMapper _mapper;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
@@ -25,10 +26,12 @@ public class PaymentService : IPaymentService
 
     public PaymentService(
         AppDbContext dbContext,
+        EntityReferenceResolver entityReferenceResolver,
         IMapper mapper,
         IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {
         _dbContext = dbContext;
+        _entityReferenceResolver = entityReferenceResolver;
         _mapper = mapper;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
         QuestPDF.Settings.License = LicenseType.Community;
@@ -47,6 +50,7 @@ public class PaymentService : IPaymentService
             .Select(r => new
             {
                 r.Id,
+                r.PublicId,
                 r.Balance,
                 r.StartDate
             })
@@ -90,6 +94,7 @@ public class PaymentService : IPaymentService
             .Select(r => new
             {
                 r.Id,
+                r.PublicId,
                 r.NumeroReserva,
                 CustomerName = r.Payer != null ? r.Payer.FullName : "Consumidor Final",
                 r.StartDate,
@@ -116,7 +121,7 @@ public class PaymentService : IPaymentService
 
                 return new CollectionWorkItemDto
                 {
-                    ReservaId = reserva.Id,
+                    ReservaPublicId = reserva.PublicId,
                     NumeroReserva = reserva.NumeroReserva,
                     CustomerName = reserva.CustomerName,
                     StartDate = reserva.StartDate,
@@ -160,8 +165,9 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken)
     {
+        var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(request.ReservaId, cancellationToken);
         var reserva = await _dbContext.Reservas
-            .FirstOrDefaultAsync(r => r.Id == request.ReservaId, cancellationToken);
+            .FirstOrDefaultAsync(r => r.Id == reservaId, cancellationToken);
 
         if (reserva == null)
             throw new ArgumentException("Reserva no encontrada.");
@@ -171,7 +177,7 @@ public class PaymentService : IPaymentService
 
         var payment = new Payment
         {
-            ReservaId = request.ReservaId,
+            ReservaId = reservaId,
             Amount = EconomicRulesHelper.RoundCurrency(request.Amount),
             Method = string.IsNullOrWhiteSpace(request.Method) ? "Transfer" : request.Method.Trim(),
             Reference = request.Reference?.Trim(),
@@ -184,7 +190,7 @@ public class PaymentService : IPaymentService
 
         _dbContext.Payments.Add(payment);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await RecalculateReservaBalanceAsync(request.ReservaId, cancellationToken);
+        await RecalculateReservaBalanceAsync(reservaId, cancellationToken);
 
         var created = await _dbContext.Payments
             .Include(p => p.Receipt)
@@ -285,14 +291,14 @@ public class PaymentService : IPaymentService
             .Where(p => p.IsDeleted)
             .OrderByDescending(p => p.DeletedAt)
             .Select(p => new {
-                p.Id,
+                p.PublicId,
                 p.Amount,
                 p.Method,
                 p.Reference,
                 p.Status,
                 p.PaidAt,
                 p.DeletedAt,
-                p.ReservaId,
+                ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null,
                 NumeroReserva = p.Reserva != null
                     ? p.Reserva.NumeroReserva : null,
                 FileName = p.Reserva != null
@@ -303,7 +309,7 @@ public class PaymentService : IPaymentService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<int> RestorePaymentAsync(int id, CancellationToken cancellationToken)
+    public async Task<Guid> RestorePaymentAsync(int id, CancellationToken cancellationToken)
     {
         var payment = await _dbContext.Payments
             .IgnoreQueryFilters()
@@ -320,7 +326,7 @@ public class PaymentService : IPaymentService
         if (payment.ReservaId.HasValue)
             await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
 
-        return payment.Id;
+        return payment.PublicId;
     }
 
     private async Task<string> GenerateReceiptNumberAsync(CancellationToken cancellationToken)

@@ -6,6 +6,7 @@ import { useCustomers } from "../hooks/useCustomers";
 import { CustomerTable } from "../components/CustomerTable";
 import { CustomerMobileList } from "../components/CustomerMobileList";
 import { CustomerFormModal } from "../components/CustomerFormModal";
+import { getPublicId } from "../../../lib/publicIds";
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -78,12 +79,12 @@ export default function CustomersPage() {
             customers={filteredCustomers}
             onEdit={handleOpenModal}
             onToggleStatus={handleToggleStatus}
-            onAccountClick={(id) => navigate(`/customers/${id}/account`)}
+            onAccountClick={(customer) => navigate(`/customers/${getPublicId(customer)}/account`)}
           />
           <CustomerMobileList
             customers={filteredCustomers}
             onEdit={handleOpenModal}
-            onAccountClick={(id) => navigate(`/customers/${id}/account`)}
+            onAccountClick={(customer) => navigate(`/customers/${getPublicId(customer)}/account`)}
           />
         </>
       )}

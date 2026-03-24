@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -11,26 +13,30 @@ namespace TravelApi.Controllers;
 public class TransferBookingsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public TransferBookingsController(IBookingService bookingService)
+    public TransferBookingsController(IBookingService bookingService, EntityReferenceResolver entityReferenceResolver)
     {
         _bookingService = bookingService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll(int reservaId, CancellationToken ct)
+    public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
-        var transfers = await _bookingService.GetTransfersAsync(reservaId, ct);
+        var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+        var transfers = await _bookingService.GetTransfersAsync(resolvedReservaId, ct);
         return Ok(transfers);
     }
 
     [HttpPost]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Create(int reservaId, [FromBody] CreateTransferRequest req, CancellationToken ct)
+    public async Task<IActionResult> Create(string reservaId, [FromBody] CreateTransferRequest req, CancellationToken ct)
     {
         try
         {
-            var transfer = await _bookingService.CreateTransferAsync(reservaId, req, ct);
+            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+            var transfer = await _bookingService.CreateTransferAsync(resolvedReservaId, req, ct);
             return Ok(transfer);
         }
         catch (KeyNotFoundException ex)
@@ -45,11 +51,13 @@ public class TransferBookingsController : ControllerBase
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Update(int reservaId, int id, [FromBody] UpdateTransferRequest req, CancellationToken ct)
+    public async Task<IActionResult> Update(string reservaId, string id, [FromBody] UpdateTransferRequest req, CancellationToken ct)
     {
         try
         {
-            var transfer = await _bookingService.UpdateTransferAsync(reservaId, id, req, ct);
+            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+            var resolvedTransferId = await _entityReferenceResolver.ResolveRequiredIdAsync<TransferBooking>(id, ct);
+            var transfer = await _bookingService.UpdateTransferAsync(resolvedReservaId, resolvedTransferId, req, ct);
             return Ok(transfer);
         }
         catch (KeyNotFoundException ex)
@@ -64,11 +72,13 @@ public class TransferBookingsController : ControllerBase
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(int reservaId, int id, CancellationToken ct)
+    public async Task<IActionResult> Delete(string reservaId, string id, CancellationToken ct)
     {
         try
         {
-            await _bookingService.DeleteTransferAsync(reservaId, id, ct);
+            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+            var resolvedTransferId = await _entityReferenceResolver.ResolveRequiredIdAsync<TransferBooking>(id, ct);
+            await _bookingService.DeleteTransferAsync(resolvedReservaId, resolvedTransferId, ct);
             return Ok();
         }
         catch (KeyNotFoundException ex)

@@ -29,7 +29,7 @@ public class SearchService : ISearchService
                 (c.Phone != null && c.Phone.ToLower().Contains(normalized)))
             .OrderBy(c => c.FullName)
             .Take(5)
-            .Select(c => new CustomerSearchResult(c.Id, c.FullName, c.Email, c.Phone))
+            .Select(c => new CustomerSearchResult(c.PublicId, c.FullName, c.Email, c.Phone))
             .ToListAsync(cancellationToken);
 
         var reservas = await _dbContext.Reservas
@@ -40,7 +40,7 @@ public class SearchService : ISearchService
                 (f.Payer != null && f.Payer.FullName.ToLower().Contains(normalized)))
             .OrderByDescending(f => f.CreatedAt)
             .Take(5)
-            .Select(f => new ReservaSearchResult(f.Id, f.NumeroReserva, f.Name, f.Status.ToString(), f.Payer != null ? f.Payer.FullName : null))
+            .Select(f => new ReservaSearchResult(f.PublicId, f.NumeroReserva, f.Name, f.Status.ToString(), f.Payer != null ? f.Payer.FullName : null))
             .ToListAsync(cancellationToken);
 
         var payments = await _dbContext.Payments
@@ -51,7 +51,7 @@ public class SearchService : ISearchService
             .OrderByDescending(p => p.PaidAt)
             .Take(5)
             .Select(p => new PaymentSearchResult(
-                p.Id, 
+                p.PublicId, 
                 p.Amount, 
                 p.Status.ToString(), 
                 p.Method, 

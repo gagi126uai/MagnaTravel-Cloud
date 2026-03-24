@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -11,10 +12,12 @@ namespace TravelApi.Controllers;
 public class CustomersController : ControllerBase
 {
     private readonly ICustomerService _customerService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public CustomersController(ICustomerService customerService)
+    public CustomersController(ICustomerService customerService, EntityReferenceResolver entityReferenceResolver)
     {
         _customerService = customerService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
@@ -24,11 +27,12 @@ public class CustomersController : ControllerBase
         return Ok(customers);
     }
 
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<object>> GetCustomer(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}")]
+    public async Task<ActionResult<object>> GetCustomer(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
             var customer = await _customerService.GetCustomerAsync(id, cancellationToken);
             return Ok(customer);
         }
@@ -44,7 +48,8 @@ public class CustomersController : ControllerBase
         try
         {
             var result = await _customerService.CreateCustomerAsync(customer, cancellationToken);
-            return CreatedAtAction(nameof(GetCustomer), new { id = result.Id }, result);
+            var response = await _customerService.GetCustomerAsync(result.Id, cancellationToken);
+            return CreatedAtAction(nameof(GetCustomer), new { publicIdOrLegacyId = result.PublicId }, response);
         }
         catch (Microsoft.EntityFrameworkCore.DbUpdateException ex)
         {
@@ -56,13 +61,15 @@ public class CustomersController : ControllerBase
         }
     }
 
-    [HttpPut("{id:int}")]
-    public async Task<ActionResult<Customer>> UpdateCustomer(int id, Customer customer, CancellationToken cancellationToken)
+    [HttpPut("{publicIdOrLegacyId}")]
+    public async Task<ActionResult<Customer>> UpdateCustomer(string publicIdOrLegacyId, Customer customer, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
             var result = await _customerService.UpdateCustomerAsync(id, customer, cancellationToken);
-            return Ok(result);
+            var response = await _customerService.GetCustomerAsync(result.Id, cancellationToken);
+            return Ok(response);
         }
         catch (ArgumentException ex)
         {
@@ -85,11 +92,12 @@ public class CustomersController : ControllerBase
     /// <summary>
     /// Cuenta corriente del cliente: reservas, pagos y saldo
     /// </summary>
-    [HttpGet("{id:int}/account")]
-    public async Task<ActionResult> GetCustomerAccount(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/account")]
+    public async Task<ActionResult> GetCustomerAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
             var accountDto = await _customerService.GetCustomerAccountAsync(id, cancellationToken);
             return Ok(accountDto);
         }

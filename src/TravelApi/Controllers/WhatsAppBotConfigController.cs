@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
@@ -7,6 +8,7 @@ namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/whatsapp/config")]
+[Authorize(Roles = "Admin")]
 public class WhatsAppBotConfigController : ControllerBase
 {
     private readonly AppDbContext _db;

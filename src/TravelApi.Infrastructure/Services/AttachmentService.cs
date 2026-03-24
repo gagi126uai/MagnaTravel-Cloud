@@ -37,7 +37,7 @@ public class AttachmentService : IAttachmentService
             .OrderByDescending(a => a.UploadedAt)
             .Select(a => new AttachmentDto
             {
-                Id = a.Id,
+                PublicId = a.PublicId,
                 FileName = a.FileName,
                 FileSize = a.FileSize,
                 ContentType = a.ContentType,
@@ -78,7 +78,7 @@ public class AttachmentService : IAttachmentService
 
         return new AttachmentDto
         {
-            Id = attachment.Id,
+            PublicId = attachment.PublicId,
             FileName = attachment.FileName,
             FileSize = attachment.FileSize,
             ContentType = attachment.ContentType,

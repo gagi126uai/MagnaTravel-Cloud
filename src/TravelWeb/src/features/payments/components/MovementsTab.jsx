@@ -30,8 +30,8 @@ const emptyForm = {
   category: "",
   description: "",
   reference: "",
-  relatedReservaId: "",
-  relatedSupplierId: "",
+  relatedReservaPublicId: "",
+  relatedSupplierPublicId: "",
 };
 
 const toLocalDateTime = (value) => {
@@ -63,8 +63,8 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
             category: movement.category || "",
             description: movement.description || "",
             reference: movement.reference || "",
-            relatedReservaId: movement.reservaId || "",
-            relatedSupplierId: movement.supplierId || "",
+            relatedReservaPublicId: movement.reservaPublicId || movement.relatedReservaPublicId || "",
+            relatedSupplierPublicId: movement.supplierPublicId || movement.relatedSupplierPublicId || "",
           }
         : emptyForm
     );
@@ -90,8 +90,8 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
         category: form.category,
         description: form.description,
         reference: form.reference || null,
-        relatedReservaId: form.relatedReservaId ? Number(form.relatedReservaId) : null,
-        relatedSupplierId: form.relatedSupplierId ? Number(form.relatedSupplierId) : null,
+        relatedReservaPublicId: form.relatedReservaPublicId || null,
+        relatedSupplierPublicId: form.relatedSupplierPublicId || null,
       });
       onClose();
     } finally {
@@ -199,22 +199,22 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Reserva vinculada</label>
             <input
-              type="number"
-              min="1"
-              value={form.relatedReservaId}
-              onChange={(event) => handleChange("relatedReservaId", event.target.value)}
+              type="text"
+              value={form.relatedReservaPublicId}
+              onChange={(event) => handleChange("relatedReservaPublicId", event.target.value)}
               className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              placeholder="Public ID de la reserva"
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Proveedor vinculado</label>
             <input
-              type="number"
-              min="1"
-              value={form.relatedSupplierId}
-              onChange={(event) => handleChange("relatedSupplierId", event.target.value)}
+              type="text"
+              value={form.relatedSupplierPublicId}
+              onChange={(event) => handleChange("relatedSupplierPublicId", event.target.value)}
               className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              placeholder="Public ID del proveedor"
             />
           </div>
 
@@ -271,7 +271,7 @@ export function MovementsTab({
 
   const handleSubmit = async (payload) => {
     if (editingMovement) {
-      await onUpdateManualMovement(Number(editingMovement.sourceId), payload);
+      await onUpdateManualMovement(editingMovement.sourceId, payload);
       return;
     }
 

@@ -58,7 +58,7 @@ public class ReportService : IReportService
             .Where(f => f.Balance > 0 && f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled)
             .OrderByDescending(f => f.Balance)
             .Take(5)
-            .Select(f => new PendingReservaDto(f.Id, f.NumeroReserva, f.Name, f.Balance, f.Status.ToString()))
+            .Select(f => new PendingReservaDto(f.PublicId, f.NumeroReserva, f.Name, f.Balance, f.Status.ToString()))
             .ToListAsync(cancellationToken);
 
         var next7Days = now.AddDays(7);
@@ -66,7 +66,7 @@ public class ReportService : IReportService
             .Where(f => f.StartDate >= now && f.StartDate <= next7Days && f.Status != EstadoReserva.Cancelled)
             .OrderBy(f => f.StartDate)
             .Take(5)
-            .Select(f => new UpcomingTripDto(f.Id, f.NumeroReserva, f.Name, f.StartDate!.Value, f.Status.ToString()))
+            .Select(f => new UpcomingTripDto(f.PublicId, f.NumeroReserva, f.Name, f.StartDate!.Value, f.Status.ToString()))
             .ToListAsync(cancellationToken);
 
         var sixMonthsAgo = startOfMonth.AddMonths(-5);
@@ -174,15 +174,16 @@ public class ReportService : IReportService
         var supplierDebts = await _dbContext.Suppliers
             .Where(s => s.IsActive && s.CurrentBalance != 0)
             .OrderByDescending(s => s.CurrentBalance)
-            .Select(s => new { s.Id, s.Name, s.CurrentBalance })
+            .Select(s => new { s.PublicId, s.Name, s.CurrentBalance })
             .ToListAsync(cancellationToken);
 
         var topCustomers = await _dbContext.Reservas
             .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
                 && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled
                 && f.PayerId != null)
-            .GroupBy(f => new { f.PayerId, f.Payer!.FullName })
+            .GroupBy(f => new { f.PayerId, f.Payer!.PublicId, f.Payer!.FullName })
             .Select(g => new { 
+                PublicId = g.Key.PublicId,
                 Name = g.Key.FullName, 
                 TotalSale = g.Sum(f => f.TotalSale),
                 FileCount = g.Count(),
@@ -230,7 +231,7 @@ public class ReportService : IReportService
             .OrderByDescending(c => c.CurrentBalance)
             .Select(c => new 
             {
-                c.Id,
+                c.PublicId,
                 c.FullName,
                 c.DocumentNumber,
                 c.CurrentBalance,

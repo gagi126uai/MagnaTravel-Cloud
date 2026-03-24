@@ -46,11 +46,6 @@ public class SupplierService : ISupplierService
 
     public async Task<Supplier> UpdateSupplierAsync(int id, Supplier supplier, CancellationToken cancellationToken)
     {
-        if (id != supplier.Id)
-        {
-            throw new ArgumentException("ID mismatch");
-        }
-
         var existing = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
         if (existing == null) throw new KeyNotFoundException("Proveedor no encontrado");
 
@@ -132,7 +127,7 @@ public class SupplierService : ISupplierService
                         validStatuses.Contains(f.Reserva!.Status))
             .Select(f => new SupplierServiceDto
             {
-                Id = f.Id,
+                PublicId = f.PublicId,
                 Type = "Vuelo",
                 Description = $"{f.AirlineName} {f.FlightNumber} ({f.Origin}-{f.Destination})",
                 Confirmation = f.PNR ?? f.TicketNumber,
@@ -152,7 +147,7 @@ public class SupplierService : ISupplierService
                         validStatuses.Contains(h.Reserva!.Status))
             .Select(h => new SupplierServiceDto
             {
-                Id = h.Id,
+                PublicId = h.PublicId,
                 Type = "Hotel",
                 Description = $"{h.HotelName} ({h.City})",
                 Confirmation = h.ConfirmationNumber,
@@ -172,7 +167,7 @@ public class SupplierService : ISupplierService
                         validStatuses.Contains(t.Reserva!.Status))
             .Select(t => new SupplierServiceDto
             {
-                Id = t.Id,
+                PublicId = t.PublicId,
                 Type = "Traslado",
                 Description = $"{t.VehicleType} ({t.PickupLocation} -> {t.DropoffLocation})",
                 Confirmation = t.ConfirmationNumber,
@@ -192,7 +187,7 @@ public class SupplierService : ISupplierService
                         validStatuses.Contains(p.Reserva!.Status))
             .Select(p => new SupplierServiceDto
             {
-                Id = p.Id,
+                PublicId = p.PublicId,
                 Type = "Paquete",
                 Description = p.PackageName,
                 Confirmation = p.ConfirmationNumber,
@@ -212,7 +207,7 @@ public class SupplierService : ISupplierService
                         validStatuses.Contains(r.Reserva!.Status))
             .Select(r => new SupplierServiceDto
             {
-                Id = r.Id,
+                PublicId = r.PublicId,
                 Type = r.ServiceType,
                 Description = r.Description ?? r.ServiceType,
                 Confirmation = r.ConfirmationNumber,
@@ -240,13 +235,14 @@ public class SupplierService : ISupplierService
             .OrderByDescending(p => p.PaidAt)
             .Select(p => new
             {
-                p.Id,
+                p.PublicId,
                 p.Amount,
                 p.Method,
                 p.PaidAt,
                 p.Reference,
                 p.Notes,
-                NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null
+                NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null,
+                ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null
             })
             .ToListAsync(cancellationToken);
 
@@ -258,7 +254,7 @@ public class SupplierService : ISupplierService
         {
             Supplier = new
             {
-                supplier.Id,
+                supplier.PublicId,
                 supplier.Name,
                 supplier.ContactName,
                 supplier.Email,
@@ -278,7 +274,7 @@ public class SupplierService : ISupplierService
         };
     }
 
-    public async Task<int> AddSupplierPaymentAsync(int id, SupplierPaymentRequest request, CancellationToken cancellationToken)
+    public async Task<Guid> AddSupplierPaymentAsync(int id, SupplierPaymentRequest request, CancellationToken cancellationToken)
     {
         var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
         if (supplier == null) throw new KeyNotFoundException("Proveedor no encontrado");
@@ -292,6 +288,23 @@ public class SupplierService : ISupplierService
             throw new InvalidOperationException($"El pago ({request.Amount:C}) excede la deuda actual con el proveedor ({currentDebt:C}).");
         }
 
+        int? reservaId = null;
+        int? servicioReservaId = null;
+
+        if (!string.IsNullOrWhiteSpace(request.ReservaId))
+        {
+            reservaId = await _dbContext.Reservas
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.ReservaId, cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.ServicioReservaId))
+        {
+            servicioReservaId = await _dbContext.Servicios
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.ServicioReservaId, cancellationToken);
+        }
+
         var payment = new SupplierPayment
         {
             SupplierId = id,
@@ -299,8 +312,8 @@ public class SupplierService : ISupplierService
             Method = request.Method ?? "Transfer",
             Reference = request.Reference,
             Notes = request.Notes,
-            ReservaId = request.ReservaId,
-            ServicioReservaId = request.ServicioReservaId,
+            ReservaId = reservaId,
+            ServicioReservaId = servicioReservaId,
             PaidAt = DateTime.UtcNow
         };
 
@@ -309,7 +322,7 @@ public class SupplierService : ISupplierService
         
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        return payment.Id;
+        return payment.PublicId;
     }
 
     public async Task UpdateSupplierPaymentAsync(int id, int paymentId, SupplierPaymentRequest request, CancellationToken cancellationToken)
@@ -330,11 +343,19 @@ public class SupplierService : ISupplierService
              throw new InvalidOperationException($"La modificación del pago excede la deuda actual. Deuda: {debtPrePayment:C}, Nuevo Monto: {request.Amount:C}");
         }
 
+        int? reservaId = null;
+        if (!string.IsNullOrWhiteSpace(request.ReservaId))
+        {
+            reservaId = await _dbContext.Reservas
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.ReservaId, cancellationToken);
+        }
+
         payment.Amount = request.Amount;
         payment.Method = request.Method ?? payment.Method;
         payment.Reference = request.Reference;
         payment.Notes = request.Notes;
-        payment.ReservaId = request.ReservaId;
+        payment.ReservaId = reservaId;
         
         supplier.CurrentBalance = debtPrePayment - request.Amount;
 
@@ -364,7 +385,7 @@ public class SupplierService : ISupplierService
             .OrderByDescending(p => p.PaidAt)
             .Select(p => new SupplierPaymentDto
             {
-                Id = p.Id,
+                PublicId = p.PublicId,
                 Amount = p.Amount,
                 Method = p.Method,
                 PaidAt = p.PaidAt,
@@ -372,7 +393,7 @@ public class SupplierService : ISupplierService
                 Notes = p.Notes,
                 NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : (string?)null,
                 FileName = p.Reserva != null ? p.Reserva.Name : (string?)null,
-                ReservaId = p.ReservaId 
+                ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null
             })
             .ToListAsync(cancellationToken);
     }

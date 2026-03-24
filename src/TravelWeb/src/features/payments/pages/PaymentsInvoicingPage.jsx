@@ -71,9 +71,9 @@ export default function PaymentsInvoicingPage() {
       <CreateInvoiceModal
         isOpen={Boolean(selectedItem)}
         onClose={() => setSelectedItem(null)}
-        reservaId={selectedItem?.reservaId}
+        reservaPublicId={selectedItem?.reservaPublicId || selectedItem?.reservaId}
         reserva={{
-          id: selectedItem?.reservaId,
+          publicId: selectedItem?.reservaPublicId || selectedItem?.reservaId,
           numeroReserva: selectedItem?.numeroReserva,
           customerName: selectedItem?.customerName,
           afipStatus: selectedItem?.fiscalStatus,

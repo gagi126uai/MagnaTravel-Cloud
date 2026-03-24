@@ -9,9 +9,10 @@ public static class PaymentReceiptStatuses
     public const string Voided = "Voided";
 }
 
-public class PaymentReceipt
+public class PaymentReceipt : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
 
     public int PaymentId { get; set; }
     public Payment Payment { get; set; } = null!;

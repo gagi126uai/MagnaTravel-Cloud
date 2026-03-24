@@ -4,7 +4,7 @@ namespace TravelApi.Application.DTOs;
 
 public class ServicioReservaDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
     public string? ServiceType { get; set; }
     public string? ProductType { get; set; }
     public string? Description { get; set; }
@@ -20,7 +20,7 @@ public class ServicioReservaDto
     public decimal Tax { get; set; }
     
     public string? SupplierName { get; set; }
-    public int? SupplierId { get; set; }
+    public Guid? SupplierPublicId { get; set; }
     
-    public int? ReservaId { get; set; }
+    public Guid? ReservaPublicId { get; set; }
 }

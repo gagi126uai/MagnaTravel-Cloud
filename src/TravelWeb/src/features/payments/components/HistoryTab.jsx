@@ -17,6 +17,7 @@ import {
   Wallet,
   XCircle,
 } from "lucide-react";
+import { getPublicId } from "../../../lib/publicIds";
 
 const currency = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -128,7 +129,7 @@ export function HistoryTab({
                   const canIssueReceipt = payment.entryType === "Payment" && Number(payment.amount) > 0 && !payment.receipt;
 
                   return (
-                    <tr key={payment.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                    <tr key={getPublicId(payment)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                       <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
                         {new Date(payment.paidAt).toLocaleString("es-AR")}
                       </td>
@@ -147,7 +148,7 @@ export function HistoryTab({
                             <div className="text-sm font-bold text-slate-900 dark:text-white">
                               {payment.entryType === "CreditNoteReversal" ? "Reversión por nota de crédito" : "Cobranza recibida"}
                             </div>
-                            <a href={`/reservas/${payment.reserva?.id}`} className="text-xs text-indigo-500 hover:underline font-mono uppercase tracking-tight">
+                            <a href={`/reservas/${getPublicId(payment.reserva)}`} className="text-xs text-indigo-500 hover:underline font-mono uppercase tracking-tight">
                               RES: {payment.reserva?.numeroReserva || "---"}
                             </a>
                           </div>
@@ -207,7 +208,7 @@ export function HistoryTab({
               const isPositive = Number(payment.amount) >= 0;
 
               return (
-                <div key={payment.id} className="bg-white dark:bg-slate-900 rounded-xl p-4 border border-slate-200 dark:border-slate-800">
+                <div key={getPublicId(payment)} className="bg-white dark:bg-slate-900 rounded-xl p-4 border border-slate-200 dark:border-slate-800">
                   <div className="flex justify-between items-start gap-3">
                     <div className="flex items-center gap-3">
                       <div
@@ -272,7 +273,7 @@ export function HistoryTab({
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {invoices.slice(0, visibleCountInvoices).map((invoice) => (
-                  <Fragment key={invoice.id}>
+                  <Fragment key={getPublicId(invoice)}>
                     <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex flex-col">
@@ -294,7 +295,7 @@ export function HistoryTab({
                         <div className="text-sm font-medium text-slate-900 dark:text-white">
                           {new Date(invoice.createdAt).toLocaleDateString("es-AR")}
                         </div>
-                        <a href={`/reservas/${invoice.reserva?.id}`} className="text-[10px] text-indigo-500 hover:underline font-bold uppercase tracking-tighter">
+                        <a href={`/reservas/${getPublicId(invoice.reserva)}`} className="text-[10px] text-indigo-500 hover:underline font-bold uppercase tracking-tighter">
                           RES: {invoice.reserva?.numeroReserva || "---"}
                         </a>
                         {invoice.wasForced && (
@@ -317,12 +318,12 @@ export function HistoryTab({
                         ) : invoice.resultado === "R" ? (
                           <button
                             type="button"
-                            onClick={() => setExpandedInvoice(expandedInvoice === invoice.id ? null : invoice.id)}
+                            onClick={() => setExpandedInvoice(expandedInvoice === getPublicId(invoice) ? null : getPublicId(invoice))}
                             className="flex items-center gap-1 text-rose-600 dark:text-rose-400 text-[10px] font-black uppercase hover:underline"
                           >
                             <AlertCircle className="w-3.5 h-3.5" />
                             Rechazado
-                            {expandedInvoice === invoice.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                            {expandedInvoice === getPublicId(invoice) ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                           </button>
                         ) : (
                           <div className="flex items-center gap-1 text-slate-400 text-[10px] font-black uppercase italic">
@@ -372,13 +373,13 @@ export function HistoryTab({
                               Reintentar
                             </button>
                           )}
-                          <a href={`/reservas/${invoice.reserva?.id}`} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-300 hover:text-indigo-600">
+                          <a href={`/reservas/${getPublicId(invoice.reserva)}`} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-300 hover:text-indigo-600">
                             <ExternalLink className="w-4.5 h-4.5" />
                           </a>
                         </div>
                       </td>
                     </tr>
-                    {expandedInvoice === invoice.id && (
+                    {expandedInvoice === getPublicId(invoice) && (
                       <tr className="bg-rose-50/40 dark:bg-rose-950/20">
                         <td colSpan="5" className="px-8 py-4">
                           <div className="flex items-start gap-3 border-l-2 border-rose-500 pl-4 py-1">
@@ -410,7 +411,7 @@ export function HistoryTab({
 
           <div className="md:hidden space-y-4">
             {invoices.slice(0, visibleCountInvoices).map((invoice) => (
-              <div key={invoice.id} className="bg-white dark:bg-slate-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800">
+              <div key={getPublicId(invoice)} className="bg-white dark:bg-slate-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800">
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <div className="text-[10px] font-black text-slate-400 uppercase mb-1">
@@ -453,7 +454,7 @@ export function HistoryTab({
                       Reintentar
                     </button>
                   )}
-                  <a href={`/reservas/${invoice.reserva?.id}`} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 rounded-lg">
+                  <a href={`/reservas/${getPublicId(invoice.reserva)}`} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 rounded-lg">
                     <ExternalLink className="w-4 h-4" />
                   </a>
                 </div>

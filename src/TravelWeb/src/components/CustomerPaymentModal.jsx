@@ -3,6 +3,7 @@ import { formatCurrency } from "../lib/utils";
 import { api } from "../api";
 import Swal from "sweetalert2";
 import { X, CreditCard, Calendar, FileText, DollarSign, AlignLeft, CheckCircle2 } from "lucide-react";
+import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 
 export default function CustomerPaymentModal({ isOpen, onClose, customerId, paymentToEdit, onSave, availableReservas = [] }) {
     const [formData, setFormData] = useState({
@@ -22,7 +23,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                     method: paymentToEdit.method,
                     paidAt: paymentToEdit.paymentDate ? new Date(paymentToEdit.paymentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
                     notes: paymentToEdit.notes || "",
-                    reservaId: paymentToEdit.reservaId?.toString() || ""
+                    reservaId: getRelatedPublicId(paymentToEdit, "reservaPublicId", "reservaId") || ""
                 });
             } else {
                 setFormData({
@@ -30,7 +31,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                     method: "Transfer",
                     paidAt: new Date().toISOString().split("T")[0],
                     notes: "",
-                    reservaId: availableReservas.length > 0 ? availableReservas[0].id.toString() : ""
+                    reservaId: availableReservas.length > 0 ? getPublicId(availableReservas[0]) || "" : ""
                 });
             }
         }
@@ -56,7 +57,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
 
             if (paymentToEdit) {
                 // Edit existing payment
-                await api.put(`/reservas/${formData.reservaId}/payments/${paymentToEdit.id}`, payload);
+                await api.put(`/reservas/${formData.reservaId}/payments/${getPublicId(paymentToEdit)}`, payload);
             } else {
                 // Create new payment
                 await api.post(`/reservas/${formData.reservaId}/payments`, payload);
@@ -109,7 +110,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                             >
                                 <option value="">Seleccionar Reserva...</option>
                                 {availableReservas.map(reserva => (
-                                    <option key={reserva.id} value={reserva.id}>
+                                    <option key={getPublicId(reserva)} value={getPublicId(reserva)}>
                                         {reserva.numeroReserva} - {reserva.name} (Saldo: {formatCurrency(reserva.balance)})
                                     </option>
                                 ))}

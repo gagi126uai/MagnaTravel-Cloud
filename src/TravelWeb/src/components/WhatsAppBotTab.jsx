@@ -123,7 +123,7 @@ export default function WhatsAppBotTab() {
   const [searchTerm, setSearchTerm] = useState("");
 
   const getConversationKey = useCallback(
-    (item) => (item ? `${item.conversationType}-${item.entityId}` : null),
+    (item) => (item ? `${item.conversationType}-${item.entityPublicId}` : null),
     []
   );
 
@@ -145,7 +145,7 @@ export default function WhatsAppBotTab() {
     setSelectedConversation(item);
     setLoadingDetail(true);
     try {
-      const data = await api.get(`/whatsapp/conversations/${item.conversationType}/${item.entityId}`);
+      const data = await api.get(`/whatsapp/conversations/${item.conversationType}/${item.entityPublicId}`);
       setConversationDetail(data);
     } catch (error) {
       setConversationDetail(null);
@@ -352,12 +352,12 @@ export default function WhatsAppBotTab() {
             ) : (
               filteredConversations.map((item) => (
                 <ConversationListItem
-                  key={`${item.conversationType}-${item.entityId}`}
+                  key={`${item.conversationType}-${item.entityPublicId}`}
                   item={item}
                   selected={
                     selectedConversation &&
                     selectedConversation.conversationType === item.conversationType &&
-                    selectedConversation.entityId === item.entityId
+                    selectedConversation.entityPublicId === item.entityPublicId
                   }
                   onSelect={loadConversationDetail}
                 />
@@ -424,21 +424,21 @@ export default function WhatsAppBotTab() {
                   </div>
 
                   <div className="flex gap-2">
-                    {conversationDetail.leadId && (
+                    {conversationDetail.leadPublicId && (
                       <Button
                         variant="outline"
                         className="rounded-xl"
-                        onClick={() => navigate("/crm", { state: { openLeadId: conversationDetail.leadId } })}
+                        onClick={() => navigate("/crm", { state: { openLeadId: conversationDetail.leadPublicId } })}
                       >
                         <ExternalLink className="h-4 w-4 mr-2" />
                         Abrir lead
                       </Button>
                     )}
-                    {conversationDetail.reservaId && (
+                    {conversationDetail.reservaPublicId && (
                       <Button
                         variant="outline"
                         className="rounded-xl"
-                        onClick={() => navigate(`/reservas/${conversationDetail.reservaId}`)}
+                        onClick={() => navigate(`/reservas/${conversationDetail.reservaPublicId}`)}
                       >
                         <ExternalLink className="h-4 w-4 mr-2" />
                         Abrir reserva

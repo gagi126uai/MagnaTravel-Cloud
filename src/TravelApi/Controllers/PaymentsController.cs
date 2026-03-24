@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -11,10 +13,12 @@ namespace TravelApi.Controllers;
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public PaymentsController(IPaymentService paymentService)
+    public PaymentsController(IPaymentService paymentService, EntityReferenceResolver entityReferenceResolver)
     {
         _paymentService = paymentService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet("collections-summary")]
@@ -36,12 +40,13 @@ public class PaymentsController : ControllerBase
         return Ok(payments);
     }
 
-    [HttpGet("reserva/{ReservaId:int}")]
+    [HttpGet("reserva/{reservaPublicIdOrLegacyId}")]
     public async Task<ActionResult<IEnumerable<PaymentDto>>> GetPaymentsForReserva(
-        int ReservaId,
+        string reservaPublicIdOrLegacyId,
         CancellationToken cancellationToken)
     {
-        var payments = await _paymentService.GetPaymentsForReservaAsync(ReservaId, cancellationToken);
+        var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, cancellationToken);
+        var payments = await _paymentService.GetPaymentsForReservaAsync(reservaId, cancellationToken);
         return Ok(payments);
     }
 
@@ -53,7 +58,7 @@ public class PaymentsController : ControllerBase
         try
         {
             var payment = await _paymentService.CreatePaymentAsync(request, cancellationToken);
-            return CreatedAtAction(nameof(GetPaymentsForReserva), new { ReservaId = request.ReservaId }, payment);
+            return CreatedAtAction(nameof(GetPaymentsForReserva), new { reservaPublicIdOrLegacyId = request.ReservaId }, payment);
         }
         catch (ArgumentException ex)
         {
@@ -61,11 +66,12 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    [HttpPost("{id:int}/receipt")]
-    public async Task<ActionResult<PaymentReceiptDto>> IssueReceipt(int id, CancellationToken cancellationToken)
+    [HttpPost("{publicIdOrLegacyId}/receipt")]
+    public async Task<ActionResult<PaymentReceiptDto>> IssueReceipt(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(publicIdOrLegacyId, cancellationToken);
             var receipt = await _paymentService.IssueReceiptAsync(id, cancellationToken);
             return Ok(receipt);
         }
@@ -79,13 +85,14 @@ public class PaymentsController : ControllerBase
         }
     }
 
-    [HttpGet("{id:int}/receipt/pdf")]
-    public async Task<IActionResult> GetReceiptPdf(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/receipt/pdf")]
+    public async Task<IActionResult> GetReceiptPdf(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(publicIdOrLegacyId, cancellationToken);
             var pdf = await _paymentService.GetReceiptPdfAsync(id, cancellationToken);
-            return File(pdf, "application/pdf", $"recibo-pago-{id}.pdf");
+            return File(pdf, "application/pdf", $"recibo-pago-{publicIdOrLegacyId}.pdf");
         }
         catch (KeyNotFoundException ex)
         {
@@ -111,14 +118,15 @@ public class PaymentsController : ControllerBase
     /// <summary>
     /// Restaurar un pago eliminado - Solo Admin
     /// </summary>
-    [HttpPut("{id:int}/restore")]
+    [HttpPut("{publicIdOrLegacyId}/restore")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult> RestorePayment(int id, CancellationToken cancellationToken)
+    public async Task<ActionResult> RestorePayment(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
-            var paymentId = await _paymentService.RestorePaymentAsync(id, cancellationToken);
-            return Ok(new { message = "Pago restaurado correctamente.", paymentId });
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(publicIdOrLegacyId, cancellationToken);
+            var paymentPublicId = await _paymentService.RestorePaymentAsync(id, cancellationToken);
+            return Ok(new { message = "Pago restaurado correctamente.", paymentPublicId });
         }
         catch (KeyNotFoundException ex)
         {

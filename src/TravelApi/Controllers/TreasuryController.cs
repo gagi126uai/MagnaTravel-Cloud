@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -12,10 +14,12 @@ namespace TravelApi.Controllers;
 public class TreasuryController : ControllerBase
 {
     private readonly ITreasuryService _treasuryService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public TreasuryController(ITreasuryService treasuryService)
+    public TreasuryController(ITreasuryService treasuryService, EntityReferenceResolver entityReferenceResolver)
     {
         _treasuryService = treasuryService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet("summary")]
@@ -54,15 +58,16 @@ public class TreasuryController : ControllerBase
         }
     }
 
-    [HttpPut("manual-movements/{id:int}")]
+    [HttpPut("manual-movements/{publicIdOrLegacyId}")]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ManualCashMovementDto>> UpdateManualMovement(
-        int id,
+        string publicIdOrLegacyId,
         [FromBody] UpsertManualCashMovementRequest request,
         CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<ManualCashMovement>(publicIdOrLegacyId, cancellationToken);
             return Ok(await _treasuryService.UpdateManualMovementAsync(id, request, cancellationToken));
         }
         catch (KeyNotFoundException ex)
@@ -79,12 +84,13 @@ public class TreasuryController : ControllerBase
         }
     }
 
-    [HttpDelete("manual-movements/{id:int}")]
+    [HttpDelete("manual-movements/{publicIdOrLegacyId}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> DeleteManualMovement(int id, CancellationToken cancellationToken)
+    public async Task<IActionResult> DeleteManualMovement(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<ManualCashMovement>(publicIdOrLegacyId, cancellationToken);
             await _treasuryService.DeleteManualMovementAsync(id, cancellationToken);
             return NoContent();
         }

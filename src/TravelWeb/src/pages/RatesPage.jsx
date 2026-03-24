@@ -3,6 +3,7 @@ import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator, Plane, Hotel, Car, Package, Star, ChevronDown, ChevronRight, BedDouble } from "lucide-react";
 import Swal from "sweetalert2";
+import { getPublicId } from "../lib/publicIds";
 
 const serviceTypes = [
     { value: "Aereo", label: "Aéreo", icon: Plane },
@@ -225,7 +226,7 @@ export default function RatesPage() {
         try {
             const basePayload = {
                 ...form,
-                supplierId: form.supplierId ? parseInt(form.supplierId) : null,
+                supplierId: form.supplierId || null,
                 tax: parseFloat(form.tax) || 0,
                 // Valid dates
                 validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
@@ -349,7 +350,7 @@ export default function RatesPage() {
         setRoomVariations([]); // Al editar una individual, limpiamos variaciones
         setForm({
             id: rate.id,
-            supplierId: rate.supplierId?.toString() || "",
+            supplierId: rate.supplierPublicId?.toString() || rate.supplierId?.toString() || "",
             serviceType: rate.serviceType || "Aereo",
             productName: rate.productName || "",
             description: rate.description || "",
@@ -853,7 +854,7 @@ export default function RatesPage() {
                             <label className={labelClass}>Proveedor</label>
                             <select id="supplierId" className={inputClass} value={form.supplierId} onChange={handleSupplierChange}>
                                 <option value="">Seleccionar proveedor</option>
-                                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name}</option>)}
                             </select>
                         </div>
                         <div>

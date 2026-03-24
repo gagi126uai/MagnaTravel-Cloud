@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function useSuppliers() {
     const [suppliers, setSuppliers] = useState([]);
@@ -28,7 +29,7 @@ export function useSuppliers() {
     const handleSaveSupplier = async (formData, supplierId = null) => {
         try {
             if (supplierId) {
-                await api.put(`/suppliers/${supplierId}`, { ...formData, id: supplierId });
+                await api.put(`/suppliers/${supplierId}`, formData);
                 showSuccess("Proveedor actualizado");
             } else {
                 await api.post("/suppliers", formData);
@@ -46,7 +47,7 @@ export function useSuppliers() {
     const handleToggleStatus = async (supplier) => {
         try {
             const newStatus = !supplier.isActive;
-            await api.put(`/suppliers/${supplier.id}`, {
+            await api.put(`/suppliers/${getPublicId(supplier)}`, {
                 ...supplier,
                 isActive: newStatus
             });

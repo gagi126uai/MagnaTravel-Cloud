@@ -5,6 +5,7 @@ using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -16,15 +17,18 @@ public class ReservasController : ControllerBase
     private readonly IReservaService _reservaService;
     private readonly IVoucherService _voucherService;
     private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
     public ReservasController(
         IReservaService reservaService,
         IVoucherService voucherService,
-        IWhatsAppDeliveryService whatsAppDeliveryService)
+        IWhatsAppDeliveryService whatsAppDeliveryService,
+        EntityReferenceResolver entityReferenceResolver)
     {
         _reservaService = reservaService;
         _voucherService = voucherService;
         _whatsAppDeliveryService = whatsAppDeliveryService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
@@ -41,11 +45,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpGet("{id}")]
-    public async Task<IActionResult> GetReserva(int id)
+    [HttpGet("{publicIdOrLegacyId}")]
+    public async Task<IActionResult> GetReserva(string publicIdOrLegacyId)
     {
         try 
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             var dto = await _reservaService.GetReservaByIdAsync(id);
             return Ok(dto);
         }
@@ -66,7 +71,8 @@ public class ReservasController : ControllerBase
         {
             var createdByUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var reserva = await _reservaService.CreateReservaAsync(request, createdByUserId);
-            return CreatedAtAction(nameof(GetReserva), new { id = reserva.Id }, reserva);
+            var dto = await _reservaService.GetReservaByIdAsync(reserva.Id);
+            return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId = reserva.PublicId }, dto);
         }
         catch (Exception ex)
         {
@@ -74,11 +80,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPost("{id}/services")]
-    public async Task<IActionResult> AddService(int id, AddServiceRequest request)
+    [HttpPost("{publicIdOrLegacyId}/services")]
+    public async Task<IActionResult> AddService(string publicIdOrLegacyId, AddServiceRequest request)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             var (servicio, warning) = await _reservaService.AddServiceAsync(id, request);
             if (warning != null)
                 return Ok(new { servicio, Warning = warning });
@@ -99,11 +106,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPut("services/{serviceId}")]
-    public async Task<IActionResult> UpdateService(int serviceId, AddServiceRequest request)
+    [HttpPut("services/{servicePublicIdOrLegacyId}")]
+    public async Task<IActionResult> UpdateService(string servicePublicIdOrLegacyId, AddServiceRequest request)
     {
         try
         {
+            var serviceId = await _entityReferenceResolver.ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, HttpContext.RequestAborted);
             var service = await _reservaService.UpdateServiceAsync(serviceId, request);
             return Ok(service);
         }
@@ -121,11 +129,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpDelete("services/{serviceId}")]
-    public async Task<IActionResult> RemoveService(int serviceId)
+    [HttpDelete("services/{servicePublicIdOrLegacyId}")]
+    public async Task<IActionResult> RemoveService(string servicePublicIdOrLegacyId)
     {
         try
         {
+            var serviceId = await _entityReferenceResolver.ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, HttpContext.RequestAborted);
             await _reservaService.RemoveServiceAsync(serviceId);
             return NoContent();
         }
@@ -140,20 +149,22 @@ public class ReservasController : ControllerBase
     }
 
     // ==================== PASAJEROS ====================
-    [HttpGet("{id}/passengers")]
-    public async Task<ActionResult> GetPassengers(int id)
+    [HttpGet("{publicIdOrLegacyId}/passengers")]
+    public async Task<ActionResult> GetPassengers(string publicIdOrLegacyId)
     {
+        var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
         var passengers = await _reservaService.GetPassengersAsync(id);
         return Ok(passengers);
     }
 
-    [HttpPost("{id}/passengers")]
-    public async Task<ActionResult> AddPassenger(int id, Passenger passenger)
+    [HttpPost("{publicIdOrLegacyId}/passengers")]
+    public async Task<ActionResult> AddPassenger(string publicIdOrLegacyId, Passenger passenger)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             var dto = await _reservaService.AddPassengerAsync(id, passenger);
-            return CreatedAtAction(nameof(GetReserva), new { id }, dto);
+            return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId }, dto);
         }
         catch (KeyNotFoundException ex)
         {
@@ -169,11 +180,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPut("passengers/{passengerId}")]
-    public async Task<ActionResult> UpdatePassenger(int passengerId, Passenger updated)
+    [HttpPut("passengers/{passengerPublicIdOrLegacyId}")]
+    public async Task<ActionResult> UpdatePassenger(string passengerPublicIdOrLegacyId, Passenger updated)
     {
         try
         {
+            var passengerId = await _entityReferenceResolver.ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, HttpContext.RequestAborted);
             var dto = await _reservaService.UpdatePassengerAsync(passengerId, updated);
             return Ok(dto);
         }
@@ -191,11 +203,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpDelete("passengers/{passengerId}")]
-    public async Task<IActionResult> RemovePassenger(int passengerId)
+    [HttpDelete("passengers/{passengerPublicIdOrLegacyId}")]
+    public async Task<IActionResult> RemovePassenger(string passengerPublicIdOrLegacyId)
     {
         try
         {
+            var passengerId = await _entityReferenceResolver.ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, HttpContext.RequestAborted);
             await _reservaService.RemovePassengerAsync(passengerId);
             return NoContent();
         }
@@ -210,20 +223,22 @@ public class ReservasController : ControllerBase
     }
 
     // ==================== PAGOS ====================
-    [HttpGet("{id}/payments")]
-    public async Task<ActionResult> GetReservaPayments(int id)
+    [HttpGet("{publicIdOrLegacyId}/payments")]
+    public async Task<ActionResult> GetReservaPayments(string publicIdOrLegacyId)
     {
+        var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
         var payments = await _reservaService.GetReservaPaymentsAsync(id);
         return Ok(payments);
     }
 
-    [HttpPost("{id}/payments")]
-    public async Task<ActionResult> AddPayment(int id, Payment payment)
+    [HttpPost("{publicIdOrLegacyId}/payments")]
+    public async Task<ActionResult> AddPayment(string publicIdOrLegacyId, Payment payment)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             var dto = await _reservaService.AddPaymentAsync(id, payment);
-            return CreatedAtAction(nameof(GetReserva), new { id }, dto);
+            return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId }, dto);
         }
         catch (KeyNotFoundException ex)
         {
@@ -239,11 +254,13 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPut("{id}/payments/{paymentId}")]
-    public async Task<ActionResult> UpdatePayment(int id, int paymentId, Payment updatedPayment)
+    [HttpPut("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, Payment updatedPayment)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
+            var paymentId = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, HttpContext.RequestAborted);
             var dto = await _reservaService.UpdatePaymentAsync(id, paymentId, updatedPayment);
             return Ok(dto);
         }
@@ -261,11 +278,13 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpDelete("{id}/payments/{paymentId}")]
-    public async Task<IActionResult> DeletePayment(int id, int paymentId)
+    [HttpDelete("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    public async Task<IActionResult> DeletePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
+            var paymentId = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, HttpContext.RequestAborted);
             await _reservaService.DeletePaymentAsync(id, paymentId);
             return Ok();
         }
@@ -284,11 +303,12 @@ public class ReservasController : ControllerBase
     }
 
     // ==================== ESTADOS ====================
-    [HttpPut("{id}/status")]
-    public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateStatusDto request)
+    [HttpPut("{publicIdOrLegacyId}/status")]
+    public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] UpdateStatusDto request)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             var reserva = await _reservaService.UpdateStatusAsync(id, request.Status);
             if (request.Status == EstadoReserva.Operational)
             {
@@ -314,11 +334,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPut("{id}/archive")]
-    public async Task<IActionResult> ArchiveReserva(int id)
+    [HttpPut("{publicIdOrLegacyId}/archive")]
+    public async Task<IActionResult> ArchiveReserva(string publicIdOrLegacyId)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             var reserva = await _reservaService.ArchiveReservaAsync(id);
             return Ok(reserva);
         }
@@ -332,11 +353,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteReserva(int id)
+    [HttpDelete("{publicIdOrLegacyId}")]
+    public async Task<IActionResult> DeleteReserva(string publicIdOrLegacyId)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             await _reservaService.DeleteReservaAsync(id);
             return Ok();
         }
@@ -355,13 +377,14 @@ public class ReservasController : ControllerBase
     }
 
     // ==================== VOUCHER ====================
-    [HttpGet("{id}/voucher")]
-    public async Task<IActionResult> GenerateVoucher(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/voucher")]
+    public async Task<IActionResult> GenerateVoucher(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var html = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
-            return File(html, "text/html", $"voucher-{id}.html");
+            return File(html, "text/html", $"voucher-{publicIdOrLegacyId}.html");
         }
         catch (KeyNotFoundException ex)
         {
@@ -373,13 +396,14 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpGet("{id}/voucher/pdf")]
-    public async Task<IActionResult> GenerateVoucherPdf(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/voucher/pdf")]
+    public async Task<IActionResult> GenerateVoucherPdf(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var pdf = await _voucherService.GenerateVoucherPdfAsync(id, cancellationToken);
-            return File(pdf, "application/pdf", $"voucher-{id}.pdf");
+            return File(pdf, "application/pdf", $"voucher-{publicIdOrLegacyId}.pdf");
         }
         catch (KeyNotFoundException ex)
         {
@@ -391,14 +415,15 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPatch("{id}/whatsapp-contact")]
+    [HttpPatch("{publicIdOrLegacyId}/whatsapp-contact")]
     public async Task<IActionResult> UpdateWhatsAppContact(
-        int id,
+        string publicIdOrLegacyId,
         [FromBody] UpdateReservaWhatsAppContactRequest request,
         CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var preview = await _whatsAppDeliveryService.UpdateReservaWhatsAppContactAsync(
                 id,
                 request.WhatsAppPhoneOverride,
@@ -415,11 +440,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpGet("{id}/whatsapp/voucher-preview")]
-    public async Task<IActionResult> GetVoucherPreview(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/whatsapp/voucher-preview")]
+    public async Task<IActionResult> GetVoucherPreview(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var preview = await _whatsAppDeliveryService.GetVoucherPreviewAsync(id, cancellationToken);
             return Ok(preview);
         }
@@ -433,14 +459,15 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPost("{id}/whatsapp/send-voucher")]
+    [HttpPost("{publicIdOrLegacyId}/whatsapp/send-voucher")]
     public async Task<IActionResult> SendVoucher(
-        int id,
+        string publicIdOrLegacyId,
         [FromBody] SendVoucherRequest request,
         CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var performedBy = User.Identity?.Name ?? "Agente";
             var delivery = await _whatsAppDeliveryService.SendVoucherAsync(id, request.Caption, performedBy, cancellationToken);
             return Ok(delivery);
@@ -459,11 +486,12 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpGet("{id}/whatsapp/history")]
-    public async Task<IActionResult> GetWhatsAppHistory(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/whatsapp/history")]
+    public async Task<IActionResult> GetWhatsAppHistory(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var history = await _whatsAppDeliveryService.GetHistoryAsync(id, cancellationToken);
             return Ok(history);
         }

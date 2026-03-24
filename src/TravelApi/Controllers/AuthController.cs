@@ -1,7 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.Contracts.Auth;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
 using System.Security.Claims;
 
 namespace TravelApi.Controllers;
@@ -11,17 +15,31 @@ namespace TravelApi.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly UserManager<ApplicationUser> _userManager;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IAuthService authService, UserManager<ApplicationUser> userManager)
     {
         _authService = authService;
+        _userManager = userManager;
     }
 
     [HttpPost("register")]
+    [EnableRateLimiting("auth")]
     public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request)
     {
         try
         {
+            var hasUsers = await _userManager.Users.AnyAsync();
+            var isAdminBootstrap = User.Identity?.IsAuthenticated == true && User.IsInRole("Admin");
+
+            if (hasUsers && !isAdminBootstrap)
+            {
+                return StatusCode(403, new[]
+                {
+                    "El registro publico esta deshabilitado. Solo un administrador puede crear usuarios."
+                });
+            }
+
             var response = await _authService.RegisterAsync(request);
             return Ok(response);
         }
@@ -32,6 +50,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting("auth")]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
     {
         try

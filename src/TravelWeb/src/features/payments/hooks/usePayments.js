@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import Swal from "sweetalert2";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
+import { getPublicId } from "../../../lib/publicIds";
 
 const CREDIT_NOTE_TYPES = [3, 8, 13, 53];
 
@@ -60,7 +61,7 @@ export function usePayments() {
       ]);
 
       const normalizedReservas = (reservasRes || []).map((reserva) => {
-        const reservaInvoices = (invoicesRes || []).filter((invoice) => invoice.reservaId === reserva.id);
+        const reservaInvoices = (invoicesRes || []).filter((invoice) => invoice.reservaPublicId === getPublicId(reserva));
         const totalSale = Number(reserva.totalSale || 0);
         const totalPaid = Number(reserva.totalPaid || 0);
         const approvedInvoiced = reservaInvoices.reduce((acc, invoice) => acc + getInvoiceNetAmount(invoice), 0);
@@ -84,9 +85,9 @@ export function usePayments() {
         .map((payment) => ({
           ...payment,
           reserva:
-            normalizedReservas.find((reserva) => reserva.id === payment.reservaId) ||
-            (payment.reservaId
-              ? { id: payment.reservaId, numeroReserva: payment.numeroReserva, customerName: "Reserva" }
+            normalizedReservas.find((reserva) => getPublicId(reserva) === payment.reservaPublicId) ||
+            (payment.reservaPublicId
+              ? { publicId: payment.reservaPublicId, numeroReserva: payment.numeroReserva, customerName: "Reserva" }
               : null),
         }))
         .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
@@ -95,7 +96,7 @@ export function usePayments() {
         .map((invoice) => ({
           ...invoice,
           reserva:
-            normalizedReservas.find((reserva) => reserva.id === invoice.reservaId) ||
+            normalizedReservas.find((reserva) => getPublicId(reserva) === invoice.reservaPublicId) ||
             invoice.reserva ||
             null,
         }))
@@ -130,7 +131,7 @@ export function usePayments() {
 
   const handleDownloadPdf = async (invoice) => {
     try {
-      const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: "blob" });
+      const response = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response]));
       const link = document.createElement("a");
       link.href = url;
@@ -145,7 +146,7 @@ export function usePayments() {
 
   const handleViewPdf = async (invoice) => {
     try {
-      const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: "blob" });
+      const response = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
       window.open(url, "_blank");
     } catch (error) {
@@ -155,7 +156,7 @@ export function usePayments() {
 
   const handleDownloadReceiptPdf = async (payment) => {
     try {
-      const response = await api.get(`/payments/${payment.id}/receipt/pdf`, { responseType: "blob" });
+      const response = await api.get(`/payments/${getPublicId(payment)}/receipt/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
       window.open(url, "_blank");
     } catch (error) {
@@ -165,7 +166,7 @@ export function usePayments() {
 
   const handleIssueReceipt = async (payment) => {
     try {
-      await api.post(`/payments/${payment.id}/receipt`);
+      await api.post(`/payments/${getPublicId(payment)}/receipt`);
       showSuccess("Comprobante emitido.");
       loadData();
     } catch (error) {
@@ -175,7 +176,7 @@ export function usePayments() {
 
   const handleRetryInvoice = async (invoice) => {
     try {
-      await api.post(`/invoices/${invoice.id}/retry`);
+      await api.post(`/invoices/${getPublicId(invoice)}/retry`);
       showSuccess("Reintento encolado.");
       loadData();
     } catch (error) {
@@ -199,7 +200,7 @@ export function usePayments() {
     }
 
     try {
-      const response = await api.post(`/invoices/${invoice.id}/annul`);
+      const response = await api.post(`/invoices/${getPublicId(invoice)}/annul`);
       showSuccess(response?.message || response?.Message || "Anulación encolada.");
       loadData();
     } catch (error) {

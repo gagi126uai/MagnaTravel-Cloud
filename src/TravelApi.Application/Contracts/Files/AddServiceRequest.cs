@@ -2,7 +2,7 @@ namespace TravelApi.Application.Contracts.Files;
 
 public record AddServiceRequest(
     string ServiceType,
-    int? SupplierId,
+    string? SupplierId,
     string? Description,
     string? ConfirmationNumber,
     DateTime DepartureDate,

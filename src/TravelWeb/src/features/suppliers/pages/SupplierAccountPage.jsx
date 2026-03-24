@@ -9,9 +9,10 @@ import { Skeleton, AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { Badge } from "../../../components/ui/badge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import Swal from "sweetalert2";
+import { getPublicId } from "../../../lib/publicIds";
 
 export default function SupplierAccountPage() {
-    const { id } = useParams();
+    const { publicId } = useParams();
     const navigate = useNavigate();
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -22,11 +23,11 @@ export default function SupplierAccountPage() {
 
     useEffect(() => {
         fetchData();
-    }, [id]);
+    }, [publicId]);
 
     const fetchData = async () => {
         try {
-            const response = await api.get(`/suppliers/${id}/account`);
+            const response = await api.get(`/suppliers/${publicId}/account`);
             setData(response);
         } catch (error) {
             console.error("Error loading supplier account:", error);
@@ -59,7 +60,7 @@ export default function SupplierAccountPage() {
 
         if (result.isConfirmed) {
             try {
-                await api.delete(`/suppliers/${id}/payments/${payment.id}`);
+                await api.delete(`/suppliers/${publicId}/payments/${getPublicId(payment)}`);
                 Swal.fire("Eliminado", "El pago ha sido eliminado y el saldo restaurado.", "success");
                 fetchData();
             } catch (error) {
@@ -194,7 +195,7 @@ export default function SupplierAccountPage() {
                                 </tr>
                             ) : (
                                 services.map((service) => (
-                                    <tr key={service.id} className="border-b hover:bg-muted/30">
+                                    <tr key={getPublicId(service)} className="border-b hover:bg-muted/30">
                                         <td className="p-3">
                                             <span className="px-2 py-1 bg-primary/10 text-primary rounded text-xs font-medium">
                                                 {service.type}
@@ -230,7 +231,7 @@ export default function SupplierAccountPage() {
                         <div className="p-4 text-center text-muted-foreground text-sm">No hay servicios</div>
                     ) : (
                         services.map((service) => (
-                            <div key={service.id} className="p-4 space-y-2">
+                            <div key={getPublicId(service)} className="p-4 space-y-2">
                                 <div className="flex justify-between items-start">
                                     <div className="flex items-center gap-2">
                                         <span className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-bold uppercase">
@@ -296,7 +297,7 @@ export default function SupplierAccountPage() {
                                 </tr>
                             ) : (
                                 payments.map((payment) => (
-                                    <tr key={payment.id} className="border-b hover:bg-muted/30">
+                                    <tr key={getPublicId(payment)} className="border-b hover:bg-muted/30">
                                         <td className="p-3">{formatDate(payment.paidAt)}</td>
                                         <td className="p-3">
                                             <span className="px-2 py-1 bg-blue-500/10 text-blue-600 rounded text-xs">
@@ -340,7 +341,7 @@ export default function SupplierAccountPage() {
                         <div className="p-4 text-center text-muted-foreground text-sm">No hay pagos</div>
                     ) : (
                         payments.map((payment) => (
-                            <div key={payment.id} className="p-4 space-y-2">
+                            <div key={getPublicId(payment)} className="p-4 space-y-2">
                                 <div className="flex justify-between items-center">
                                     <div className="flex items-center gap-2">
                                         <span className="px-2 py-0.5 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded text-xs font-bold">
@@ -381,7 +382,7 @@ export default function SupplierAccountPage() {
                 isOpen={showPaymentModal}
                 onClose={() => setShowPaymentModal(false)}
                 onSuccess={handlePaymentSuccess}
-                supplierId={supplier.id}
+                supplierId={getPublicId(supplier)}
                 supplierName={supplier.name}
                 currentBalance={summary.balance} // We pass the current Debt to validate overpayment
                 editingPayment={editingPayment}

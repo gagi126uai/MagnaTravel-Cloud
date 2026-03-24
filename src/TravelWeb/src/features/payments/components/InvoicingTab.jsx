@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { AlertCircle, CheckCircle2, ExternalLink, Receipt, ShieldAlert } from "lucide-react";
 import { formatCurrency, formatDate, getInvoiceLabel } from "../lib/financeUtils";
+import { getPublicId } from "../../../lib/publicIds";
 
 function WorkItemSection({ title, caption, items, emptyText, onInvoice }) {
   return (
@@ -15,11 +16,11 @@ function WorkItemSection({ title, caption, items, emptyText, onInvoice }) {
       ) : (
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {items.map((item) => (
-            <div key={`${title}-${item.reservaId}`} className="px-6 py-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+            <div key={`${title}-${item.reservaPublicId || item.reservaId}`} className="px-6 py-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <Link
-                    to={`/reservas/${item.reservaId}`}
+                    to={`/reservas/${item.reservaPublicId || item.reservaId}`}
                     className="font-semibold text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-300"
                   >
                     {item.numeroReserva}
@@ -102,7 +103,7 @@ function InvoiceSection({ title, caption, items, emptyText, onDownloadPdf, onVie
       ) : (
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {items.map((invoice) => (
-            <div key={`${title}-${invoice.id}`} className="px-6 py-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+            <div key={`${title}-${getPublicId(invoice)}`} className="px-6 py-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-900 dark:text-white">{getInvoiceLabel(invoice.tipoComprobante)}</span>
@@ -177,9 +178,9 @@ function InvoiceSection({ title, caption, items, emptyText, onDownloadPdf, onVie
                   </button>
                 )}
 
-                {invoice.reservaId && (
+                {(invoice.reservaPublicId || invoice.reservaId) && (
                   <Link
-                    to={`/reservas/${invoice.reservaId}`}
+                    to={`/reservas/${invoice.reservaPublicId || invoice.reservaId}`}
                     className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-indigo-600"
                     title="Ver reserva"
                   >

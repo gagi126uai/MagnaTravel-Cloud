@@ -41,7 +41,7 @@ public class RateService : IRateService
                 r.PickupLocation, r.DropoffLocation, r.VehicleType, r.MaxPassengers, r.IsRoundTrip,
                 r.IncludesFlight, r.IncludesHotel, r.IncludesTransfer, r.IncludesExcursions, r.IncludesInsurance,
                 r.DurationDays, r.Itinerary,
-                SupplierId = r.SupplierId,
+                SupplierPublicId = r.Supplier != null ? (Guid?)r.Supplier.PublicId : null,
                 SupplierName = r.Supplier != null ? r.Supplier.Name : null
             })
             .ToListAsync(ct);
@@ -60,7 +60,7 @@ public class RateService : IRateService
                 r.PickupLocation, r.DropoffLocation, r.VehicleType, r.MaxPassengers, r.IsRoundTrip,
                 r.IncludesFlight, r.IncludesHotel, r.IncludesTransfer, r.IncludesExcursions, r.IncludesInsurance,
                 r.DurationDays, r.Itinerary,
-                SupplierId = r.SupplierId,
+                SupplierPublicId = r.Supplier != null ? (Guid?)r.Supplier.PublicId : null,
                 SupplierName = r.Supplier != null ? r.Supplier.Name : null
             })
             .FirstOrDefaultAsync(ct);
@@ -88,7 +88,7 @@ public class RateService : IRateService
             .Select(r => new {
                 r.Id, r.ServiceType, r.ProductName, r.Description, r.PriceUnit,
                 r.NetCost, r.Tax, r.SalePrice, r.Currency,
-                SupplierId = r.SupplierId,
+                SupplierPublicId = r.Supplier != null ? (Guid?)r.Supplier.PublicId : null,
                 SupplierName = r.Supplier != null ? r.Supplier.Name : null,
                 // Datos resumidos por tipo
                 r.Airline, r.Origin, r.Destination, r.CabinClass,
@@ -101,9 +101,20 @@ public class RateService : IRateService
 
     public async Task<object> CreateAsync(RateDto req, CancellationToken ct)
     {
+        int? supplierId = null;
+        if (!string.IsNullOrWhiteSpace(req.SupplierId))
+        {
+            supplierId = await _db.Suppliers
+                .AsNoTracking()
+                .ResolveInternalIdAsync(req.SupplierId, ct);
+
+            if (!supplierId.HasValue)
+                throw new ArgumentException("Proveedor no encontrado.");
+        }
+
         var rate = new Rate
         {
-            SupplierId = req.SupplierId,
+            SupplierId = supplierId,
             ServiceType = req.ServiceType,
             ProductName = req.ProductName,
             Description = req.Description,
@@ -158,7 +169,18 @@ public class RateService : IRateService
         var rate = await _db.Rates.FindAsync(new object[] { id }, ct);
         if (rate == null) return null;
 
-        rate.SupplierId = req.SupplierId;
+        int? supplierId = null;
+        if (!string.IsNullOrWhiteSpace(req.SupplierId))
+        {
+            supplierId = await _db.Suppliers
+                .AsNoTracking()
+                .ResolveInternalIdAsync(req.SupplierId, ct);
+
+            if (!supplierId.HasValue)
+                throw new ArgumentException("Proveedor no encontrado.");
+        }
+
+        rate.SupplierId = supplierId;
         rate.ServiceType = req.ServiceType;
         rate.ProductName = req.ProductName;
         rate.Description = req.Description;

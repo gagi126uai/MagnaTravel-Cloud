@@ -12,12 +12,12 @@ public interface IPaymentService
     Task<PaymentReceiptDto> IssueReceiptAsync(int paymentId, CancellationToken cancellationToken);
     Task<byte[]> GetReceiptPdfAsync(int paymentId, CancellationToken cancellationToken);
     Task<IEnumerable<object>> GetDeletedPaymentsAsync(CancellationToken cancellationToken);
-    Task<int> RestorePaymentAsync(int id, CancellationToken cancellationToken);
+    Task<Guid> RestorePaymentAsync(int id, CancellationToken cancellationToken);
 }
 
 public class CreatePaymentRequest
 {
-    public int ReservaId { get; set; }
+    public string ReservaId { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public string Method { get; set; } = string.Empty;
     public string? Reference { get; set; }

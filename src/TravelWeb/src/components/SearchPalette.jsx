@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Search, FolderOpen, User, CreditCard, X, Loader2 } from "lucide-react";
 import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
+import { getPublicId } from "../lib/publicIds";
 
 export default function SearchPalette({ isOpen, onClose }) {
     const [query, setQuery] = useState("");
@@ -121,8 +122,8 @@ export default function SearchPalette({ isOpen, onClose }) {
                                 </div>
                                 {(results.reservas || results.files).map((reserva) => (
                                     <button
-                                        key={`reserva-${reserva.id}`}
-                                        onClick={() => handleSelect("reserva", reserva.id)}
+                                        key={`reserva-${getPublicId(reserva)}`}
+                                        onClick={() => handleSelect("reserva", getPublicId(reserva))}
                                         className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors text-left group"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center shrink-0">
@@ -154,8 +155,8 @@ export default function SearchPalette({ isOpen, onClose }) {
                                 </div>
                                 {results.customers.map((cust) => (
                                     <button
-                                        key={`cust-${cust.id}`}
-                                        onClick={() => handleSelect("customer", cust.id)}
+                                        key={`cust-${getPublicId(cust)}`}
+                                        onClick={() => handleSelect("customer", getPublicId(cust))}
                                         className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-left"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
@@ -180,7 +181,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                 </div>
                                 {results.payments.map((pay) => (
                                     <div
-                                        key={`pay-${pay.id}`}
+                                        key={`pay-${getPublicId(pay)}`}
                                         className="flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">

@@ -2,7 +2,7 @@ namespace TravelApi.Application.DTOs;
 
 public class ReservaListDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
     public string NumeroReserva { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Status { get; set; } = "Presupuesto";

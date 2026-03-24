@@ -35,6 +35,7 @@ import AfipSettingsTab from "../components/AfipSettingsTab";
 import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
+import { getPublicId } from "../lib/publicIds";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
@@ -393,7 +394,7 @@ export default function SettingsPage() {
         showSuccess("Regla actualizada");
       } else {
         await api.post("/commissions", {
-          supplierId: commissionForm.supplierId ? parseInt(commissionForm.supplierId) : null,
+          supplierId: commissionForm.supplierId || null,
           serviceType: commissionForm.serviceType || null,
           commissionPercent: parseFloat(commissionForm.commissionPercent),
           priority: parseInt(commissionForm.priority),
@@ -413,7 +414,7 @@ export default function SettingsPage() {
   const editCommissionRule = (rule) => {
     setCommissionForm({
       id: rule.id,
-      supplierId: rule.supplierId || "",
+      supplierId: rule.supplierPublicId || rule.supplierId || "",
       serviceType: rule.serviceType || "",
       commissionPercent: rule.commissionPercent,
       priority: rule.priority || 1,
@@ -956,7 +957,7 @@ export default function SettingsPage() {
               onChange={e => setCommissionForm({ ...commissionForm, supplierId: e.target.value })}
             >
               <option value="">Todos los proveedores</option>
-              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name}</option>)}
             </select>
             <p className="text-xs text-slate-500 mt-1">Si se deja vacío, aplica a todos.</p>
           </div>

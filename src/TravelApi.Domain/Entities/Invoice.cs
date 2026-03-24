@@ -3,9 +3,10 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
 
-public class Invoice
+public class Invoice : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

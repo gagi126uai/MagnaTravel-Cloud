@@ -12,9 +12,10 @@ public static class EstadoReserva
     public const string Cancelled = "Cancelado";
 }
 
-public class Reserva
+public class Reserva : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     [Required]
     [MaxLength(50)]

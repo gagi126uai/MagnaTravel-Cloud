@@ -12,9 +12,10 @@ public static class LeadStatus
     public const string Lost = "Perdido";
 }
 
-public class Lead
+public class Lead : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     [Required]
     [MaxLength(200)]

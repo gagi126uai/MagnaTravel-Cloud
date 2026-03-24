@@ -1,11 +1,12 @@
 import Swal from "sweetalert2";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function useFinanceActions(loadData) {
   const handleDownloadPdf = async (invoice) => {
     try {
-      const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: "blob" });
+      const response = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response]));
       const link = document.createElement("a");
       link.href = url;
@@ -20,7 +21,7 @@ export function useFinanceActions(loadData) {
 
   const handleViewPdf = async (invoice) => {
     try {
-      const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: "blob" });
+      const response = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
       window.open(url, "_blank");
     } catch (error) {
@@ -30,7 +31,7 @@ export function useFinanceActions(loadData) {
 
   const handleDownloadReceiptPdf = async (payment) => {
     try {
-      const response = await api.get(`/payments/${payment.id}/receipt/pdf`, { responseType: "blob" });
+      const response = await api.get(`/payments/${getPublicId(payment)}/receipt/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
       window.open(url, "_blank");
     } catch (error) {
@@ -40,7 +41,7 @@ export function useFinanceActions(loadData) {
 
   const handleIssueReceipt = async (payment) => {
     try {
-      await api.post(`/payments/${payment.id}/receipt`);
+      await api.post(`/payments/${getPublicId(payment)}/receipt`);
       showSuccess("Comprobante emitido.");
       await loadData();
     } catch (error) {
@@ -50,7 +51,7 @@ export function useFinanceActions(loadData) {
 
   const handleRetryInvoice = async (invoice) => {
     try {
-      await api.post(`/invoices/${invoice.id}/retry`);
+      await api.post(`/invoices/${getPublicId(invoice)}/retry`);
       showSuccess("Reintento encolado.");
       await loadData();
     } catch (error) {
@@ -74,7 +75,7 @@ export function useFinanceActions(loadData) {
     }
 
     try {
-      const response = await api.post(`/invoices/${invoice.id}/annul`);
+      const response = await api.post(`/invoices/${getPublicId(invoice)}/annul`);
       showSuccess(response?.message || response?.Message || "Anulacion encolada.");
       await loadData();
     } catch (error) {

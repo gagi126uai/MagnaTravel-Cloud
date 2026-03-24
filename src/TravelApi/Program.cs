@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Security.Claims;
+using System.Threading.RateLimiting;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Interfaces;
@@ -36,6 +38,30 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
     builder.Host.UseSerilog(); // Use Serilog for logging
+
+    static bool IsPlaceholderSecret(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        return value.Contains("CHANGE_THIS_SECRET", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("travelpass", StringComparison.OrdinalIgnoreCase);
+    }
+
+    if (builder.Environment.IsProduction())
+    {
+        var jwtKey = builder.Configuration["Jwt:Key"] ?? builder.Configuration["Jwt__Key"];
+        var webhookSecret = builder.Configuration["WhatsApp:WebhookSecret"] ?? builder.Configuration["WhatsApp__WebhookSecret"];
+        var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+        if (IsPlaceholderSecret(jwtKey) || IsPlaceholderSecret(webhookSecret) || IsPlaceholderSecret(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Production startup blocked because placeholder secrets or default credentials are still configured.");
+        }
+    }
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -91,6 +117,9 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
         options.Password.RequireNonAlphanumeric = true;
         options.Password.RequiredLength = 8;
         options.User.RequireUniqueEmail = true;
+        options.Lockout.AllowedForNewUsers = true;
+        options.Lockout.MaxFailedAccessAttempts = 5;
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
     })
     .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<AppDbContext>()
@@ -132,6 +161,40 @@ builder.Services.AddAuthentication(options =>
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
+
+    options.AddFixedWindowLimiter("auth", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = 10;
+        limiterOptions.Window = TimeSpan.FromMinutes(5);
+        limiterOptions.QueueLimit = 0;
+        limiterOptions.AutoReplenishment = true;
+    });
+
+    options.AddFixedWindowLimiter("webhooks", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = 30;
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 0;
+        limiterOptions.AutoReplenishment = true;
+    });
+});
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<IAfipService, AfipService>();
@@ -155,6 +218,7 @@ builder.Services.AddScoped<IBookingService, BookingService>();
 builder.Services.AddScoped<IAttachmentService, AttachmentService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<EntityReferenceResolver>();
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 
 builder.Services.AddSignalR();
@@ -204,8 +268,11 @@ builder.Services.AddHangfireServer();
 
 var app = builder.Build();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+if (!app.Environment.IsProduction())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.UseExceptionHandler(opt => { }); // Use GlobalExceptionHandler
 
@@ -276,9 +343,27 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
     ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
 });
 
+if (app.Environment.IsProduction())
+{
+    app.UseHsts();
+}
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; " +
+        "img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https:; " +
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https: ws: wss:;";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    await next();
+});
+
 app.UseSerilogRequestLogging();
 
 app.UseRouting();
+app.UseRateLimiter();
 
 // 2. CORS (Explicitly permissive for known origins + wildcard fallback if needed)
 app.UseCors("web");
@@ -373,30 +458,6 @@ using (var scope = app.Services.CreateScope())
         {
             await userManager.AddToRoleAsync(firstUser, "Admin");
         }
-    }
-
-    // ONE-TIME PASSWORD RESET for gagi126@gmail.com
-    var targetUser = await userManager.FindByEmailAsync("gagi126@gmail.com");
-    if (targetUser is not null)
-    {
-        var resetToken = await userManager.GeneratePasswordResetTokenAsync(targetUser);
-        // Password MUST have: uppercase, lowercase, digit, special char, min 8 chars
-        var resetResult = await userManager.ResetPasswordAsync(targetUser, resetToken, "Aa1234567890$");
-        if (resetResult.Succeeded)
-        {
-            app.Logger.LogInformation("Password reset successful for gagi126@gmail.com");
-        }
-        else
-        {
-            foreach (var error in resetResult.Errors)
-            {
-                app.Logger.LogError("Password reset failed: {0} - {1}", error.Code, error.Description);
-            }
-        }
-    }
-    else
-    {
-        app.Logger.LogWarning("User gagi126@gmail.com not found for password reset");
     }
 }
 

@@ -84,13 +84,13 @@ export default function App() {
 
                   {/* Core ERP Modules */}
                   <Route path="/reservas" element={<ReservasPage />} />
-                  <Route path="/reservas/:id" element={<ReservaDetailPage />} />
+                  <Route path="/reservas/:publicId" element={<ReservaDetailPage />} />
 
                   <Route path="/customers" element={<CustomersPage />} />
-                  <Route path="/customers/:id/account" element={<CustomerAccountPage />} />
+                  <Route path="/customers/:publicId/account" element={<CustomerAccountPage />} />
 
                   <Route path="/suppliers" element={<SuppliersPage />} />
-                  <Route path="/suppliers/:id/account" element={<SupplierAccountPage />} />
+                  <Route path="/suppliers/:publicId/account" element={<SupplierAccountPage />} />
 
                   {/* Treasury */}
                   <Route path="/payments" element={<PaymentsPage />}>

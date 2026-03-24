@@ -34,7 +34,7 @@ export default function CreateInvoiceModal({
   isOpen,
   onClose,
   onSuccess,
-  reservaId,
+  reservaPublicId,
   reserva,
   initialAmount,
   clientName,
@@ -161,7 +161,7 @@ export default function CreateInvoiceModal({
     setLoading(true);
     try {
       const payload = {
-        reservaId,
+        reservaId: reservaPublicId,
         items: items.map((item) => ({
           description: item.description,
           quantity: Number(item.quantity),

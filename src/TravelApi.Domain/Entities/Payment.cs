@@ -8,9 +8,10 @@ public static class PaymentEntryTypes
     public const string CreditNoteReversal = "CreditNoteReversal";
 }
 
-public class Payment
+public class Payment : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
 
     [Column(TypeName = "decimal(18,2)")]
     public decimal Amount { get; set; }

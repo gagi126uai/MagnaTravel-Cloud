@@ -12,7 +12,7 @@ public interface ISupplierService
     Task ForceDeleteSupplierAsync(int id, CancellationToken cancellationToken);
     Task RecalculateAllBalancesAsync(CancellationToken cancellationToken);
     Task<SupplierAccountDto> GetSupplierAccountAsync(int id, CancellationToken cancellationToken);
-    Task<int> AddSupplierPaymentAsync(int id, SupplierPaymentRequest request, CancellationToken cancellationToken);
+    Task<Guid> AddSupplierPaymentAsync(int id, SupplierPaymentRequest request, CancellationToken cancellationToken);
     Task UpdateSupplierPaymentAsync(int id, int paymentId, SupplierPaymentRequest request, CancellationToken cancellationToken);
     Task DeleteSupplierPaymentAsync(int id, int paymentId, CancellationToken cancellationToken);
     Task<IEnumerable<SupplierPaymentDto>> GetSupplierPaymentsHistoryAsync(int id, CancellationToken cancellationToken);
@@ -28,7 +28,7 @@ public class SupplierAccountDto
 
 public class SupplierServiceDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
     public string Type { get; set; } = "";
     public string? Description { get; set; } = "";
     public string? Confirmation { get; set; }
@@ -42,7 +42,7 @@ public class SupplierServiceDto
 
 public class SupplierPaymentDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
     public decimal Amount { get; set; }
     public string Method { get; set; } = "";
     public DateTime PaidAt { get; set; }
@@ -50,7 +50,7 @@ public class SupplierPaymentDto
     public string? Notes { get; set; }
     public string? NumeroReserva { get; set; }
     public string? FileName { get; set; }
-    public int? ReservaId { get; set; }
+    public Guid? ReservaPublicId { get; set; }
 }
 
 public record SupplierPaymentRequest(
@@ -58,6 +58,6 @@ public record SupplierPaymentRequest(
     string? Method, 
     string? Reference, 
     string? Notes,
-    int? ReservaId,
-    int? ServicioReservaId
+    string? ReservaId,
+    string? ServicioReservaId
 );

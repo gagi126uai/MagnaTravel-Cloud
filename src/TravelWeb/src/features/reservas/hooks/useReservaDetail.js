@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
+import { getPublicId } from "../../../lib/publicIds";
 
 /**
  * Hook to manage a single Reserva's details, including CRUD for services and passengers.
@@ -90,10 +91,11 @@ export function useReservaDetail(reservaId, navigate) {
     const handleDeleteService = async (service) => {
         try {
             let endpoint = "";
-            if (service._type === 'Flight') endpoint = `/reservas/${reservaId}/flights/${service.id}`;
-            else if (service._type === 'Hotel') endpoint = `/reservas/${reservaId}/hotels/${service.id}`;
-            else if (service._type === 'Transfer') endpoint = `/reservas/${reservaId}/transfers/${service.id}`;
-            else if (service._type === 'Package') endpoint = `/reservas/${reservaId}/packages/${service.id}`;
+            const servicePublicId = getPublicId(service);
+            if (service._type === 'Flight') endpoint = `/reservas/${reservaId}/flights/${servicePublicId}`;
+            else if (service._type === 'Hotel') endpoint = `/reservas/${reservaId}/hotels/${servicePublicId}`;
+            else if (service._type === 'Transfer') endpoint = `/reservas/${reservaId}/transfers/${servicePublicId}`;
+            else if (service._type === 'Package') endpoint = `/reservas/${reservaId}/packages/${servicePublicId}`;
 
             if (!endpoint) return;
 

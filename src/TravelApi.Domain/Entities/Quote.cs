@@ -12,9 +12,10 @@ public static class QuoteStatus
     public const string Rejected = "Rechazada";
 }
 
-public class Quote
+public class Quote : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     [MaxLength(50)]
     public string QuoteNumber { get; set; } = string.Empty;

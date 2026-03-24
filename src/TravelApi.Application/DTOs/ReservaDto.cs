@@ -2,13 +2,13 @@ namespace TravelApi.Application.DTOs;
 
 public class ReservaDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
     public string NumeroReserva { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Status { get; set; } = "Presupuesto";
-    public int? CustomerId { get; set; }
-    public int? SourceLeadId { get; set; }
-    public int? SourceQuoteId { get; set; }
+    public Guid? CustomerPublicId { get; set; }
+    public Guid? SourceLeadPublicId { get; set; }
+    public Guid? SourceQuotePublicId { get; set; }
     public string? ResponsibleUserId { get; set; }
     public string? ResponsibleUserName { get; set; }
     public string? WhatsAppPhoneOverride { get; set; }

@@ -2,8 +2,8 @@ namespace TravelApi.Application.DTOs;
 
 public class FlightSegmentDto
 {
-    public int Id { get; set; }
-    public int SupplierId { get; set; }
+    public Guid PublicId { get; set; }
+    public Guid SupplierPublicId { get; set; }
     public string SupplierName { get; set; } = string.Empty;
     public string AirlineCode { get; set; } = string.Empty;
     public string? AirlineName { get; set; }

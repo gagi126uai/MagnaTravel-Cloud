@@ -14,7 +14,7 @@ public interface IRateService
 
 // Moving RateDto from controllers namespace to application layer
 public record RateDto(
-    int? SupplierId,
+    string? SupplierId,
     string ServiceType,
     string ProductName,
     string? Description,

@@ -3,6 +3,7 @@ import { User, Users, Calendar, AlertCircle, CheckCircle2, FolderOpen, MessageCi
 import { Button } from "../../../components/ui/button";
 import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function ReservaMobileList({ reservas, onRowClick }) {
     const [visibleCount, setVisibleCount] = useState(50);
@@ -27,8 +28,8 @@ export function ReservaMobileList({ reservas, onRowClick }) {
                 const isPaid = reserva.totalSale > 0 && reserva.balance <= 0;
                 return (
                     <div
-                        key={reserva.id}
-                        onClick={() => onRowClick(reserva.id)}
+                        key={getPublicId(reserva)}
+                        onClick={() => onRowClick(getPublicId(reserva))}
                         className="bg-white dark:bg-slate-900 rounded-xl p-4 border border-slate-200 dark:border-slate-800 shadow-sm active:scale-[0.98] transition-transform"
                     >
                         <div className="flex justify-between items-start mb-3">

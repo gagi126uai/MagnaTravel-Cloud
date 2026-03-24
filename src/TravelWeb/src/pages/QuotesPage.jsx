@@ -17,6 +17,7 @@ import {
     X
 } from "lucide-react";
 import Swal from "sweetalert2";
+import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 
 const SERVICE_TYPES = ["Hotel", "Vuelo", "Transfer", "Paquete", "Excursion", "Seguro", "Otro"];
 const STATUS_COLORS = {
@@ -84,7 +85,7 @@ export default function QuotesPage() {
 
     const sanitizeQuote = (data) => ({
         ...data,
-        customerId: data.customerId || null,
+        customerPublicId: data.customerPublicId || null,
         travelStartDate: data.travelStartDate || null,
         travelEndDate: data.travelEndDate || null,
         validUntil: data.validUntil || null,
@@ -105,13 +106,13 @@ export default function QuotesPage() {
 
     const handleUpdate = async (data) => {
         try {
-            await api.put(`/quotes/${editingQuote.id}`, sanitizeQuote(data));
+            await api.put(`/quotes/${getPublicId(editingQuote)}`, sanitizeQuote(data));
             showSuccess("Cotizacion actualizada");
             setEditingQuote(null);
             setShowModal(false);
             loadQuotes();
-            if (detailQuote?.id === editingQuote.id) {
-                loadDetail(editingQuote.id);
+            if (getPublicId(detailQuote) === getPublicId(editingQuote)) {
+                loadDetail(getPublicId(editingQuote));
             }
         } catch {
             showError("Error al actualizar");
@@ -131,7 +132,7 @@ export default function QuotesPage() {
         try {
             await api.delete(`/quotes/${id}`);
             showSuccess("Cotizacion eliminada");
-            if (detailQuote?.id === id) {
+            if (getPublicId(detailQuote) === id) {
                 setDetailQuote(null);
             }
             loadQuotes();
@@ -145,7 +146,7 @@ export default function QuotesPage() {
             await api.patch(`/quotes/${id}/status`, { status });
             showSuccess(`Estado: ${status}`);
             loadQuotes();
-            if (detailQuote?.id === id) {
+            if (getPublicId(detailQuote) === id) {
                 loadDetail(id);
             }
         } catch {
@@ -166,9 +167,9 @@ export default function QuotesPage() {
 
         try {
             const res = await api.post(`/quotes/${id}/convert`);
-            showSuccess(`Reserva creada: ID ${res.reservaId}`);
+            showSuccess("Reserva creada");
             loadQuotes();
-            navigate(`/reservas/${res.reservaId}`);
+            navigate(`/reservas/${res.reservaPublicId}`);
         } catch (error) {
             showError(error.message || "Error al convertir");
         }
@@ -176,7 +177,7 @@ export default function QuotesPage() {
 
     const handleAddItem = async (item) => {
         try {
-            const quote = await api.post(`/quotes/${detailQuote.id}/items`, item);
+            const quote = await api.post(`/quotes/${getPublicId(detailQuote)}/items`, item);
             setDetailQuote(quote);
             setShowItemModal(false);
             showSuccess("Item agregado");
@@ -188,8 +189,8 @@ export default function QuotesPage() {
 
     const handleRemoveItem = async (itemId) => {
         try {
-            await api.delete(`/quotes/${detailQuote.id}/items/${itemId}`);
-            loadDetail(detailQuote.id);
+            await api.delete(`/quotes/${getPublicId(detailQuote)}/items/${itemId}`);
+            loadDetail(getPublicId(detailQuote));
             loadQuotes();
             showSuccess("Item eliminado");
         } catch {
@@ -228,21 +229,30 @@ export default function QuotesPage() {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                     <OriginCard
                         label="Cliente"
-                        value={detailQuote.customer?.fullName || (detailQuote.customerId ? `Cliente #${detailQuote.customerId}` : "Sin cliente")}
-                        disabled={!detailQuote.customerId}
-                        onClick={() => detailQuote.customerId && navigate(`/customers/${detailQuote.customerId}/account`)}
+                        value={detailQuote.customer?.fullName || detailQuote.customerName || "Sin cliente"}
+                        disabled={!getRelatedPublicId(detailQuote, "customerPublicId", "customerId")}
+                        onClick={() => {
+                            const customerPublicId = getRelatedPublicId(detailQuote, "customerPublicId", "customerId");
+                            if (customerPublicId) navigate(`/customers/${customerPublicId}/account`);
+                        }}
                     />
                     <OriginCard
                         label="Lead origen"
-                        value={detailQuote.lead?.fullName || (detailQuote.leadId ? `Lead #${detailQuote.leadId}` : "Sin lead")}
-                        disabled={!detailQuote.leadId}
-                        onClick={() => detailQuote.leadId && navigate("/crm", { state: { openLeadId: detailQuote.leadId } })}
+                        value={detailQuote.lead?.fullName || detailQuote.leadName || "Sin lead"}
+                        disabled={!getRelatedPublicId(detailQuote, "leadPublicId", "leadId")}
+                        onClick={() => {
+                            const leadPublicId = getRelatedPublicId(detailQuote, "leadPublicId", "leadId");
+                            if (leadPublicId) navigate("/crm", { state: { openLeadId: leadPublicId } });
+                        }}
                     />
                     <OriginCard
                         label="Reserva"
-                        value={detailQuote.convertedReservaId ? `Reserva #${detailQuote.convertedReservaId}` : "Todavia no convertida"}
-                        disabled={!detailQuote.convertedReservaId}
-                        onClick={() => detailQuote.convertedReservaId && navigate(`/reservas/${detailQuote.convertedReservaId}`)}
+                        value={detailQuote.convertedReserva?.numeroReserva || detailQuote.convertedReservaNumeroReserva || "Todavia no convertida"}
+                        disabled={!getRelatedPublicId(detailQuote, "convertedReservaPublicId", "convertedReservaId")}
+                        onClick={() => {
+                            const reservaPublicId = getRelatedPublicId(detailQuote, "convertedReservaPublicId", "convertedReservaId");
+                            if (reservaPublicId) navigate(`/reservas/${reservaPublicId}`);
+                        }}
                     />
                 </div>
 
@@ -272,7 +282,7 @@ export default function QuotesPage() {
                                 No hay servicios. Agrega items para armar la cotizacion.
                             </div>
                         ) : detailQuote.items.map((item) => (
-                            <div key={item.id} className="px-6 py-3 flex items-center gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
+                            <div key={getPublicId(item)} className="px-6 py-3 flex items-center gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
                                 <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 flex items-center justify-center text-[10px] font-black">
                                     {item.serviceType?.substring(0, 3).toUpperCase()}
                                 </div>
@@ -282,8 +292,8 @@ export default function QuotesPage() {
                                         {item.quantity}x | Costo: {fmt(item.unitCost)} | Venta: {fmt(item.unitPrice)}
                                     </div>
                                 </div>
-                                <span className="text-sm font-black text-slate-900 dark:text-white">{fmt(item.unitPrice * item.quantity)}</span>
-                                <button onClick={() => handleRemoveItem(item.id)} className="p-1.5 rounded hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-500">
+                                <span className="text-sm font-black text-slate-900 dark:text-white">{fmt(item.totalPrice ?? item.unitPrice * item.quantity)}</span>
+                                <button onClick={() => handleRemoveItem(getPublicId(item))} className="p-1.5 rounded hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-500">
                                     <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                             </div>
@@ -293,31 +303,31 @@ export default function QuotesPage() {
 
                 <div className="flex gap-3 flex-wrap">
                     {detailQuote.status === "Borrador" && (
-                        <button onClick={() => handleStatusChange(detailQuote.id, "Enviada")} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+                        <button onClick={() => handleStatusChange(getPublicId(detailQuote), "Enviada")} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
                             <Send className="w-4 h-4" /> Marcar como enviada
                         </button>
                     )}
                     {detailQuote.status === "Enviada" && (
                         <>
-                            <button onClick={() => handleStatusChange(detailQuote.id, "Aceptada")} className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700">
+                            <button onClick={() => handleStatusChange(getPublicId(detailQuote), "Aceptada")} className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700">
                                 <Check className="w-4 h-4" /> Aceptada
                             </button>
-                            <button onClick={() => handleStatusChange(detailQuote.id, "Rechazada")} className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700">
+                            <button onClick={() => handleStatusChange(getPublicId(detailQuote), "Rechazada")} className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700">
                                 <X className="w-4 h-4" /> Rechazada
                             </button>
                         </>
                     )}
-                    {detailQuote.status === "Aceptada" && !detailQuote.convertedReservaId && (
-                        <button onClick={() => handleConvert(detailQuote.id)} className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700">
+                    {!getRelatedPublicId(detailQuote, "convertedReservaPublicId", "convertedReservaId") && detailQuote.status === "Aceptada" && (
+                        <button onClick={() => handleConvert(getPublicId(detailQuote))} className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700">
                             <ArrowRight className="w-4 h-4" /> Convertir a reserva
                         </button>
                     )}
-                    {detailQuote.convertedReservaId && (
+                    {getRelatedPublicId(detailQuote, "convertedReservaPublicId", "convertedReservaId") && (
                         <button
-                            onClick={() => navigate(`/reservas/${detailQuote.convertedReservaId}`)}
+                            onClick={() => navigate(`/reservas/${getRelatedPublicId(detailQuote, "convertedReservaPublicId", "convertedReservaId")}`)}
                             className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-xl text-sm font-bold"
                         >
-                            <Check className="w-4 h-4" /> Abrir reserva #{detailQuote.convertedReservaId}
+                            <Check className="w-4 h-4" /> Abrir reserva {detailQuote.convertedReserva?.numeroReserva || detailQuote.convertedReservaNumeroReserva}
                         </button>
                     )}
                 </div>
@@ -374,7 +384,7 @@ export default function QuotesPage() {
                                 </tr>
                             ) : (
                                 filtered.map((quote) => (
-                                    <tr key={quote.id} onClick={() => loadDetail(quote.id)} className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors cursor-pointer">
+                                    <tr key={getPublicId(quote)} onClick={() => loadDetail(getPublicId(quote))} className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors cursor-pointer">
                                         <td className="px-4 py-3 align-middle whitespace-nowrap">
                                             <span className="text-[11px] font-black text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 px-2 py-1 rounded-md">
                                                 {quote.quoteNumber}
@@ -383,8 +393,8 @@ export default function QuotesPage() {
                                         <td className="px-4 py-3 align-middle">
                                             <div className="font-semibold text-sm text-slate-900 dark:text-white truncate">{quote.title}</div>
                                             <div className="text-xs text-slate-400 truncate">
-                                                {quote.customer?.fullName || "Sin cliente"}
-                                                {quote.leadId ? ` · Lead #${quote.leadId}` : ""}
+                                                {quote.customer?.fullName || quote.customerName || "Sin cliente"}
+                                                {quote.leadName ? ` · ${quote.leadName}` : ""}
                                             </div>
                                             <div className="text-xs text-slate-400 flex items-center gap-1 mt-1">
                                                 <Calendar className="w-3 h-3" />
@@ -424,7 +434,7 @@ export default function QuotesPage() {
                                                 <button
                                                     onClick={(event) => {
                                                         event.stopPropagation();
-                                                        handleDelete(quote.id);
+                                                        handleDelete(getPublicId(quote));
                                                     }}
                                                     className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded"
                                                 >
@@ -482,7 +492,7 @@ function QuoteFormModal({ customers, initial, onSave, onClose }) {
     const [form, setForm] = useState({
         title: initial?.title || "",
         description: initial?.description || "",
-        customerId: initial?.customerId || "",
+        customerPublicId: initial?.customerPublicId || initial?.customer?.publicId || "",
         destination: initial?.destination || "",
         adults: initial?.adults || 2,
         children: initial?.children || 0,
@@ -499,9 +509,9 @@ function QuoteFormModal({ customers, initial, onSave, onClose }) {
             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={(event) => event.stopPropagation()}>
                 <h2 className="text-lg font-black text-slate-900 dark:text-white">{initial ? "Editar cotizacion" : "Nueva cotizacion"}</h2>
                 <input value={form.title} onChange={(event) => set("title", event.target.value)} placeholder="Titulo *" className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm" />
-                <select value={form.customerId} onChange={(event) => set("customerId", event.target.value ? parseInt(event.target.value) : null)} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm">
+                <select value={form.customerPublicId || ""} onChange={(event) => set("customerPublicId", event.target.value)} className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm">
                     <option value="">Cliente (opcional)</option>
-                    {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.fullName}</option>)}
+                    {customers.map((customer) => <option key={getPublicId(customer)} value={getPublicId(customer)}>{customer.fullName}</option>)}
                 </select>
                 <input value={form.destination} onChange={(event) => set("destination", event.target.value)} placeholder="Destino" className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-sm" />
                 <div className="grid grid-cols-2 gap-3">

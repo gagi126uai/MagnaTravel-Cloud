@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
-using System.Security.Claims;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -12,10 +14,12 @@ namespace TravelApi.Controllers;
 public class InvoicesController : ControllerBase
 {
     private readonly IInvoiceService _invoiceService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public InvoicesController(IInvoiceService invoiceService)
+    public InvoicesController(IInvoiceService invoiceService, EntityReferenceResolver entityReferenceResolver)
     {
         _invoiceService = invoiceService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet("summary")]
@@ -53,14 +57,15 @@ public class InvoicesController : ControllerBase
         }
     }
 
-    [HttpPost("{id}/retry")]
-    public async Task<IActionResult> RetryInvoice(int id, CancellationToken ct)
+    [HttpPost("{publicIdOrLegacyId}/retry")]
+    public async Task<IActionResult> RetryInvoice(string publicIdOrLegacyId, CancellationToken ct)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Invoice>(publicIdOrLegacyId, ct);
             var success = await _invoiceService.RetryAsync(id, ct);
             if (!success) return NotFound();
-            
+
             return Accepted(new { message = "Reintento encolado." });
         }
         catch (InvalidOperationException ex)
@@ -69,21 +74,22 @@ public class InvoicesController : ControllerBase
         }
     }
 
-    [HttpGet("reserva/{reservaId}")]
-    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByReservaId(int reservaId, CancellationToken ct)
+    [HttpGet("reserva/{publicIdOrLegacyId}")]
+    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByReservaId(string publicIdOrLegacyId, CancellationToken ct)
     {
+        var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
         var invoices = await _invoiceService.GetByReservaIdAsync(reservaId, ct);
         return Ok(invoices);
     }
 
-    [HttpGet("{id}/pdf")]
-    public async Task<IActionResult> GetInvoicePdf(int id, CancellationToken ct)
+    [HttpGet("{publicIdOrLegacyId}/pdf")]
+    public async Task<IActionResult> GetInvoicePdf(string publicIdOrLegacyId, CancellationToken ct)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Invoice>(publicIdOrLegacyId, ct);
             var pdfBytes = await _invoiceService.GetPdfAsync(id, ct);
-            // We'd need the invoice details to name the file properly, but for now we use a generic name or fetch it in the service if needed.
-            return File(pdfBytes, "application/pdf", $"Factura-{id}.pdf");
+            return File(pdfBytes, "application/pdf", $"Factura-{publicIdOrLegacyId}.pdf");
         }
         catch (KeyNotFoundException)
         {
@@ -99,12 +105,12 @@ public class InvoicesController : ControllerBase
         }
     }
 
-    [HttpPost("{id}/annul")]
-    public async Task<IActionResult> AnnulInvoice(int id, CancellationToken ct)
+    [HttpPost("{publicIdOrLegacyId}/annul")]
+    public async Task<IActionResult> AnnulInvoice(string publicIdOrLegacyId, CancellationToken ct)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Invoice>(publicIdOrLegacyId, ct);
         await _invoiceService.EnqueueAnnulmentAsync(id, userId, ct);
-        return Accepted(new { Message = "La anulación se está procesando en segundo plano. Te avisaremos cuando termine." });
+        return Accepted(new { Message = "La anulacion se esta procesando en segundo plano. Te avisaremos cuando termine." });
     }
 }
-

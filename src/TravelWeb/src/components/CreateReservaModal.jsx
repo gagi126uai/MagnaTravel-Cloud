@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { X, User, Calendar, FileText, CheckCircle2, Search } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
+import { getPublicId } from "../lib/publicIds";
 
 export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
     if (!isOpen) return null;
@@ -56,7 +57,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
         try {
             await api.post("/reservas", {
                 name: "", // Backend will auto-generate
-                payerId: formData.payerId ? parseInt(formData.payerId) : null,
+                payerId: formData.payerId || null,
                 startDate: formData.startDate ? new Date(formData.startDate).toISOString() : null,
                 status: formData.isBudget ? 'Presupuesto' : 'Reservado'
             });
@@ -177,7 +178,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
                                 >
                                     <option value="">Seleccionar cliente...</option>
                                     {customers.map(c => (
-                                        <option key={c.id} value={c.id}>{c.fullName}</option>
+                                        <option key={getPublicId(c)} value={getPublicId(c)}>{c.fullName}</option>
                                     ))}
                                 </select>
                                 <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-500">

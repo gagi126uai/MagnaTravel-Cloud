@@ -9,6 +9,7 @@ import {
     User, CalendarRange, Users2, Info, Copy
 } from "lucide-react";
 import Swal from "sweetalert2";
+import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 
 const STATUSES = [
     { value: "Nuevo", label: "Nuevo", dot: "bg-slate-400", badge: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
@@ -111,19 +112,19 @@ export default function CRMPage() {
     };
 
     const handleStatusChange = async (id, status) => {
-        try { await api.patch(`/leads/${id}/status`, { status }); showSuccess(`Estado: ${status}`); loadLeads(); if (detailLead?.id === id) loadDetail(id); }
+        try { await api.patch(`/leads/${id}/status`, { status }); showSuccess(`Estado: ${status}`); loadLeads(); if (getPublicId(detailLead) === id) loadDetail(id); }
         catch { showError("Error al cambiar estado"); }
     };
 
     const handleConvert = async (id) => {
         const { isConfirmed } = await Swal.fire({ title: "¿Convertir a cliente?", text: "Se creará un cliente nuevo.", icon: "question", showCancelButton: true, confirmButtonColor: "#4f46e5" });
         if (!isConfirmed) return;
-        try { const res = await api.post(`/leads/${id}/convert`); showSuccess(`Cliente creado: #${res.customerId}`); loadLeads(); if (detailLead?.id === id) loadDetail(id); }
+        try { const res = await api.post(`/leads/${id}/convert`); showSuccess("Cliente creado"); loadLeads(); if (getPublicId(detailLead) === id) loadDetail(id); if (res?.customerPublicId) navigate(`/customers/${res.customerPublicId}/account`); }
         catch (e) { showError(e.message || "Error al convertir"); }
     };
 
     const handleAddActivity = async (activity) => {
-        try { await api.post(`/leads/${detailLead.id}/activities`, activity); showSuccess("Actividad registrada"); setShowActivityModal(false); loadDetail(detailLead.id); }
+        try { await api.post(`/leads/${getPublicId(detailLead)}/activities`, activity); showSuccess("Actividad registrada"); setShowActivityModal(false); loadDetail(getPublicId(detailLead)); }
         catch { showError("Error al registrar actividad"); }
     };
 
@@ -138,11 +139,11 @@ export default function CRMPage() {
         try {
             setCreatingQuote(true);
             const res = await api.post(`/leads/${id}/quote-draft`);
-            showSuccess(`Cotizacion creada: ${res.quoteNumber || `#${res.quoteId}`}`);
+            showSuccess(`Cotizacion creada: ${res.quoteNumber || "nueva"}`);
             setDetailLead(null);
             setDetailJourney(null);
             loadLeads();
-            navigate("/quotes", { state: { openQuoteId: res.quoteId } });
+            navigate("/quotes", { state: { openQuoteId: res.quotePublicId } });
         } catch (e) {
             showError(e.message || "Error al crear cotizacion");
         } finally {
@@ -151,12 +152,12 @@ export default function CRMPage() {
     };
 
     const handleSendChat = async () => {
-        if (!chatMessage.trim() || !detailLead?.id) return;
+        if (!chatMessage.trim() || !getPublicId(detailLead)) return;
         setSendingChat(true);
         try {
-            await api.post(`/leads/${detailLead.id}/whatsapp-message`, { message: chatMessage.trim() });
+            await api.post(`/leads/${getPublicId(detailLead)}/whatsapp-message`, { message: chatMessage.trim() });
             setChatMessage("");
-            loadDetail(detailLead.id);
+            loadDetail(getPublicId(detailLead));
         } catch (e) {
             showError(e.message || "Error al enviar mensaje");
         } finally {
@@ -259,7 +260,7 @@ export default function CRMPage() {
                                 {visibleLeads.map(lead => {
                                     const sc = getStatusConfig(lead.status);
                                     return (
-                                        <tr key={lead.id} onClick={() => loadDetail(lead.id)}
+                                        <tr key={getPublicId(lead)} onClick={() => loadDetail(getPublicId(lead))}
                                             className="group cursor-pointer hover:bg-indigo-50/30 dark:hover:bg-indigo-900/5 transition-colors">
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-3">
@@ -348,7 +349,7 @@ export default function CRMPage() {
                                                 <div className="flex items-center gap-4 text-slate-400 text-sm font-medium">
                                                     <span className="flex items-center gap-1.5"><Clock className="w-4 h-4" /> Ingresó {timeAgo(detailLead.createdAt)}</span>
                                                     <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                                                    <span className="flex items-center gap-1.5"><Info className="w-4 h-4" /> CRM ID: #{detailLead.id}</span>
+                                                    <span className="flex items-center gap-1.5"><Info className="w-4 h-4" /> Lead comercial</span>
                                                 </div>
                                             </div>
                                             <button onClick={() => { setDetailLead(null); setDetailJourney(null); }} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-2xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors group">
@@ -383,60 +384,60 @@ export default function CRMPage() {
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                                 <JourneyCard
                                                     label="Cliente"
-                                                    value={detailJourney?.convertedCustomerName || (detailLead.convertedCustomerId ? `Cliente #${detailLead.convertedCustomerId}` : "Pendiente")}
-                                                    actionLabel={detailLead.convertedCustomerId ? "Abrir cuenta" : "Convertir"}
-                                                    disabled={!detailLead.convertedCustomerId}
-                                                    onAction={() => detailLead.convertedCustomerId && navigate(`/customers/${detailLead.convertedCustomerId}/account`)}
+                                                    value={detailJourney?.convertedCustomerName || (getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") ? "Cliente convertido" : "Pendiente")}
+                                                    actionLabel={getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") ? "Abrir cuenta" : "Convertir"}
+                                                    disabled={!getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId")}
+                                                    onAction={() => getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") && navigate(`/customers/${getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId")}/account`)}
                                                 />
                                                 <JourneyCard
                                                     label="Cotizacion"
                                                     value={detailJourney?.quotes?.[0]?.quoteNumber || "Sin cotizacion"}
                                                     meta={detailJourney?.quotes?.[0]?.status || "Borrador aun no creado"}
-                                                    actionLabel={detailJourney?.latestQuoteId ? "Abrir" : "Crear"}
-                                                    disabled={!detailJourney?.latestQuoteId}
-                                                    onAction={() => detailJourney?.latestQuoteId && navigate("/quotes", { state: { openQuoteId: detailJourney.latestQuoteId } })}
+                                                    actionLabel={detailJourney?.latestQuotePublicId ? "Abrir" : "Crear"}
+                                                    disabled={!detailJourney?.latestQuotePublicId}
+                                                    onAction={() => detailJourney?.latestQuotePublicId && navigate("/quotes", { state: { openQuoteId: detailJourney.latestQuotePublicId } })}
                                                 />
                                                 <JourneyCard
                                                     label="Reserva"
                                                     value={detailJourney?.reservas?.[0]?.numeroReserva || "Sin reserva"}
                                                     meta={detailJourney?.reservas?.[0]?.status || "Aun no convertida"}
-                                                    actionLabel={detailJourney?.latestReservaId ? "Abrir" : "Pendiente"}
-                                                    disabled={!detailJourney?.latestReservaId}
-                                                    onAction={() => detailJourney?.latestReservaId && navigate(`/reservas/${detailJourney.latestReservaId}`)}
+                                                    actionLabel={detailJourney?.latestReservaPublicId ? "Abrir" : "Pendiente"}
+                                                    disabled={!detailJourney?.latestReservaPublicId}
+                                                    onAction={() => detailJourney?.latestReservaPublicId && navigate(`/reservas/${detailJourney.latestReservaPublicId}`)}
                                                 />
                                             </div>
                                         </div>
 
                                         <div className="flex gap-3 flex-wrap items-center">
-                                            {!detailLead.convertedCustomerId && detailLead.status !== "Perdido" && (
-                                                <ActionBtnLg onClick={() => handleConvert(detailLead.id)} bg="bg-indigo-600" text="Convertir a Cliente" icon={User} />
+                                            {!getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") && detailLead.status !== "Perdido" && (
+                                                <ActionBtnLg onClick={() => handleConvert(getPublicId(detailLead))} bg="bg-indigo-600" text="Convertir a Cliente" icon={User} />
                                             )}
-                                            {detailLead.convertedCustomerId && (
-                                                <ActionBtnLg onClick={() => handleCreateQuoteDraft(detailLead.id)} bg="bg-violet-600" text={creatingQuote ? "Creando..." : "Crear Cotizacion"} icon={FileText} disabled={creatingQuote} />
+                                            {getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") && (
+                                                <ActionBtnLg onClick={() => handleCreateQuoteDraft(getPublicId(detailLead))} bg="bg-violet-600" text={creatingQuote ? "Creando..." : "Crear Cotizacion"} icon={FileText} disabled={creatingQuote} />
                                             )}
-                                            {detailJourney?.latestQuoteId && (
-                                                <ActionBtnLg onClick={() => navigate("/quotes", { state: { openQuoteId: detailJourney.latestQuoteId } })} bg="bg-slate-900" text="Abrir Cotizacion" icon={ArrowRight} />
+                                            {detailJourney?.latestQuotePublicId && (
+                                                <ActionBtnLg onClick={() => navigate("/quotes", { state: { openQuoteId: detailJourney.latestQuotePublicId } })} bg="bg-slate-900" text="Abrir Cotizacion" icon={ArrowRight} />
                                             )}
-                                            {detailJourney?.latestReservaId && (
-                                                <ActionBtnLg onClick={() => navigate(`/reservas/${detailJourney.latestReservaId}`)} bg="bg-emerald-600" text="Abrir Reserva" icon={ArrowRight} />
+                                            {detailJourney?.latestReservaPublicId && (
+                                                <ActionBtnLg onClick={() => navigate(`/reservas/${detailJourney.latestReservaPublicId}`)} bg="bg-emerald-600" text="Abrir Reserva" icon={ArrowRight} />
                                             )}
                                         </div>
 
                                         {/* Primary Actions */}
                                         <div className="flex gap-3 flex-wrap items-center">
-                                            {detailLead.status === "Nuevo" && <ActionBtnLg onClick={() => handleStatusChange(detailLead.id, "Contactado")} bg="bg-blue-600" text="Marcar Contactado" icon={Send} />}
-                                            {detailLead.status === "Contactado" && <ActionBtnLg onClick={() => handleStatusChange(detailLead.id, "Cotizado")} bg="bg-violet-600" text="Subir Cotización" icon={FileText} />}
+                                            {detailLead.status === "Nuevo" && <ActionBtnLg onClick={() => handleStatusChange(getPublicId(detailLead), "Contactado")} bg="bg-blue-600" text="Marcar Contactado" icon={Send} />}
+                                            {detailLead.status === "Contactado" && <ActionBtnLg onClick={() => handleStatusChange(getPublicId(detailLead), "Cotizado")} bg="bg-violet-600" text="Subir Cotización" icon={FileText} />}
                                             {detailLead.status === "Cotizado" && (
                                                 <div className="flex gap-2">
-                                                    <ActionBtnLg onClick={() => handleStatusChange(detailLead.id, "Ganado")} bg="bg-emerald-600" text="Ganado" icon={Check} />
-                                                    <ActionBtnLg onClick={() => handleStatusChange(detailLead.id, "Perdido")} bg="bg-rose-500" text="Perdido" icon={X} />
+                                                    <ActionBtnLg onClick={() => handleStatusChange(getPublicId(detailLead), "Ganado")} bg="bg-emerald-600" text="Ganado" icon={Check} />
+                                                    <ActionBtnLg onClick={() => handleStatusChange(getPublicId(detailLead), "Perdido")} bg="bg-rose-500" text="Perdido" icon={X} />
                                                 </div>
                                             )}
-                                            {detailLead.status === "Ganado" && !detailLead.convertedCustomerId && <ActionBtnLg onClick={() => handleConvert(detailLead.id)} bg="bg-indigo-600" text="Convertir a Cliente" icon={User} />}
-                                            {detailLead.convertedCustomerId && <span className="px-6 py-3 bg-emerald-100/50 text-emerald-700 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2"><Check className="w-4 h-4" /> Cliente Registrado</span>}
+                                            {detailLead.status === "Ganado" && !getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") && <ActionBtnLg onClick={() => handleConvert(getPublicId(detailLead))} bg="bg-indigo-600" text="Convertir a Cliente" icon={User} />}
+                                            {getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") && <span className="px-6 py-3 bg-emerald-100/50 text-emerald-700 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2"><Check className="w-4 h-4" /> Cliente Registrado</span>}
                                             
                                             <div className="flex-1"></div>
-                                            <button onClick={() => handleDelete(detailLead.id)} className="p-3 text-rose-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/10 rounded-2xl transition-all">
+                                            <button onClick={() => handleDelete(getPublicId(detailLead))} className="p-3 text-rose-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/10 rounded-2xl transition-all">
                                                 <Trash2 className="w-5 h-5" />
                                             </button>
                                         </div>
@@ -463,7 +464,7 @@ export default function CRMPage() {
                                             <button onClick={() => setShowActivityModal(true)} className="p-2.5 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-400 hover:text-indigo-500 transition-colors" title="Registrar Actividad Manual">
                                                 <MessageSquare className="w-4 h-4" />
                                             </button>
-                                            <button onClick={() => loadDetail(detailLead.id)} className="p-2.5 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-400 hover:text-indigo-500 transition-colors" title="Actualizar Chat">
+                                            <button onClick={() => loadDetail(getPublicId(detailLead))} className="p-2.5 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-400 hover:text-indigo-500 transition-colors" title="Actualizar Chat">
                                                 <RefreshCw className="w-4 h-4" />
                                             </button>
                                         </div>

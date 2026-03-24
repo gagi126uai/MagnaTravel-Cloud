@@ -28,7 +28,7 @@ public class CustomerService : ICustomerService
             .OrderBy(customer => customer.FullName)
             .Select(c => new 
             {
-                c.Id,
+                c.PublicId,
                 c.FullName,
                 c.Email,
                 c.Phone,
@@ -56,7 +56,7 @@ public class CustomerService : ICustomerService
 
         return new 
         {
-            customer.Id,
+            customer.PublicId,
             customer.FullName,
             customer.Email,
             customer.Phone,
@@ -82,8 +82,6 @@ public class CustomerService : ICustomerService
 
     public async Task<Customer> UpdateCustomerAsync(int id, Customer customer, CancellationToken cancellationToken)
     {
-        if (id != customer.Id) throw new ArgumentException("ID mismatch");
-
         var existing = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
         if (existing == null) throw new KeyNotFoundException("Cliente no encontrado");
 
@@ -116,7 +114,7 @@ public class CustomerService : ICustomerService
             .OrderByDescending(f => f.CreatedAt)
             .Select(f => new
             {
-                f.Id,
+                f.PublicId,
                 f.NumeroReserva,
                 f.Name,
                 f.Status,
@@ -128,19 +126,19 @@ public class CustomerService : ICustomerService
             })
             .ToListAsync(cancellationToken);
 
-        var fileIds = files.Select(f => f.Id).ToList();
+        var filePublicIds = files.Select(f => f.PublicId).ToList();
         var payments = await _dbContext.Payments
             .AsNoTracking()
-            .Where(p => p.ReservaId != null && fileIds.Contains(p.ReservaId.Value) && !p.IsDeleted)
+            .Where(p => p.Reserva != null && filePublicIds.Contains(p.Reserva.PublicId) && !p.IsDeleted)
             .OrderByDescending(p => p.PaidAt)
             .Select(p => new
             {
-                p.Id,
+                p.PublicId,
                 p.Amount,
                 p.Method,
                 PaymentDate = p.PaidAt,
                 p.Notes,
-                ReservaId = p.ReservaId,
+                ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null,
                 NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null,
                 FileName = p.Reserva != null ? p.Reserva.Name : null
             })
@@ -153,11 +151,11 @@ public class CustomerService : ICustomerService
         // Facturas asociadas a sus reservas
         var invoices = await _dbContext.Invoices
             .AsNoTracking()
-            .Where(i => i.ReservaId != null && fileIds.Contains(i.ReservaId.Value))
+            .Where(i => i.Reserva != null && filePublicIds.Contains(i.Reserva.PublicId))
             .OrderByDescending(i => i.CreatedAt)
             .Select(i => new
             {
-                i.Id,
+                i.PublicId,
                 i.NumeroComprobante,
                 i.PuntoDeVenta,
                 i.TipoComprobante,
@@ -165,7 +163,7 @@ public class CustomerService : ICustomerService
                 i.CreatedAt,
                 i.Resultado,
                 i.CAE,
-                ReservaId = i.ReservaId,
+                ReservaPublicId = i.Reserva != null ? (Guid?)i.Reserva.PublicId : null,
                 NumeroReserva = i.Reserva != null ? i.Reserva.NumeroReserva : null
             })
             .ToListAsync(cancellationToken);
@@ -174,7 +172,7 @@ public class CustomerService : ICustomerService
         {
             Customer = new
             {
-                customer.Id,
+                customer.PublicId,
                 customer.FullName,
                 customer.Email,
                 customer.Phone,
@@ -190,9 +188,9 @@ public class CustomerService : ICustomerService
                 TotalSales = totalSales,
                 TotalPaid = totalPaid,
                 TotalBalance = totalBalance,
-                FileCount = files.Count,
-                PaymentCount = payments.Count,
-                InvoiceCount = invoices.Count
+                FileCount = files.Count(),
+                PaymentCount = payments.Count(),
+                InvoiceCount = invoices.Count()
             }
         };
     }

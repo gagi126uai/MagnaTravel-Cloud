@@ -12,7 +12,7 @@ public class CollectionsSummaryDto
 
 public class CollectionWorkItemDto
 {
-    public int ReservaId { get; set; }
+    public Guid ReservaPublicId { get; set; }
     public string NumeroReserva { get; set; } = string.Empty;
     public string CustomerName { get; set; } = string.Empty;
     public DateTime? StartDate { get; set; }
@@ -44,7 +44,7 @@ public class InvoicingSummaryDto
 
 public class InvoicingWorkItemDto
 {
-    public int ReservaId { get; set; }
+    public Guid ReservaPublicId { get; set; }
     public string NumeroReserva { get; set; } = string.Empty;
     public string CustomerName { get; set; } = string.Empty;
     public decimal TotalSale { get; set; }

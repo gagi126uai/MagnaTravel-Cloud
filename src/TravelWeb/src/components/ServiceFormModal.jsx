@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { X, Plane, Hotel, Bus, Package, Search, Calculator, DollarSign, AlertCircle } from "lucide-react";
+import { getPublicId } from "../lib/publicIds";
 
 const SERVICE_TYPES = [
     { value: "Aereo", label: "Aéreo", icon: Plane, color: "sky" },
@@ -66,7 +67,7 @@ function RateSelector({ serviceType, supplierId, onSelect, suppliers }) {
         );
     }
 
-    const supplierName = suppliers?.find(s => s.id.toString() === supplierId)?.name || "proveedor";
+    const supplierName = suppliers?.find((s) => getPublicId(s) === supplierId)?.name || "proveedor";
 
     return (
         <div className="relative">
@@ -147,7 +148,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
+                        {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div className="flex items-end pb-2">
@@ -239,7 +240,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
+                        {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div className="flex items-end pb-2">
@@ -322,7 +323,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
+                        {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div className="flex items-end pb-2">
@@ -422,7 +423,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
+                        {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name} {!s.isActive ? '(Inactivo)' : ''}</option>)}
                     </select>
                 </div>
                 <div className="flex items-end pb-2">
@@ -596,7 +597,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, suppliers
                 // Map fields based on type
                 const formattedForm = {
                     ...serviceToEdit,
-                    supplierId: serviceToEdit.supplierId?.toString() || "",
+                    supplierId: serviceToEdit.supplierPublicId?.toString() || serviceToEdit.supplierId?.toString() || "",
                     // Ensure dates are strings for inputs
                     departureDate: serviceToEdit.departureTime?.split('T')[0],
                     arrivalDate: serviceToEdit.arrivalTime?.split('T')[0],
@@ -715,11 +716,11 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, suppliers
 
             // If editing, append ID and change method to PUT
             if (serviceToEdit) {
-                endpoint += `/${serviceToEdit.id}`;
+                endpoint += `/${getPublicId(serviceToEdit)}`;
                 method = "put";
             }
 
-            const payload = { ...form, supplierId: parseInt(form.supplierId) };
+            const payload = { ...form, supplierId: form.supplierId };
 
             // Ajustar fechas según tipo
             if (serviceType === "Aereo") {

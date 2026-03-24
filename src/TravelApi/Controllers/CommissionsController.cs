@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -10,10 +12,12 @@ namespace TravelApi.Controllers;
 public class CommissionsController : ControllerBase
 {
     private readonly ICommissionService _commissionService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public CommissionsController(ICommissionService commissionService)
+    public CommissionsController(ICommissionService commissionService, EntityReferenceResolver entityReferenceResolver)
     {
         _commissionService = commissionService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     /// <summary>
@@ -77,9 +81,22 @@ public class CommissionsController : ControllerBase
     /// Retorna la regla más específica que aplique
     /// </summary>
     [HttpGet("calculate")]
-    public async Task<IActionResult> Calculate([FromQuery] int? supplierId, [FromQuery] string? serviceType, CancellationToken cancellationToken)
+    public async Task<IActionResult> Calculate([FromQuery] string? supplierId, [FromQuery] string? serviceType, CancellationToken cancellationToken)
     {
-        var percent = await _commissionService.CalculateCommissionAsync(supplierId, serviceType, cancellationToken);
+        var resolvedSupplierId = await ResolveOptionalSupplierIdAsync(supplierId, cancellationToken);
+        if (supplierId is not null && resolvedSupplierId is null)
+            return NotFound("Proveedor no encontrado.");
+
+        var percent = await _commissionService.CalculateCommissionAsync(resolvedSupplierId, serviceType, cancellationToken);
         return Ok(new { commissionPercent = percent });
+    }
+
+    private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(supplierPublicIdOrLegacyId))
+            return null;
+
+        var supplier = await _entityReferenceResolver.FindAsync<Supplier>(supplierPublicIdOrLegacyId, cancellationToken);
+        return supplier?.Id;
     }
 }

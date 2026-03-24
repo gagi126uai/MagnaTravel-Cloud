@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Building2, Mail, Wallet, Pencil } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { Badge } from "../../../components/ui/badge";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function SupplierMobileList({ suppliers, onEdit, onAccountClick }) {
     const getInitials = (name) => {
@@ -35,7 +36,7 @@ export function SupplierMobileList({ suppliers, onEdit, onAccountClick }) {
     return (
         <div className="md:hidden space-y-3">
             {visibleSuppliers.map((supplier) => (
-                <div key={supplier.id} className={`bg-white dark:bg-slate-900 rounded-xl p-4 border shadow-sm ${!supplier.isActive ? 'opacity-70 border-slate-200 dark:border-slate-800' : 'border-slate-200 dark:border-slate-800'}`}>
+                <div key={getPublicId(supplier)} className={`bg-white dark:bg-slate-900 rounded-xl p-4 border shadow-sm ${!supplier.isActive ? 'opacity-70 border-slate-200 dark:border-slate-800' : 'border-slate-200 dark:border-slate-800'}`}>
                     <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-3">
                             <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm shrink-0 ${getRandomColor(supplier.name)}`}>
@@ -69,7 +70,7 @@ export function SupplierMobileList({ suppliers, onEdit, onAccountClick }) {
 
                         <div className="flex items-center gap-1">
                             <button
-                                onClick={() => onAccountClick(supplier.id)}
+                                onClick={() => onAccountClick(supplier)}
                                 className="h-8 w-8 flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 transition-colors"
                             >
                                 <Wallet className="h-4 w-4" />

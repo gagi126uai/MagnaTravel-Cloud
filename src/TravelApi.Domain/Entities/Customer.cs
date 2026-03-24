@@ -2,9 +2,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TravelApi.Domain.Entities;
 
-public class Customer
+public class Customer : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     public string FullName { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string? Phone { get; set; }

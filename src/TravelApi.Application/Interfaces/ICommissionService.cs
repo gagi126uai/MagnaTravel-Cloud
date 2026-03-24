@@ -10,7 +10,7 @@ public interface ICommissionService
 }
 
 public record CreateCommissionRuleRequest(
-    int? SupplierId,
+    string? SupplierId,
     string? ServiceType,
     decimal CommissionPercent,
     int Priority,

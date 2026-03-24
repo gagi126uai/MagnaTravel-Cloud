@@ -3,6 +3,7 @@ import { User, Mail, Phone, XCircle, Search, Loader2, FileText } from "lucide-re
 import { useDebounce } from "../../../hooks/useDebounce";
 import { api } from "../../../api";
 import { showError, showSuccess, showWarning } from "../../../alerts";
+import { getPublicId } from "../../../lib/publicIds";
 
 
 export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
@@ -86,7 +87,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        onSave(formData, customer?.id);
+        onSave(formData, getPublicId(customer));
     };
 
     return (

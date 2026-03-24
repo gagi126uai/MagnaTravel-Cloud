@@ -25,7 +25,7 @@ public class CommissionService : ICommissionService
         return rules.Select(r => new
         {
             r.Id,
-            r.SupplierId,
+            SupplierPublicId = r.Supplier != null ? (Guid?)r.Supplier.PublicId : null,
             SupplierName = r.Supplier?.Name,
             r.ServiceType,
             r.CommissionPercent,
@@ -38,10 +38,21 @@ public class CommissionService : ICommissionService
 
     public async Task<object> CreateRuleAsync(CreateCommissionRuleRequest request, CancellationToken cancellationToken)
     {
+        int? supplierId = null;
+        if (!string.IsNullOrWhiteSpace(request.SupplierId))
+        {
+            supplierId = await _dbContext.Suppliers
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.SupplierId, cancellationToken);
+
+            if (!supplierId.HasValue)
+                throw new ArgumentException("Proveedor no encontrado.");
+        }
+
         // Verificar si ya existe una regla igual
         var existing = await _dbContext.CommissionRules
             .FirstOrDefaultAsync(r => 
-                r.SupplierId == request.SupplierId && 
+                r.SupplierId == supplierId && 
                 r.ServiceType == request.ServiceType &&
                 r.IsActive, cancellationToken);
 
@@ -50,7 +61,7 @@ public class CommissionService : ICommissionService
 
         var rule = new CommissionRule
         {
-            SupplierId = request.SupplierId,
+            SupplierId = supplierId,
             ServiceType = request.ServiceType,
             CommissionPercent = request.CommissionPercent,
             Priority = request.Priority,

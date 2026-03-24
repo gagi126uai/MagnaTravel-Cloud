@@ -2,7 +2,7 @@ namespace TravelApi.Application.DTOs;
 
 public class CreateInvoiceRequest
 {
-    public int ReservaId { get; set; }
+    public string ReservaId { get; set; } = string.Empty;
     public int CbteTipo { get; set; } // Optional: To override automatic detection
     public int Concepto { get; set; } = 3; // 1: Productos, 2: Servicios, 3: Ambos
     public int DocTipo { get; set; } = 99;
@@ -10,7 +10,7 @@ public class CreateInvoiceRequest
     
     public List<InvoiceItemDto> Items { get; set; } = new();
     public List<InvoiceTributeDto> Tributes { get; set; } = new();
-    public int? OriginalInvoiceId { get; set; } 
+    public string? OriginalInvoiceId { get; set; } 
     public bool IsCreditNote { get; set; } 
     public bool IsDebitNote { get; set; } 
     public bool ForceIssue { get; set; }

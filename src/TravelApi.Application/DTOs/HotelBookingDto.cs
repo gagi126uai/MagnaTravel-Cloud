@@ -2,8 +2,8 @@ namespace TravelApi.Application.DTOs;
 
 public class HotelBookingDto
 {
-    public int Id { get; set; }
-    public int SupplierId { get; set; }
+    public Guid PublicId { get; set; }
+    public Guid SupplierPublicId { get; set; }
     public string SupplierName { get; set; } = string.Empty;
     public string HotelName { get; set; } = string.Empty;
     public string City { get; set; } = string.Empty;

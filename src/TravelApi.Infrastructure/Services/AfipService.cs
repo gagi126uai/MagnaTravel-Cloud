@@ -369,9 +369,16 @@ public class AfipService : IAfipService
 
         // 2. Load Original Invoice (if Annulment/Note)
         Invoice? originalInvoice = null;
-        if (request.OriginalInvoiceId.HasValue)
+        if (!string.IsNullOrWhiteSpace(request.OriginalInvoiceId))
         {
-            originalInvoice = await _context.Invoices.FindAsync(request.OriginalInvoiceId.Value);
+            var originalInvoiceId = await _context.Invoices
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.OriginalInvoiceId);
+
+            if (!originalInvoiceId.HasValue)
+                throw new Exception("Comprobante original no encontrado");
+
+            originalInvoice = await _context.Invoices.FindAsync(originalInvoiceId.Value);
             if (originalInvoice == null) throw new Exception("Comprobante original no encontrado");
         }
 
@@ -452,7 +459,7 @@ public class AfipService : IAfipService
         var invoice = new Invoice
         {
              ReservaId = ReservaId,
-             OriginalInvoiceId = request.OriginalInvoiceId,
+             OriginalInvoiceId = originalInvoice?.Id,
              TipoComprobante = cbteTipo,
              PuntoDeVenta = settings.PuntoDeVenta,
              NumeroComprobante = 0, // Placeholder

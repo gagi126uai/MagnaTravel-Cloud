@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Mail, Phone, Wallet, Pencil, Power } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { Badge } from "../../../components/ui/badge";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClick }) {
     const getInitials = (name) => {
@@ -30,7 +31,7 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0 divide-y divide-slate-100 dark:divide-slate-800">
                         {visibleCustomers.map((customer) => (
-                            <tr key={customer.id} className={`transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-900/50 ${!customer.isActive ? 'opacity-60 bg-slate-50/30' : ''}`}>
+                            <tr key={getPublicId(customer)} className={`transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-900/50 ${!customer.isActive ? 'opacity-60 bg-slate-50/30' : ''}`}>
                                 <td className="p-4 align-middle">
                                     <div className="flex items-center gap-3">
                                         <div className={`h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold shadow-sm ${customer.isActive ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
@@ -70,7 +71,7 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                                 <td className="p-4 align-middle text-right">
                                     <div className="flex items-center justify-end gap-1">
                                         <button
-                                            onClick={() => onAccountClick(customer.id)}
+                                            onClick={() => onAccountClick(customer)}
                                             title="Ver Cuenta Corriente"
                                             className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-indigo-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900 transition-colors shadow-sm"
                                         >

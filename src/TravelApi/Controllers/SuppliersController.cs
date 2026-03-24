@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -12,17 +13,19 @@ namespace TravelApi.Controllers;
 public class SuppliersController : ControllerBase
 {
     private readonly ISupplierService _supplierService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public SuppliersController(ISupplierService supplierService)
+    public SuppliersController(ISupplierService supplierService, EntityReferenceResolver entityReferenceResolver)
     {
         _supplierService = supplierService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Supplier>>> GetSuppliers(CancellationToken cancellationToken)
     {
         var suppliers = await _supplierService.GetSuppliersAsync(cancellationToken);
-        return Ok(suppliers);
+        return Ok(suppliers.Select(ToSupplierResponse));
     }
 
     [HttpPost("recalculate-all")]
@@ -32,13 +35,14 @@ public class SuppliersController : ControllerBase
         return Ok(new { Message = "Saldos recalculados" });
     }
 
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<Supplier>> GetSupplier(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}")]
+    public async Task<ActionResult<Supplier>> GetSupplier(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             var supplier = await _supplierService.GetSupplierAsync(id, cancellationToken);
-            return Ok(supplier);
+            return Ok(ToSupplierResponse(supplier));
         }
         catch (KeyNotFoundException)
         {
@@ -52,7 +56,7 @@ public class SuppliersController : ControllerBase
         try
         {
             var result = await _supplierService.CreateSupplierAsync(supplier, cancellationToken);
-            return CreatedAtAction(nameof(GetSupplier), new { id = result.Id }, result);
+            return CreatedAtAction(nameof(GetSupplier), new { publicIdOrLegacyId = result.PublicId }, ToSupplierResponse(result));
         }
         catch (ArgumentException ex)
         {
@@ -60,13 +64,14 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpPut("{id:int}")]
-    public async Task<ActionResult<Supplier>> UpdateSupplier(int id, Supplier supplier, CancellationToken cancellationToken)
+    [HttpPut("{publicIdOrLegacyId}")]
+    public async Task<ActionResult<Supplier>> UpdateSupplier(string publicIdOrLegacyId, Supplier supplier, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             var result = await _supplierService.UpdateSupplierAsync(id, supplier, cancellationToken);
-            return Ok(result);
+            return Ok(ToSupplierResponse(result));
         }
         catch (ArgumentException ex)
         {
@@ -78,12 +83,13 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpDelete("{id:int}")]
+    [HttpDelete("{publicIdOrLegacyId}")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult> DeleteSupplier(int id, CancellationToken cancellationToken)
+    public async Task<ActionResult> DeleteSupplier(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             await _supplierService.DeleteSupplierAsync(id, cancellationToken);
             return Ok(new { Message = "Proveedor eliminado" });
         }
@@ -97,12 +103,13 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpDelete("{id:int}/force")]
+    [HttpDelete("{publicIdOrLegacyId}/force")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult> ForceDeleteSupplier(int id, CancellationToken cancellationToken)
+    public async Task<ActionResult> ForceDeleteSupplier(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             await _supplierService.ForceDeleteSupplierAsync(id, cancellationToken);
             return Ok(new { Message = "Proveedor eliminado (forzado)" });
         }
@@ -112,11 +119,12 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpGet("{id:int}/account")]
-    public async Task<ActionResult> GetSupplierAccount(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/account")]
+    public async Task<ActionResult> GetSupplierAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             var accountDto = await _supplierService.GetSupplierAccountAsync(id, cancellationToken);
             return Ok(accountDto);
         }
@@ -126,13 +134,14 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpPost("{id:int}/payments")]
-    public async Task<ActionResult> AddSupplierPayment(int id, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
+    [HttpPost("{publicIdOrLegacyId}/payments")]
+    public async Task<ActionResult> AddSupplierPayment(string publicIdOrLegacyId, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var paymentId = await _supplierService.AddSupplierPaymentAsync(id, request, cancellationToken);
-            return Ok(new { Message = "Pago registrado correctamente", PaymentId = paymentId });
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            var paymentPublicId = await _supplierService.AddSupplierPaymentAsync(id, request, cancellationToken);
+            return Ok(new { Message = "Pago registrado correctamente", PaymentPublicId = paymentPublicId });
         }
         catch (KeyNotFoundException ex)
         {
@@ -148,11 +157,13 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpPut("{id:int}/payments/{paymentId:int}")]
-    public async Task<ActionResult> UpdateSupplierPayment(int id, int paymentId, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
+    [HttpPut("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    public async Task<ActionResult> UpdateSupplierPayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            var paymentId = await _entityReferenceResolver.ResolveRequiredIdAsync<SupplierPayment>(paymentPublicIdOrLegacyId, cancellationToken);
             await _supplierService.UpdateSupplierPaymentAsync(id, paymentId, request, cancellationToken);
             return Ok(new { Message = "Pago actualizado correctamente" });
         }
@@ -170,11 +181,13 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpDelete("{id:int}/payments/{paymentId:int}")]
-    public async Task<ActionResult> DeleteSupplierPayment(int id, int paymentId, CancellationToken cancellationToken)
+    [HttpDelete("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    public async Task<ActionResult> DeleteSupplierPayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            var paymentId = await _entityReferenceResolver.ResolveRequiredIdAsync<SupplierPayment>(paymentPublicIdOrLegacyId, cancellationToken);
             await _supplierService.DeleteSupplierPaymentAsync(id, paymentId, cancellationToken);
             return Ok(new { Message = "Pago eliminado y saldo restaurado" });
         }
@@ -184,10 +197,26 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpGet("{id:int}/payments")]
-    public async Task<ActionResult> GetSupplierPayments(int id, CancellationToken cancellationToken)
+    [HttpGet("{publicIdOrLegacyId}/payments")]
+    public async Task<ActionResult> GetSupplierPayments(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
+        var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
         var payments = await _supplierService.GetSupplierPaymentsHistoryAsync(id, cancellationToken);
         return Ok(payments);
     }
+
+    private static object ToSupplierResponse(Supplier supplier) => new
+    {
+        supplier.PublicId,
+        supplier.Name,
+        supplier.ContactName,
+        supplier.Email,
+        supplier.Phone,
+        supplier.TaxId,
+        supplier.TaxCondition,
+        supplier.Address,
+        supplier.IsActive,
+        supplier.CurrentBalance,
+        supplier.CreatedAt
+    };
 }

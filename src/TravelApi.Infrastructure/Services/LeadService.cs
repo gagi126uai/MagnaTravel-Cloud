@@ -148,7 +148,7 @@ public class LeadService : ILeadService
             CustomerId = lead.ConvertedCustomerId,
             LeadId = lead.Id,
             Destination = lead.InterestedIn,
-            Notes = $"Cotizacion creada desde Lead #{lead.Id}",
+            Notes = $"Cotizacion creada desde lead {lead.FullName}",
             CreatedAt = DateTime.UtcNow,
             ValidUntil = DateTime.UtcNow.AddDays(15)
         };
@@ -170,12 +170,12 @@ public class LeadService : ILeadService
             .OrderByDescending(q => q.CreatedAt)
             .Select(q => new LeadJourneyQuoteDto
             {
-                Id = q.Id,
+                PublicId = q.PublicId,
                 QuoteNumber = q.QuoteNumber,
                 Title = q.Title,
                 Status = q.Status,
-                CustomerId = q.CustomerId,
-                ConvertedReservaId = q.ConvertedReservaId,
+                CustomerPublicId = q.Customer != null ? q.Customer.PublicId : null,
+                ConvertedReservaPublicId = q.ConvertedReserva != null ? q.ConvertedReserva.PublicId : null,
                 CreatedAt = q.CreatedAt
             })
             .ToListAsync(cancellationToken);
@@ -185,22 +185,22 @@ public class LeadService : ILeadService
             .OrderByDescending(r => r.CreatedAt)
             .Select(r => new LeadJourneyReservaDto
             {
-                Id = r.Id,
+                PublicId = r.PublicId,
                 NumeroReserva = r.NumeroReserva,
                 Name = r.Name,
                 Status = r.Status,
-                SourceQuoteId = r.SourceQuoteId,
+                SourceQuotePublicId = r.SourceQuote != null ? r.SourceQuote.PublicId : null,
                 CreatedAt = r.CreatedAt
             })
             .ToListAsync(cancellationToken);
 
         return new LeadJourneyDto
         {
-            LeadId = lead.Id,
-            ConvertedCustomerId = lead.ConvertedCustomerId,
+            LeadPublicId = lead.PublicId,
+            ConvertedCustomerPublicId = lead.ConvertedCustomer?.PublicId,
             ConvertedCustomerName = lead.ConvertedCustomer?.FullName,
-            LatestQuoteId = quotes.FirstOrDefault()?.Id,
-            LatestReservaId = reservas.FirstOrDefault()?.Id,
+            LatestQuotePublicId = quotes.FirstOrDefault()?.PublicId,
+            LatestReservaPublicId = reservas.FirstOrDefault()?.PublicId,
             Quotes = quotes,
             Reservas = reservas
         };
@@ -211,8 +211,9 @@ public class LeadService : ILeadService
         var leads = await _db.Leads
             .Select(l => new
             {
-                l.Id, l.FullName, l.Status, l.Source, l.InterestedIn,
+                l.PublicId, l.FullName, l.Status, l.Source, l.InterestedIn,
                 l.EstimatedBudget, l.AssignedToName, l.NextFollowUp, l.CreatedAt,
+                ConvertedCustomerPublicId = l.ConvertedCustomer != null ? l.ConvertedCustomer.PublicId : (Guid?)null,
                 ActivitiesCount = l.Activities.Count,
                 LastActivity = l.Activities.OrderByDescending(a => a.CreatedAt).Select(a => a.Description).FirstOrDefault()
             })

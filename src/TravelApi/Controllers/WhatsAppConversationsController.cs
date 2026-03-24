@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
-using TravelApi.Infrastructure.Services;
 
 namespace TravelApi.Controllers;
 
@@ -14,10 +13,12 @@ namespace TravelApi.Controllers;
 public class WhatsAppConversationsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public WhatsAppConversationsController(AppDbContext db)
+    public WhatsAppConversationsController(AppDbContext db, EntityReferenceResolver entityReferenceResolver)
     {
         _db = db;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
@@ -55,18 +56,19 @@ public class WhatsAppConversationsController : ControllerBase
         return Ok(items);
     }
 
-    [HttpGet("{conversationType}/{entityId:int}")]
+    [HttpGet("{conversationType}/{publicIdOrLegacyId}")]
     public async Task<ActionResult<WhatsAppConversationDetailDto>> GetConversationDetail(
         string conversationType,
-        int entityId,
+        string publicIdOrLegacyId,
         CancellationToken cancellationToken)
     {
         if (string.Equals(conversationType, "lead", StringComparison.OrdinalIgnoreCase))
         {
+            var leadId = await _entityReferenceResolver.ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
             var lead = await _db.Leads
                 .AsNoTracking()
                 .Include(item => item.Activities)
-                .FirstOrDefaultAsync(item => item.Id == entityId, cancellationToken);
+                .FirstOrDefaultAsync(item => item.Id == leadId, cancellationToken);
 
             if (lead == null)
                 return NotFound();
@@ -78,8 +80,8 @@ public class WhatsAppConversationsController : ControllerBase
             return Ok(new WhatsAppConversationDetailDto
             {
                 ConversationType = "lead",
-                EntityId = lead.Id,
-                LeadId = lead.Id,
+                EntityPublicId = lead.PublicId,
+                LeadPublicId = lead.PublicId,
                 Phone = lead.Phone ?? string.Empty,
                 Title = BuildLeadTitle(lead),
                 Subtitle = BuildLeadSubtitle(lead),
@@ -93,12 +95,13 @@ public class WhatsAppConversationsController : ControllerBase
 
         if (string.Equals(conversationType, "operational", StringComparison.OrdinalIgnoreCase))
         {
+            var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var deliveries = await _db.WhatsAppDeliveries
                 .AsNoTracking()
                 .Include(delivery => delivery.Reserva)
                 .ThenInclude(reserva => reserva!.Payer)
                 .Where(delivery =>
-                    delivery.ReservaId == entityId &&
+                    delivery.ReservaId == reservaId &&
                     delivery.Status != WhatsAppDeliveryStatuses.PendingApproval)
                 .OrderBy(delivery => delivery.CreatedAt)
                 .ToListAsync(cancellationToken);
@@ -113,14 +116,14 @@ public class WhatsAppConversationsController : ControllerBase
             return Ok(new WhatsAppConversationDetailDto
             {
                 ConversationType = "operational",
-                EntityId = reserva.Id,
-                ReservaId = reserva.Id,
-                LeadId = reserva.SourceLeadId,
+                EntityPublicId = reserva.PublicId,
+                ReservaPublicId = reserva.PublicId,
+                LeadPublicId = reserva.SourceLead?.PublicId,
                 Phone = deliveries.Last().Phone,
                 Title = $"Reserva {reserva.NumeroReserva}",
                 Subtitle = reserva.Payer?.FullName ?? reserva.Name,
                 StatusLabel = reserva.Status,
-                Messages = deliveries.Select(BuildOperationalMessage).ToList()
+                Messages = BuildOperationalMessages(deliveries, reserva.PublicId)
             });
         }
 
@@ -138,8 +141,8 @@ public class WhatsAppConversationsController : ControllerBase
         return new WhatsAppConversationListItemDto
         {
             ConversationType = "lead",
-            EntityId = lead.Id,
-            LeadId = lead.Id,
+            EntityPublicId = lead.PublicId,
+            LeadPublicId = lead.PublicId,
             Phone = lead.Phone ?? string.Empty,
             Title = BuildLeadTitle(lead),
             Subtitle = BuildLeadSubtitle(lead),
@@ -165,9 +168,9 @@ public class WhatsAppConversationsController : ControllerBase
         return new WhatsAppConversationListItemDto
         {
             ConversationType = "operational",
-            EntityId = reserva.Id,
-            ReservaId = reserva.Id,
-            LeadId = reserva.SourceLeadId,
+            EntityPublicId = reserva.PublicId,
+            ReservaPublicId = reserva.PublicId,
+            LeadPublicId = reserva.SourceLead?.PublicId,
             Phone = latest.Phone,
             Title = $"Reserva {reserva.NumeroReserva}",
             Subtitle = reserva.Payer?.FullName ?? reserva.Name,
@@ -200,7 +203,7 @@ public class WhatsAppConversationsController : ControllerBase
 
             messages.Add(new WhatsAppConversationMessageDto
             {
-                Id = $"lead-{lead.Id}-activity-{activity.Id}",
+                Id = $"lead-{lead.PublicId:N}-activity-{activity.PublicId:N}",
                 Sender = isAgent ? "agent" : "client",
                 SenderLabel = isAgent
                     ? (activity.CreatedBy ?? "Agente")
@@ -219,6 +222,7 @@ public class WhatsAppConversationsController : ControllerBase
         var lines = activity.Description
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+        var index = 0;
         foreach (var line in lines)
         {
             if (line.StartsWith("Conversacion capturada por bot:", StringComparison.OrdinalIgnoreCase) ||
@@ -231,13 +235,14 @@ public class WhatsAppConversationsController : ControllerBase
             {
                 yield return new WhatsAppConversationMessageDto
                 {
-                    Id = $"activity-{activity.Id}-client-{line.GetHashCode()}",
+                    Id = $"activity-{activity.PublicId:N}-client-{index}",
                     Sender = "client",
                     SenderLabel = leadName,
                     Text = line["[Cliente]:".Length..].Trim(),
                     CreatedAt = activity.CreatedAt,
                     Kind = "message"
                 };
+                index++;
                 continue;
             }
 
@@ -245,18 +250,31 @@ public class WhatsAppConversationsController : ControllerBase
             {
                 yield return new WhatsAppConversationMessageDto
                 {
-                    Id = $"activity-{activity.Id}-bot-{line.GetHashCode()}",
+                    Id = $"activity-{activity.PublicId:N}-bot-{index}",
                     Sender = "bot",
                     SenderLabel = "Bot",
                     Text = line["[Bot]:".Length..].Trim(),
                     CreatedAt = activity.CreatedAt,
                     Kind = "message"
                 };
+                index++;
             }
         }
     }
 
-    private static WhatsAppConversationMessageDto BuildOperationalMessage(WhatsAppDelivery delivery)
+    private static List<WhatsAppConversationMessageDto> BuildOperationalMessages(
+        IReadOnlyList<WhatsAppDelivery> deliveries,
+        Guid reservaPublicId)
+    {
+        return deliveries
+            .Select((delivery, index) => BuildOperationalMessage(delivery, reservaPublicId, index))
+            .ToList();
+    }
+
+    private static WhatsAppConversationMessageDto BuildOperationalMessage(
+        WhatsAppDelivery delivery,
+        Guid reservaPublicId,
+        int index)
     {
         var isInbound = delivery.Direction == WhatsAppDeliveryDirections.Inbound;
         var isAgent = !isInbound &&
@@ -265,7 +283,7 @@ public class WhatsAppConversationsController : ControllerBase
 
         return new WhatsAppConversationMessageDto
         {
-            Id = $"operational-{delivery.Id}",
+            Id = $"operational-{reservaPublicId:N}-{index}",
             Sender = isInbound ? "client" : isAgent ? "agent" : "bot",
             SenderLabel = isInbound
                 ? "Cliente"
@@ -300,9 +318,10 @@ public class WhatsAppConversationsController : ControllerBase
             return lead.FullName;
         }
 
-        return !string.IsNullOrWhiteSpace(lead.Phone)
-            ? lead.Phone
-            : $"Lead #{lead.Id}";
+        if (!string.IsNullOrWhiteSpace(lead.Phone))
+            return lead.Phone;
+
+        return "Lead sin identificar";
     }
 
     private static string BuildLeadSubtitle(Lead lead)
@@ -316,7 +335,7 @@ public class WhatsAppConversationsController : ControllerBase
             parts.Add(lead.Phone);
 
         parts.Add($"Pipeline: {lead.Status}");
-        return string.Join(" · ", parts);
+        return string.Join(" | ", parts);
     }
 
     private static string? BuildPreview(string? text)

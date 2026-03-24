@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import Swal from "sweetalert2";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function useCustomers() {
     const [customers, setCustomers] = useState([]);
@@ -29,7 +30,7 @@ export function useCustomers() {
     const handleSaveCustomer = async (formData, customerId = null) => {
         try {
             if (customerId) {
-                await api.put(`/customers/${customerId}`, { ...formData, id: customerId });
+                await api.put(`/customers/${customerId}`, formData);
                 showSuccess("Cliente actualizado correctamente");
             } else {
                 await api.post("/customers", formData);
@@ -61,10 +62,10 @@ export function useCustomers() {
 
         if (result.isConfirmed) {
             try {
-                await api.put(`/customers/${customer.id}`, {
+                const customerPublicId = getPublicId(customer);
+                await api.put(`/customers/${customerPublicId}`, {
                     ...customer,
-                    isActive: !customer.isActive,
-                    id: customer.id
+                    isActive: !customer.isActive
                 });
                 await fetchCustomers();
                 showSuccess(`Cliente ${action === "activar" ? "activado" : "desactivado"}.`);

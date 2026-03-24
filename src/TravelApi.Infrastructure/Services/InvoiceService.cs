@@ -14,6 +14,7 @@ namespace TravelApi.Infrastructure.Services;
 public class InvoiceService : IInvoiceService
 {
     private readonly AppDbContext _context;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
     private readonly IAfipService _afipService;
     private readonly IInvoicePdfService _pdfService;
     private readonly IMapper _mapper;
@@ -29,6 +30,7 @@ public class InvoiceService : IInvoiceService
 
     public InvoiceService(
         AppDbContext context, 
+        EntityReferenceResolver entityReferenceResolver,
         IAfipService afipService, 
         IInvoicePdfService pdfService,
         IMapper mapper,
@@ -38,6 +40,7 @@ public class InvoiceService : IInvoiceService
         UserManager<ApplicationUser> userManager)
     {
         _context = context;
+        _entityReferenceResolver = entityReferenceResolver;
         _afipService = afipService;
         _pdfService = pdfService;
         _mapper = mapper;
@@ -95,8 +98,9 @@ public class InvoiceService : IInvoiceService
 
     public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct)
     {
+        var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(request.ReservaId, ct);
         var reserva = await _context.Reservas
-            .FirstOrDefaultAsync(r => r.Id == request.ReservaId, ct)
+            .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
         if (!request.IsCreditNote && !request.IsDebitNote)
@@ -122,7 +126,7 @@ public class InvoiceService : IInvoiceService
         }
 
         // 1. Create Pending in DB
-        var invoice = await _afipService.CreatePendingInvoice(request.ReservaId, request);
+        var invoice = await _afipService.CreatePendingInvoice(reservaId, request);
 
         if (invoice.WasForced)
         {
@@ -216,12 +220,12 @@ public class InvoiceService : IInvoiceService
 
             var request = new CreateInvoiceRequest
             {
-                ReservaId = original.ReservaId ?? 0,
+                ReservaId = original.Reserva?.PublicId.ToString() ?? string.Empty,
                 CbteTipo = cbteTipo,
                 Concepto = 3, // Productos y Servicios (default)
                 DocTipo = 99, // Sin info
                 DocNro = 0,
-                OriginalInvoiceId = invoiceId,
+                OriginalInvoiceId = original.PublicId.ToString(),
                 IsCreditNote = cbteTipo == 3 || cbteTipo == 8 || cbteTipo == 13 || cbteTipo == 53,
                 IsDebitNote = cbteTipo == 2 || cbteTipo == 7 || cbteTipo == 12 || cbteTipo == 52
             };
@@ -337,7 +341,8 @@ public class InvoiceService : IInvoiceService
             }
 
             // Execute AFIP Call (Chain the pending creation and the processing)
-            var newInvoice = await _afipService.CreatePendingInvoice(request.ReservaId, request);
+            var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(request.ReservaId);
+            var newInvoice = await _afipService.CreatePendingInvoice(reservaId, request);
             
             // Since we are already in a background job, we can process it immediately
             await _afipService.ProcessInvoiceJob(newInvoice.Id);
@@ -416,6 +421,7 @@ public class InvoiceService : IInvoiceService
             .Select(r => new
             {
                 r.Id,
+                r.PublicId,
                 r.NumeroReserva,
                 CustomerName = r.Payer != null ? r.Payer.FullName : "Consumidor Final",
                 r.TotalSale,
@@ -480,7 +486,7 @@ public class InvoiceService : IInvoiceService
 
                 return new InvoicingWorkItemDto
                 {
-                    ReservaId = reserva.Id,
+                    ReservaPublicId = reserva.PublicId,
                     NumeroReserva = reserva.NumeroReserva,
                     CustomerName = reserva.CustomerName,
                     TotalSale = EconomicRulesHelper.RoundCurrency(reserva.TotalSale),

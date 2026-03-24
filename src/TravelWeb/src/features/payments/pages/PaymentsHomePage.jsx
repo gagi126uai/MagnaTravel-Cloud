@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useFinanceHome } from "../hooks/useFinanceHome";
 import { formatCurrency, formatDate } from "../lib/financeUtils";
+import { getPublicId } from "../../../lib/publicIds";
 
 function HomeCard({ title, description, icon: Icon, accentClass, metrics, ctaTo, ctaLabel }) {
   return (
@@ -145,8 +146,8 @@ export default function PaymentsHomePage() {
           icon={CalendarClock}
           renderItem={(trip) => (
             <Link
-              key={`trip-${trip.id}`}
-              to={`/reservas/${trip.id}`}
+              key={`trip-${getPublicId(trip)}`}
+              to={`/reservas/${getPublicId(trip)}`}
               className="flex items-start justify-between gap-4 rounded-2xl border border-slate-100 dark:border-slate-800 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
             >
               <div>
@@ -174,8 +175,8 @@ export default function PaymentsHomePage() {
           icon={ShieldAlert}
           renderItem={(supplier) => (
             <Link
-              key={`supplier-${supplier.id}`}
-              to={`/suppliers/${supplier.id}/account`}
+              key={`supplier-${getPublicId(supplier)}`}
+              to={`/suppliers/${getPublicId(supplier)}/account`}
               className="flex items-start justify-between gap-4 rounded-2xl border border-slate-100 dark:border-slate-800 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
             >
               <div>

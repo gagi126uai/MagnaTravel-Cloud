@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Wallet } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { formatCurrency } from "../../../lib/utils";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
     const [formData, setFormData] = useState({
@@ -46,7 +47,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        onSave(formData, supplier?.id);
+        onSave(formData, getPublicId(supplier));
     };
 
     if (!isOpen) return null;

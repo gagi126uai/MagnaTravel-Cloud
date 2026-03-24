@@ -22,6 +22,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     public override int SaveChanges()
     {
+        AssignPublicIds();
         var auditEntries = OnBeforeSaveChanges();
         var result = base.SaveChanges();
         OnAfterSaveChanges(auditEntries);
@@ -30,10 +31,22 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        AssignPublicIds();
         var auditEntries = OnBeforeSaveChanges();
         var result = await base.SaveChangesAsync(cancellationToken);
         await OnAfterSaveChangesAsync(auditEntries, cancellationToken);
         return result;
+    }
+
+    private void AssignPublicIds()
+    {
+        foreach (var entry in ChangeTracker.Entries<IHasPublicId>())
+        {
+            if (entry.State == EntityState.Added && entry.Entity.PublicId == Guid.Empty)
+            {
+                entry.Entity.PublicId = Guid.NewGuid();
+            }
+        }
     }
 
     private class AuditEntry
@@ -68,10 +81,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
             var changes = new Dictionary<string, object>();
             
-            // For Added entities, ID is temp/unknown yet.
-            var keyName = entry.Metadata.FindPrimaryKey()?.Properties.Select(p => p.Name).FirstOrDefault();
-            var primaryKey = keyName != null ? entry.Property(keyName).CurrentValue : null;
-            auditLog.EntityId = primaryKey?.ToString() ?? "0";
+            auditLog.EntityId = GetAuditEntityId(entry);
 
             if (entry.State == EntityState.Added)
             {
@@ -134,10 +144,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             if (auditEntry.AuditLog.EntityId == "0" || auditEntry.AuditLog.EntityId == null)
             {
-                // Update PK for new entities
-                var keyName = auditEntry.Entry.Metadata.FindPrimaryKey()?.Properties.Select(p => p.Name).FirstOrDefault();
-                var primaryKey = keyName != null ? auditEntry.Entry.Property(keyName).CurrentValue : null;
-                auditEntry.AuditLog.EntityId = primaryKey?.ToString() ?? "0";
+                auditEntry.AuditLog.EntityId = GetAuditEntityId(auditEntry.Entry);
             }
             AuditLogs.Add(auditEntry.AuditLog);
         }
@@ -156,10 +163,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             if (auditEntry.AuditLog.EntityId == "0" || auditEntry.AuditLog.EntityId == null)
             {
-                // Update PK for new entities
-                var keyName = auditEntry.Entry.Metadata.FindPrimaryKey()?.Properties.Select(p => p.Name).FirstOrDefault();
-                var primaryKey = keyName != null ? auditEntry.Entry.Property(keyName).CurrentValue : null;
-                auditEntry.AuditLog.EntityId = primaryKey?.ToString() ?? "0";
+                auditEntry.AuditLog.EntityId = GetAuditEntityId(auditEntry.Entry);
             }
             AuditLogs.Add(auditEntry.AuditLog);
         }
@@ -168,6 +172,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
              await base.SaveChangesAsync(cancellationToken); // Save the logs
         }
+    }
+
+    private static string GetAuditEntityId(EntityEntry entry)
+    {
+        if (entry.Entity is IHasPublicId hasPublicId && hasPublicId.PublicId != Guid.Empty)
+        {
+            return hasPublicId.PublicId.ToString();
+        }
+
+        var keyName = entry.Metadata.FindPrimaryKey()?.Properties.Select(p => p.Name).FirstOrDefault();
+        var primaryKey = keyName != null ? entry.Property(keyName).CurrentValue : null;
+        return primaryKey?.ToString() ?? "0";
     }
     
     // I need to correct this. I will put the full logic in the replacement content properly.
@@ -213,6 +229,27 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.HasPostgresExtension("pgcrypto");
+
+        ConfigurePublicEntity<Customer>(modelBuilder);
+        ConfigurePublicEntity<Reserva>(modelBuilder);
+        ConfigurePublicEntity<Supplier>(modelBuilder);
+        ConfigurePublicEntity<Lead>(modelBuilder);
+        ConfigurePublicEntity<LeadActivity>(modelBuilder);
+        ConfigurePublicEntity<Quote>(modelBuilder);
+        ConfigurePublicEntity<QuoteItem>(modelBuilder);
+        ConfigurePublicEntity<Payment>(modelBuilder);
+        ConfigurePublicEntity<Invoice>(modelBuilder);
+        ConfigurePublicEntity<Passenger>(modelBuilder);
+        ConfigurePublicEntity<ServicioReserva>(modelBuilder);
+        ConfigurePublicEntity<FlightSegment>(modelBuilder);
+        ConfigurePublicEntity<HotelBooking>(modelBuilder);
+        ConfigurePublicEntity<PackageBooking>(modelBuilder);
+        ConfigurePublicEntity<TransferBooking>(modelBuilder);
+        ConfigurePublicEntity<ReservaAttachment>(modelBuilder);
+        ConfigurePublicEntity<SupplierPayment>(modelBuilder);
+        ConfigurePublicEntity<ManualCashMovement>(modelBuilder);
+        ConfigurePublicEntity<PaymentReceipt>(modelBuilder);
 
         // Supplier
         modelBuilder.Entity<Supplier>(entity =>
@@ -497,6 +534,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(m => m.RelatedSupplierId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+    }
+
+    private static void ConfigurePublicEntity<TEntity>(ModelBuilder modelBuilder)
+        where TEntity : class, IHasPublicId
+    {
+        modelBuilder.Entity<TEntity>(entity =>
+        {
+            entity.Property(e => e.PublicId)
+                .HasColumnType("uuid")
+                .HasDefaultValueSql("gen_random_uuid()");
+            entity.HasIndex(e => e.PublicId).IsUnique();
         });
     }
 }

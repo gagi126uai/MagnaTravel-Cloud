@@ -10,6 +10,7 @@ import PassengerFormModal from "../../../components/PassengerFormModal";
 import PaymentModal from "../../../components/PaymentModal";
 import AuditTimeline from "../../../components/AuditTimeline";
 import { ReservaAttachmentsTab } from "../../../components/ReservaAttachmentsTab";
+import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 
 import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
@@ -18,7 +19,7 @@ import { ServiceList } from "../components/ServiceList";
 import { PassengerList } from "../components/PassengerList";
 
 export default function ReservaDetailPage() {
-    const { id } = useParams();
+    const { publicId } = useParams();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState("services"); // services, passengers, history, account, attachments
     const [showServiceModal, setShowServiceModal] = useState(false);
@@ -39,14 +40,14 @@ export default function ReservaDetailPage() {
         handleDeletePassenger,
         allServices,
         hotelCapacity
-    } = useReservaDetail(id, navigate);
+    } = useReservaDetail(publicId, navigate);
 
     if (loading) return <div className="p-8 text-center text-slate-500 animate-pulse">Cargando reserva...</div>;
 
     if (!reserva) return (
         <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 m-8">
             <h3 className="text-xl font-bold text-slate-900 dark:text-white">Reserva no encontrada</h3>
-            <p className="text-slate-500 dark:text-slate-400 mt-2">No se pudo cargar la información. Verifique que el ID sea correcto.</p>
+            <p className="text-slate-500 dark:text-slate-400 mt-2">No se pudo cargar la información. Verifique que la URL sea correcta.</p>
             <div className="mt-6 flex justify-center">
                 <button onClick={() => navigate("/reservas")} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
                     Volver a la lista
@@ -69,7 +70,7 @@ export default function ReservaDetailPage() {
 
             <CapacityWarning paxCount={reserva.passengers?.length || 0} hotelCapacity={hotelCapacity} />
 
-            {(reserva.sourceLeadId || reserva.sourceQuoteId) && (
+            {(getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") || getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId")) && (
                 <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                         <div>
@@ -79,20 +80,20 @@ export default function ReservaDetailPage() {
                             </div>
                         </div>
                         <div className="flex flex-wrap gap-3">
-                            {reserva.sourceLeadId && (
+                            {getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") && (
                                 <button
-                                    onClick={() => navigate('/crm', { state: { openLeadId: reserva.sourceLeadId } })}
+                                    onClick={() => navigate('/crm', { state: { openLeadId: getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") } })}
                                     className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                                 >
-                                    Lead #{reserva.sourceLeadId}
+                                    Abrir lead origen
                                 </button>
                             )}
-                            {reserva.sourceQuoteId && (
+                            {getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId") && (
                                 <button
-                                    onClick={() => navigate('/quotes', { state: { openQuoteId: reserva.sourceQuoteId } })}
+                                    onClick={() => navigate('/quotes', { state: { openQuoteId: getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId") } })}
                                     className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-colors"
                                 >
-                                    Cotizacion #{reserva.sourceQuoteId}
+                                    Abrir cotización origen
                                 </button>
                             )}
                         </div>
@@ -143,9 +144,9 @@ export default function ReservaDetailPage() {
                         />
                     )}
 
-                    {activeTab === 'history' && <AuditTimeline entityName="Reserva" entityId={id} />}
+                    {activeTab === 'history' && <AuditTimeline entityName="Reserva" entityId={publicId} />}
 
-                    {activeTab === 'attachments' && <ReservaAttachmentsTab reservaId={id} />}
+                    {activeTab === 'attachments' && <ReservaAttachmentsTab reservaId={publicId} />}
 
                     {activeTab === 'account' && (
                         <div className="space-y-6 animate-in fade-in duration-500">
@@ -205,7 +206,7 @@ export default function ReservaDetailPage() {
                                             </thead>
                                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                                 {reserva.payments?.length > 0 ? reserva.payments.map(p => (
-                                                    <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                                                    <tr key={getPublicId(p)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                                                         <td className="px-6 py-4">{new Date(p.paidAt).toLocaleDateString()}</td>
                                                         <td className="px-6 py-4">
                                                             <span className="text-[10px] font-black bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded uppercase">
@@ -246,7 +247,7 @@ export default function ReservaDetailPage() {
                                             </thead>
                                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                                 {reserva.invoices?.length > 0 ? reserva.invoices.map(i => (
-                                                    <tr key={i.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                                                    <tr key={getPublicId(i)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                                                         <td className="px-6 py-4 font-bold">Factura {i.tipoComprobante === 1 ? 'A' : i.tipoComprobante === 6 ? 'B' : 'C'}</td>
                                                         <td className="px-6 py-4 font-mono">{String(i.puntoDeVenta).padStart(5, '0')}-{String(i.numeroComprobante).padStart(8, '0')}</td>
                                                         <td className="px-6 py-4 text-xs font-mono text-slate-400">{i.cae || '---'}</td>
@@ -278,7 +279,7 @@ export default function ReservaDetailPage() {
             <ServiceFormModal
                 isOpen={showServiceModal}
                 onClose={() => setShowServiceModal(false)}
-                reservaId={id}
+                reservaId={publicId}
                 serviceToEdit={serviceToEdit}
                 onSuccess={fetchReserva}
                 suppliers={suppliers}
@@ -287,7 +288,7 @@ export default function ReservaDetailPage() {
             <PaymentModal
                 isOpen={showPaymentModal}
                 onClose={() => setShowPaymentModal(false)}
-                reservaId={id}
+                reservaId={publicId}
                 maxAmount={reserva?.balance}
                 onSuccess={fetchReserva}
             />
@@ -295,7 +296,7 @@ export default function ReservaDetailPage() {
             <PassengerFormModal
                 isOpen={showPassengerForm}
                 onClose={() => setShowPassengerForm(false)}
-                reservaId={id}
+                reservaId={publicId}
                 passengerToEdit={editingPassenger}
                 onSuccess={fetchReserva}
             />

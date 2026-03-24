@@ -52,9 +52,11 @@ public class BookingService : IBookingService
     {
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         var flight = _mapper.Map<FlightSegment>(req);
         flight.ReservaId = reservaId;
+        flight.SupplierId = supplierId;
 
         await _flightRepo.AddAsync(flight, ct);
 
@@ -78,8 +80,10 @@ public class BookingService : IBookingService
 
         var oldNetCost = flight.NetCost;
         var oldSupplierId = flight.SupplierId;
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, flight);
+        flight.SupplierId = supplierId;
 
         if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
         {
@@ -158,9 +162,11 @@ public class BookingService : IBookingService
     {
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         var hotel = _mapper.Map<HotelBooking>(req);
         hotel.ReservaId = reservaId;
+        hotel.SupplierId = supplierId;
 
         await _hotelRepo.AddAsync(hotel, ct);
 
@@ -184,8 +190,10 @@ public class BookingService : IBookingService
 
         var oldNetCost = hotel.NetCost;
         var oldSupplierId = hotel.SupplierId;
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, hotel);
+        hotel.SupplierId = supplierId;
 
         if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
         {
@@ -257,9 +265,11 @@ public class BookingService : IBookingService
     {
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         var package = _mapper.Map<PackageBooking>(req);
         package.ReservaId = reservaId;
+        package.SupplierId = supplierId;
 
         await _packageRepo.AddAsync(package, ct);
 
@@ -283,8 +293,10 @@ public class BookingService : IBookingService
 
         var oldNetCost = package.NetCost;
         var oldSupplierId = package.SupplierId;
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, package);
+        package.SupplierId = supplierId;
 
         if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
         {
@@ -356,9 +368,11 @@ public class BookingService : IBookingService
     {
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         var transfer = _mapper.Map<TransferBooking>(req);
         transfer.ReservaId = reservaId;
+        transfer.SupplierId = supplierId;
 
         await _transferRepo.AddAsync(transfer, ct);
 
@@ -382,8 +396,10 @@ public class BookingService : IBookingService
 
         var oldNetCost = transfer.NetCost;
         var oldSupplierId = transfer.SupplierId;
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, transfer);
+        transfer.SupplierId = supplierId;
 
         if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)
         {
@@ -436,6 +452,20 @@ public class BookingService : IBookingService
         }
 
         await _transferRepo.DeleteAsync(transfer, ct);
+    }
+
+    private async Task<int> ResolveSupplierIdAsync(string supplierPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var supplierId = await _supplierRepo.Query()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(supplierPublicIdOrLegacyId, ct);
+
+        if (!supplierId.HasValue)
+        {
+            throw new KeyNotFoundException("Proveedor no encontrado");
+        }
+
+        return supplierId.Value;
     }
 
     #endregion

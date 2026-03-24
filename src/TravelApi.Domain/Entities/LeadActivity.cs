@@ -2,9 +2,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TravelApi.Domain.Entities;
 
-public class LeadActivity
+public class LeadActivity : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     public int LeadId { get; set; }
     public Lead? Lead { get; set; }

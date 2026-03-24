@@ -46,6 +46,7 @@ import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import Swal from "sweetalert2";
 import AnalyticsPage from "./AnalyticsPage";
+import { getPublicId } from "../lib/publicIds";
 
 export default function ReportsPage() {
   const [report, setReport] = useState(null);
@@ -380,7 +381,7 @@ export default function ReportsPage() {
                     {report.topCustomers.map((cust, i) => (
                       <div
                         key={i}
-                        onClick={() => navigate(`/customers/${cust.payerId || cust.id}/account`)}
+                        onClick={() => navigate(`/customers/${getPublicId(cust)}/account`)}
                         className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-all"
                       >
                         <div className="flex items-center gap-3">
@@ -461,8 +462,8 @@ export default function ReportsPage() {
                   <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                     {receivables.map((debtor) => (
                       <div
-                        key={debtor.id}
-                        onClick={() => navigate(`/customers/${debtor.id}/account`)}
+                        key={getPublicId(debtor)}
+                        onClick={() => navigate(`/customers/${getPublicId(debtor)}/account`)}
                         className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-purple-200 dark:hover:border-purple-800 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 cursor-pointer transition-all"
                       >
                         <div className="flex flex-col">
@@ -501,8 +502,8 @@ export default function ReportsPage() {
                   <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                     {report.supplierDebts.map((sup) => (
                       <div
-                        key={sup.id}
-                        onClick={() => navigate(`/suppliers/${sup.id}/account`)}
+                        key={getPublicId(sup)}
+                        onClick={() => navigate(`/suppliers/${getPublicId(sup)}/account`)}
                         className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-rose-200 dark:hover:border-rose-800 hover:bg-rose-50/50 dark:hover:bg-rose-900/10 cursor-pointer transition-all"
                       >
                         <div className="flex items-center gap-3">

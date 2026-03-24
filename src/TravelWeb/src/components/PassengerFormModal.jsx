@@ -3,6 +3,7 @@ import { X, Save, User, Search, Loader2 } from "lucide-react";
 import { useDebounce } from "../hooks/useDebounce";
 import { api } from "../api";
 import { showError, showSuccess, showWarning } from "../alerts";
+import { getPublicId } from "../lib/publicIds";
 
 // Clases reutilizables
 const inputClass = "w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors";
@@ -111,7 +112,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
 
         try {
             if (passengerToEdit) {
-                await api.put(`/reservas/passengers/${passengerToEdit.id}`, payload);
+                await api.put(`/reservas/passengers/${getPublicId(passengerToEdit)}`, payload);
                 showSuccess("Pasajero actualizado");
             } else {
                 await api.post(`/reservas/${reservaId}/passengers`, payload);

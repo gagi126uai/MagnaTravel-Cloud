@@ -2,9 +2,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TravelApi.Domain.Entities;
 
-public class Supplier
+public class Supplier : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     [Required]
     [MaxLength(100)]

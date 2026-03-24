@@ -3,6 +3,7 @@ import { api } from "../../../api";
 import { showError } from "../../../alerts";
 import { getInvoiceLabel, isCreditNote } from "../lib/financeUtils";
 import { useFinanceActions } from "./useFinanceActions";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function useFinanceHistory() {
   const [loading, setLoading] = useState(true);
@@ -39,7 +40,7 @@ export function useFinanceHistory() {
 
   const timeline = useMemo(() => {
     const paymentItems = payments.map((payment) => ({
-      id: `payment-${payment.id}`,
+      id: `payment-${getPublicId(payment)}`,
       date: payment.paidAt,
       kind: payment.entryType === "CreditNoteReversal" ? "Reversion" : "Cobranza",
       title: payment.entryType === "CreditNoteReversal" ? "Reversion por nota de credito" : "Cobranza recibida",
@@ -51,7 +52,7 @@ export function useFinanceHistory() {
     }));
 
     const invoiceItems = invoices.map((invoice) => ({
-      id: `invoice-${invoice.id}`,
+      id: `invoice-${getPublicId(invoice)}`,
       date: invoice.createdAt,
       kind: isCreditNote(invoice) ? "Nota de credito" : "Factura AFIP",
       title: getInvoiceLabel(invoice.tipoComprobante),

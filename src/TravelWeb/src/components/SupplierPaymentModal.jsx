@@ -3,6 +3,7 @@ import { X, DollarSign, CreditCard, Banknote, Landmark, CheckCircle, AlertCircle
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { formatCurrency } from "../lib/utils";
+import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 
 // Icon component helper (Moved outside component to avoid re-render crashes)
 const CheckIcon = ({ className }) => (
@@ -42,7 +43,7 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                     method: editingPayment.method,
                     reference: editingPayment.reference || "",
                     notes: editingPayment.notes || "",
-                    reservaId: editingPayment.reservaId
+                    reservaId: getRelatedPublicId(editingPayment, "reservaPublicId", "reservaId")
                 });
             } else {
                 setFormData({ amount: "", method: "Transfer", reference: "", notes: "", reservaId: null });
@@ -98,11 +99,11 @@ export default function SupplierPaymentModal({ isOpen, onClose, onSuccess, suppl
                 method: formData.method,
                 reference: formData.reference,
                 notes: formData.notes,
-                reservaId: formData.reservaId ? Number(formData.reservaId) : null
+                reservaId: formData.reservaId || null
             };
 
             if (editingPayment) {
-                await api.put(`/suppliers/${supplierId}/payments/${editingPayment.id}`, payload);
+                await api.put(`/suppliers/${supplierId}/payments/${getPublicId(editingPayment)}`, payload);
                 showSuccess("Pago actualizado correctamente");
             } else {
                 await api.post(`/suppliers/${supplierId}/payments`, payload);

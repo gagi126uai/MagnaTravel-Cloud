@@ -9,9 +9,10 @@ public static class CashMovementDirections
     public const string Expense = "Expense";
 }
 
-public class ManualCashMovement
+public class ManualCashMovement : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
 
     [MaxLength(20)]
     public string Direction { get; set; } = CashMovementDirections.Expense;

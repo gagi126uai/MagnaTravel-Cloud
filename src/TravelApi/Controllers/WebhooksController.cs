@@ -5,6 +5,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace TravelApi.Controllers;
 
@@ -18,6 +19,7 @@ public class WebhooksController : ControllerBase
     private readonly IConfiguration _config;
     private readonly ILogger<WebhooksController> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
     public WebhooksController(
         ILeadService leadService,
@@ -25,7 +27,8 @@ public class WebhooksController : ControllerBase
         AppDbContext db,
         IConfiguration config,
         ILogger<WebhooksController> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        EntityReferenceResolver entityReferenceResolver)
     {
         _leadService = leadService;
         _whatsAppDeliveryService = whatsAppDeliveryService;
@@ -33,6 +36,7 @@ public class WebhooksController : ControllerBase
         _config = config;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     private bool ValidateSecret()
@@ -79,6 +83,7 @@ public class WebhooksController : ControllerBase
     }
 
     [HttpPost("whatsapp")]
+    [EnableRateLimiting("webhooks")]
     public async Task<ActionResult> WhatsAppLead(
         [FromBody] WhatsAppWebhookDto dto,
         CancellationToken cancellationToken)
@@ -117,7 +122,7 @@ public class WebhooksController : ControllerBase
             return Ok(new
             {
                 message = "Lead actualizado exitosamente.",
-                leadId = existingLead.Id,
+                leadPublicId = existingLead.PublicId,
                 updated = true
             });
         }
@@ -151,13 +156,14 @@ public class WebhooksController : ControllerBase
         return StatusCode(201, new
         {
             message = "Lead creado exitosamente.",
-            leadId = created.Id,
+            leadPublicId = created.PublicId,
             name = created.FullName,
             phone = created.Phone
         });
     }
 
     [HttpPost("whatsapp/message")]
+    [EnableRateLimiting("webhooks")]
     public async Task<ActionResult> WhatsAppMessage(
         [FromBody] WhatsAppMessageDto dto,
         CancellationToken cancellationToken)
@@ -218,19 +224,21 @@ public class WebhooksController : ControllerBase
         return Ok(new
         {
             handledBy = "lead",
-            leadId = lead.Id,
+            leadPublicId = lead.PublicId,
             autoCreated = lead.FullName.StartsWith("Nuevo contacto"),
             allowBotCapture = LeadNeedsQualification(lead)
         });
     }
 
-    [HttpPost("/api/leads/{leadId}/whatsapp-message")]
+    [HttpPost("/api/leads/{publicIdOrLegacyId}/whatsapp-message")]
     [Authorize]
+    [EnableRateLimiting("auth")]
     public async Task<ActionResult> SendWhatsAppMessage(
-        int leadId,
+        string publicIdOrLegacyId,
         [FromBody] SendMessageRequest request,
         CancellationToken cancellationToken)
     {
+        var leadId = await _entityReferenceResolver.ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
         var lead = await _leadService.GetByIdAsync(leadId, cancellationToken);
         if (lead == null) return NotFound(new { message = "Lead no encontrado." });
 

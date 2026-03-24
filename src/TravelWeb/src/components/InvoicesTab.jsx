@@ -4,6 +4,7 @@ import { FileText, Plus, CheckCircle, XCircle, AlertTriangle, Eye, RefreshCw } f
 import Swal from "sweetalert2";
 import { showError, showSuccess } from "../alerts";
 import CreateInvoiceModal from "./CreateInvoiceModal";
+import { getPublicId } from "../lib/publicIds";
 
 export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, readOnly = false, clientName, clientCuit }) {
     const [invoices, setInvoices] = useState([]);
@@ -47,8 +48,7 @@ export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, read
             showLoaderOnConfirm: true,
             preConfirm: async () => {
                 try {
-                    const res = await api.post(`/invoices/${invoice.id}/annul`);
-                    return res.data;
+                    return await api.post(`/invoices/${getPublicId(invoice)}/annul`);
                 } catch (error) {
                     Swal.showValidationMessage(
                         `Error: ${error.response?.data?.message || 'No se pudo anular'}`
@@ -80,7 +80,7 @@ export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, read
 
     const handleDownloadPdf = async (invoice) => {
         try {
-            const response = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: 'blob' });
+            const response = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: 'blob' });
             const url = window.URL.createObjectURL(new Blob([response]));
             const link = document.createElement('a');
             link.href = url;
@@ -119,10 +119,10 @@ export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, read
                 {!readOnly && (
                     <button
                         onClick={handleCreateInvoice}
-                        disabled={creating}
+                        disabled={loading}
                         className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50"
                     >
-                        {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                        {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                         Emitir Factura
                     </button>
                 )}
@@ -150,7 +150,7 @@ export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, read
                         </thead>
                         <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
                             {invoices.map((inv) => (
-                                <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                                <tr key={getPublicId(inv)} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
                                         {new Date(inv.createdAt).toLocaleDateString()}
                                     </td>
@@ -211,7 +211,7 @@ export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, read
                 isOpen={showCreateModal}
                 onClose={() => setShowCreateModal(false)}
                 onSuccess={handleInvoiceCreated}
-                reservaId={reservaId}
+                reservaPublicId={reservaId}
                 initialAmount={balance}
                 clientName={clientName}
                 clientCuit={clientCuit}

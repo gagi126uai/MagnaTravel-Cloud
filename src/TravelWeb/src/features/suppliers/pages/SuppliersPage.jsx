@@ -6,6 +6,7 @@ import { useSuppliers } from "../hooks/useSuppliers";
 import { SupplierTable } from "../components/SupplierTable";
 import { SupplierMobileList } from "../components/SupplierMobileList";
 import { SupplierFormModal } from "../components/SupplierFormModal";
+import { getPublicId } from "../../../lib/publicIds";
 
 export default function SuppliersPage() {
     const navigate = useNavigate();
@@ -86,12 +87,12 @@ export default function SuppliersPage() {
                         suppliers={filteredSuppliers}
                         onEdit={handleOpenModal}
                         onToggleStatus={handleToggleStatus}
-                        onAccountClick={(id) => navigate(`/suppliers/${id}/account`)}
+                        onAccountClick={(supplier) => navigate(`/suppliers/${getPublicId(supplier)}/account`)}
                     />
                     <SupplierMobileList
                         suppliers={filteredSuppliers}
                         onEdit={handleOpenModal}
-                        onAccountClick={(id) => navigate(`/suppliers/${id}/account`)}
+                        onAccountClick={(supplier) => navigate(`/suppliers/${getPublicId(supplier)}/account`)}
                     />
                 </>
             )}

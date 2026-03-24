@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Mail, Phone, Wallet, Pencil } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { Badge } from "../../../components/ui/badge";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
     const getInitials = (name) => {
@@ -26,7 +27,7 @@ export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
     return (
         <div className="md:hidden space-y-3">
             {visibleCustomers.map((customer) => (
-                <div key={customer.id} className={`bg-white dark:bg-slate-900 rounded-xl p-4 border shadow-sm ${!customer.isActive ? 'opacity-70 border-slate-200 dark:border-slate-800' : 'border-slate-200 dark:border-slate-800'}`}>
+                <div key={getPublicId(customer)} className={`bg-white dark:bg-slate-900 rounded-xl p-4 border shadow-sm ${!customer.isActive ? 'opacity-70 border-slate-200 dark:border-slate-800' : 'border-slate-200 dark:border-slate-800'}`}>
                     <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-3">
                             <div className={`h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold shadow-sm shrink-0 ${customer.isActive ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
@@ -60,7 +61,7 @@ export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
 
                         <div className="flex items-center gap-1">
                             <button
-                                onClick={() => onAccountClick(customer.id)}
+                                onClick={() => onAccountClick(customer)}
                                 className="h-8 w-8 flex items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
                             >
                                 <Wallet className="h-4 w-4" />

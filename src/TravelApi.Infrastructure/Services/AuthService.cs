@@ -61,15 +61,28 @@ public class AuthService : IAuthService
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null || !user.IsActive)
         {
-            throw new UnauthorizedAccessException("Credenciales inválidas o usuario desactivado.");
+            throw new UnauthorizedAccessException("Credenciales invalidas o usuario desactivado.");
+        }
+
+        if (await _userManager.IsLockedOutAsync(user))
+        {
+            throw new UnauthorizedAccessException("Usuario bloqueado temporalmente por multiples intentos fallidos.");
         }
 
         var isValid = await _userManager.CheckPasswordAsync(user, request.Password);
         if (!isValid)
         {
-            throw new UnauthorizedAccessException("Credenciales inválidas.");
+            await _userManager.AccessFailedAsync(user);
+
+            if (await _userManager.IsLockedOutAsync(user))
+            {
+                throw new UnauthorizedAccessException("Usuario bloqueado temporalmente por multiples intentos fallidos.");
+            }
+
+            throw new UnauthorizedAccessException("Credenciales invalidas.");
         }
 
+        await _userManager.ResetAccessFailedCountAsync(user);
         return await CreateTokenAsync(user);
     }
 

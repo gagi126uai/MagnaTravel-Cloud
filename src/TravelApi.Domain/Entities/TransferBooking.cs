@@ -3,9 +3,10 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
 
-public class TransferBooking
+public class TransferBooking : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     // Relaciones
     public int ReservaId { get; set; }

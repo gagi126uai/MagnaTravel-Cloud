@@ -39,6 +39,7 @@ import {
 } from "recharts";
 
 import { DashboardSkeleton } from "../components/ui/skeleton";
+import { getPublicId } from "../lib/publicIds";
 
 export default function DashboardPage() {
     const [dashboard, setDashboard] = useState(null);
@@ -239,9 +240,9 @@ export default function DashboardPage() {
                             {dashboard.reservasPendientes?.length > 0 ? (
                                 dashboard.reservasPendientes.map((reserva) => (
                                     <div
-                                        key={reserva.id}
+                                        key={getPublicId(reserva)}
                                         className="flex items-center justify-between p-3 rounded-lg bg-rose-50/50 hover:bg-rose-100/50 dark:bg-rose-900/10 dark:hover:bg-rose-900/20 cursor-pointer transition-colors border border-rose-100 dark:border-rose-900/20"
-                                        onClick={() => navigate(`/reservas/${reserva.id}`)}
+                                        onClick={() => navigate(`/reservas/${getPublicId(reserva)}`)}
                                     >
                                         <div className="flex gap-3 items-center">
                                             <div className="bg-rose-100 dark:bg-rose-900/30 p-2 rounded-full">
@@ -281,9 +282,9 @@ export default function DashboardPage() {
                             {dashboard.proximosViajes?.length > 0 ? (
                                 dashboard.proximosViajes.map((trip) => (
                                     <div
-                                        key={trip.id}
+                                        key={getPublicId(trip)}
                                         className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 cursor-pointer transition-colors border border-slate-100 dark:border-slate-800"
-                                        onClick={() => navigate(`/reservas/${trip.id}`)}
+                                        onClick={() => navigate(`/reservas/${getPublicId(trip)}`)}
                                     >
                                         <div className="flex gap-3 items-center">
                                             <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-full">

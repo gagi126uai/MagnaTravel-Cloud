@@ -3,6 +3,7 @@ import { User, Users, Archive, MessageCircle, CreditCard, DollarSign } from "luc
 import { Button } from "../../../components/ui/button";
 import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function ReservaTable({ reservas, onRowClick, onArchive }) {
     const [visibleCount, setVisibleCount] = useState(50);
@@ -28,8 +29,8 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                         {visibleReservas.map((reserva) => (
                             <tr
-                                key={reserva.id}
-                                onClick={() => onRowClick(reserva.id)}
+                                key={getPublicId(reserva)}
+                                onClick={() => onRowClick(getPublicId(reserva))}
                                 className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-all cursor-pointer"
                             >
                                 <td className="px-4 py-4">
@@ -89,7 +90,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                                             variant="ghost"
                                             size="icon"
                                             className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
-                                            onClick={() => onRowClick(reserva.id)}
+                                            onClick={() => onRowClick(getPublicId(reserva))}
                                             title="Ver Detalles"
                                         >
                                             <MessageCircle className="h-4 w-4" />
@@ -98,7 +99,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                                             variant="ghost"
                                             size="icon"
                                             className="h-8 w-8 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20"
-                                            onClick={() => onArchive(reserva.id)}
+                                            onClick={() => onArchive(getPublicId(reserva))}
                                             title="Archivar"
                                         >
                                             <Archive className="h-4 w-4" />

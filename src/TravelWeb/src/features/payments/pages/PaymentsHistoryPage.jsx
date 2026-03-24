@@ -227,17 +227,17 @@ export default function PaymentsHistoryPage() {
                       onIssueReceipt={handleIssueReceipt}
                     />
 
-                    {(item.entityType === "payment" || item.entityType === "invoice") && item.entity?.reservaId && (
+                    {(item.entityType === "payment" || item.entityType === "invoice") && (item.entity?.reservaPublicId || item.entity?.reservaId) && (
                       <Link
-                        to={`/reservas/${item.entity.reservaId}`}
+                        to={`/reservas/${item.entity.reservaPublicId || item.entity.reservaId}`}
                         className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
                       >
                         Ver reserva
                       </Link>
                     )}
-                    {item.entityType === "movement" && item.entity?.reservaId && (
+                    {item.entityType === "movement" && (item.entity?.reservaPublicId || item.entity?.reservaId) && (
                       <Link
-                        to={`/reservas/${item.entity.reservaId}`}
+                        to={`/reservas/${item.entity.reservaPublicId || item.entity.reservaId}`}
                         className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
                       >
                         Ver reserva vinculada

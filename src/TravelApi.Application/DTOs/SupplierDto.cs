@@ -2,7 +2,7 @@ namespace TravelApi.Application.DTOs;
 
 public class SupplierDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? TaxId { get; set; }
     public string? ContactName { get; set; }

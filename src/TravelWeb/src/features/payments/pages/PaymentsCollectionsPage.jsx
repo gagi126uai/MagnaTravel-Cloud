@@ -71,7 +71,7 @@ export default function PaymentsCollectionsPage() {
       <PaymentModal
         isOpen={Boolean(selectedItem)}
         onClose={() => setSelectedItem(null)}
-        reservaId={selectedItem?.reservaId}
+        reservaId={selectedItem?.reservaPublicId || selectedItem?.reservaId}
         maxAmount={selectedItem?.balance}
         onSuccess={async () => {
           setSelectedItem(null);

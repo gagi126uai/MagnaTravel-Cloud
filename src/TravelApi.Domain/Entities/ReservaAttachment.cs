@@ -3,9 +3,10 @@ using System.Text.Json.Serialization;
 
 namespace TravelApi.Domain.Entities;
 
-public class ReservaAttachment
+public class ReservaAttachment : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     public int ReservaId { get; set; }
     public Reserva? Reserva { get; set; }
     

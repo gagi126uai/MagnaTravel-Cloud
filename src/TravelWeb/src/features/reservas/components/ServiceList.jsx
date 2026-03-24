@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus, Plane, Hotel, Car, Package, Edit2, Trash2, TrendingUp, ShieldCheck } from "lucide-react";
 import { isAdmin } from "../../../auth";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function ServiceList({ services, onAddService, onEditService, onDeleteService }) {
     const admin = isAdmin();
@@ -47,7 +48,7 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                     const marginPercent = salePrice > 0 ? (margin / salePrice) * 100 : 0;
 
                                     return (
-                                        <tr key={`${svc._type}-${svc.id}`} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                                        <tr key={`${svc._type}-${getPublicId(svc)}`} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
                                             <td className="py-4 align-middle whitespace-nowrap pr-4">
                                                 <div className="flex items-center">
                                                     {svc._type === 'Flight' && <Plane className="w-4 h-4 text-slate-400 mr-2" />}
@@ -111,7 +112,7 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                             const margin = salePrice - netCost;
 
                             return (
-                                <div key={`${svc._type}-${svc.id}`} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                                <div key={`${svc._type}-${getPublicId(svc)}`} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
                                     <div className="flex justify-between mb-2">
                                         <div className="flex items-center gap-2">
                                             {svc._type === 'Flight' && <Plane className="w-4 h-4 text-blue-500" />}

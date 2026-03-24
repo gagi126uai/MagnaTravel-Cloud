@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import Swal from "sweetalert2";
+import { getPublicId } from "../../../lib/publicIds";
 
 export default function PaymentsTrashPage() {
     const [payments, setPayments] = useState([]);
@@ -48,7 +49,7 @@ export default function PaymentsTrashPage() {
 
         if (result.isConfirmed) {
             try {
-                await api.put(`/payments/${payment.id}/restore`);
+                await api.put(`/payments/${getPublicId(payment)}/restore`);
                 showSuccess("Pago restaurado exitosamente.");
                 loadTrash();
             } catch (error) {
@@ -97,7 +98,7 @@ export default function PaymentsTrashPage() {
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 {payments.map((p) => (
-                                    <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                                    <tr key={getPublicId(p)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-2">
                                                 <div className="h-8 w-8 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">

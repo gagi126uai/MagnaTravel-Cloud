@@ -5,9 +5,10 @@ namespace TravelApi.Domain.Entities;
 /// <summary>
 /// Pago realizado a un proveedor (egreso)
 /// </summary>
-public class SupplierPayment
+public class SupplierPayment : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
 
     public int SupplierId { get; set; }
     public Supplier Supplier { get; set; } = null!;

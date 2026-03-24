@@ -2,9 +2,9 @@ namespace TravelApi.Application.DTOs;
 
 public class InvoiceDto
 {
-    public int Id { get; set; }
+    public Guid PublicId { get; set; }
 
-    public int ReservaId { get; set; }
+    public Guid? ReservaPublicId { get; set; }
     public ReservaDto? Reserva { get; set; } // Navigation for frontend "Reserva" and "Client" columns
     public int TipoComprobante { get; set; } 
     public int PuntoDeVenta { get; set; }

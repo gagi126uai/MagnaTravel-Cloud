@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -11,25 +13,30 @@ namespace TravelApi.Controllers;
 public class HotelBookingsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
+    private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public HotelBookingsController(IBookingService bookingService)
+    public HotelBookingsController(IBookingService bookingService, EntityReferenceResolver entityReferenceResolver)
     {
         _bookingService = bookingService;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll(int reservaId, CancellationToken ct)
+    public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
-        var hotels = await _bookingService.GetHotelsAsync(reservaId, ct);
+        var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+        var hotels = await _bookingService.GetHotelsAsync(resolvedReservaId, ct);
         return Ok(hotels);
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetById(int reservaId, int id, CancellationToken ct)
+    public async Task<IActionResult> GetById(string reservaId, string id, CancellationToken ct)
     {
         try
         {
-            var hotel = await _bookingService.GetHotelByIdAsync(reservaId, id, ct);
+            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+            var resolvedHotelId = await _entityReferenceResolver.ResolveRequiredIdAsync<HotelBooking>(id, ct);
+            var hotel = await _bookingService.GetHotelByIdAsync(resolvedReservaId, resolvedHotelId, ct);
             return Ok(hotel);
         }
         catch (KeyNotFoundException)
@@ -40,11 +47,12 @@ public class HotelBookingsController : ControllerBase
 
     [HttpPost]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Create(int reservaId, [FromBody] CreateHotelRequest req, CancellationToken ct)
+    public async Task<IActionResult> Create(string reservaId, [FromBody] CreateHotelRequest req, CancellationToken ct)
     {
         try
         {
-            var hotel = await _bookingService.CreateHotelAsync(reservaId, req, ct);
+            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+            var hotel = await _bookingService.CreateHotelAsync(resolvedReservaId, req, ct);
             return Ok(hotel);
         }
         catch (KeyNotFoundException ex)
@@ -59,11 +67,13 @@ public class HotelBookingsController : ControllerBase
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Update(int reservaId, int id, [FromBody] UpdateHotelRequest req, CancellationToken ct)
+    public async Task<IActionResult> Update(string reservaId, string id, [FromBody] UpdateHotelRequest req, CancellationToken ct)
     {
         try
         {
-            var hotel = await _bookingService.UpdateHotelAsync(reservaId, id, req, ct);
+            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+            var resolvedHotelId = await _entityReferenceResolver.ResolveRequiredIdAsync<HotelBooking>(id, ct);
+            var hotel = await _bookingService.UpdateHotelAsync(resolvedReservaId, resolvedHotelId, req, ct);
             return Ok(hotel);
         }
         catch (KeyNotFoundException)
@@ -78,11 +88,13 @@ public class HotelBookingsController : ControllerBase
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(int reservaId, int id, CancellationToken ct)
+    public async Task<IActionResult> Delete(string reservaId, string id, CancellationToken ct)
     {
         try
         {
-            await _bookingService.DeleteHotelAsync(reservaId, id, ct);
+            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
+            var resolvedHotelId = await _entityReferenceResolver.ResolveRequiredIdAsync<HotelBooking>(id, ct);
+            await _bookingService.DeleteHotelAsync(resolvedReservaId, resolvedHotelId, ct);
             return Ok();
         }
         catch (KeyNotFoundException)

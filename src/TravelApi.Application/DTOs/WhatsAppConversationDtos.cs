@@ -3,9 +3,9 @@ namespace TravelApi.Application.DTOs;
 public class WhatsAppConversationListItemDto
 {
     public string ConversationType { get; set; } = string.Empty;
-    public int EntityId { get; set; }
-    public int? LeadId { get; set; }
-    public int? ReservaId { get; set; }
+    public Guid EntityPublicId { get; set; }
+    public Guid? LeadPublicId { get; set; }
+    public Guid? ReservaPublicId { get; set; }
     public string Phone { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Subtitle { get; set; }
@@ -19,9 +19,9 @@ public class WhatsAppConversationListItemDto
 public class WhatsAppConversationDetailDto
 {
     public string ConversationType { get; set; } = string.Empty;
-    public int EntityId { get; set; }
-    public int? LeadId { get; set; }
-    public int? ReservaId { get; set; }
+    public Guid EntityPublicId { get; set; }
+    public Guid? LeadPublicId { get; set; }
+    public Guid? ReservaPublicId { get; set; }
     public string Phone { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Subtitle { get; set; }

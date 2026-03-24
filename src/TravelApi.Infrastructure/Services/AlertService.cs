@@ -29,7 +29,7 @@ public class AlertService : IAlertService
                         f.Balance > 0)
             .Select(f => new
             {
-                f.Id,
+                f.PublicId,
                 f.NumeroReserva,
                 f.Name,
                 f.StartDate,
@@ -44,7 +44,7 @@ public class AlertService : IAlertService
             .Where(s => s.CurrentBalance > 100 && s.IsActive)
             .Select(s => new
             {
-                s.Id,
+                s.PublicId,
                 s.Name,
                 s.CurrentBalance,
                 s.Phone

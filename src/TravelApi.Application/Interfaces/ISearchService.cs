@@ -11,6 +11,6 @@ public record SearchResultsResponse(
     List<ReservaSearchResult> Reservas,
     List<PaymentSearchResult> Payments);
 
-public record CustomerSearchResult(int Id, string FullName, string? Email, string? Phone);
-public record ReservaSearchResult(int Id, string NumeroReserva, string Name, string Status, string? PayerName);
-public record PaymentSearchResult(int Id, decimal Amount, string Status, string Method, string? NumeroReserva);
+public record CustomerSearchResult(Guid PublicId, string FullName, string? Email, string? Phone);
+public record ReservaSearchResult(Guid PublicId, string NumeroReserva, string Name, string Status, string? PayerName);
+public record PaymentSearchResult(Guid PublicId, decimal Amount, string Status, string Method, string? NumeroReserva);

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Plus, User, Trash2, Edit2 } from "lucide-react";
+import { getPublicId } from "../../../lib/publicIds";
 
 export function PassengerList({ passengers, onAddPassenger, onEditPassenger, onDeletePassenger }) {
     return (
@@ -33,7 +34,7 @@ export function PassengerList({ passengers, onAddPassenger, onEditPassenger, onD
                             </thead>
                             <tbody>
                                 {passengers?.map((pax) => (
-                                    <tr key={pax.id} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/20 dark:hover:bg-slate-800/10 transition-colors">
+                                    <tr key={getPublicId(pax)} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/20 dark:hover:bg-slate-800/10 transition-colors">
                                         <td className="px-4 py-3 whitespace-nowrap">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-9 h-9 rounded-full bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xs shadow-sm border border-indigo-100 dark:border-indigo-800/50">
@@ -66,7 +67,7 @@ export function PassengerList({ passengers, onAddPassenger, onEditPassenger, onD
                                                 <button onClick={() => onEditPassenger(pax)} className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-lg transition-colors" title="Editar">
                                                     <Edit2 className="w-4 h-4" />
                                                 </button>
-                                                <button onClick={() => onDeletePassenger(pax.id)} className="p-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40 rounded-lg transition-colors" title="Eliminar">
+                                                <button onClick={() => onDeletePassenger(getPublicId(pax))} className="p-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40 rounded-lg transition-colors" title="Eliminar">
                                                     <Trash2 className="w-4 h-4" />
                                                 </button>
                                             </div>

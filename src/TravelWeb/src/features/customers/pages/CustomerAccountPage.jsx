@@ -28,6 +28,7 @@ import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import Swal from "sweetalert2";
 import { Button } from "../../../components/ui/button";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
+import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 
 const StatusBadge = ({ status }) => {
     const colors = {
@@ -220,7 +221,7 @@ const renderInvoiceTab = (previewWindow, { title, body }) => {
 };
 
 export default function CustomerAccountPage() {
-    const { id } = useParams();
+    const { publicId } = useParams();
     const navigate = useNavigate();
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -230,12 +231,12 @@ export default function CustomerAccountPage() {
 
     useEffect(() => {
         loadAccount();
-    }, [id]);
+    }, [publicId]);
 
     const loadAccount = async () => {
         setLoading(true);
         try {
-            const result = await api.get(`/customers/${id}/account`);
+            const result = await api.get(`/customers/${publicId}/account`);
             setData(result);
         } catch (error) {
             showError("No se pudo cargar la cuenta corriente");
@@ -284,7 +285,7 @@ export default function CustomerAccountPage() {
         });
 
         try {
-            const blob = await api.get(`/invoices/${invoice.id}/pdf`, { responseType: "blob" });
+            const blob = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
 
             if (!(blob instanceof Blob) || blob.size === 0) {
                 throw new Error("La factura no devolvio un PDF valido.");
@@ -358,7 +359,7 @@ export default function CustomerAccountPage() {
 
         if (result.isConfirmed) {
             try {
-                await api.delete(`/reservas/${payment.reservaId}/payments/${payment.id}`);
+                await api.delete(`/reservas/${getRelatedPublicId(payment, "reservaPublicId", "reservaId")}/payments/${getPublicId(payment)}`);
                 Swal.fire("Eliminado", "El pago ha sido eliminado.", "success");
                 loadAccount();
             } catch (error) {
@@ -383,8 +384,8 @@ export default function CustomerAccountPage() {
 
     // --- Ledger Calculation (Debits & Credits only) ---
     const debitMovements = (reservas || []).map(r => ({
-        id: r.id,
-        trackId: `res-${r.id}`,
+        id: getPublicId(r),
+        trackId: `res-${getPublicId(r)}`,
         type: 'RESERVA',
         date: r.createdAt || r.startDate,
         concept: `Reserva ${r.numeroReserva} - ${r.name}`,
@@ -394,8 +395,8 @@ export default function CustomerAccountPage() {
     }));
 
     const creditMovements = (payments || []).map(p => ({
-        id: p.id,
-        trackId: `pay-${p.id}`,
+        id: getPublicId(p),
+        trackId: `pay-${getPublicId(p)}`,
         type: 'PAYMENT',
         date: p.paymentDate,
         concept: `Pago (${methodLabels[p.method] || p.method})`,
@@ -564,7 +565,7 @@ export default function CustomerAccountPage() {
                                                             </button>
                                                         )}
                                                         {move.type === 'RESERVA' && (
-                                                            <Link to={`/reservas/${move.originalData.id}`} className="p-1.5 hover:bg-indigo-50 rounded-lg text-indigo-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Detalles">
+                                                            <Link to={`/reservas/${getPublicId(move.originalData)}`} className="p-1.5 hover:bg-indigo-50 rounded-lg text-indigo-400 hover:text-indigo-600 transition-colors inline-block" title="Ver Detalles">
                                                                 <Eye className="h-4 w-4" />
                                                             </Link>
                                                         )}
@@ -598,7 +599,7 @@ export default function CustomerAccountPage() {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                         {displayInvoices.map((inv) => (
-                                            <tr key={inv.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
+                                            <tr key={getPublicId(inv)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
                                                 <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
                                                     {formatDate(inv.createdAt)}
                                                 </td>
@@ -648,7 +649,7 @@ export default function CustomerAccountPage() {
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 paymentToEdit={paymentToEdit}
-                customerId={id}
+                customerId={publicId}
                 availableReservas={reservas.filter(f => f.status !== "Cancelado")}
                 onSave={loadAccount}
             />
