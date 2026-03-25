@@ -141,15 +141,154 @@ public class PaymentService : IPaymentService
             .ToList();
     }
 
-    public async Task<IEnumerable<PaymentDto>> GetAllPaymentsAsync(CancellationToken cancellationToken)
+    public async Task<PagedResponse<PaymentDto>> GetAllPaymentsAsync(PaymentsListQuery query, CancellationToken cancellationToken)
     {
-        return await _dbContext.Payments
+        var paymentsQuery = ApplyPaymentSearch(_dbContext.Payments.AsNoTracking(), query.Search);
+        paymentsQuery = ApplyPaymentOrdering(paymentsQuery, query);
+
+        return await paymentsQuery
             .AsNoTracking()
-            .Include(p => p.Reserva)
-            .Include(p => p.Receipt)
-            .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
-            .ToListAsync(cancellationToken);
+            .ToPagedResponseAsync(query, cancellationToken);
+    }
+
+    public async Task<PagedResponse<FinanceHistoryItemDto>> GetHistoryAsync(FinanceHistoryQuery query, CancellationToken cancellationToken)
+    {
+        var normalizedSearch = query.Search?.Trim().ToLowerInvariant();
+        var customerPayments = _dbContext.Payments
+            .AsNoTracking()
+            .Where(payment => string.IsNullOrWhiteSpace(normalizedSearch) ||
+                payment.Reference != null && payment.Reference.ToLower().Contains(normalizedSearch) ||
+                payment.Method.ToLower().Contains(normalizedSearch) ||
+                payment.Notes != null && payment.Notes.ToLower().Contains(normalizedSearch) ||
+                payment.Reserva != null && payment.Reserva.NumeroReserva.ToLower().Contains(normalizedSearch))
+            .Select(payment => new FinanceHistoryItemDto
+            {
+                PublicId = payment.PublicId,
+                EntityType = "payment",
+                OccurredAt = payment.PaidAt,
+                Amount = payment.Amount,
+                Kind = payment.EntryType == PaymentEntryTypes.CreditNoteReversal ? "Reversion" : "Cobranza",
+                Title = payment.EntryType == PaymentEntryTypes.CreditNoteReversal
+                    ? "Reversion por nota de credito"
+                    : "Cobranza recibida",
+                Subtitle = payment.Reserva != null
+                    ? "Reserva " + payment.Reserva.NumeroReserva
+                    : "Sin reserva",
+                ReservaPublicId = payment.Reserva != null ? (Guid?)payment.Reserva.PublicId : null,
+                NumeroReserva = payment.Reserva != null ? payment.Reserva.NumeroReserva : null,
+                Reference = payment.Reference,
+                Method = payment.Method,
+                PaymentEntryType = payment.EntryType,
+                ReceiptPublicId = payment.Receipt != null ? (Guid?)payment.Receipt.PublicId : null,
+                ReceiptNumber = payment.Receipt != null ? payment.Receipt.ReceiptNumber : null,
+                ReceiptStatus = payment.Receipt != null ? payment.Receipt.Status : null,
+                InvoiceTipoComprobante = null,
+                InvoiceResultado = null,
+                InvoiceWasForced = false,
+                InvoiceForceReason = null,
+                MovementSourceType = null,
+                MovementDirection = null,
+                IsManual = false
+            });
+
+        var invoices = _dbContext.Invoices
+            .AsNoTracking()
+            .Where(invoice => string.IsNullOrWhiteSpace(normalizedSearch) ||
+                invoice.ForceReason != null && invoice.ForceReason.ToLower().Contains(normalizedSearch) ||
+                invoice.Reserva != null && invoice.Reserva.NumeroReserva.ToLower().Contains(normalizedSearch) ||
+                invoice.NumeroComprobante.ToString().Contains(normalizedSearch))
+            .Select(invoice => new FinanceHistoryItemDto
+            {
+                PublicId = invoice.PublicId,
+                EntityType = "invoice",
+                OccurredAt = invoice.CreatedAt,
+                Amount = invoice.ImporteTotal,
+                Kind = invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
+                    ? "Nota de credito"
+                    : "Factura AFIP",
+                Title = invoice.TipoComprobante == 1 ? "Factura A" :
+                    invoice.TipoComprobante == 6 ? "Factura B" :
+                    invoice.TipoComprobante == 11 ? "Factura C" :
+                    invoice.TipoComprobante == 3 ? "Nota de Credito A" :
+                    invoice.TipoComprobante == 8 ? "Nota de Credito B" :
+                    invoice.TipoComprobante == 13 ? "Nota de Credito C" :
+                    invoice.TipoComprobante == 2 ? "Nota de Debito A" :
+                    invoice.TipoComprobante == 7 ? "Nota de Debito B" :
+                    invoice.TipoComprobante == 12 ? "Nota de Debito C" :
+                    invoice.TipoComprobante == 51 ? "Factura M" :
+                    invoice.TipoComprobante == 52 ? "Nota de Debito M" :
+                    invoice.TipoComprobante == 53 ? "Nota de Credito M" :
+                    "Comp. " + invoice.TipoComprobante,
+                Subtitle = invoice.Reserva != null
+                    ? "Reserva " + invoice.Reserva.NumeroReserva
+                    : "Sin reserva",
+                ReservaPublicId = invoice.Reserva != null ? (Guid?)invoice.Reserva.PublicId : null,
+                NumeroReserva = invoice.Reserva != null ? invoice.Reserva.NumeroReserva : null,
+                Reference = invoice.NumeroComprobante.ToString(),
+                Method = null,
+                PaymentEntryType = null,
+                ReceiptPublicId = null,
+                ReceiptNumber = null,
+                ReceiptStatus = null,
+                InvoiceTipoComprobante = invoice.TipoComprobante,
+                InvoiceResultado = invoice.Resultado,
+                InvoiceWasForced = invoice.WasForced,
+                InvoiceForceReason = invoice.ForceReason,
+                MovementSourceType = null,
+                MovementDirection = null,
+                IsManual = false
+            });
+
+        var manualMovements = _dbContext.ManualCashMovements
+            .AsNoTracking()
+            .Where(movement => !movement.IsVoided)
+            .Where(movement => string.IsNullOrWhiteSpace(normalizedSearch) ||
+                movement.Description.ToLower().Contains(normalizedSearch) ||
+                movement.Reference != null && movement.Reference.ToLower().Contains(normalizedSearch) ||
+                movement.Method.ToLower().Contains(normalizedSearch) ||
+                movement.RelatedReserva != null && movement.RelatedReserva.NumeroReserva.ToLower().Contains(normalizedSearch) ||
+                movement.RelatedSupplier != null && movement.RelatedSupplier.Name.ToLower().Contains(normalizedSearch))
+            .Select(movement => new FinanceHistoryItemDto
+            {
+                PublicId = movement.PublicId,
+                EntityType = "movement",
+                OccurredAt = movement.OccurredAt,
+                Amount = movement.Direction == CashMovementDirections.Expense ? -movement.Amount : movement.Amount,
+                Kind = "Caja",
+                Title = movement.Description,
+                Subtitle = movement.Reference ??
+                    (movement.RelatedReserva != null
+                        ? movement.RelatedReserva.NumeroReserva
+                        : movement.RelatedSupplier != null
+                            ? movement.RelatedSupplier.Name
+                            : "Ajuste manual"),
+                ReservaPublicId = movement.RelatedReserva != null ? (Guid?)movement.RelatedReserva.PublicId : null,
+                NumeroReserva = movement.RelatedReserva != null ? movement.RelatedReserva.NumeroReserva : null,
+                Reference = movement.Reference,
+                Method = movement.Method,
+                PaymentEntryType = null,
+                ReceiptPublicId = null,
+                ReceiptNumber = null,
+                ReceiptStatus = null,
+                InvoiceTipoComprobante = null,
+                InvoiceResultado = null,
+                InvoiceWasForced = false,
+                InvoiceForceReason = null,
+                MovementSourceType = "ManualAdjustment",
+                MovementDirection = movement.Direction,
+                IsManual = true
+            });
+
+        var timeline = customerPayments
+            .Concat(invoices)
+            .Concat(manualMovements);
+
+        timeline = query.IsSortDescending()
+            ? timeline.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.PublicId)
+            : timeline.OrderBy(item => item.OccurredAt).ThenBy(item => item.PublicId);
+
+        return await timeline.ToPagedResponseAsync(query, cancellationToken);
     }
 
     public async Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken)
@@ -369,5 +508,39 @@ public class PaymentService : IPaymentService
 
         reserva.Balance = reserva.TotalSale - reserva.TotalPaid;
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static IQueryable<Payment> ApplyPaymentSearch(IQueryable<Payment> query, string? search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            return query;
+        }
+
+        var normalized = search.Trim().ToLowerInvariant();
+        return query.Where(payment =>
+            payment.Method.ToLower().Contains(normalized) ||
+            payment.Reference != null && payment.Reference.ToLower().Contains(normalized) ||
+            payment.Notes != null && payment.Notes.ToLower().Contains(normalized) ||
+            payment.Reserva != null && payment.Reserva.NumeroReserva.ToLower().Contains(normalized));
+    }
+
+    private static IQueryable<Payment> ApplyPaymentOrdering(IQueryable<Payment> query, PaymentsListQuery request)
+    {
+        var sortBy = (request.SortBy ?? "paidAt").Trim().ToLowerInvariant();
+        var desc = !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return sortBy switch
+        {
+            "amount" => desc
+                ? query.OrderByDescending(payment => payment.Amount).ThenByDescending(payment => payment.PaidAt)
+                : query.OrderBy(payment => payment.Amount).ThenByDescending(payment => payment.PaidAt),
+            "numeroreserva" => desc
+                ? query.OrderByDescending(payment => payment.Reserva != null ? payment.Reserva.NumeroReserva : string.Empty).ThenByDescending(payment => payment.PaidAt)
+                : query.OrderBy(payment => payment.Reserva != null ? payment.Reserva.NumeroReserva : string.Empty).ThenByDescending(payment => payment.PaidAt),
+            _ => desc
+                ? query.OrderByDescending(payment => payment.PaidAt).ThenByDescending(payment => payment.Id)
+                : query.OrderBy(payment => payment.PaidAt).ThenBy(payment => payment.Id)
+        };
     }
 }

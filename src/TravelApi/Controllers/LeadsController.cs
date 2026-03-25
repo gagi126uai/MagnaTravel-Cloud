@@ -102,7 +102,7 @@ public class LeadsController : ControllerBase
     {
         var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
         var customerId = await _leadService.ConvertToCustomerAsync(id, cancellationToken);
-        var customerPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Customer>(customerId.ToString(), cancellationToken);
+            var customerPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Customer>(customerId, cancellationToken);
         if (!customerPublicId.HasValue)
             return NotFound();
 

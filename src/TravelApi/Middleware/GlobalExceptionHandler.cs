@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Errors;
 
 namespace TravelApi.Middleware;
 
@@ -21,12 +22,14 @@ public class GlobalExceptionHandler : IExceptionHandler
     {
         _logger.LogError(exception, "Exception occurred: {Message}", exception.Message);
 
-        var problemDetails = new ProblemDetails
-        {
-            Status = StatusCodes.Status500InternalServerError,
-            Title = "An error occurred while processing your request.",
-            Detail = _env.IsDevelopment() ? exception.Message : "Please contact support if the problem persists."
-        };
+        var problemDetails = DatabaseExceptionClassifier.IsDatabaseUnavailable(exception)
+            ? DatabaseExceptionClassifier.CreateProblemDetails(_env.IsDevelopment() ? exception.Message : null)
+            : new ProblemDetails
+            {
+                Status = StatusCodes.Status500InternalServerError,
+                Title = "An error occurred while processing your request.",
+                Detail = _env.IsDevelopment() ? exception.Message : "Please contact support if the problem persists."
+            };
 
         httpContext.Response.StatusCode = problemDetails.Status.Value;
 

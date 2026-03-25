@@ -11,7 +11,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
         method: "Transfer",
         paidAt: new Date().toISOString().split("T")[0],
         notes: "",
-        reservaId: ""
+        reservaPublicId: ""
     });
     const [loading, setLoading] = useState(false);
 
@@ -21,9 +21,9 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                 setFormData({
                     amount: paymentToEdit.amount,
                     method: paymentToEdit.method,
-                    paidAt: paymentToEdit.paymentDate ? new Date(paymentToEdit.paymentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+                    paidAt: paymentToEdit.paidAt ? new Date(paymentToEdit.paidAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
                     notes: paymentToEdit.notes || "",
-                    reservaId: getRelatedPublicId(paymentToEdit, "reservaPublicId", "reservaId") || ""
+                    reservaPublicId: getRelatedPublicId(paymentToEdit, "reservaPublicId", "reservaId") || ""
                 });
             } else {
                 setFormData({
@@ -31,7 +31,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                     method: "Transfer",
                     paidAt: new Date().toISOString().split("T")[0],
                     notes: "",
-                    reservaId: availableReservas.length > 0 ? getPublicId(availableReservas[0]) || "" : ""
+                    reservaPublicId: availableReservas.length > 0 ? getPublicId(availableReservas[0]) || "" : ""
                 });
             }
         }
@@ -41,7 +41,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.reservaId) {
+        if (!formData.reservaPublicId) {
             Swal.fire("Error", "Debe seleccionar una reserva", "error");
             return;
         }
@@ -57,10 +57,10 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
 
             if (paymentToEdit) {
                 // Edit existing payment
-                await api.put(`/reservas/${formData.reservaId}/payments/${getPublicId(paymentToEdit)}`, payload);
+                await api.put(`/reservas/${formData.reservaPublicId}/payments/${getPublicId(paymentToEdit)}`, payload);
             } else {
                 // Create new payment
-                await api.post(`/reservas/${formData.reservaId}/payments`, payload);
+                await api.post(`/reservas/${formData.reservaPublicId}/payments`, payload);
             }
 
             onSave();
@@ -104,8 +104,8 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
                             <FileText className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                             <select
                                 disabled={!!paymentToEdit} // Cannot change file when editing
-                                value={formData.reservaId}
-                                onChange={(e) => setFormData({ ...formData, reservaId: e.target.value })}
+                                value={formData.reservaPublicId}
+                                onChange={(e) => setFormData({ ...formData, reservaPublicId: e.target.value })}
                                 className="w-full rounded-md border border-input bg-background pl-9 pr-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                             >
                                 <option value="">Seleccionar Reserva...</option>

@@ -6,7 +6,8 @@ public interface IPaymentService
 {
     Task<CollectionsSummaryDto> GetCollectionsSummaryAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<CollectionWorkItemDto>> GetCollectionsWorklistAsync(CancellationToken cancellationToken);
-    Task<IEnumerable<PaymentDto>> GetAllPaymentsAsync(CancellationToken cancellationToken);
+    Task<PagedResponse<PaymentDto>> GetAllPaymentsAsync(PaymentsListQuery query, CancellationToken cancellationToken);
+    Task<PagedResponse<FinanceHistoryItemDto>> GetHistoryAsync(FinanceHistoryQuery query, CancellationToken cancellationToken);
     Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken);
     Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);
     Task<PaymentReceiptDto> IssueReceiptAsync(int paymentId, CancellationToken cancellationToken);

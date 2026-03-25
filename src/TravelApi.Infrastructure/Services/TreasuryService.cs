@@ -102,40 +102,51 @@ public class TreasuryService : ITreasuryService
         };
     }
 
-    public async Task<IReadOnlyList<CashMovementDto>> GetMovementsAsync(CancellationToken cancellationToken)
+    public async Task<PagedResponse<CashMovementDto>> GetMovementsAsync(TreasuryMovementsQuery query, CancellationToken cancellationToken)
     {
-        var paymentMovements = await _dbContext.Payments
+        var normalizedSearch = query.Search?.Trim().ToLowerInvariant();
+
+        var paymentMovements = _dbContext.Payments
             .AsNoTracking()
-            .Include(p => p.Reserva)
             .Where(p => !p.IsDeleted && p.AffectsCash && p.Status != "Cancelled")
+            .Where(p => string.IsNullOrWhiteSpace(normalizedSearch) ||
+                p.Method.ToLower().Contains(normalizedSearch) ||
+                p.Reference != null && p.Reference.ToLower().Contains(normalizedSearch) ||
+                p.Notes != null && p.Notes.ToLower().Contains(normalizedSearch) ||
+                p.Reserva != null && p.Reserva.NumeroReserva.ToLower().Contains(normalizedSearch))
             .Select(p => new CashMovementDto
             {
                 SourceType = "CustomerPayment",
-                SourceId = p.PublicId.ToString(),
+                SourcePublicId = p.PublicId,
                 Direction = CashMovementDirections.Income,
                 Amount = p.Amount,
                 OccurredAt = p.PaidAt,
                 Method = p.Method,
+                Category = null,
                 Description = p.Notes ?? "Cobranza de cliente",
                 Reference = p.Reference,
                 ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null,
                 NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null,
                 IsManual = false
-            })
-            .ToListAsync(cancellationToken);
+            });
 
-        var supplierMovements = await _dbContext.SupplierPayments
+        var supplierMovements = _dbContext.SupplierPayments
             .AsNoTracking()
-            .Include(p => p.Reserva)
-            .Include(p => p.Supplier)
+            .Where(p => string.IsNullOrWhiteSpace(normalizedSearch) ||
+                p.Method.ToLower().Contains(normalizedSearch) ||
+                p.Reference != null && p.Reference.ToLower().Contains(normalizedSearch) ||
+                p.Notes != null && p.Notes.ToLower().Contains(normalizedSearch) ||
+                p.Supplier.Name.ToLower().Contains(normalizedSearch) ||
+                p.Reserva != null && p.Reserva.NumeroReserva.ToLower().Contains(normalizedSearch))
             .Select(p => new CashMovementDto
             {
                 SourceType = "SupplierPayment",
-                SourceId = p.PublicId.ToString(),
+                SourcePublicId = p.PublicId,
                 Direction = CashMovementDirections.Expense,
                 Amount = p.Amount,
                 OccurredAt = p.PaidAt,
                 Method = p.Method,
+                Category = null,
                 Description = p.Notes ?? "Pago a proveedor",
                 Reference = p.Reference,
                 ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null,
@@ -143,22 +154,27 @@ public class TreasuryService : ITreasuryService
                 SupplierPublicId = p.Supplier.PublicId,
                 SupplierName = p.Supplier.Name,
                 IsManual = false
-            })
-            .ToListAsync(cancellationToken);
+            });
 
-        var manualMovements = await _dbContext.ManualCashMovements
+        var manualMovements = _dbContext.ManualCashMovements
             .AsNoTracking()
-            .Include(m => m.RelatedReserva)
-            .Include(m => m.RelatedSupplier)
             .Where(m => !m.IsVoided)
+            .Where(m => string.IsNullOrWhiteSpace(normalizedSearch) ||
+                m.Description.ToLower().Contains(normalizedSearch) ||
+                m.Method.ToLower().Contains(normalizedSearch) ||
+                m.Reference != null && m.Reference.ToLower().Contains(normalizedSearch) ||
+                m.Category.ToLower().Contains(normalizedSearch) ||
+                m.RelatedReserva != null && m.RelatedReserva.NumeroReserva.ToLower().Contains(normalizedSearch) ||
+                m.RelatedSupplier != null && m.RelatedSupplier.Name.ToLower().Contains(normalizedSearch))
             .Select(m => new CashMovementDto
             {
                 SourceType = "ManualAdjustment",
-                SourceId = m.PublicId.ToString(),
+                SourcePublicId = m.PublicId,
                 Direction = m.Direction,
                 Amount = m.Amount,
                 OccurredAt = m.OccurredAt,
                 Method = m.Method,
+                Category = m.Category,
                 Description = m.Description,
                 Reference = m.Reference,
                 ReservaPublicId = m.RelatedReserva != null ? (Guid?)m.RelatedReserva.PublicId : null,
@@ -166,14 +182,32 @@ public class TreasuryService : ITreasuryService
                 SupplierPublicId = m.RelatedSupplier != null ? (Guid?)m.RelatedSupplier.PublicId : null,
                 SupplierName = m.RelatedSupplier != null ? m.RelatedSupplier.Name : null,
                 IsManual = true
-            })
-            .ToListAsync(cancellationToken);
+            });
 
-        return paymentMovements
+        var movements = paymentMovements
             .Concat(supplierMovements)
-            .Concat(manualMovements)
-            .OrderByDescending(m => m.OccurredAt)
-            .ToList();
+            .Concat(manualMovements);
+
+        if (!string.Equals(query.Direction, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            var direction = string.Equals(query.Direction, "income", StringComparison.OrdinalIgnoreCase)
+                ? CashMovementDirections.Income
+                : string.Equals(query.Direction, "expense", StringComparison.OrdinalIgnoreCase)
+                    ? CashMovementDirections.Expense
+                    : query.Direction;
+            movements = movements.Where(movement => movement.Direction == direction);
+        }
+
+        if (!string.Equals(query.SourceType, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            movements = movements.Where(movement => movement.SourceType == query.SourceType);
+        }
+
+        movements = !string.Equals(query.SortDir, "asc", StringComparison.OrdinalIgnoreCase)
+            ? movements.OrderByDescending(movement => movement.OccurredAt).ThenByDescending(movement => movement.SourcePublicId)
+            : movements.OrderBy(movement => movement.OccurredAt).ThenBy(movement => movement.SourcePublicId);
+
+        return await movements.ToPagedResponseAsync(query, cancellationToken);
     }
 
     public async Task<ManualCashMovementDto> CreateManualMovementAsync(UpsertManualCashMovementRequest request, string createdBy, CancellationToken cancellationToken)

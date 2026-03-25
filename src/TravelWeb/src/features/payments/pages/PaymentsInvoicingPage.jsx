@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
+import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { FinanceMetricsGrid } from "../components/FinanceMetricsGrid";
 import { InvoicingTab } from "../components/InvoicingTab";
 import { useInvoicing } from "../hooks/useInvoicing";
@@ -16,17 +18,26 @@ export default function PaymentsInvoicingPage() {
     creditNotes,
     searchTerm,
     setSearchTerm,
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+    hasPreviousPage,
+    hasNextPage,
+    setPage,
+    setPageSize,
     loadData,
     handleDownloadPdf,
     handleViewPdf,
     handleRetryInvoice,
     handleAnnulInvoice,
+    databaseUnavailable,
   } = useInvoicing();
 
   if (loading && workItems.length === 0 && invoices.length === 0) {
     return (
-      <div className="flex justify-center items-center h-64 text-slate-400">
-        <Loader2 className="w-8 h-8 animate-spin" />
+      <div className="flex h-64 items-center justify-center text-slate-400">
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
@@ -35,13 +46,13 @@ export default function PaymentsInvoicingPage() {
     <div className="space-y-6">
       <div className="flex justify-end">
         <div className="relative min-w-[260px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             placeholder="Buscar reserva, cliente o comprobante..."
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
-            className="pl-9 pr-4 py-2 w-full text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-slate-200 transition-shadow dark:text-white"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
           />
         </div>
       </div>
@@ -57,23 +68,40 @@ export default function PaymentsInvoicingPage() {
         columns="md:grid-cols-2 xl:grid-cols-5"
       />
 
-      <InvoicingTab
-        items={workItems}
-        issuedInvoices={issuedInvoices}
-        creditNotes={creditNotes}
-        onInvoice={setSelectedItem}
-        onDownloadPdf={handleDownloadPdf}
-        onViewPdf={handleViewPdf}
-        onRetryInvoice={handleRetryInvoice}
-        onAnnulInvoice={handleAnnulInvoice}
-      />
+      {databaseUnavailable ? (
+        <DatabaseUnavailableState />
+      ) : (
+        <>
+          <InvoicingTab
+            items={workItems}
+            issuedInvoices={issuedInvoices}
+            creditNotes={creditNotes}
+            onInvoice={setSelectedItem}
+            onDownloadPdf={handleDownloadPdf}
+            onViewPdf={handleViewPdf}
+            onRetryInvoice={handleRetryInvoice}
+            onAnnulInvoice={handleAnnulInvoice}
+          />
+
+          <PaginationFooter
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            totalPages={totalPages}
+            hasPreviousPage={hasPreviousPage}
+            hasNextPage={hasNextPage}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        </>
+      )}
 
       <CreateInvoiceModal
         isOpen={Boolean(selectedItem)}
         onClose={() => setSelectedItem(null)}
-        reservaPublicId={selectedItem?.reservaPublicId || selectedItem?.reservaId}
+        reservaPublicId={selectedItem?.reservaPublicId}
         reserva={{
-          publicId: selectedItem?.reservaPublicId || selectedItem?.reservaId,
+          publicId: selectedItem?.reservaPublicId,
           numeroReserva: selectedItem?.numeroReserva,
           customerName: selectedItem?.customerName,
           afipStatus: selectedItem?.fiscalStatus,

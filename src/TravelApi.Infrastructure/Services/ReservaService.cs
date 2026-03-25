@@ -1,6 +1,7 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
+using System.Data;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -25,57 +26,73 @@ public class ReservaService : IReservaService
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
     }
 
-    public async Task<IEnumerable<ReservaListDto>> GetReservasAsync()
+    public async Task<ReservaListPageDto> GetReservasAsync(ReservaListQuery query, CancellationToken cancellationToken)
     {
-        var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        var summaryBaseQuery = ApplyReservaSearch(_context.Reservas.AsNoTracking(), query.Search);
+        var filteredQuery = ApplyReservaView(summaryBaseQuery, query.View);
 
-        var reservas = await _context.Reservas
-            .OrderByDescending(f => f.CreatedAt)
-            .Select(f => new ReservaListDto 
+        var summary = new ReservaListSummaryDto
+        {
+            ActiveCount = await summaryBaseQuery.CountAsync(r =>
+                r.Status != EstadoReserva.Closed &&
+                r.Status != EstadoReserva.Cancelled &&
+                r.Status != "Archived",
+                cancellationToken),
+            ReservedCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Reserved, cancellationToken),
+            OperativeCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Operational, cancellationToken),
+            ClosedCount = await summaryBaseQuery.CountAsync(r =>
+                r.Status == EstadoReserva.Closed ||
+                r.Status == EstadoReserva.Cancelled ||
+                r.Status == "Archived",
+                cancellationToken),
+            TotalSaleActive = await summaryBaseQuery
+                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != "Archived")
+                .SumAsync(r => (decimal?)r.TotalSale, cancellationToken) ?? 0m,
+            TotalCostActive = await summaryBaseQuery
+                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != "Archived")
+                .SumAsync(r => (decimal?)r.TotalCost, cancellationToken) ?? 0m,
+            TotalPendingBalance = await summaryBaseQuery
+                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != "Archived" && r.Balance > 0)
+                .SumAsync(r => (decimal?)r.Balance, cancellationToken) ?? 0m
+        };
+        summary.GrossProfit = summary.TotalSaleActive - summary.TotalCostActive;
+
+        var reservasQuery = ApplyReservaOrdering(filteredQuery, query)
+            .Select(f => new ReservaListDto
             {
                 PublicId = f.PublicId,
                 NumeroReserva = f.NumeroReserva,
                 Name = f.Name,
                 Status = f.Status,
-                CustomerName = f.Payer != null ? f.Payer.FullName : "",
+                CustomerName = f.Payer != null ? f.Payer.FullName : string.Empty,
                 ResponsibleUserId = f.ResponsibleUserId,
                 ResponsibleUserName = f.ResponsibleUser != null ? f.ResponsibleUser.FullName : null,
                 CreatedAt = f.CreatedAt,
                 StartDate = f.StartDate,
                 EndDate = f.EndDate,
                 PassengerCount = f.Passengers.Count,
-                TotalCost = (f.FlightSegments.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                            (f.HotelBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                            (f.TransferBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                            (f.PackageBookings.Sum(x => (decimal?)x.NetCost) ?? 0) +
-                            (f.Servicios.Sum(x => (decimal?)x.NetCost) ?? 0),
-                TotalPaid = f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0,
-                TotalSale = (f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                            (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                            (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                            (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                            (f.Servicios.Sum(x => (decimal?)x.SalePrice) ?? 0),
-                Balance = ((f.FlightSegments.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                           (f.HotelBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                           (f.TransferBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                           (f.PackageBookings.Sum(x => (decimal?)x.SalePrice) ?? 0) +
-                           (f.Servicios.Sum(x => (decimal?)x.SalePrice) ?? 0)) -
-                           (f.Payments.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
+                TotalCost = f.TotalCost,
+                TotalPaid = f.TotalPaid,
+                TotalSale = f.TotalSale,
+                Balance = f.Balance
             })
-            .ToListAsync();
+            .AsQueryable();
 
-        foreach (var reserva in reservas)
+        var paged = await reservasQuery.ToPagedResponseAsync(query, cancellationToken);
+        foreach (var reserva in paged.Items)
         {
             ApplyEconomicFlags(reserva, settings);
         }
 
-        return reservas;
+        return ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
     }
 
     public async Task<ReservaDto> GetReservaByIdAsync(int id)
     {
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
         var file = await _context.Reservas
+            .AsNoTracking()
             .Include(f => f.Payer)
             .Include(f => f.ResponsibleUser)
             .Include(f => f.Passengers)
@@ -94,29 +111,6 @@ public class ReservaService : IReservaService
             throw new KeyNotFoundException($"File with ID {id} not found locally");
         }
 
-        var totalSale = 
-            (file.FlightSegments?.Sum(f => f.SalePrice) ?? 0) +
-            (file.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
-            (file.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
-            (file.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
-            (file.Servicios?.Sum(r => r.SalePrice) ?? 0);
-
-        var totalCost = 
-            (file.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
-            (file.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
-            (file.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
-            (file.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
-            (file.Servicios?.Sum(r => r.NetCost) ?? 0);
-
-        var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => p.Amount) ?? 0;
-
-        file.TotalSale = totalSale;
-        file.TotalCost = totalCost;
-        file.TotalPaid = totalPaid;
-        file.Balance = totalSale - totalPaid;
-
-        await _context.SaveChangesAsync();
-
         var dto = _mapper.Map<ReservaDto>(file);
         ApplyEconomicFlags(dto, settings);
         return dto;
@@ -124,8 +118,7 @@ public class ReservaService : IReservaService
 
     public async Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId)
     {
-        var nextId = await _context.Reservas.CountAsync() + 1000;
-        var NumeroReserva = $"F-{DateTime.Now.Year}-{nextId}";
+        await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         int? payerId = null;
 
         if (!string.IsNullOrWhiteSpace(request.PayerId))
@@ -139,15 +132,17 @@ public class ReservaService : IReservaService
                 throw new KeyNotFoundException("Cliente no encontrado");
             }
         }
+
+        var numeroReserva = await GenerateNumeroReservaAsync(CancellationToken.None);
         
         var fileName = !string.IsNullOrWhiteSpace(request.Name) 
             ? request.Name 
-            : $"Reserva {NumeroReserva}";
+            : $"Reserva {numeroReserva}";
 
         var file = new Reserva
         {
             Name = fileName,
-            NumeroReserva = NumeroReserva,
+            NumeroReserva = numeroReserva,
             PayerId = payerId,
             ResponsibleUserId = createdByUserId,
             StartDate = request.StartDate,
@@ -157,6 +152,7 @@ public class ReservaService : IReservaService
         
         _context.Reservas.Add(file);
         await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
         
         return file;
     }
@@ -559,5 +555,94 @@ public class ReservaService : IReservaService
         var afip = EconomicRulesHelper.EvaluateAfip(reserva, settings);
         dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
         dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
+    }
+
+    private IQueryable<Reserva> ApplyReservaSearch(IQueryable<Reserva> query, string? search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            return query;
+        }
+
+        var normalized = search.Trim().ToLower();
+        return query.Where(r =>
+            r.Name.ToLower().Contains(normalized) ||
+            r.NumeroReserva.ToLower().Contains(normalized) ||
+            (r.Payer != null && r.Payer.FullName.ToLower().Contains(normalized)));
+    }
+
+    private static IQueryable<Reserva> ApplyReservaView(IQueryable<Reserva> query, string? view)
+    {
+        return (view ?? "active").Trim().ToLowerInvariant() switch
+        {
+            "reserved" => query.Where(r => r.Status == EstadoReserva.Reserved),
+            "operative" => query.Where(r => r.Status == EstadoReserva.Operational),
+            "closed" => query.Where(r =>
+                r.Status == EstadoReserva.Closed ||
+                r.Status == EstadoReserva.Cancelled ||
+                r.Status == "Archived"),
+            _ => query.Where(r =>
+                r.Status != EstadoReserva.Closed &&
+                r.Status != EstadoReserva.Cancelled &&
+                r.Status != "Archived")
+        };
+    }
+
+    private static IQueryable<Reserva> ApplyReservaOrdering(IQueryable<Reserva> query, ReservaListQuery request)
+    {
+        var sortBy = (request.SortBy ?? "startDate").Trim().ToLowerInvariant();
+        var desc = request.IsSortDescending();
+
+        return sortBy switch
+        {
+            "createdat" => desc
+                ? query.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
+                : query.OrderBy(r => r.CreatedAt).ThenBy(r => r.Id),
+            "numeroreserva" => desc
+                ? query.OrderByDescending(r => r.NumeroReserva).ThenByDescending(r => r.CreatedAt)
+                : query.OrderBy(r => r.NumeroReserva).ThenByDescending(r => r.CreatedAt),
+            "totalsale" => desc
+                ? query.OrderByDescending(r => r.TotalSale).ThenByDescending(r => r.CreatedAt)
+                : query.OrderBy(r => r.TotalSale).ThenByDescending(r => r.CreatedAt),
+            "balance" => desc
+                ? query.OrderByDescending(r => r.Balance).ThenByDescending(r => r.CreatedAt)
+                : query.OrderBy(r => r.Balance).ThenByDescending(r => r.CreatedAt),
+            _ => desc
+                ? query.OrderBy(r => r.StartDate == null).ThenByDescending(r => r.StartDate).ThenByDescending(r => r.CreatedAt)
+                : query.OrderBy(r => r.StartDate == null).ThenBy(r => r.StartDate).ThenByDescending(r => r.CreatedAt)
+        };
+    }
+
+    private async Task<string> GenerateNumeroReservaAsync(CancellationToken cancellationToken)
+    {
+        var year = DateTime.UtcNow.Year;
+        var sequence = await _context.BusinessSequences
+            .FirstOrDefaultAsync(item => item.DocumentType == "Reserva" && item.Year == year, cancellationToken);
+
+        if (sequence is null)
+        {
+            sequence = new BusinessSequence
+            {
+                DocumentType = "Reserva",
+                Year = year,
+                LastValue = 1000,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _context.BusinessSequences.Add(sequence);
+        }
+        else
+        {
+            sequence.LastValue += 1;
+            if (sequence.LastValue < 1000)
+            {
+                sequence.LastValue = 1000;
+            }
+
+            sequence.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return $"F-{year}-{sequence.LastValue}";
     }
 }

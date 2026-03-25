@@ -12,11 +12,12 @@ public class TreasurySummaryDto
 public class CashMovementDto
 {
     public string SourceType { get; set; } = string.Empty;
-    public string SourceId { get; set; } = string.Empty;
+    public Guid SourcePublicId { get; set; }
     public string Direction { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public DateTime OccurredAt { get; set; }
     public string Method { get; set; } = string.Empty;
+    public string? Category { get; set; }
     public string Description { get; set; } = string.Empty;
     public string? Reference { get; set; }
     public Guid? ReservaPublicId { get; set; }

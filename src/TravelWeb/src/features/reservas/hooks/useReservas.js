@@ -1,104 +1,120 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
+import { useDebounce } from "../../../hooks/useDebounce";
+import { isDatabaseUnavailableError } from "../../../lib/errors";
 
-/**
- * Hook to manage the Reservas list, including filtering, searching, and archiving.
- */
+const emptyPage = {
+  items: [],
+  page: 1,
+  pageSize: 25,
+  totalCount: 0,
+  totalPages: 0,
+  hasPreviousPage: false,
+  hasNextPage: false,
+  summary: {
+    activeCount: 0,
+    reservedCount: 0,
+    operativeCount: 0,
+    closedCount: 0,
+    totalSaleActive: 0,
+    totalCostActive: 0,
+    totalPendingBalance: 0,
+    grossProfit: 0,
+  },
+};
+
 export function useReservas() {
-    const [reservas, setReservas] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState("");
-    const [viewFilter, setViewFilter] = useState("all"); // all, Presupuesto, Reservado, Operativo, archived
+  const [reservasPage, setReservasPage] = useState(emptyPage);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [viewFilter, setViewFilter] = useState("active");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
+  const debouncedSearch = useDebounce(searchTerm, 300);
 
-    const loadReservas = useCallback(async () => {
-        setLoading(true);
-        try {
-            const data = await api.get("/reservas");
-            setReservas(data);
-        } catch (error) {
-            console.error(error);
-            showError("Error cargando reservas: " + (error.response?.data?.Error || error.message));
-            setReservas([]);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+  const loadReservas = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        view: viewFilter,
+      });
 
-    useEffect(() => {
-        loadReservas();
-    }, [loadReservas]);
+      if (debouncedSearch.trim()) {
+        params.set("search", debouncedSearch.trim());
+      }
 
-    const handleArchive = async (id) => {
-        if (!confirm("¿Archivar esta reserva? Desaparecerá de la lista principal.")) return;
+      const data = await api.get(`/reservas?${params.toString()}`);
+      setReservasPage({ ...emptyPage, ...(data || {}) });
+      setDatabaseUnavailable(false);
+    } catch (error) {
+      console.error(error);
+      setReservasPage(emptyPage);
+      setDatabaseUnavailable(isDatabaseUnavailableError(error));
+      showError("Error cargando reservas: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [debouncedSearch, page, pageSize, viewFilter]);
 
-        try {
-            await api.put(`/reservas/${id}/archive`);
-            showSuccess("Reserva archivada");
-            await loadReservas();
-            return true;
-        } catch (error) {
-            showError(error.message || "Error al archivar");
-            return false;
-        }
-    };
+  useEffect(() => {
+    loadReservas();
+  }, [loadReservas]);
 
-    const filteredReservas = reservas.filter(f => {
-        // Search Filter
-        const searchMatch =
-            f.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            f.numeroReserva?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            f.customerName?.toLowerCase().includes(searchTerm.toLowerCase());
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, viewFilter, pageSize]);
 
-        // View Filter
-        let viewMatch = true;
-        if (viewFilter === 'all') {
-            viewMatch = !['Cerrado', 'Cancelado', 'Archived'].includes(f.status);
-        } else if (viewFilter === 'Cerrado') {
-            viewMatch = ['Cerrado', 'Cancelado', 'Archived'].includes(f.status);
-        } else {
-            viewMatch = f.status === viewFilter;
-        }
+  const handleArchive = async (publicId) => {
+    if (!confirm("Archivar esta reserva? Desaparecera de la lista principal.")) return;
 
-        return searchMatch && viewMatch;
-    });
+    try {
+      await api.put(`/reservas/${publicId}/archive`);
+      showSuccess("Reserva archivada");
+      await loadReservas();
+      return true;
+    } catch (error) {
+      showError(error.message || "Error al archivar");
+      return false;
+    }
+  };
 
-    const sortedReservas = [...filteredReservas].sort((a, b) => {
-        if (!a.startDate && !b.startDate) return new Date(b.createdAt) - new Date(a.createdAt);
-        if (!a.startDate) return 1;
-        if (!b.startDate) return -1;
-        return new Date(a.startDate) - new Date(b.startDate);
-    });
+  const summary = reservasPage.summary || emptyPage.summary;
 
-    const tabCounts = {
-        all: reservas.filter(f => !['Cerrado', 'Cancelado', 'Archived'].includes(f.status)).length,
-        Reservado: reservas.filter(f => f.status === 'Reservado').length,
-        Operativo: reservas.filter(f => f.status === 'Operativo').length,
-        Cerrado: reservas.filter(f => ['Cerrado', 'Cancelado', 'Archived'].includes(f.status)).length,
-    };
-
-    // KPIs
-    const activeReservas = reservas.filter(f => !['Cerrado', 'Cancelado', 'Archived'].includes(f.status));
-    const stats = {
-        activeCount: activeReservas.length,
-        operativeCount: reservas.filter(f => f.status === 'Operativo').length,
-        totalSaleActive: activeReservas.reduce((sum, f) => sum + (f.totalSale || 0), 0),
-        totalCostActive: activeReservas.reduce((sum, f) => sum + (f.totalCost || 0), 0),
-        totalPendingBalance: activeReservas.reduce((sum, f) => sum + (f.balance > 0 ? f.balance : 0), 0),
-    };
-    stats.grossProfit = stats.totalSaleActive - stats.totalCostActive;
-
-    return {
-        reservas,
-        loading,
-        searchTerm,
-        setSearchTerm,
-        viewFilter,
-        setViewFilter,
-        loadReservas,
-        handleArchive,
-        sortedReservas,
-        tabCounts,
-        stats
-    };
+  return {
+    reservas: reservasPage.items || [],
+    loading,
+    searchTerm,
+    setSearchTerm,
+    viewFilter,
+    setViewFilter,
+    page: reservasPage.page || page,
+    pageSize: reservasPage.pageSize || pageSize,
+    totalCount: reservasPage.totalCount || 0,
+    totalPages: reservasPage.totalPages || 0,
+    hasPreviousPage: Boolean(reservasPage.hasPreviousPage),
+    hasNextPage: Boolean(reservasPage.hasNextPage),
+    setPage,
+    setPageSize,
+    loadReservas,
+    handleArchive,
+    databaseUnavailable,
+    tabCounts: {
+      active: summary.activeCount || 0,
+      reserved: summary.reservedCount || 0,
+      operative: summary.operativeCount || 0,
+      closed: summary.closedCount || 0,
+    },
+    stats: {
+      activeCount: summary.activeCount || 0,
+      operativeCount: summary.operativeCount || 0,
+      totalSaleActive: summary.totalSaleActive || 0,
+      totalCostActive: summary.totalCostActive || 0,
+      totalPendingBalance: summary.totalPendingBalance || 0,
+      grossProfit: summary.grossProfit || 0,
+    },
+  };
 }

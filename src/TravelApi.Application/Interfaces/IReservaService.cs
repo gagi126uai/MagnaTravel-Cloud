@@ -6,7 +6,7 @@ namespace TravelApi.Application.Interfaces;
 
 public interface IReservaService
 {
-    Task<IEnumerable<ReservaListDto>> GetReservasAsync();
+    Task<ReservaListPageDto> GetReservasAsync(ReservaListQuery query, CancellationToken cancellationToken);
     Task<ReservaDto> GetReservaByIdAsync(int id);
     Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId);
     

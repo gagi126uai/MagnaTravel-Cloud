@@ -32,8 +32,8 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
 
     const loadCustomers = async () => {
         try {
-            const data = await api.get("/customers");
-            setCustomers(data);
+            const data = await api.get("/customers?page=1&pageSize=100&sortBy=fullName&sortDir=asc");
+            setCustomers(data?.items || []);
         } catch (err) {
             console.error(err);
         }

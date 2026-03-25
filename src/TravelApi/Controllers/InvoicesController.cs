@@ -4,6 +4,7 @@ using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Errors;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
@@ -35,9 +36,9 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetInvoices(CancellationToken ct)
+    public async Task<ActionResult<PagedResponse<InvoiceListDto>>> GetInvoices([FromQuery] InvoicesListQuery query, CancellationToken ct)
     {
-        var invoices = await _invoiceService.GetAllAsync(ct);
+        var invoices = await _invoiceService.GetAllAsync(query, ct);
         return Ok(invoices);
     }
 
@@ -54,6 +55,10 @@ public class InvoicesController : ControllerBase
         catch (InvalidOperationException)
         {
             return BadRequest(new { message = "No se pudo generar la factura." });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
         }
         catch
         {
@@ -76,10 +81,14 @@ public class InvoicesController : ControllerBase
         {
             return BadRequest(new { message = "La factura no pudo reintentarse." });
         }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
     }
 
     [HttpGet("reserva/{publicIdOrLegacyId}")]
-    public async Task<ActionResult<IEnumerable<InvoiceDto>>> GetByReservaId(string publicIdOrLegacyId, CancellationToken ct)
+    public async Task<ActionResult<IEnumerable<InvoiceListDto>>> GetByReservaId(string publicIdOrLegacyId, CancellationToken ct)
     {
         var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
         var invoices = await _invoiceService.GetByReservaIdAsync(reservaId, ct);
@@ -102,6 +111,10 @@ public class InvoicesController : ControllerBase
         catch (InvalidOperationException)
         {
             return BadRequest(new { message = "No se pudo generar el PDF de la factura." });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
         }
         catch
         {

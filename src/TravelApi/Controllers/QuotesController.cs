@@ -112,7 +112,7 @@ public class QuotesController : ControllerBase
     {
         var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
         var reservaId = await _quoteService.ConvertToFileAsync(id, cancellationToken);
-        var reservaPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Reserva>(reservaId.ToString(), cancellationToken);
+            var reservaPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Reserva>(reservaId, cancellationToken);
 
         if (!reservaPublicId.HasValue)
             return NotFound();

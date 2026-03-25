@@ -24,6 +24,7 @@ using TravelApi.Application.Contracts.Auth;
 using TravelApi.Infrastructure.Logging;
 using TravelApi.Hubs;
 using TravelApi.Services;
+using TravelApi.Errors;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -108,7 +109,11 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    options.UseNpgsql(connectionString, o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+    options.UseNpgsql(connectionString, o =>
+    {
+        o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+        o.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
+    });
 });
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
@@ -333,11 +338,14 @@ builder.Services.AddCors(options =>
 });
 
 // Hangfire Configuration (PostgreSQL)
+var jobStorageConnectionString = builder.Configuration.GetConnectionString("JobStorageConnection")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection");
+
 builder.Services.AddHangfire(configuration => configuration
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_170)
     .UseSimpleAssemblyNameTypeSerializer()
     .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
+    .UsePostgreSqlStorage(jobStorageConnectionString));
 
 builder.Services.AddHangfireServer();
 
@@ -414,6 +422,7 @@ using (var scope = app.Services.CreateScope())
             if (retries == 0)
             {
                 app.Logger.LogError(ex, "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS AFTER MULTIPLE ATTEMPTS");
+                throw;
             }
             else
             {
@@ -473,7 +482,39 @@ RecurringJob.AddOrUpdate<OperationalFinanceMonitorService>(
     Cron.Daily());
 
 // 3. Health Check
-app.MapGet("/health", () => Results.Ok("Healthy")).AllowAnonymous();
+app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+app.MapGet("/health/live", () => Results.Ok(new { status = "live" })).AllowAnonymous();
+app.MapGet("/health/ready", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        if (!await dbContext.Database.CanConnectAsync(cancellationToken))
+        {
+            return Results.Json(
+                DatabaseExceptionClassifier.CreateProblemDetails(),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var pendingMigrations = await dbContext.Database.GetPendingMigrationsAsync(cancellationToken);
+        if (pendingMigrations.Any())
+        {
+            return Results.Json(new
+            {
+                status = "unready",
+                code = "database_not_ready",
+                pendingMigrations = pendingMigrations.ToArray()
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return Results.Ok(new { status = "ready" });
+    }
+    catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+    {
+        return Results.Json(
+            DatabaseExceptionClassifier.CreateProblemDetails(app.Environment.IsDevelopment() ? ex.Message : null),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+}).AllowAnonymous();
 
 using (var scope = app.Services.CreateScope())
 {

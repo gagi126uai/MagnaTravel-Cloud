@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Errors;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
@@ -34,10 +35,16 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<PaymentDto>>> GetAllPayments(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResponse<PaymentDto>>> GetAllPayments([FromQuery] PaymentsListQuery query, CancellationToken cancellationToken)
     {
-        var payments = await _paymentService.GetAllPaymentsAsync(cancellationToken);
+        var payments = await _paymentService.GetAllPaymentsAsync(query, cancellationToken);
         return Ok(payments);
+    }
+
+    [HttpGet("history")]
+    public async Task<ActionResult<PagedResponse<FinanceHistoryItemDto>>> GetHistory([FromQuery] FinanceHistoryQuery query, CancellationToken cancellationToken)
+    {
+        return Ok(await _paymentService.GetHistoryAsync(query, cancellationToken));
     }
 
     [HttpGet("reserva/{reservaPublicIdOrLegacyId}")]
@@ -64,6 +71,10 @@ public class PaymentsController : ControllerBase
         {
             return BadRequest(new { message = "No se pudo registrar el pago." });
         }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
     }
 
     [HttpPost("{publicIdOrLegacyId}/receipt")]
@@ -83,6 +94,10 @@ public class PaymentsController : ControllerBase
         {
             return BadRequest(new { message = "No se pudo emitir el comprobante del pago." });
         }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
     }
 
     [HttpGet("{publicIdOrLegacyId}/receipt/pdf")]
@@ -101,6 +116,10 @@ public class PaymentsController : ControllerBase
         catch (InvalidOperationException)
         {
             return BadRequest(new { message = "No se pudo generar el PDF del comprobante." });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
         }
     }
 
@@ -131,6 +150,10 @@ public class PaymentsController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
         }
     }
 }

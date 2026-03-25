@@ -43,7 +43,7 @@ services:
       WhatsApp__WebhookSecret: ${WHATSAPP_WEBHOOK_SECRET:-CHANGE_THIS_SECRET}
       WhatsApp__BotUrl: http://whatsapp-bot:3001
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10

@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Errors;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
@@ -21,14 +23,14 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<object>>> GetCustomers([FromQuery] bool includeInactive = false, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<PagedResponse<CustomerListItemDto>>> GetCustomers([FromQuery] CustomerListQuery query, CancellationToken cancellationToken = default)
     {
-        var customers = await _customerService.GetCustomersAsync(includeInactive, cancellationToken);
+        var customers = await _customerService.GetCustomersAsync(query, cancellationToken);
         return Ok(customers);
     }
 
     [HttpGet("{publicIdOrLegacyId}")]
-    public async Task<ActionResult<object>> GetCustomer(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    public async Task<ActionResult<CustomerListItemDto>> GetCustomer(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
@@ -57,6 +59,10 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el cliente.");
         }
     }
@@ -85,6 +91,10 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
              return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el cliente.");
         }
     }
@@ -93,12 +103,12 @@ public class CustomersController : ControllerBase
     /// Cuenta corriente del cliente: reservas, pagos y saldo
     /// </summary>
     [HttpGet("{publicIdOrLegacyId}/account")]
-    public async Task<ActionResult> GetCustomerAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    public async Task<ActionResult<CustomerAccountOverviewDto>> GetCustomerAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
-            var accountDto = await _customerService.GetCustomerAccountAsync(id, cancellationToken);
+            var accountDto = await _customerService.GetCustomerAccountOverviewAsync(id, cancellationToken);
             return Ok(accountDto);
         }
         catch (KeyNotFoundException)
@@ -107,7 +117,62 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener la cuenta corriente del cliente.");
+        }
+    }
+
+    [HttpGet("{publicIdOrLegacyId}/account/reservas")]
+    public async Task<ActionResult<PagedResponse<CustomerAccountReservaListItemDto>>> GetCustomerAccountReservas(
+        string publicIdOrLegacyId,
+        [FromQuery] PagedQuery query,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _customerService.GetCustomerAccountReservasAsync(id, query, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{publicIdOrLegacyId}/account/payments")]
+    public async Task<ActionResult<PagedResponse<CustomerAccountPaymentListItemDto>>> GetCustomerAccountPayments(
+        string publicIdOrLegacyId,
+        [FromQuery] PagedQuery query,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _customerService.GetCustomerAccountPaymentsAsync(id, query, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{publicIdOrLegacyId}/account/invoices")]
+    public async Task<ActionResult<PagedResponse<InvoiceListDto>>> GetCustomerAccountInvoices(
+        string publicIdOrLegacyId,
+        [FromQuery] PagedQuery query,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _customerService.GetCustomerAccountInvoicesAsync(id, query, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
     }
 

@@ -12,20 +12,20 @@ public class EntityReferenceResolver
         _dbContext = dbContext;
     }
 
-    public Task<TEntity?> FindAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken = default)
+    public Task<TEntity?> FindAsync<TEntity>(string publicId, CancellationToken cancellationToken = default)
         where TEntity : class, IHasPublicId
     {
         return _dbContext.Set<TEntity>()
             .AsQueryable()
-            .FindByPublicIdOrLegacyIdAsync(publicIdOrLegacyId, cancellationToken);
+            .FindByPublicIdAsync(publicId, cancellationToken);
     }
 
-    public async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken = default)
+    public async Task<int> ResolveRequiredIdAsync<TEntity>(string publicId, CancellationToken cancellationToken = default)
         where TEntity : class, IHasPublicId
     {
         var id = await _dbContext.Set<TEntity>()
             .AsNoTracking()
-            .ResolveInternalIdAsync(publicIdOrLegacyId, cancellationToken);
+            .ResolveInternalIdAsync(publicId, cancellationToken);
 
         if (!id.HasValue)
         {
@@ -35,11 +35,19 @@ public class EntityReferenceResolver
         return id.Value;
     }
 
-    public Task<Guid?> ResolvePublicIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken = default)
+    public Task<Guid?> ResolvePublicIdAsync<TEntity>(string publicId, CancellationToken cancellationToken = default)
         where TEntity : class, IHasPublicId
     {
         return _dbContext.Set<TEntity>()
             .AsNoTracking()
-            .ResolvePublicIdAsync(publicIdOrLegacyId, cancellationToken);
+            .ResolvePublicIdAsync(publicId, cancellationToken);
+    }
+
+    public Task<Guid?> ResolvePublicIdAsync<TEntity>(int internalId, CancellationToken cancellationToken = default)
+        where TEntity : class, IHasPublicId
+    {
+        return _dbContext.Set<TEntity>()
+            .AsNoTracking()
+            .ResolvePublicIdAsync(internalId, cancellationToken);
     }
 }

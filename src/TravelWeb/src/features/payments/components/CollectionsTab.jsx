@@ -67,11 +67,11 @@ export function CollectionsTab({ items, onPay }) {
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {visibleItems.map((item) => (
-              <tr key={item.reservaPublicId || item.reservaId} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+            <tr key={item.reservaPublicId} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                 <td className="px-6 py-4">
                   <div className="flex flex-col">
                     <Link
-                      to={`/reservas/${item.reservaPublicId || item.reservaId}`}
+                      to={`/reservas/${item.reservaPublicId}`}
                       className="font-bold text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                     >
                       {item.numeroReserva}
@@ -140,7 +140,7 @@ export function CollectionsTab({ items, onPay }) {
 
       <div className="md:hidden space-y-4">
         {visibleItems.map((item) => (
-          <div key={item.reservaPublicId || item.reservaId} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div key={item.reservaPublicId} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
             <div className="flex justify-between items-start gap-4">
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 mb-1">

@@ -6,7 +6,6 @@ import {
   Pencil,
   Plus,
   Trash2,
-  Wallet,
   X,
 } from "lucide-react";
 
@@ -100,9 +99,9 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <div>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
               {movement ? "Editar ajuste manual" : "Nuevo ajuste manual"}
@@ -112,17 +111,17 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="w-5 h-5" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 grid gap-4 md:grid-cols-2">
+        <form onSubmit={handleSubmit} className="grid gap-4 p-6 md:grid-cols-2">
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Dirección</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Direccion</label>
             <select
               value={form.direction}
               onChange={(event) => handleChange("direction", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
             >
               <option value="Income">Ingreso</option>
               <option value="Expense">Egreso</option>
@@ -130,91 +129,68 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Monto</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Monto</label>
             <input
               type="number"
               step="0.01"
               min="0.01"
               value={form.amount}
               onChange={(event) => handleChange("amount", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Fecha</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Fecha</label>
             <input
               type="datetime-local"
               value={form.occurredAt}
               onChange={(event) => handleChange("occurredAt", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Método</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Metodo</label>
             <input
               type="text"
               value={form.method}
               onChange={(event) => handleChange("method", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Categoría</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Categoria</label>
             <input
               type="text"
               value={form.category}
               onChange={(event) => handleChange("category", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
-              placeholder="Caja, ajuste, retiro, reposición..."
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Referencia</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Referencia</label>
             <input
               type="text"
               value={form.reference}
               onChange={(event) => handleChange("reference", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
             />
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descripción</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Descripcion</label>
             <textarea
               value={form.description}
               onChange={(event) => handleChange("description", event.target.value)}
               rows={3}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
               required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Reserva vinculada</label>
-            <input
-              type="text"
-              value={form.relatedReservaPublicId}
-              onChange={(event) => handleChange("relatedReservaPublicId", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
-              placeholder="Public ID de la reserva"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Proveedor vinculado</label>
-            <input
-              type="text"
-              value={form.relatedSupplierPublicId}
-              onChange={(event) => handleChange("relatedSupplierPublicId", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2"
-              placeholder="Public ID del proveedor"
             />
           </div>
 
@@ -222,14 +198,14 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-medium text-slate-700 dark:text-slate-200"
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
             >
               {saving ? "Guardando..." : movement ? "Guardar cambios" : "Registrar movimiento"}
             </button>
@@ -248,11 +224,8 @@ export function MovementsTab({
   onDeleteManualMovement,
   showHeader = true,
 }) {
-  const [visibleCount, setVisibleCount] = useState(25);
   const [editingMovement, setEditingMovement] = useState(null);
   const [showModal, setShowModal] = useState(false);
-
-  const visibleMovements = movements.slice(0, visibleCount);
 
   const openCreate = () => {
     setEditingMovement(null);
@@ -271,7 +244,7 @@ export function MovementsTab({
 
   const handleSubmit = async (payload) => {
     if (editingMovement) {
-      await onUpdateManualMovement(editingMovement.sourceId, payload);
+      await onUpdateManualMovement(editingMovement.sourcePublicId, payload);
       return;
     }
 
@@ -281,7 +254,7 @@ export function MovementsTab({
   return (
     <div className="space-y-6">
       {showHeader && (
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Caja</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -292,9 +265,9 @@ export function MovementsTab({
             <button
               type="button"
               onClick={openCreate}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="h-4 w-4" />
               Nuevo ajuste manual
             </button>
           )}
@@ -306,53 +279,47 @@ export function MovementsTab({
           <button
             type="button"
             onClick={openCreate}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="h-4 w-4" />
             Nuevo ajuste manual
           </button>
         </div>
       )}
 
-      <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
-        <table className="w-full text-left border-collapse">
+      <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 md:block">
+        <table className="w-full border-collapse text-left">
           <thead>
-            <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-              <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Fecha</th>
-              <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Origen</th>
-              <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Detalle</th>
-              <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Método</th>
-              <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Monto</th>
-              <th className="px-6 py-4 text-[11px] uppercase tracking-wider text-slate-500 font-semibold text-right">Acción</th>
+            <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50">
+              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Fecha</th>
+              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Origen</th>
+              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Detalle</th>
+              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Metodo</th>
+              <th className="px-6 py-4 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Monto</th>
+              <th className="px-6 py-4 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Accion</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {visibleMovements.map((movement) => {
+            {movements.map((movement) => {
               const isIncome = movement.direction === "Income";
               const isManual = movement.isManual;
 
               return (
-                <tr key={`${movement.sourceType}-${movement.sourceId}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                <tr key={`${movement.sourceType}-${movement.sourcePublicId}`} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
                   <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
                     {new Date(movement.occurredAt).toLocaleString("es-AR")}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div
-                        className={`p-2 rounded-lg ${
-                          isIncome
-                            ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400"
-                            : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"
-                        }`}
-                      >
-                        {isIncome ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                      <div className={`rounded-lg p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
+                        {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                       </div>
                       <div>
                         <div className="text-sm font-semibold text-slate-900 dark:text-white">
                           {sourceLabels[movement.sourceType] || movement.sourceType}
                         </div>
                         <div className="text-xs text-slate-500 dark:text-slate-400">
-                          {movement.numeroReserva ? `Reserva ${movement.numeroReserva}` : movement.supplierName || "Sin vínculo"}
+                          {movement.numeroReserva ? `Reserva ${movement.numeroReserva}` : movement.supplierName || "Sin vinculo"}
                         </div>
                       </div>
                     </div>
@@ -376,22 +343,20 @@ export function MovementsTab({
                         <button
                           type="button"
                           onClick={() => openEdit(movement)}
-                          className="p-2 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
                         >
-                          <Pencil className="w-4 h-4" />
+                          <Pencil className="h-4 w-4" />
                         </button>
                         <button
                           type="button"
                           onClick={() => onDeleteManualMovement(movement)}
-                          className="p-2 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
                     ) : (
-                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                        Automático
-                      </span>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
                     )}
                   </td>
                 </tr>
@@ -401,21 +366,15 @@ export function MovementsTab({
         </table>
       </div>
 
-      <div className="md:hidden space-y-3">
-        {visibleMovements.map((movement) => {
+      <div className="space-y-3 md:hidden">
+        {movements.map((movement) => {
           const isIncome = movement.direction === "Income";
           return (
-            <div key={`${movement.sourceType}-${movement.sourceId}`} className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-sm">
-              <div className="flex justify-between items-start gap-3">
+            <div key={`${movement.sourceType}-${movement.sourcePublicId}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
-                  <div
-                    className={`p-2 rounded-xl ${
-                      isIncome
-                        ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400"
-                        : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"
-                    }`}
-                  >
-                    {isIncome ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                  <div className={`rounded-xl p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
+                    {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                   </div>
                   <div>
                     <div className="text-sm font-bold text-slate-900 dark:text-white">
@@ -424,7 +383,7 @@ export function MovementsTab({
                     <div className="text-xs text-slate-500 dark:text-slate-400">
                       {new Date(movement.occurredAt).toLocaleDateString("es-AR")} · {movement.method}
                     </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{movement.description}</div>
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{movement.description}</div>
                   </div>
                 </div>
                 <div className={`text-sm font-black ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
@@ -433,7 +392,7 @@ export function MovementsTab({
                 </div>
               </div>
               {(movement.numeroReserva || movement.supplierName) && (
-                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                <div className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
                   {movement.numeroReserva ? `Reserva ${movement.numeroReserva}` : movement.supplierName}
                 </div>
               )}
@@ -442,26 +401,14 @@ export function MovementsTab({
         })}
       </div>
 
-      {movements.length > visibleCount && (
-        <div className="p-4 text-center">
-          <button
-            type="button"
-            onClick={() => setVisibleCount((current) => current + 25)}
-            className="px-6 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
-          >
-            Cargar más movimientos ({movements.length - visibleCount} restantes)
-          </button>
-        </div>
-      )}
-
       {movements.length === 0 && (
-        <div className="py-20 text-center bg-slate-50/50 dark:bg-slate-800/20 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800">
-          <div className="w-16 h-16 bg-white dark:bg-slate-900 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-slate-100 dark:border-slate-800">
-            <Landmark className="w-8 h-8 text-slate-300" />
+        <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50/50 py-20 text-center dark:border-slate-800 dark:bg-slate-800/20">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-slate-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <Landmark className="h-8 w-8 text-slate-300" />
           </div>
-          <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">Caja sin movimientos</h3>
-          <p className="text-slate-500 dark:text-slate-400 text-sm">
-            Todavía no hay ingresos o egresos registrados en caja.
+          <h3 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Caja sin movimientos</h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Todavia no hay ingresos o egresos registrados en caja.
           </p>
         </div>
       )}

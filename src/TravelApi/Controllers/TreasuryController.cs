@@ -35,9 +35,9 @@ public class TreasuryController : ControllerBase
     }
 
     [HttpGet("movements")]
-    public async Task<ActionResult<IReadOnlyList<CashMovementDto>>> GetMovements(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResponse<CashMovementDto>>> GetMovements([FromQuery] TreasuryMovementsQuery query, CancellationToken cancellationToken)
     {
-        return Ok(await _treasuryService.GetMovementsAsync(cancellationToken));
+        return Ok(await _treasuryService.GetMovementsAsync(query, cancellationToken));
     }
 
     [HttpPost("manual-movements")]

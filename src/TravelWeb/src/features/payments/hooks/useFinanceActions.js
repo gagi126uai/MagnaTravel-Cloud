@@ -121,7 +121,7 @@ export function useFinanceActions(loadData) {
     }
 
     try {
-      await api.delete(`/treasury/manual-movements/${movement.sourceId}`);
+      await api.delete(`/treasury/manual-movements/${movement.sourcePublicId}`);
       showSuccess("Movimiento anulado.");
       await loadData();
     } catch (error) {

@@ -1,108 +1,81 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../../../api";
 import { showError } from "../../../alerts";
-import { getInvoiceLabel, isCreditNote } from "../lib/financeUtils";
+import { useDebounce } from "../../../hooks/useDebounce";
+import { isDatabaseUnavailableError } from "../../../lib/errors";
 import { useFinanceActions } from "./useFinanceActions";
-import { getPublicId } from "../../../lib/publicIds";
+
+const emptyPage = {
+  items: [],
+  page: 1,
+  pageSize: 25,
+  totalCount: 0,
+  totalPages: 0,
+  hasPreviousPage: false,
+  hasNextPage: false,
+};
 
 export function useFinanceHistory() {
   const [loading, setLoading] = useState(true);
-  const [payments, setPayments] = useState([]);
-  const [invoices, setInvoices] = useState([]);
-  const [movements, setMovements] = useState([]);
+  const [historyPage, setHistoryPage] = useState(emptyPage);
   const [searchTerm, setSearchTerm] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
+  const debouncedSearch = useDebounce(searchTerm, 300);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [paymentsRes, invoicesRes, movementsRes] = await Promise.all([
-        api.get("/payments"),
-        api.get("/invoices"),
-        api.get("/treasury/movements"),
-      ]);
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        sortBy: "occurredAt",
+        sortDir: "desc",
+      });
 
-      setPayments((paymentsRes || []).sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt)));
-      setInvoices((invoicesRes || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-      setMovements((movementsRes || []).filter((movement) => movement.isManual));
+      if (debouncedSearch.trim()) {
+        params.set("search", debouncedSearch.trim());
+      }
+
+      const response = await api.get(`/payments/history?${params.toString()}`);
+      setHistoryPage({ ...emptyPage, ...(response || {}) });
+      setDatabaseUnavailable(false);
     } catch (error) {
       console.error("Error loading finance history:", error);
+      setHistoryPage(emptyPage);
+      setDatabaseUnavailable(isDatabaseUnavailableError(error));
       showError("Error al cargar historial.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [debouncedSearch, page, pageSize]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, pageSize]);
+
   const actions = useFinanceActions(loadData);
-
-  const timeline = useMemo(() => {
-    const paymentItems = payments.map((payment) => ({
-      id: `payment-${getPublicId(payment)}`,
-      date: payment.paidAt,
-      kind: payment.entryType === "CreditNoteReversal" ? "Reversion" : "Cobranza",
-      title: payment.entryType === "CreditNoteReversal" ? "Reversion por nota de credito" : "Cobranza recibida",
-      subtitle: payment.numeroReserva ? `Reserva ${payment.numeroReserva}` : "Sin reserva",
-      amount: payment.amount,
-      searchable: `${payment.numeroReserva || ""} ${payment.reference || ""} ${payment.method || ""}`,
-      entity: payment,
-      entityType: "payment",
-    }));
-
-    const invoiceItems = invoices.map((invoice) => ({
-      id: `invoice-${getPublicId(invoice)}`,
-      date: invoice.createdAt,
-      kind: isCreditNote(invoice) ? "Nota de credito" : "Factura AFIP",
-      title: getInvoiceLabel(invoice.tipoComprobante),
-      subtitle: invoice.reserva?.numeroReserva ? `Reserva ${invoice.reserva.numeroReserva}` : "Sin reserva",
-      amount: invoice.importeTotal,
-      searchable: `${invoice.reserva?.numeroReserva || ""} ${invoice.numeroComprobante || ""} ${invoice.forceReason || ""}`,
-      entity: invoice,
-      entityType: "invoice",
-    }));
-
-    const manualMovementItems = movements.map((movement) => ({
-      id: `movement-${movement.sourceId}`,
-      date: movement.occurredAt,
-      kind: "Caja",
-      title: movement.description || "Movimiento manual",
-      subtitle: movement.reference || movement.numeroReserva || movement.supplierName || "Ajuste manual",
-      amount: movement.direction === "Expense" ? -Math.abs(Number(movement.amount || 0)) : Number(movement.amount || 0),
-      searchable: `${movement.description || ""} ${movement.reference || ""} ${movement.numeroReserva || ""} ${movement.supplierName || ""}`,
-      entity: movement,
-      entityType: "movement",
-    }));
-
-    return paymentItems
-      .concat(invoiceItems)
-      .concat(manualMovementItems)
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [payments, invoices, movements]);
-
-  const filteredTimeline = useMemo(() => {
-    const needle = searchTerm.trim().toLowerCase();
-    if (!needle) {
-      return timeline;
-    }
-
-    return timeline.filter((item) => {
-      return (
-        item.title?.toLowerCase().includes(needle) ||
-        item.subtitle?.toLowerCase().includes(needle) ||
-        item.kind?.toLowerCase().includes(needle) ||
-        item.searchable?.toLowerCase().includes(needle)
-      );
-    });
-  }, [timeline, searchTerm]);
 
   return {
     loading,
-    timeline: filteredTimeline,
+    timeline: historyPage.items || [],
     searchTerm,
     setSearchTerm,
+    page: historyPage.page || page,
+    pageSize: historyPage.pageSize || pageSize,
+    totalCount: historyPage.totalCount || 0,
+    totalPages: historyPage.totalPages || 0,
+    hasPreviousPage: Boolean(historyPage.hasPreviousPage),
+    hasNextPage: Boolean(historyPage.hasNextPage),
+    setPage,
+    setPageSize,
     loadData,
+    databaseUnavailable,
     ...actions,
   };
 }

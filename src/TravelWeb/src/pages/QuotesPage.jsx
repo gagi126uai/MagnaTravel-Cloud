@@ -45,9 +45,12 @@ export default function QuotesPage() {
     const loadQuotes = useCallback(async () => {
         setLoading(true);
         try {
-            const [quoteData, customerData] = await Promise.all([api.get("/quotes"), api.get("/customers")]);
+            const [quoteData, customerData] = await Promise.all([
+                api.get("/quotes"),
+                api.get("/customers?page=1&pageSize=100&sortBy=fullName&sortDir=asc")
+            ]);
             setQuotes(quoteData || []);
-            setCustomers(customerData || []);
+            setCustomers(customerData?.items || []);
         } catch {
             showError("Error al cargar cotizaciones");
         } finally {

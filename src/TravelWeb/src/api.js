@@ -94,39 +94,51 @@ function mergeHeaders(options = {}) {
   return headers;
 }
 
-async function parseErrorMessage(response) {
+async function parseErrorResponse(response) {
   const errorText = await response.text();
   if (!errorText) {
-    return response.statusText || "Request failed";
+    return {
+      message: response.statusText || "Request failed",
+      code: null,
+      payload: null,
+    };
   }
 
   try {
     const data = JSON.parse(errorText);
 
     if (Array.isArray(data) && data.length > 0) {
-      return data.join(", ");
+      return { message: data.join(", "), code: null, payload: data };
     }
 
     if (data.errors && typeof data.errors === "object") {
       const errorMessages = Object.values(data.errors).flat();
-      return errorMessages.length > 0 ? errorMessages.join("\n") : "Error de validacion";
+      return {
+        message: errorMessages.length > 0 ? errorMessages.join("\n") : "Error de validacion",
+        code: data.code || null,
+        payload: data,
+      };
     }
 
     if (data?.message) {
-      return data.message;
+      return { message: data.message, code: data.code || null, payload: data };
     }
 
     if (data?.title) {
-      return data.title;
+      return { message: data.title, code: data.code || null, payload: data };
     }
 
     if (data?.error) {
-      return data.error;
+      return { message: data.error, code: data.code || null, payload: data };
     }
 
-    return JSON.stringify(data);
+    return { message: JSON.stringify(data), code: data.code || null, payload: data };
   } catch {
-    return errorText;
+    return {
+      message: errorText,
+      code: null,
+      payload: errorText,
+    };
   }
 }
 
@@ -167,7 +179,12 @@ async function refreshSession() {
     })
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(await parseErrorMessage(response));
+          const errorInfo = await parseErrorResponse(response);
+          const error = new Error(errorInfo.message);
+          error.status = response.status;
+          error.code = errorInfo.code;
+          error.payload = errorInfo.payload;
+          throw error;
         }
 
         return parseResponse(response);
@@ -207,7 +224,12 @@ export async function apiRequest(path, options = {}) {
         window.dispatchEvent(new Event("auth:unauthorized"));
       }
 
-      throw new Error(await parseErrorMessage(response));
+      const errorInfo = await parseErrorResponse(response);
+      const error = new Error(errorInfo.message);
+      error.status = response.status;
+      error.code = errorInfo.code;
+      error.payload = errorInfo.payload;
+      throw error;
     }
 
     return parseResponse(response, options.responseType);

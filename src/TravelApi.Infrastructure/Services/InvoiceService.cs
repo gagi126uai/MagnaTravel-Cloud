@@ -50,12 +50,40 @@ public class InvoiceService : IInvoiceService
         _userManager = userManager;
     }
 
-    public async Task<IEnumerable<InvoiceDto>> GetAllAsync(CancellationToken ct)
+    public async Task<PagedResponse<InvoiceListDto>> GetAllAsync(InvoicesListQuery query, CancellationToken ct)
     {
-        return await _context.Invoices
-            .OrderByDescending(i => i.CreatedAt)
-            .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
-            .ToListAsync(ct);
+        var invoicesQuery = ApplyInvoiceSearch(_context.Invoices.AsNoTracking(), query.Search);
+        invoicesQuery = ApplyInvoiceOrdering(invoicesQuery, query);
+
+        return await invoicesQuery
+            .Select(invoice => new InvoiceListDto
+            {
+                PublicId = invoice.PublicId,
+                ReservaPublicId = invoice.Reserva != null ? (Guid?)invoice.Reserva.PublicId : null,
+                NumeroReserva = invoice.Reserva != null ? invoice.Reserva.NumeroReserva : null,
+                CustomerName = invoice.Reserva != null && invoice.Reserva.Payer != null ? invoice.Reserva.Payer.FullName : null,
+                TipoComprobante = invoice.TipoComprobante,
+                PuntoDeVenta = invoice.PuntoDeVenta,
+                NumeroComprobante = invoice.NumeroComprobante,
+                ImporteTotal = invoice.ImporteTotal,
+                CreatedAt = invoice.CreatedAt,
+                CAE = invoice.CAE,
+                Resultado = invoice.Resultado,
+                Observaciones = invoice.Observaciones,
+                WasForced = invoice.WasForced,
+                ForceReason = invoice.ForceReason,
+                ForcedByUserId = invoice.ForcedByUserId,
+                ForcedByUserName = invoice.ForcedByUserName,
+                ForcedAt = invoice.ForcedAt,
+                OutstandingBalanceAtIssuance = invoice.OutstandingBalanceAtIssuance,
+                InvoiceType =
+                    invoice.TipoComprobante == 1 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3 ? "A" :
+                    invoice.TipoComprobante == 6 || invoice.TipoComprobante == 7 || invoice.TipoComprobante == 8 ? "B" :
+                    invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13 ? "C" :
+                    invoice.TipoComprobante == 51 ? "M" :
+                    "UNK"
+            })
+            .ToPagedResponseAsync(query, ct);
     }
 
     public async Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct)
@@ -154,12 +182,39 @@ public class InvoiceService : IInvoiceService
         return true;
     }
 
-    public async Task<IEnumerable<InvoiceDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct)
+    public async Task<IEnumerable<InvoiceListDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct)
     {
         return await _context.Invoices
+            .AsNoTracking()
             .Where(i => i.ReservaId == reservaId)
             .OrderByDescending(i => i.CreatedAt)
-            .ProjectTo<InvoiceDto>(_mapper.ConfigurationProvider)
+            .Select(invoice => new InvoiceListDto
+            {
+                PublicId = invoice.PublicId,
+                ReservaPublicId = invoice.Reserva != null ? (Guid?)invoice.Reserva.PublicId : null,
+                NumeroReserva = invoice.Reserva != null ? invoice.Reserva.NumeroReserva : null,
+                CustomerName = invoice.Reserva != null && invoice.Reserva.Payer != null ? invoice.Reserva.Payer.FullName : null,
+                TipoComprobante = invoice.TipoComprobante,
+                PuntoDeVenta = invoice.PuntoDeVenta,
+                NumeroComprobante = invoice.NumeroComprobante,
+                ImporteTotal = invoice.ImporteTotal,
+                CreatedAt = invoice.CreatedAt,
+                CAE = invoice.CAE,
+                Resultado = invoice.Resultado,
+                Observaciones = invoice.Observaciones,
+                WasForced = invoice.WasForced,
+                ForceReason = invoice.ForceReason,
+                ForcedByUserId = invoice.ForcedByUserId,
+                ForcedByUserName = invoice.ForcedByUserName,
+                ForcedAt = invoice.ForcedAt,
+                OutstandingBalanceAtIssuance = invoice.OutstandingBalanceAtIssuance,
+                InvoiceType =
+                    invoice.TipoComprobante == 1 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3 ? "A" :
+                    invoice.TipoComprobante == 6 || invoice.TipoComprobante == 7 || invoice.TipoComprobante == 8 ? "B" :
+                    invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13 ? "C" :
+                    invoice.TipoComprobante == 51 ? "M" :
+                    "UNK"
+            })
             .ToListAsync(ct);
     }
 
@@ -523,5 +578,39 @@ public class InvoiceService : IInvoiceService
         return tipoComprobante == 3 || tipoComprobante == 8 || tipoComprobante == 13 || tipoComprobante == 53
             ? -importeTotal
             : importeTotal;
+    }
+
+    private static IQueryable<Invoice> ApplyInvoiceSearch(IQueryable<Invoice> query, string? search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            return query;
+        }
+
+        var normalized = search.Trim().ToLowerInvariant();
+        return query.Where(invoice =>
+            invoice.NumeroComprobante.ToString().Contains(normalized) ||
+            invoice.ForceReason != null && invoice.ForceReason.ToLower().Contains(normalized) ||
+            invoice.Reserva != null && invoice.Reserva.NumeroReserva.ToLower().Contains(normalized) ||
+            invoice.Reserva != null && invoice.Reserva.Payer != null && invoice.Reserva.Payer.FullName.ToLower().Contains(normalized));
+    }
+
+    private static IQueryable<Invoice> ApplyInvoiceOrdering(IQueryable<Invoice> query, InvoicesListQuery request)
+    {
+        var sortBy = (request.SortBy ?? "createdAt").Trim().ToLowerInvariant();
+        var desc = !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return sortBy switch
+        {
+            "numerocomprobante" => desc
+                ? query.OrderByDescending(invoice => invoice.NumeroComprobante).ThenByDescending(invoice => invoice.CreatedAt)
+                : query.OrderBy(invoice => invoice.NumeroComprobante).ThenByDescending(invoice => invoice.CreatedAt),
+            "importetotal" => desc
+                ? query.OrderByDescending(invoice => invoice.ImporteTotal).ThenByDescending(invoice => invoice.CreatedAt)
+                : query.OrderBy(invoice => invoice.ImporteTotal).ThenByDescending(invoice => invoice.CreatedAt),
+            _ => desc
+                ? query.OrderByDescending(invoice => invoice.CreatedAt).ThenByDescending(invoice => invoice.Id)
+                : query.OrderBy(invoice => invoice.CreatedAt).ThenBy(invoice => invoice.Id)
+        };
     }
 }

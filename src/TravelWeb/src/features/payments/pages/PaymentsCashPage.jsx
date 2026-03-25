@@ -1,5 +1,7 @@
 import { Filter, Loader2, Search } from "lucide-react";
 import { isAdmin } from "../../../auth";
+import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { FinanceMetricsGrid } from "../components/FinanceMetricsGrid";
 import { MovementsTab } from "../components/MovementsTab";
 import { useCash } from "../hooks/useCash";
@@ -16,9 +18,18 @@ export default function PaymentsCashPage() {
     setDirectionFilter,
     sourceFilter,
     setSourceFilter,
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+    hasPreviousPage,
+    hasNextPage,
+    setPage,
+    setPageSize,
     handleCreateManualMovement,
     handleUpdateManualMovement,
     handleDeleteManualMovement,
+    databaseUnavailable,
   } = useCash();
 
   if (loading && movements.length === 0) {
@@ -76,14 +87,30 @@ export default function PaymentsCashPage() {
         ]}
       />
 
-      <MovementsTab
-        movements={movements}
-        isAdmin={adminUser}
-        onCreateManualMovement={handleCreateManualMovement}
-        onUpdateManualMovement={handleUpdateManualMovement}
-        onDeleteManualMovement={handleDeleteManualMovement}
-        showHeader={false}
-      />
+      {databaseUnavailable ? (
+        <DatabaseUnavailableState />
+      ) : (
+        <>
+          <MovementsTab
+            movements={movements}
+            isAdmin={adminUser}
+            onCreateManualMovement={handleCreateManualMovement}
+            onUpdateManualMovement={handleUpdateManualMovement}
+            onDeleteManualMovement={handleDeleteManualMovement}
+            showHeader={false}
+          />
+          <PaginationFooter
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            totalPages={totalPages}
+            hasPreviousPage={hasPreviousPage}
+            hasNextPage={hasNextPage}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        </>
+      )}
     </div>
   );
 }

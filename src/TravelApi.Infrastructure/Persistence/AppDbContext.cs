@@ -280,6 +280,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<WhatsAppBotConfig> WhatsAppBotConfigs => Set<WhatsAppBotConfig>();
     public DbSet<WhatsAppDelivery> WhatsAppDeliveries => Set<WhatsAppDelivery>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<BusinessSequence> BusinessSequences => Set<BusinessSequence>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -322,6 +323,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(c => c.Email).HasMaxLength(200);
             entity.Property(c => c.DocumentNumber).HasMaxLength(50);
             entity.Property(c => c.Address).HasMaxLength(300);
+            entity.HasIndex(c => new { c.IsActive, c.FullName });
         });
 
         // Reserva (Master) - Mapeado a TravelFiles (Legacy)
@@ -332,6 +334,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(f => f.Name).HasMaxLength(200).IsRequired();
             entity.Property(f => f.Status).HasMaxLength(50).IsRequired();
             entity.Property(f => f.WhatsAppPhoneOverride).HasMaxLength(50);
+            entity.HasIndex(f => f.NumeroReserva).IsUnique();
+            entity.HasIndex(f => new { f.Status, f.StartDate, f.CreatedAt });
 
             entity.HasOne(f => f.Payer)
                   .WithMany(c => c.Reservas)
@@ -416,6 +420,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Method).HasMaxLength(50).IsRequired();
             entity.Property(p => p.Status).HasMaxLength(50).IsRequired();
             entity.Property(p => p.EntryType).HasMaxLength(50).IsRequired();
+            entity.HasIndex(p => p.PaidAt);
 
             // Filtro global: excluir pagos borrados de todas las consultas
             entity.HasQueryFilter(p => !p.IsDeleted);
@@ -471,6 +476,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(i => i.ForcedByUserId).HasMaxLength(200);
             entity.Property(i => i.ForcedByUserName).HasMaxLength(200);
             entity.Property(i => i.OutstandingBalanceAtIssuance).HasPrecision(18, 2);
+            entity.HasIndex(i => i.CreatedAt);
         });
 
         // InvoiceItem (Singular table from Program.cs)
@@ -596,6 +602,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(m => m.Description).HasMaxLength(500).IsRequired();
             entity.Property(m => m.Reference).HasMaxLength(100);
             entity.Property(m => m.CreatedBy).HasMaxLength(200).IsRequired();
+            entity.HasIndex(m => m.OccurredAt);
 
             entity.HasOne(m => m.RelatedReserva)
                   .WithMany(r => r.ManualCashMovements)
@@ -607,6 +614,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(m => m.RelatedSupplierId)
                   .OnDelete(DeleteBehavior.SetNull);
         });
+
+        modelBuilder.Entity<BusinessSequence>(entity =>
+        {
+            entity.ToTable("BusinessSequences");
+            entity.Property(sequence => sequence.DocumentType).HasMaxLength(100).IsRequired();
+            entity.Property(sequence => sequence.LastValue).IsRequired();
+            entity.HasIndex(sequence => new { sequence.DocumentType, sequence.Year }).IsUnique();
+        });
     }
 
     private static void ConfigurePublicEntity<TEntity>(ModelBuilder modelBuilder)
@@ -615,8 +630,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<TEntity>(entity =>
         {
             entity.Property(e => e.PublicId)
-                .HasColumnType("uuid")
-                .HasDefaultValueSql("gen_random_uuid()");
+                .HasColumnType("uuid");
             entity.HasIndex(e => e.PublicId).IsUnique();
         });
     }
