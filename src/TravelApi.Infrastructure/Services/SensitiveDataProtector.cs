@@ -10,6 +10,7 @@ namespace TravelApi.Infrastructure.Services;
 public class SensitiveDataProtector : ISensitiveDataProtector
 {
     private static readonly byte[] BinaryMarker = Encoding.ASCII.GetBytes("MTENC1");
+    private const string MissingKeyMessage = "Security encryption key is not configured. Set Security__EncryptionKey to use encrypted AFIP data.";
     private readonly byte[]? _key;
     private readonly bool _noopMode;
 
@@ -23,7 +24,9 @@ public class SensitiveDataProtector : ISensitiveDataProtector
         {
             if (!environment.IsDevelopment())
             {
-                throw new InvalidOperationException("Security encryption key is required outside development.");
+                logger.LogCritical(
+                    "Security encryption key is not configured outside development. AFIP encrypted data will remain unavailable until Security__EncryptionKey is set.");
+                return;
             }
 
             _noopMode = true;
@@ -46,6 +49,7 @@ public class SensitiveDataProtector : ISensitiveDataProtector
             return value;
         }
 
+        EnsureKeyAvailable();
         var cipherBytes = ProtectBytesCore(Encoding.UTF8.GetBytes(value));
         return $"enc:{Convert.ToBase64String(cipherBytes)}";
     }
@@ -57,6 +61,7 @@ public class SensitiveDataProtector : ISensitiveDataProtector
             return value;
         }
 
+        EnsureKeyAvailable();
         var cipherBytes = Convert.FromBase64String(value["enc:".Length..]);
         var plainBytes = UnprotectBytesCore(cipherBytes);
         return Encoding.UTF8.GetString(plainBytes);
@@ -69,6 +74,7 @@ public class SensitiveDataProtector : ISensitiveDataProtector
             return value;
         }
 
+        EnsureKeyAvailable();
         return ProtectBytesCore(value);
     }
 
@@ -79,7 +85,16 @@ public class SensitiveDataProtector : ISensitiveDataProtector
             return value;
         }
 
+        EnsureKeyAvailable();
         return UnprotectBytesCore(value);
+    }
+
+    private void EnsureKeyAvailable()
+    {
+        if (_key is null)
+        {
+            throw new InvalidOperationException(MissingKeyMessage);
+        }
     }
 
     private static byte[] DeriveKey(string configuredKey)
