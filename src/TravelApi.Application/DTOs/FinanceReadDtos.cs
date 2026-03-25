@@ -47,6 +47,7 @@ public class InvoicingWorkItemDto
     public Guid ReservaPublicId { get; set; }
     public string NumeroReserva { get; set; } = string.Empty;
     public string CustomerName { get; set; } = string.Empty;
+    public DateTime? StartDate { get; set; }
     public decimal TotalSale { get; set; }
     public decimal AlreadyInvoiced { get; set; }
     public decimal PendingFiscalAmount { get; set; }

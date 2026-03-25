@@ -30,9 +30,9 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpGet("worklist")]
-    public async Task<ActionResult<IReadOnlyList<InvoicingWorkItemDto>>> GetWorklist(CancellationToken ct)
+    public async Task<ActionResult<PagedResponse<InvoicingWorkItemDto>>> GetWorklist([FromQuery] InvoicingWorklistQuery query, CancellationToken ct)
     {
-        return Ok(await _invoiceService.GetInvoicingWorklistAsync(ct));
+        return Ok(await _invoiceService.GetInvoicingWorklistAsync(query, ct));
     }
 
     [HttpGet]

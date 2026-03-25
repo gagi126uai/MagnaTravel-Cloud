@@ -1,26 +1,19 @@
-import React, { useState } from 'react';
-import { Building2, Mail, Wallet, Pencil } from "lucide-react";
+import React from "react";
+import { Building2, Mail, Wallet, Pencil, Power } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { Badge } from "../../../components/ui/badge";
 import { getPublicId } from "../../../lib/publicIds";
 
-export function SupplierMobileList({ suppliers, onEdit, onAccountClick }) {
+export function SupplierMobileList({ suppliers, onEdit, onToggleStatus, onAccountClick }) {
     const getInitials = (name) => {
-        return name?.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) || "PV";
-    };
-
-    const [visibleCount, setVisibleCount] = useState(50);
-    const visibleSuppliers = suppliers.slice(0, visibleCount);
-
-    const handleLoadMore = () => {
-        setVisibleCount(prev => prev + 50);
+        return name?.split(" ").map((part) => part[0]).join("").toUpperCase().slice(0, 2) || "PV";
     };
 
     const getRandomColor = (name) => {
         const colors = ["bg-blue-500", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-indigo-500"];
         let hash = 0;
-        for (let i = 0; i < name.length; i++) {
-            hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        for (let index = 0; index < name.length; index += 1) {
+            hash = name.charCodeAt(index) + ((hash << 5) - hash);
         }
         return colors[Math.abs(hash) % colors.length];
     };
@@ -35,11 +28,16 @@ export function SupplierMobileList({ suppliers, onEdit, onAccountClick }) {
 
     return (
         <div className="md:hidden space-y-3">
-            {visibleSuppliers.map((supplier) => (
-                <div key={getPublicId(supplier)} className={`bg-white dark:bg-slate-900 rounded-xl p-4 border shadow-sm ${!supplier.isActive ? 'opacity-70 border-slate-200 dark:border-slate-800' : 'border-slate-200 dark:border-slate-800'}`}>
+            {suppliers.map((supplier) => (
+                <div
+                    key={getPublicId(supplier)}
+                    className={`bg-white dark:bg-slate-900 rounded-xl p-4 border shadow-sm ${
+                        !supplier.isActive ? "opacity-70 border-slate-200 dark:border-slate-800" : "border-slate-200 dark:border-slate-800"
+                    }`}
+                >
                     <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-3">
-                            <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm shrink-0 ${getRandomColor(supplier.name)}`}>
+                            <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm shrink-0 ${getRandomColor(supplier.name || "PV")}`}>
                                 {getInitials(supplier.name)}
                             </div>
                             <div>
@@ -81,20 +79,20 @@ export function SupplierMobileList({ suppliers, onEdit, onAccountClick }) {
                             >
                                 <Pencil className="h-4 w-4" />
                             </button>
+                            <button
+                                onClick={() => onToggleStatus(supplier)}
+                                className={`h-8 w-8 flex items-center justify-center rounded-md border transition-colors ${
+                                    supplier.isActive
+                                        ? "border-slate-200 bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-800"
+                                        : "border-slate-200 bg-white text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:border-slate-700 dark:bg-slate-800"
+                                }`}
+                            >
+                                <Power className="h-4 w-4" />
+                            </button>
                         </div>
                     </div>
                 </div>
             ))}
-            {suppliers.length > visibleCount && (
-                <div className="pt-2 pb-4 text-center">
-                    <button 
-                        onClick={handleLoadMore}
-                        className="text-sm font-semibold text-slate-600 dark:text-slate-300 w-full px-4 py-2 border rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    >
-                        Cargar más resultados ({suppliers.length - visibleCount} restantes)
-                    </button>
-                </div>
-            )}
         </div>
     );
 }

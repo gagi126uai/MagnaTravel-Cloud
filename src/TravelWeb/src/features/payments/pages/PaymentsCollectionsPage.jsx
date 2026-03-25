@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Filter, Loader2, Search } from "lucide-react";
 import PaymentModal from "../../../components/PaymentModal";
+import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { FinanceMetricsGrid } from "../components/FinanceMetricsGrid";
 import { CollectionsTab } from "../components/CollectionsTab";
 import { useCollections } from "../hooks/useCollections";
@@ -15,6 +17,15 @@ export default function PaymentsCollectionsPage() {
     setSearchTerm,
     urgencyFilter,
     setUrgencyFilter,
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+    hasPreviousPage,
+    hasNextPage,
+    setPage,
+    setPageSize,
+    databaseUnavailable,
     loadData,
   } = useCollections();
 
@@ -66,7 +77,23 @@ export default function PaymentsCollectionsPage() {
         ]}
       />
 
-      <CollectionsTab items={items} onPay={setSelectedItem} />
+      {databaseUnavailable ? (
+        <DatabaseUnavailableState />
+      ) : (
+        <>
+          <CollectionsTab items={items} onPay={setSelectedItem} />
+          <PaginationFooter
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            totalPages={totalPages}
+            hasPreviousPage={hasPreviousPage}
+            hasNextPage={hasNextPage}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        </>
+      )}
 
       <PaymentModal
         isOpen={Boolean(selectedItem)}

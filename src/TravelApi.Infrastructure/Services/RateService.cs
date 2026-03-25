@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -14,228 +15,504 @@ public class RateService : IRateService
         _db = db;
     }
 
-    public async Task<IEnumerable<object>> GetAllAsync(int? supplierId, string? serviceType, bool activeOnly, CancellationToken ct)
+    public async Task<PagedResponse<RateListItemDto>> GetAllAsync(RateListQuery query, CancellationToken ct)
     {
-        var query = _db.Rates.Include(r => r.Supplier).AsQueryable();
-        
-        if (supplierId.HasValue)
-            query = query.Where(r => r.SupplierId == supplierId.Value);
-        
-        if (!string.IsNullOrEmpty(serviceType))
-            query = query.Where(r => r.ServiceType == serviceType);
-        
-        if (activeOnly)
-            query = query.Where(r => r.IsActive && (r.ValidTo == null || r.ValidTo >= DateTime.UtcNow));
-        
-        return await query
-            .OrderBy(r => r.Supplier != null ? r.Supplier.Name : "")
-            .ThenBy(r => r.ServiceType)
-            .ThenBy(r => r.ProductName)
-            .Select(r => new {
-                r.Id, r.ServiceType, r.ProductName, r.Description, r.PriceUnit,
-                r.NetCost, r.Tax, r.SalePrice, r.Commission, r.Currency,
-                r.ValidFrom, r.ValidTo, r.IsActive, r.InternalNotes,
-                // Campos dinámicos
-                r.Airline, r.AirlineCode, r.Origin, r.Destination, r.CabinClass, r.BaggageIncluded,
-                r.HotelName, r.City, r.StarRating, r.RoomType, r.RoomCategory, r.RoomFeatures, r.MealPlan, r.HotelPriceType, r.ChildrenPayPercent, r.ChildMaxAge,
-                r.PickupLocation, r.DropoffLocation, r.VehicleType, r.MaxPassengers, r.IsRoundTrip,
-                r.IncludesFlight, r.IncludesHotel, r.IncludesTransfer, r.IncludesExcursions, r.IncludesInsurance,
-                r.DurationDays, r.Itinerary,
-                SupplierPublicId = r.Supplier != null ? (Guid?)r.Supplier.PublicId : null,
-                SupplierName = r.Supplier != null ? r.Supplier.Name : null
-            })
-            .ToListAsync(ct);
+        var supplierId = await ResolveOptionalSupplierIdAsync(query.SupplierId, ct);
+        var ratesQuery = BuildFilteredRatesQuery(supplierId, query.ServiceType, query.ActiveOnly, query.Search);
+        ratesQuery = ApplyRateOrdering(ratesQuery, query);
+
+        return await ProjectRateListItems(ratesQuery)
+            .ToPagedResponseAsync(query, ct);
     }
 
-    public async Task<object?> GetByIdAsync(int id, CancellationToken ct)
+    public async Task<PagedResponse<HotelRateGroupDto>> GetHotelGroupsAsync(HotelRateGroupsQuery query, CancellationToken ct)
     {
-        return await _db.Rates.Include(r => r.Supplier)
-            .Where(r => r.Id == id)
-            .Select(r => new {
-                r.Id, r.ServiceType, r.ProductName, r.Description, r.PriceUnit,
-                r.NetCost, r.Tax, r.SalePrice, r.Commission, r.Currency,
-                r.ValidFrom, r.ValidTo, r.IsActive, r.InternalNotes,
-                r.Airline, r.AirlineCode, r.Origin, r.Destination, r.CabinClass, r.BaggageIncluded,
-                r.HotelName, r.City, r.StarRating, r.RoomType, r.MealPlan,
-                r.PickupLocation, r.DropoffLocation, r.VehicleType, r.MaxPassengers, r.IsRoundTrip,
-                r.IncludesFlight, r.IncludesHotel, r.IncludesTransfer, r.IncludesExcursions, r.IncludesInsurance,
-                r.DurationDays, r.Itinerary,
-                SupplierPublicId = r.Supplier != null ? (Guid?)r.Supplier.PublicId : null,
-                SupplierName = r.Supplier != null ? r.Supplier.Name : null
+        var supplierId = await ResolveOptionalSupplierIdAsync(query.SupplierId, ct);
+        var hotelRatesQuery = BuildFilteredRatesQuery(supplierId, "Hotel", query.ActiveOnly, query.Search);
+        var now = DateTime.UtcNow;
+
+        var groupedQuery = hotelRatesQuery
+            .Select(rate => new
+            {
+                HotelName = rate.HotelName ?? "Hotel sin nombre",
+                rate.City,
+                rate.StarRating,
+                SupplierPublicId = rate.Supplier != null ? (Guid?)rate.Supplier.PublicId : null,
+                SupplierName = rate.Supplier != null ? rate.Supplier.Name : null,
+                rate.SalePrice,
+                IsExpired = rate.ValidTo.HasValue && rate.ValidTo.Value < now
             })
+            .GroupBy(rate => new
+            {
+                rate.HotelName,
+                rate.City,
+                rate.StarRating,
+                rate.SupplierPublicId,
+                rate.SupplierName
+            })
+            .Select(group => new HotelRateGroupSummary
+            {
+                HotelName = group.Key.HotelName,
+                City = group.Key.City,
+                StarRating = group.Key.StarRating,
+                SupplierPublicId = group.Key.SupplierPublicId,
+                SupplierName = group.Key.SupplierName,
+                FromPrice = group.Min(item => item.SalePrice),
+                HasExpiredRates = group.Any(item => item.IsExpired),
+                RoomCount = group.Count()
+            });
+
+        groupedQuery = ApplyHotelGroupOrdering(groupedQuery, query);
+
+        var totalCount = await groupedQuery.CountAsync(ct);
+        var safePage = query.GetNormalizedPage();
+        var safePageSize = query.GetNormalizedPageSize();
+
+        var groups = await groupedQuery
+            .Skip((safePage - 1) * safePageSize)
+            .Take(safePageSize)
+            .ToListAsync(ct);
+
+        foreach (var group in groups)
+        {
+            group.GroupKey = BuildHotelGroupKey(group.HotelName, group.City, group.SupplierName, group.StarRating);
+        }
+
+        if (!groups.Any())
+        {
+            return PagedResponse<HotelRateGroupDto>.Create(Array.Empty<HotelRateGroupDto>(), safePage, safePageSize, totalCount);
+        }
+
+        var selectedHotelNames = groups.Select(group => group.HotelName).Distinct().ToList();
+        var hotelItems = await ProjectRateListItems(hotelRatesQuery)
+            .Where(rate => selectedHotelNames.Contains(rate.HotelName ?? "Hotel sin nombre"))
+            .OrderBy(rate => rate.HotelName)
+            .ThenBy(rate => rate.RoomType)
+            .ThenBy(rate => rate.RoomCategory)
+            .ThenBy(rate => rate.SalePrice)
+            .ToListAsync(ct);
+
+        var itemsByGroup = hotelItems
+            .GroupBy(rate => BuildHotelGroupKey(rate.HotelName, rate.City, rate.SupplierName, rate.StarRating))
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<RateListItemDto>)group.ToList());
+
+        var pageItems = groups
+            .Select(group => new HotelRateGroupDto
+            {
+                GroupKey = group.GroupKey,
+                HotelName = group.HotelName,
+                City = group.City,
+                StarRating = group.StarRating,
+                SupplierPublicId = group.SupplierPublicId,
+                SupplierName = group.SupplierName,
+                FromPrice = group.FromPrice,
+                HasExpiredRates = group.HasExpiredRates,
+                RoomCount = group.RoomCount,
+                Items = itemsByGroup.TryGetValue(group.GroupKey, out var groupItems)
+                    ? groupItems
+                    : Array.Empty<RateListItemDto>()
+            })
+            .ToList();
+
+        return PagedResponse<HotelRateGroupDto>.Create(pageItems, safePage, safePageSize, totalCount);
+    }
+
+    public async Task<RateSummaryDto> GetSummaryAsync(RateSummaryQuery query, CancellationToken ct)
+    {
+        var supplierId = await ResolveOptionalSupplierIdAsync(query.SupplierId, ct);
+        var filteredRates = BuildFilteredRatesQuery(supplierId, query.ServiceType, query.ActiveOnly, query.Search);
+        var now = DateTime.UtcNow;
+
+        var rates = await filteredRates
+            .Select(rate => new
+            {
+                rate.ServiceType,
+                rate.HotelName,
+                rate.City,
+                SupplierName = rate.Supplier != null ? rate.Supplier.Name : null,
+                rate.StarRating,
+                IsExpired = rate.ValidTo.HasValue && rate.ValidTo.Value < now
+            })
+            .ToListAsync(ct);
+
+        return new RateSummaryDto
+        {
+            TotalCount = rates.Count,
+            AereoCount = rates.Count(rate => rate.ServiceType == "Aereo"),
+            TrasladoCount = rates.Count(rate => rate.ServiceType == "Traslado"),
+            PaqueteCount = rates.Count(rate => rate.ServiceType == "Paquete"),
+            HotelGroupCount = rates
+                .Where(rate => rate.ServiceType == "Hotel")
+                .Select(rate => BuildHotelGroupKey(rate.HotelName, rate.City, rate.SupplierName, rate.StarRating))
+                .Distinct()
+                .Count(),
+            HotelRateCount = rates.Count(rate => rate.ServiceType == "Hotel"),
+            ExpiredCount = rates.Count(rate => rate.IsExpired)
+        };
+    }
+
+    public async Task<RateListItemDto?> GetByIdAsync(int id, CancellationToken ct)
+    {
+        return await ProjectRateListItems(_db.Rates.AsNoTracking().Where(rate => rate.Id == id))
             .FirstOrDefaultAsync(ct);
     }
 
-    public async Task<IEnumerable<object>> SearchAsync(int? supplierId, string? serviceType, string? query, CancellationToken ct)
+    public async Task<RateListItemDto?> GetByPublicIdAsync(string publicId, CancellationToken ct)
     {
-        var q = _db.Rates.Include(r => r.Supplier)
-            .Where(r => r.IsActive && (r.ValidTo == null || r.ValidTo >= DateTime.UtcNow));
-        
-        if (supplierId.HasValue)
-            q = q.Where(r => r.SupplierId == supplierId.Value);
-        
-        if (!string.IsNullOrEmpty(serviceType))
-            q = q.Where(r => r.ServiceType == serviceType);
-        
-        if (!string.IsNullOrEmpty(query))
-            q = q.Where(r => r.ProductName.Contains(query) || 
-                           (r.Description != null && r.Description.Contains(query)) ||
-                           (r.HotelName != null && r.HotelName.Contains(query)) ||
-                           (r.Airline != null && r.Airline.Contains(query)));
-        
-        return await q
-            .Take(30)
-            .Select(r => new {
-                r.Id, r.ServiceType, r.ProductName, r.Description, r.PriceUnit,
-                r.NetCost, r.Tax, r.SalePrice, r.Currency,
-                SupplierPublicId = r.Supplier != null ? (Guid?)r.Supplier.PublicId : null,
-                SupplierName = r.Supplier != null ? r.Supplier.Name : null,
-                // Datos resumidos por tipo
-                r.Airline, r.Origin, r.Destination, r.CabinClass,
-                r.HotelName, r.City, r.StarRating, r.RoomType, r.MealPlan,
-                r.VehicleType, r.IsRoundTrip,
-                r.DurationDays
+        if (!Guid.TryParse(publicId, out var parsedPublicId))
+        {
+            return null;
+        }
+
+        return await ProjectRateListItems(_db.Rates.AsNoTracking().Where(rate => rate.PublicId == parsedPublicId))
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<RateSearchItemDto>> SearchAsync(int? supplierId, string? serviceType, string? query, CancellationToken ct)
+    {
+        var ratesQuery = BuildFilteredRatesQuery(supplierId, serviceType, activeOnly: true, query);
+
+        return await ratesQuery
+            .OrderBy(rate => rate.ProductName)
+            .ThenBy(rate => rate.HotelName)
+            .Select(rate => new RateSearchItemDto
+            {
+                PublicId = rate.PublicId,
+                ServiceType = rate.ServiceType,
+                ProductName = rate.ProductName,
+                Description = rate.Description,
+                PriceUnit = rate.PriceUnit,
+                NetCost = rate.NetCost,
+                Tax = rate.Tax,
+                SalePrice = rate.SalePrice,
+                Currency = rate.Currency,
+                SupplierPublicId = rate.Supplier != null ? (Guid?)rate.Supplier.PublicId : null,
+                SupplierName = rate.Supplier != null ? rate.Supplier.Name : null,
+                ValidTo = rate.ValidTo,
+                Airline = rate.Airline,
+                Origin = rate.Origin,
+                Destination = rate.Destination,
+                CabinClass = rate.CabinClass,
+                HotelName = rate.HotelName,
+                City = rate.City,
+                StarRating = rate.StarRating,
+                RoomType = rate.RoomType,
+                RoomCategory = rate.RoomCategory,
+                RoomFeatures = rate.RoomFeatures,
+                MealPlan = rate.MealPlan,
+                VehicleType = rate.VehicleType,
+                IsRoundTrip = rate.IsRoundTrip,
+                DurationDays = rate.DurationDays
             })
+            .Take(30)
             .ToListAsync(ct);
     }
 
-    public async Task<object> CreateAsync(RateDto req, CancellationToken ct)
+    public async Task<RateListItemDto> CreateAsync(RateDto request, CancellationToken ct)
     {
-        int? supplierId = null;
-        if (!string.IsNullOrWhiteSpace(req.SupplierId))
-        {
-            supplierId = await _db.Suppliers
-                .AsNoTracking()
-                .ResolveInternalIdAsync(req.SupplierId, ct);
-
-            if (!supplierId.HasValue)
-                throw new ArgumentException("Proveedor no encontrado.");
-        }
+        var supplierId = await ResolveOptionalSupplierIdAsync(request.SupplierId, ct);
 
         var rate = new Rate
         {
             SupplierId = supplierId,
-            ServiceType = req.ServiceType,
-            ProductName = req.ProductName,
-            Description = req.Description,
-            PriceUnit = req.PriceUnit ?? "servicio",
-            NetCost = req.NetCost,
-            Tax = req.Tax,
-            SalePrice = req.SalePrice,
-            Commission = req.SalePrice - req.NetCost - req.Tax,
-            Currency = req.Currency ?? "USD",
-            ValidFrom = req.ValidFrom,
-            ValidTo = req.ValidTo,
-            InternalNotes = req.InternalNotes,
-            IsActive = true,
-            // Campos dinámicos
-            Airline = req.Airline,
-            AirlineCode = req.AirlineCode,
-            Origin = req.Origin,
-            Destination = req.Destination,
-            CabinClass = req.CabinClass,
-            BaggageIncluded = req.BaggageIncluded,
-            HotelName = req.HotelName,
-            City = req.City,
-            StarRating = req.StarRating,
-            RoomType = req.RoomType,
-            RoomCategory = req.RoomCategory,
-            RoomFeatures = req.RoomFeatures,
-            MealPlan = req.MealPlan,
-            HotelPriceType = req.HotelPriceType ?? "base_doble",
-            ChildrenPayPercent = req.ChildrenPayPercent,
-            ChildMaxAge = req.ChildMaxAge,
-            PickupLocation = req.PickupLocation,
-            DropoffLocation = req.DropoffLocation,
-            VehicleType = req.VehicleType,
-            MaxPassengers = req.MaxPassengers,
-            IsRoundTrip = req.IsRoundTrip,
-            IncludesFlight = req.IncludesFlight,
-            IncludesHotel = req.IncludesHotel,
-            IncludesTransfer = req.IncludesTransfer,
-            IncludesExcursions = req.IncludesExcursions,
-            IncludesInsurance = req.IncludesInsurance,
-            DurationDays = req.DurationDays,
-            Itinerary = req.Itinerary
+            ServiceType = request.ServiceType,
+            ProductName = request.ProductName,
+            Description = request.Description,
+            PriceUnit = request.PriceUnit ?? "servicio",
+            NetCost = request.NetCost,
+            Tax = request.Tax,
+            SalePrice = request.SalePrice,
+            Commission = request.SalePrice - request.NetCost - request.Tax,
+            Currency = request.Currency ?? "USD",
+            ValidFrom = request.ValidFrom,
+            ValidTo = request.ValidTo,
+            InternalNotes = request.InternalNotes,
+            IsActive = request.IsActive,
+            Airline = request.Airline,
+            AirlineCode = request.AirlineCode,
+            Origin = request.Origin,
+            Destination = request.Destination,
+            CabinClass = request.CabinClass,
+            BaggageIncluded = request.BaggageIncluded,
+            HotelName = request.HotelName,
+            City = request.City,
+            StarRating = request.StarRating,
+            RoomType = request.RoomType,
+            RoomCategory = request.RoomCategory,
+            RoomFeatures = request.RoomFeatures,
+            MealPlan = request.MealPlan,
+            HotelPriceType = request.HotelPriceType ?? "base_doble",
+            ChildrenPayPercent = request.ChildrenPayPercent,
+            ChildMaxAge = request.ChildMaxAge,
+            PickupLocation = request.PickupLocation,
+            DropoffLocation = request.DropoffLocation,
+            VehicleType = request.VehicleType,
+            MaxPassengers = request.MaxPassengers,
+            IsRoundTrip = request.IsRoundTrip,
+            IncludesFlight = request.IncludesFlight,
+            IncludesHotel = request.IncludesHotel,
+            IncludesTransfer = request.IncludesTransfer,
+            IncludesExcursions = request.IncludesExcursions,
+            IncludesInsurance = request.IncludesInsurance,
+            DurationDays = request.DurationDays,
+            Itinerary = request.Itinerary
         };
 
         _db.Rates.Add(rate);
         await _db.SaveChangesAsync(ct);
-        return rate;
+
+        return await GetByIdAsync(rate.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo cargar la tarifa creada.");
     }
 
-    public async Task<object?> UpdateAsync(int id, RateDto req, CancellationToken ct)
+    public async Task<RateListItemDto?> UpdateAsync(int id, RateDto request, CancellationToken ct)
     {
-        var rate = await _db.Rates.FindAsync(new object[] { id }, ct);
-        if (rate == null) return null;
-
-        int? supplierId = null;
-        if (!string.IsNullOrWhiteSpace(req.SupplierId))
+        var rate = await _db.Rates.FirstOrDefaultAsync(item => item.Id == id, ct);
+        if (rate == null)
         {
-            supplierId = await _db.Suppliers
-                .AsNoTracking()
-                .ResolveInternalIdAsync(req.SupplierId, ct);
-
-            if (!supplierId.HasValue)
-                throw new ArgumentException("Proveedor no encontrado.");
+            return null;
         }
 
+        var supplierId = await ResolveOptionalSupplierIdAsync(request.SupplierId, ct);
+
         rate.SupplierId = supplierId;
-        rate.ServiceType = req.ServiceType;
-        rate.ProductName = req.ProductName;
-        rate.Description = req.Description;
-        rate.PriceUnit = req.PriceUnit ?? "servicio";
-        rate.NetCost = req.NetCost;
-        rate.Tax = req.Tax;
-        rate.SalePrice = req.SalePrice;
-        rate.Commission = req.SalePrice - req.NetCost - req.Tax;
-        rate.Currency = req.Currency ?? "USD";
-        rate.ValidFrom = req.ValidFrom;
-        rate.ValidTo = req.ValidTo;
-        rate.InternalNotes = req.InternalNotes;
-        rate.IsActive = req.IsActive;
+        rate.ServiceType = request.ServiceType;
+        rate.ProductName = request.ProductName;
+        rate.Description = request.Description;
+        rate.PriceUnit = request.PriceUnit ?? "servicio";
+        rate.NetCost = request.NetCost;
+        rate.Tax = request.Tax;
+        rate.SalePrice = request.SalePrice;
+        rate.Commission = request.SalePrice - request.NetCost - request.Tax;
+        rate.Currency = request.Currency ?? "USD";
+        rate.ValidFrom = request.ValidFrom;
+        rate.ValidTo = request.ValidTo;
+        rate.InternalNotes = request.InternalNotes;
+        rate.IsActive = request.IsActive;
         rate.UpdatedAt = DateTime.UtcNow;
-        // Campos dinámicos
-        rate.Airline = req.Airline;
-        rate.AirlineCode = req.AirlineCode;
-        rate.Origin = req.Origin;
-        rate.Destination = req.Destination;
-        rate.CabinClass = req.CabinClass;
-        rate.BaggageIncluded = req.BaggageIncluded;
-        rate.HotelName = req.HotelName;
-        rate.City = req.City;
-        rate.StarRating = req.StarRating;
-        rate.RoomType = req.RoomType;
-        rate.RoomCategory = req.RoomCategory;
-        rate.RoomFeatures = req.RoomFeatures;
-        rate.MealPlan = req.MealPlan;
-        rate.HotelPriceType = req.HotelPriceType ?? "base_doble";
-        rate.ChildrenPayPercent = req.ChildrenPayPercent;
-        rate.ChildMaxAge = req.ChildMaxAge;
-        rate.PickupLocation = req.PickupLocation;
-        rate.DropoffLocation = req.DropoffLocation;
-        rate.VehicleType = req.VehicleType;
-        rate.MaxPassengers = req.MaxPassengers;
-        rate.IsRoundTrip = req.IsRoundTrip;
-        rate.IncludesFlight = req.IncludesFlight;
-        rate.IncludesHotel = req.IncludesHotel;
-        rate.IncludesTransfer = req.IncludesTransfer;
-        rate.IncludesExcursions = req.IncludesExcursions;
-        rate.IncludesInsurance = req.IncludesInsurance;
-        rate.DurationDays = req.DurationDays;
-        rate.Itinerary = req.Itinerary;
+        rate.Airline = request.Airline;
+        rate.AirlineCode = request.AirlineCode;
+        rate.Origin = request.Origin;
+        rate.Destination = request.Destination;
+        rate.CabinClass = request.CabinClass;
+        rate.BaggageIncluded = request.BaggageIncluded;
+        rate.HotelName = request.HotelName;
+        rate.City = request.City;
+        rate.StarRating = request.StarRating;
+        rate.RoomType = request.RoomType;
+        rate.RoomCategory = request.RoomCategory;
+        rate.RoomFeatures = request.RoomFeatures;
+        rate.MealPlan = request.MealPlan;
+        rate.HotelPriceType = request.HotelPriceType ?? "base_doble";
+        rate.ChildrenPayPercent = request.ChildrenPayPercent;
+        rate.ChildMaxAge = request.ChildMaxAge;
+        rate.PickupLocation = request.PickupLocation;
+        rate.DropoffLocation = request.DropoffLocation;
+        rate.VehicleType = request.VehicleType;
+        rate.MaxPassengers = request.MaxPassengers;
+        rate.IsRoundTrip = request.IsRoundTrip;
+        rate.IncludesFlight = request.IncludesFlight;
+        rate.IncludesHotel = request.IncludesHotel;
+        rate.IncludesTransfer = request.IncludesTransfer;
+        rate.IncludesExcursions = request.IncludesExcursions;
+        rate.IncludesInsurance = request.IncludesInsurance;
+        rate.DurationDays = request.DurationDays;
+        rate.Itinerary = request.Itinerary;
 
         await _db.SaveChangesAsync(ct);
-        return rate;
+
+        return await GetByIdAsync(rate.Id, ct);
     }
 
     public async Task<bool> DeleteAsync(int id, CancellationToken ct)
     {
-        var rate = await _db.Rates.FindAsync(new object[] { id }, ct);
-        if (rate == null) return false;
+        var rate = await _db.Rates.FirstOrDefaultAsync(item => item.Id == id, ct);
+        if (rate == null)
+        {
+            return false;
+        }
 
         _db.Rates.Remove(rate);
         await _db.SaveChangesAsync(ct);
         return true;
+    }
+
+    private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(supplierPublicId))
+        {
+            return null;
+        }
+
+        var supplierId = await _db.Suppliers
+            .AsNoTracking()
+            .ResolveInternalIdAsync(supplierPublicId, ct);
+
+        if (!supplierId.HasValue)
+        {
+            throw new ArgumentException("Proveedor no encontrado.");
+        }
+
+        return supplierId.Value;
+    }
+
+    private IQueryable<Rate> BuildFilteredRatesQuery(
+        int? supplierId,
+        string? serviceType,
+        bool activeOnly,
+        string? search)
+    {
+        var query = _db.Rates
+            .AsNoTracking()
+            .AsQueryable();
+
+        if (supplierId.HasValue)
+        {
+            query = query.Where(rate => rate.SupplierId == supplierId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(serviceType))
+        {
+            query = query.Where(rate => rate.ServiceType == serviceType);
+        }
+
+        if (activeOnly)
+        {
+            var now = DateTime.UtcNow;
+            query = query.Where(rate => rate.IsActive && (!rate.ValidTo.HasValue || rate.ValidTo.Value >= now));
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var normalized = search.Trim().ToLowerInvariant();
+            query = query.Where(rate =>
+                rate.ProductName.ToLower().Contains(normalized) ||
+                (rate.Description != null && rate.Description.ToLower().Contains(normalized)) ||
+                (rate.HotelName != null && rate.HotelName.ToLower().Contains(normalized)) ||
+                (rate.City != null && rate.City.ToLower().Contains(normalized)) ||
+                (rate.Airline != null && rate.Airline.ToLower().Contains(normalized)) ||
+                (rate.Origin != null && rate.Origin.ToLower().Contains(normalized)) ||
+                (rate.Destination != null && rate.Destination.ToLower().Contains(normalized)) ||
+                (rate.Supplier != null && rate.Supplier.Name.ToLower().Contains(normalized)));
+        }
+
+        return query;
+    }
+
+    private static IQueryable<Rate> ApplyRateOrdering(IQueryable<Rate> query, RateListQuery request)
+    {
+        var sortBy = (request.SortBy ?? "productName").Trim().ToLowerInvariant();
+        var desc = !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return sortBy switch
+        {
+            "suppliername" => desc
+                ? query.OrderByDescending(rate => rate.Supplier != null ? rate.Supplier.Name : string.Empty)
+                    .ThenByDescending(rate => rate.ProductName)
+                : query.OrderBy(rate => rate.Supplier != null ? rate.Supplier.Name : string.Empty)
+                    .ThenBy(rate => rate.ProductName),
+            "validto" => desc
+                ? query.OrderByDescending(rate => rate.ValidTo).ThenByDescending(rate => rate.ProductName)
+                : query.OrderBy(rate => rate.ValidTo).ThenBy(rate => rate.ProductName),
+            "saleprice" => desc
+                ? query.OrderByDescending(rate => rate.SalePrice).ThenByDescending(rate => rate.ProductName)
+                : query.OrderBy(rate => rate.SalePrice).ThenBy(rate => rate.ProductName),
+            _ => desc
+                ? query.OrderByDescending(rate => rate.ProductName).ThenByDescending(rate => rate.ValidTo)
+                : query.OrderBy(rate => rate.ProductName).ThenBy(rate => rate.ValidTo)
+        };
+    }
+
+    private static IQueryable<HotelRateGroupSummary> ApplyHotelGroupOrdering(
+        IQueryable<HotelRateGroupSummary> query,
+        HotelRateGroupsQuery request)
+    {
+        var sortBy = (request.SortBy ?? "hotelName").Trim().ToLowerInvariant();
+        var desc = !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return sortBy switch
+        {
+            "city" => desc
+                ? query.OrderByDescending(group => group.City).ThenByDescending(group => group.HotelName)
+                : query.OrderBy(group => group.City).ThenBy(group => group.HotelName),
+            "validto" => desc
+                ? query.OrderByDescending(group => group.HasExpiredRates).ThenByDescending(group => group.HotelName)
+                : query.OrderBy(group => group.HasExpiredRates).ThenBy(group => group.HotelName),
+            "fromprice" => desc
+                ? query.OrderByDescending(group => group.FromPrice).ThenByDescending(group => group.HotelName)
+                : query.OrderBy(group => group.FromPrice).ThenBy(group => group.HotelName),
+            _ => desc
+                ? query.OrderByDescending(group => group.HotelName).ThenByDescending(group => group.City)
+                : query.OrderBy(group => group.HotelName).ThenBy(group => group.City)
+        };
+    }
+
+    private static IQueryable<RateListItemDto> ProjectRateListItems(IQueryable<Rate> query)
+    {
+        return query.Select(rate => new RateListItemDto
+        {
+            PublicId = rate.PublicId,
+            ServiceType = rate.ServiceType,
+            ProductName = rate.ProductName,
+            Description = rate.Description,
+            PriceUnit = rate.PriceUnit,
+            NetCost = rate.NetCost,
+            Tax = rate.Tax,
+            SalePrice = rate.SalePrice,
+            Commission = rate.Commission,
+            Currency = rate.Currency,
+            ValidFrom = rate.ValidFrom,
+            ValidTo = rate.ValidTo,
+            IsActive = rate.IsActive,
+            InternalNotes = rate.InternalNotes,
+            Airline = rate.Airline,
+            AirlineCode = rate.AirlineCode,
+            Origin = rate.Origin,
+            Destination = rate.Destination,
+            CabinClass = rate.CabinClass,
+            BaggageIncluded = rate.BaggageIncluded,
+            HotelName = rate.HotelName,
+            City = rate.City,
+            StarRating = rate.StarRating,
+            RoomType = rate.RoomType,
+            RoomCategory = rate.RoomCategory,
+            RoomFeatures = rate.RoomFeatures,
+            MealPlan = rate.MealPlan,
+            HotelPriceType = rate.HotelPriceType,
+            ChildrenPayPercent = rate.ChildrenPayPercent,
+            ChildMaxAge = rate.ChildMaxAge,
+            PickupLocation = rate.PickupLocation,
+            DropoffLocation = rate.DropoffLocation,
+            VehicleType = rate.VehicleType,
+            MaxPassengers = rate.MaxPassengers,
+            IsRoundTrip = rate.IsRoundTrip,
+            IncludesFlight = rate.IncludesFlight,
+            IncludesHotel = rate.IncludesHotel,
+            IncludesTransfer = rate.IncludesTransfer,
+            IncludesExcursions = rate.IncludesExcursions,
+            IncludesInsurance = rate.IncludesInsurance,
+            DurationDays = rate.DurationDays,
+            Itinerary = rate.Itinerary,
+            SupplierPublicId = rate.Supplier != null ? (Guid?)rate.Supplier.PublicId : null,
+            SupplierName = rate.Supplier != null ? rate.Supplier.Name : null
+        });
+    }
+
+    private static string BuildHotelGroupKey(string? hotelName, string? city, string? supplierName, int? starRating)
+    {
+        return $"{hotelName ?? string.Empty}|{city ?? string.Empty}|{supplierName ?? string.Empty}|{starRating?.ToString() ?? string.Empty}";
+    }
+
+    private sealed class HotelRateGroupSummary
+    {
+        public string GroupKey { get; set; } = string.Empty;
+        public string HotelName { get; set; } = string.Empty;
+        public string? City { get; set; }
+        public int? StarRating { get; set; }
+        public Guid? SupplierPublicId { get; set; }
+        public string? SupplierName { get; set; }
+        public decimal FromPrice { get; set; }
+        public bool HasExpiredRates { get; set; }
+        public int RoomCount { get; set; }
     }
 }

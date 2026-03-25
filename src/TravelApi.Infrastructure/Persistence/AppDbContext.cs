@@ -301,6 +301,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<FlightSegment>(modelBuilder);
         ConfigurePublicEntity<HotelBooking>(modelBuilder);
         ConfigurePublicEntity<PackageBooking>(modelBuilder);
+        ConfigurePublicEntity<Rate>(modelBuilder);
         ConfigurePublicEntity<TransferBooking>(modelBuilder);
         ConfigurePublicEntity<ReservaAttachment>(modelBuilder);
         ConfigurePublicEntity<SupplierPayment>(modelBuilder);

@@ -7,9 +7,10 @@ namespace TravelApi.Domain.Entities;
 /// Tarifario Profesional - precios de referencia por proveedor y tipo de servicio
 /// Incluye campos dinámicos según el tipo de servicio y estructura de precios completa
 /// </summary>
-public class Rate
+public class Rate : IHasPublicId
 {
     public int Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     
     // === PROVEEDOR ===
     public int? SupplierId { get; set; }

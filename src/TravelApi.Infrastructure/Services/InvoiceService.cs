@@ -53,6 +53,7 @@ public class InvoiceService : IInvoiceService
     public async Task<PagedResponse<InvoiceListDto>> GetAllAsync(InvoicesListQuery query, CancellationToken ct)
     {
         var invoicesQuery = ApplyInvoiceSearch(_context.Invoices.AsNoTracking(), query.Search);
+        invoicesQuery = ApplyInvoiceKind(invoicesQuery, query.Kind);
         invoicesQuery = ApplyInvoiceOrdering(invoicesQuery, query);
 
         return await invoicesQuery
@@ -89,39 +90,45 @@ public class InvoiceService : IInvoiceService
     public async Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct)
     {
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        var workItems = await BuildInvoicingWorkItemsAsync(settings, ct);
+        var workItemsQuery = BuildInvoicingWorkItemsQuery(settings);
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        var approvedInvoices = await _context.Invoices
+        var approvedInvoices = _context.Invoices
             .AsNoTracking()
-            .Where(i => i.Resultado == "A")
-            .Select(i => new
-            {
-                i.TipoComprobante,
-                i.ImporteTotal,
-                i.CreatedAt,
-                i.WasForced
-            })
-            .ToListAsync(ct);
+            .Where(i => i.Resultado == "A");
 
         return new InvoicingSummaryDto
         {
-            ReadyAmount = EconomicRulesHelper.RoundCurrency(workItems
+            ReadyAmount = Math.Round(await workItemsQuery
                 .Where(item => item.FiscalStatus == "ready")
-                .Sum(item => item.PendingFiscalAmount)),
-            ReadyCount = workItems.Count(item => item.FiscalStatus == "ready"),
-            BlockedCount = workItems.Count(item => item.FiscalStatus == "blocked" || item.FiscalStatus == "override"),
-            InvoicedThisMonth = EconomicRulesHelper.RoundCurrency(approvedInvoices
+                .Select(item => item.PendingFiscalAmount)
+                .DefaultIfEmpty(0m)
+                .SumAsync(ct), 2),
+            ReadyCount = await workItemsQuery.CountAsync(item => item.FiscalStatus == "ready", ct),
+            BlockedCount = await workItemsQuery.CountAsync(
+                item => item.FiscalStatus == "blocked" || item.FiscalStatus == "override",
+                ct),
+            InvoicedThisMonth = Math.Round(await approvedInvoices
                 .Where(invoice => invoice.CreatedAt >= startOfMonth)
-                .Sum(invoice => GetNetInvoiceAmount(invoice.TipoComprobante, invoice.ImporteTotal))),
-            ForcedCount = approvedInvoices.Count(invoice => invoice.WasForced)
+                .Select(invoice =>
+                    invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
+                        ? -invoice.ImporteTotal
+                        : invoice.ImporteTotal)
+                .DefaultIfEmpty(0m)
+                .SumAsync(ct), 2),
+            ForcedCount = await approvedInvoices.CountAsync(invoice => invoice.WasForced, ct)
         };
     }
 
-    public async Task<IReadOnlyList<InvoicingWorkItemDto>> GetInvoicingWorklistAsync(CancellationToken ct)
+    public async Task<PagedResponse<InvoicingWorkItemDto>> GetInvoicingWorklistAsync(InvoicingWorklistQuery query, CancellationToken ct)
     {
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        return await BuildInvoicingWorkItemsAsync(settings, ct);
+        var workItemsQuery = BuildInvoicingWorkItemsQuery(settings);
+        workItemsQuery = ApplyInvoicingWorkItemSearch(workItemsQuery, query.Search);
+        workItemsQuery = ApplyInvoicingWorkItemStatus(workItemsQuery, query.Status);
+        workItemsQuery = ApplyInvoicingWorkItemOrdering(workItemsQuery, query);
+
+        return await workItemsQuery.ToPagedResponseAsync(query, ct);
     }
 
     public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct)
@@ -468,109 +475,78 @@ public class InvoiceService : IInvoiceService
         await _context.SaveChangesAsync(ct);
     }
 
-    private async Task<IReadOnlyList<InvoicingWorkItemDto>> BuildInvoicingWorkItemsAsync(OperationalFinanceSettings settings, CancellationToken ct)
+    private IQueryable<InvoicingWorkItemDto> BuildInvoicingWorkItemsQuery(OperationalFinanceSettings settings)
     {
-        var reservas = await _context.Reservas
+        var allowsOverride = settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason;
+        var overrideBlockReason = "La reserva tiene deuda. AFIP queda bloqueado por defecto y requiere override con motivo.";
+        var hardBlockReason = "La reserva no esta cancelada economicamente y no puede emitirse en AFIP.";
+
+        return _context.Reservas
             .AsNoTracking()
-            .Where(r => ActiveInvoicingStatuses.Contains(r.Status))
-            .Select(r => new
+            .Where(reserva => ActiveInvoicingStatuses.Contains(reserva.Status))
+            .Select(reserva => new
             {
-                r.Id,
-                r.PublicId,
-                r.NumeroReserva,
-                CustomerName = r.Payer != null ? r.Payer.FullName : "Consumidor Final",
-                r.TotalSale,
-                r.Balance
+                reserva.Id,
+                reserva.PublicId,
+                reserva.NumeroReserva,
+                CustomerName = reserva.Payer != null ? reserva.Payer.FullName : "Consumidor Final",
+                reserva.StartDate,
+                TotalSale = Math.Round(reserva.TotalSale, 2),
+                Balance = Math.Round(reserva.Balance, 2),
+                AlreadyInvoiced = Math.Round(_context.Invoices
+                    .AsNoTracking()
+                    .Where(invoice => invoice.ReservaId == reserva.Id && invoice.Resultado == "A")
+                    .Select(invoice =>
+                        invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
+                            ? -invoice.ImporteTotal
+                            : invoice.ImporteTotal)
+                    .DefaultIfEmpty(0m)
+                    .Sum(), 2),
+                ForcedByUserName = _context.Invoices
+                    .AsNoTracking()
+                    .Where(invoice => invoice.ReservaId == reserva.Id && invoice.Resultado == "A" && invoice.WasForced)
+                    .OrderByDescending(invoice => invoice.CreatedAt)
+                    .Select(invoice => invoice.ForcedByUserName)
+                    .FirstOrDefault()
             })
-            .ToListAsync(ct);
-
-        if (reservas.Count == 0)
-            return Array.Empty<InvoicingWorkItemDto>();
-
-        var reservaIds = reservas.Select(r => r.Id).ToList();
-
-        var approvedInvoices = await _context.Invoices
-            .AsNoTracking()
-            .Where(i => i.ReservaId.HasValue && reservaIds.Contains(i.ReservaId.Value) && i.Resultado == "A")
-            .Select(i => new
+            .Select(item => new
             {
-                ReservaId = i.ReservaId!.Value,
-                i.TipoComprobante,
-                i.ImporteTotal,
-                i.WasForced,
-                i.ForcedByUserName,
-                i.CreatedAt
+                item.PublicId,
+                item.NumeroReserva,
+                item.CustomerName,
+                item.StartDate,
+                item.TotalSale,
+                item.Balance,
+                item.AlreadyInvoiced,
+                PendingFiscalAmount = item.TotalSale > item.AlreadyInvoiced
+                    ? Math.Round(item.TotalSale - item.AlreadyInvoiced, 2)
+                    : 0m,
+                item.ForcedByUserName
             })
-            .ToListAsync(ct);
-
-        var invoicedByReserva = approvedInvoices
-            .GroupBy(i => i.ReservaId)
-            .ToDictionary(
-                group => group.Key,
-                group => EconomicRulesHelper.RoundCurrency(group.Sum(i => GetNetInvoiceAmount(i.TipoComprobante, i.ImporteTotal))));
-
-        var latestForcedByReserva = approvedInvoices
-            .Where(i => i.WasForced)
-            .GroupBy(i => i.ReservaId)
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderByDescending(i => i.CreatedAt).First().ForcedByUserName);
-
-        return reservas
-            .Select(reserva =>
+            .Where(item => item.PendingFiscalAmount > 0m)
+            .Select(item => new InvoicingWorkItemDto
             {
-                var alreadyInvoiced = invoicedByReserva.TryGetValue(reserva.Id, out var value)
-                    ? value
-                    : 0m;
-                var pendingFiscalAmount = EconomicRulesHelper.RoundCurrency(Math.Max(reserva.TotalSale - alreadyInvoiced, 0m));
-
-                if (pendingFiscalAmount <= 0)
-                    return null;
-
-                var syntheticReserva = new Reserva
-                {
-                    Balance = reserva.Balance
-                };
-                var settled = EconomicRulesHelper.IsEconomicallySettled(syntheticReserva);
-                var afipEvaluation = EconomicRulesHelper.EvaluateAfip(syntheticReserva, settings);
-                var fiscalStatus = settled
+                ReservaPublicId = item.PublicId,
+                NumeroReserva = item.NumeroReserva,
+                CustomerName = item.CustomerName,
+                StartDate = item.StartDate,
+                TotalSale = item.TotalSale,
+                AlreadyInvoiced = item.AlreadyInvoiced,
+                PendingFiscalAmount = item.PendingFiscalAmount,
+                FiscalStatus = item.Balance <= 0m
                     ? "ready"
-                    : afipEvaluation.RequiresOverride
+                    : allowsOverride
                         ? "override"
-                        : "blocked";
-
-                return new InvoicingWorkItemDto
-                {
-                    ReservaPublicId = reserva.PublicId,
-                    NumeroReserva = reserva.NumeroReserva,
-                    CustomerName = reserva.CustomerName,
-                    TotalSale = EconomicRulesHelper.RoundCurrency(reserva.TotalSale),
-                    AlreadyInvoiced = alreadyInvoiced,
-                    PendingFiscalAmount = pendingFiscalAmount,
-                    FiscalStatus = fiscalStatus,
-                    FiscalStatusLabel = fiscalStatus switch
-                    {
-                        "ready" => "Lista para facturar",
-                        "override" => "Bloqueada por deuda",
-                        _ => "Bloqueada por deuda"
-                    },
-                    RequiresOverride = fiscalStatus == "override",
-                    EconomicBlockReason = settled ? null : afipEvaluation.BlockReason,
-                    ForcedByUserName = latestForcedByReserva.TryGetValue(reserva.Id, out var forcedByUserName)
-                        ? forcedByUserName
-                        : null
-                };
-            })
-            .Where(item => item != null)
-            .OrderBy(item => item!.FiscalStatus switch
-            {
-                "ready" => 0,
-                "override" => 1,
-                _ => 2
-            })
-            .ThenBy(item => item!.NumeroReserva)
-            .Cast<InvoicingWorkItemDto>()
-            .ToList();
+                        : "blocked",
+                FiscalStatusLabel = item.Balance <= 0m ? "Lista para facturar" : "Bloqueada por deuda",
+                RequiresOverride = item.Balance > 0m && allowsOverride,
+                EconomicBlockReason = item.Balance <= 0m
+                    ? null
+                    : allowsOverride
+                        ? overrideBlockReason
+                        : hardBlockReason,
+                ForcedByUserName = item.ForcedByUserName
+            });
     }
 
     private static decimal GetNetInvoiceAmount(int tipoComprobante, decimal importeTotal)
@@ -578,6 +554,26 @@ public class InvoiceService : IInvoiceService
         return tipoComprobante == 3 || tipoComprobante == 8 || tipoComprobante == 13 || tipoComprobante == 53
             ? -importeTotal
             : importeTotal;
+    }
+
+    private static IQueryable<Invoice> ApplyInvoiceKind(IQueryable<Invoice> query, string? kind)
+    {
+        var normalizedKind = (kind ?? "all").Trim().ToLowerInvariant();
+
+        return normalizedKind switch
+        {
+            "creditnote" => query.Where(invoice =>
+                invoice.TipoComprobante == 3 ||
+                invoice.TipoComprobante == 8 ||
+                invoice.TipoComprobante == 13 ||
+                invoice.TipoComprobante == 53),
+            "issued" => query.Where(invoice =>
+                invoice.TipoComprobante != 3 &&
+                invoice.TipoComprobante != 8 &&
+                invoice.TipoComprobante != 13 &&
+                invoice.TipoComprobante != 53),
+            _ => query
+        };
     }
 
     private static IQueryable<Invoice> ApplyInvoiceSearch(IQueryable<Invoice> query, string? search)
@@ -611,6 +607,59 @@ public class InvoiceService : IInvoiceService
             _ => desc
                 ? query.OrderByDescending(invoice => invoice.CreatedAt).ThenByDescending(invoice => invoice.Id)
                 : query.OrderBy(invoice => invoice.CreatedAt).ThenBy(invoice => invoice.Id)
+        };
+    }
+
+    private static IQueryable<InvoicingWorkItemDto> ApplyInvoicingWorkItemSearch(
+        IQueryable<InvoicingWorkItemDto> query,
+        string? search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            return query;
+        }
+
+        var normalized = search.Trim().ToLowerInvariant();
+        return query.Where(item =>
+            item.NumeroReserva.ToLower().Contains(normalized) ||
+            item.CustomerName.ToLower().Contains(normalized) ||
+            (item.EconomicBlockReason != null && item.EconomicBlockReason.ToLower().Contains(normalized)) ||
+            item.FiscalStatusLabel.ToLower().Contains(normalized));
+    }
+
+    private static IQueryable<InvoicingWorkItemDto> ApplyInvoicingWorkItemStatus(
+        IQueryable<InvoicingWorkItemDto> query,
+        string? status)
+    {
+        var normalizedStatus = (status ?? "all").Trim().ToLowerInvariant();
+
+        return normalizedStatus switch
+        {
+            "ready" => query.Where(item => item.FiscalStatus == "ready"),
+            "blocked" => query.Where(item => item.FiscalStatus == "blocked" || item.FiscalStatus == "override"),
+            "override" => query.Where(item => item.FiscalStatus == "override"),
+            _ => query
+        };
+    }
+
+    private static IQueryable<InvoicingWorkItemDto> ApplyInvoicingWorkItemOrdering(
+        IQueryable<InvoicingWorkItemDto> query,
+        InvoicingWorklistQuery request)
+    {
+        var sortBy = (request.SortBy ?? "startDate").Trim().ToLowerInvariant();
+        var desc = !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return sortBy switch
+        {
+            "pendingfiscalamount" => desc
+                ? query.OrderByDescending(item => item.PendingFiscalAmount).ThenBy(item => item.NumeroReserva)
+                : query.OrderBy(item => item.PendingFiscalAmount).ThenBy(item => item.NumeroReserva),
+            "numeroreserva" => desc
+                ? query.OrderByDescending(item => item.NumeroReserva).ThenByDescending(item => item.StartDate)
+                : query.OrderBy(item => item.NumeroReserva).ThenBy(item => item.StartDate),
+            _ => desc
+                ? query.OrderByDescending(item => item.StartDate).ThenBy(item => item.NumeroReserva)
+                : query.OrderBy(item => item.StartDate).ThenBy(item => item.NumeroReserva)
         };
     }
 }

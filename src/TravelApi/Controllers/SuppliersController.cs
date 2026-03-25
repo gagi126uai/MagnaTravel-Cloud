@@ -1,6 +1,7 @@
 #pragma warning disable CS8601, CS8602, CS8604, CS8618
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -22,10 +23,9 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Supplier>>> GetSuppliers(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResponse<SupplierListItemDto>>> GetSuppliers([FromQuery] SupplierListQuery query, CancellationToken cancellationToken)
     {
-        var suppliers = await _supplierService.GetSuppliersAsync(cancellationToken);
-        return Ok(suppliers.Select(ToSupplierResponse));
+        return Ok(await _supplierService.GetSuppliersAsync(query, cancellationToken));
     }
 
     [HttpPost("recalculate-all")]
@@ -121,13 +121,46 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/account")]
-    public async Task<ActionResult> GetSupplierAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    public async Task<ActionResult<SupplierAccountOverviewDto>> GetSupplierAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
-            var accountDto = await _supplierService.GetSupplierAccountAsync(id, cancellationToken);
-            return Ok(accountDto);
+            return Ok(await _supplierService.GetSupplierAccountOverviewAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{publicIdOrLegacyId}/account/services")]
+    public async Task<ActionResult<PagedResponse<SupplierAccountServiceListItemDto>>> GetSupplierAccountServices(
+        string publicIdOrLegacyId,
+        [FromQuery] SupplierAccountServicesQuery query,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.GetSupplierAccountServicesAsync(id, query, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpGet("{publicIdOrLegacyId}/account/payments")]
+    public async Task<ActionResult<PagedResponse<SupplierPaymentDto>>> GetSupplierAccountPayments(
+        string publicIdOrLegacyId,
+        [FromQuery] SupplierAccountPaymentsQuery query,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.GetSupplierAccountPaymentsAsync(id, query, cancellationToken));
         }
         catch (KeyNotFoundException)
         {

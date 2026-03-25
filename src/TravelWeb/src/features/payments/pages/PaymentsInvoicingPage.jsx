@@ -14,18 +14,28 @@ export default function PaymentsInvoicingPage() {
     summary,
     workItems,
     invoices,
-    issuedInvoices,
-    creditNotes,
     searchTerm,
     setSearchTerm,
-    page,
-    pageSize,
-    totalCount,
-    totalPages,
-    hasPreviousPage,
-    hasNextPage,
-    setPage,
-    setPageSize,
+    worklistStatus,
+    setWorklistStatus,
+    worklistPage,
+    worklistPageSize,
+    worklistTotalCount,
+    worklistTotalPages,
+    worklistHasPreviousPage,
+    worklistHasNextPage,
+    setWorklistPage,
+    setWorklistPageSize,
+    invoiceKind,
+    setInvoiceKind,
+    invoicePage,
+    invoicePageSize,
+    invoiceTotalCount,
+    invoiceTotalPages,
+    invoiceHasPreviousPage,
+    invoiceHasNextPage,
+    setInvoicePage,
+    setInvoicePageSize,
     loadData,
     handleDownloadPdf,
     handleViewPdf,
@@ -74,8 +84,11 @@ export default function PaymentsInvoicingPage() {
         <>
           <InvoicingTab
             items={workItems}
-            issuedInvoices={issuedInvoices}
-            creditNotes={creditNotes}
+            invoices={invoices}
+            worklistStatus={worklistStatus}
+            onWorklistStatusChange={setWorklistStatus}
+            invoiceKind={invoiceKind}
+            onInvoiceKindChange={setInvoiceKind}
             onInvoice={setSelectedItem}
             onDownloadPdf={handleDownloadPdf}
             onViewPdf={handleViewPdf}
@@ -83,16 +96,37 @@ export default function PaymentsInvoicingPage() {
             onAnnulInvoice={handleAnnulInvoice}
           />
 
-          <PaginationFooter
-            page={page}
-            pageSize={pageSize}
-            totalCount={totalCount}
-            totalPages={totalPages}
-            hasPreviousPage={hasPreviousPage}
-            hasNextPage={hasNextPage}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
+          <div className="space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+              Worklist AFIP
+            </div>
+            <PaginationFooter
+              page={worklistPage}
+              pageSize={worklistPageSize}
+              totalCount={worklistTotalCount}
+              totalPages={worklistTotalPages}
+              hasPreviousPage={worklistHasPreviousPage}
+              hasNextPage={worklistHasNextPage}
+              onPageChange={setWorklistPage}
+              onPageSizeChange={setWorklistPageSize}
+            />
+          </div>
+
+          <div className="space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+              Comprobantes AFIP
+            </div>
+            <PaginationFooter
+              page={invoicePage}
+              pageSize={invoicePageSize}
+              totalCount={invoiceTotalCount}
+              totalPages={invoiceTotalPages}
+              hasPreviousPage={invoiceHasPreviousPage}
+              hasNextPage={invoiceHasNextPage}
+              onPageChange={setInvoicePage}
+              onPageSizeChange={setInvoicePageSize}
+            />
+          </div>
         </>
       )}
 

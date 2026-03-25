@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -20,38 +21,53 @@ public class RatesController : ControllerBase
         _entityReferenceResolver = entityReferenceResolver;
     }
 
-    /// <summary>
-    /// Listar tarifario con filtros opcionales
-    /// </summary>
     [HttpGet]
-    public async Task<IActionResult> GetAll(
-        [FromQuery] string? supplierId, 
-        [FromQuery] string? serviceType,
-        [FromQuery] bool activeOnly = false,
-        CancellationToken ct = default)
+    public async Task<ActionResult<PagedResponse<RateListItemDto>>> GetAll([FromQuery] RateListQuery query, CancellationToken ct = default)
     {
-        var resolvedSupplierId = await ResolveOptionalSupplierIdAsync(supplierId, ct);
-        if (supplierId is not null && resolvedSupplierId is null)
+        try
+        {
+            return Ok(await _rateService.GetAllAsync(query, ct));
+        }
+        catch (ArgumentException)
+        {
             return NotFound("Proveedor no encontrado.");
-
-        var rates = await _rateService.GetAllAsync(resolvedSupplierId, serviceType, activeOnly, ct);
-        return Ok(rates);
+        }
     }
 
-    /// <summary>
-    /// Obtener tarifa por ID con todos los campos
-    /// </summary>
-    [HttpGet("{id}")]
-    public async Task<IActionResult> GetById(int id, CancellationToken ct)
+    [HttpGet("hotels")]
+    public async Task<ActionResult<PagedResponse<HotelRateGroupDto>>> GetHotels([FromQuery] HotelRateGroupsQuery query, CancellationToken ct = default)
     {
-        var rate = await _rateService.GetByIdAsync(id, ct);
+        try
+        {
+            return Ok(await _rateService.GetHotelGroupsAsync(query, ct));
+        }
+        catch (ArgumentException)
+        {
+            return NotFound("Proveedor no encontrado.");
+        }
+    }
+
+    [HttpGet("summary")]
+    public async Task<ActionResult<RateSummaryDto>> GetSummary([FromQuery] RateSummaryQuery query, CancellationToken ct = default)
+    {
+        try
+        {
+            return Ok(await _rateService.GetSummaryAsync(query, ct));
+        }
+        catch (ArgumentException)
+        {
+            return NotFound("Proveedor no encontrado.");
+        }
+    }
+
+    [HttpGet("{publicId}")]
+    public async Task<IActionResult> GetById(string publicId, CancellationToken ct)
+    {
+        var rate = await _rateService.GetByPublicIdAsync(publicId, ct);
         if (rate == null) return NotFound();
         return Ok(rate);
     }
 
-    /// <summary>
-    /// Buscar tarifa para autocompletar al crear servicio
-    /// </summary>
     [HttpGet("search")]
     public async Task<IActionResult> Search(
         [FromQuery] string? supplierId,
@@ -74,7 +90,7 @@ public class RatesController : ControllerBase
         try
         {
             var rate = await _rateService.CreateAsync(req, ct);
-            return Ok(rate);
+            return CreatedAtAction(nameof(GetById), new { publicId = rate.PublicId }, rate);
         }
         catch (ArgumentException)
         {
@@ -82,15 +98,20 @@ public class RatesController : ControllerBase
         }
     }
 
-    [HttpPut("{id}")]
+    [HttpPut("{publicId}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Update(int id, [FromBody] RateDto req, CancellationToken ct)
+    public async Task<IActionResult> Update(string publicId, [FromBody] RateDto req, CancellationToken ct)
     {
         try
         {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Rate>(publicId, ct);
             var rate = await _rateService.UpdateAsync(id, req, ct);
             if (rate == null) return NotFound();
             return Ok(rate);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
         catch (ArgumentException)
         {
@@ -98,13 +119,21 @@ public class RatesController : ControllerBase
         }
     }
 
-    [HttpDelete("{id}")]
+    [HttpDelete("{publicId}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(int id, CancellationToken ct)
+    public async Task<IActionResult> Delete(string publicId, CancellationToken ct)
     {
-        var deleted = await _rateService.DeleteAsync(id, ct);
-        if (!deleted) return NotFound();
-        return Ok();
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Rate>(publicId, ct);
+            var deleted = await _rateService.DeleteAsync(id, ct);
+            if (!deleted) return NotFound();
+            return Ok();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 
     private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicIdOrLegacyId, CancellationToken ct)

@@ -552,7 +552,7 @@ function QuoteFormModal({ customers, initial, onSave, onClose }) {
 }
 
 function ItemModal({ serviceTypes, onSave, onClose }) {
-    const [form, setForm] = useState({ serviceType: "Hotel", description: "", quantity: 1, unitCost: 0, unitPrice: 0, markupPercent: 20, notes: "", rateId: null });
+    const [form, setForm] = useState({ serviceType: "Hotel", description: "", quantity: 1, unitCost: 0, unitPrice: 0, markupPercent: 20, notes: "", ratePublicId: null });
     const [ratesResults, setRatesResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
 
@@ -593,7 +593,7 @@ function ItemModal({ serviceTypes, onSave, onClose }) {
             description: rate.productName || rate.hotelName || rate.description || "Servicio seleccionado",
             unitCost: rate.netCost || 0,
             unitPrice: rate.salePrice || 0,
-            rateId: rate.id,
+            ratePublicId: getPublicId(rate),
             markupPercent: rate.netCost ? Math.round(((rate.salePrice - rate.netCost) / rate.netCost) * 100) : 0
         }));
         setRatesResults([]);
@@ -605,7 +605,7 @@ function ItemModal({ serviceTypes, onSave, onClose }) {
                 <h2 className="text-lg font-black text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">Agregar servicio a cotizacion</h2>
                 <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Tipo de servicio</label>
-                    <select value={form.serviceType} onChange={(event) => { set("serviceType", event.target.value); set("rateId", null); }} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                    <select value={form.serviceType} onChange={(event) => { set("serviceType", event.target.value); set("ratePublicId", null); }} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
                         {serviceTypes.map((type) => <option key={type} value={type}>{type}</option>)}
                     </select>
                 </div>
@@ -613,14 +613,14 @@ function ItemModal({ serviceTypes, onSave, onClose }) {
                 <div className="relative">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Descripcion o nombre de tarifa</label>
                     <div className="relative">
-                        <input value={form.description} onChange={(event) => { set("description", event.target.value); set("rateId", null); }} placeholder="Ej: Hotel Hilton base doble" className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50" />
+                        <input value={form.description} onChange={(event) => { set("description", event.target.value); set("ratePublicId", null); }} placeholder="Ej: Hotel Hilton base doble" className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50" />
                         {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin" />}
                     </div>
 
-                    {ratesResults.length > 0 && !form.rateId && (
+                    {ratesResults.length > 0 && !form.ratePublicId && (
                         <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
                             {ratesResults.map((rate) => (
-                                <div key={rate.id} onClick={() => selectRate(rate)} className="p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                                <div key={getPublicId(rate)} onClick={() => selectRate(rate)} className="p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
                                     <div className="font-bold text-sm text-slate-900 dark:text-white">{rate.productName || rate.hotelName || rate.description}</div>
                                     <div className="flex justify-between mt-1 text-xs">
                                         <span className="text-slate-500">{rate.supplierName || "Tarifario"}</span>
@@ -632,12 +632,12 @@ function ItemModal({ serviceTypes, onSave, onClose }) {
                     )}
                 </div>
 
-                {form.rateId && (
+                {form.ratePublicId && (
                     <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/30 rounded-lg p-3 flex justify-between items-center">
                         <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 text-sm font-medium">
-                            <Check className="w-4 h-4" /> Vinculado a tarifario (#{form.rateId})
+                            <Check className="w-4 h-4" /> Vinculado a una tarifa del tarifario
                         </div>
-                        <button onClick={() => set("rateId", null)} className="text-xs text-emerald-600 hover:text-emerald-800 underline">Desvincular</button>
+                        <button onClick={() => set("ratePublicId", null)} className="text-xs text-emerald-600 hover:text-emerald-800 underline">Desvincular</button>
                     </div>
                 )}
 

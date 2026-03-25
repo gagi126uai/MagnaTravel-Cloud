@@ -82,63 +82,66 @@ public class PaymentService : IPaymentService
         };
     }
 
-    public async Task<IReadOnlyList<CollectionWorkItemDto>> GetCollectionsWorklistAsync(CancellationToken cancellationToken)
+    public async Task<PagedResponse<CollectionWorkItemDto>> GetCollectionsWorklistAsync(CollectionWorklistQuery query, CancellationToken cancellationToken)
     {
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
-        var reservations = await _dbContext.Reservas
+        var reservationsQuery = _dbContext.Reservas
             .AsNoTracking()
-            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0)
-            .Select(r => new
-            {
-                r.Id,
-                r.PublicId,
-                r.NumeroReserva,
-                CustomerName = r.Payer != null ? r.Payer.FullName : "Consumidor Final",
-                r.StartDate,
-                ResponsibleUserName = r.ResponsibleUser != null ? r.ResponsibleUser.FullName : null,
-                r.TotalSale,
-                r.TotalPaid,
-                r.Balance
-            })
-            .ToListAsync(cancellationToken);
+            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0);
 
-        return reservations
-            .Select(reserva =>
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var normalized = query.Search.Trim().ToLowerInvariant();
+            reservationsQuery = reservationsQuery.Where(reserva =>
+                reserva.NumeroReserva.ToLower().Contains(normalized) ||
+                (reserva.Payer != null && reserva.Payer.FullName.ToLower().Contains(normalized)) ||
+                (reserva.ResponsibleUser != null && reserva.ResponsibleUser.FullName.ToLower().Contains(normalized)));
+        }
+
+        var blocksOperational = settings.RequireFullPaymentForOperativeStatus;
+        var blocksVoucher = settings.RequireFullPaymentForVoucher;
+
+        if (!string.Equals(query.Urgency, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            reservationsQuery = query.Urgency.Trim().ToLowerInvariant() switch
             {
-                var balance = EconomicRulesHelper.RoundCurrency(reserva.Balance);
-                var totalPaid = EconomicRulesHelper.RoundCurrency(reserva.TotalPaid);
-                var totalSale = EconomicRulesHelper.RoundCurrency(reserva.TotalSale);
-                var isUrgent = reserva.StartDate.HasValue &&
+                "urgent" => reservationsQuery.Where(reserva =>
+                    reserva.StartDate.HasValue &&
                     reserva.StartDate.Value.Date >= today &&
-                    reserva.StartDate.Value.Date <= threshold;
-                var syntheticReserva = new Reserva
-                {
-                    Balance = balance
-                };
+                    reserva.StartDate.Value.Date <= threshold),
+                "blocked" => blocksOperational || blocksVoucher
+                    ? reservationsQuery
+                    : reservationsQuery.Where(_ => false),
+                _ => reservationsQuery
+            };
+        }
 
-                return new CollectionWorkItemDto
-                {
-                    ReservaPublicId = reserva.PublicId,
-                    NumeroReserva = reserva.NumeroReserva,
-                    CustomerName = reserva.CustomerName,
-                    StartDate = reserva.StartDate,
-                    ResponsibleUserName = reserva.ResponsibleUserName,
-                    TotalSale = totalSale,
-                    TotalPaid = totalPaid,
-                    Balance = balance,
-                    CollectionStatus = totalPaid > 0 ? "Parcial" : "Pendiente",
-                    UrgencyStatus = isUrgent ? "Urgente" : "Normal",
-                    BlocksOperational = EconomicRulesHelper.GetOperativeBlockReason(syntheticReserva, settings) != null,
-                    BlocksVoucher = EconomicRulesHelper.GetVoucherBlockReason(syntheticReserva, settings) != null
-                };
-            })
-            .OrderByDescending(item => item.UrgencyStatus == "Urgente")
-            .ThenBy(item => item.StartDate ?? DateTime.MaxValue)
-            .ThenByDescending(item => item.Balance)
-            .ToList();
+        var workItemsQuery = reservationsQuery.Select(reserva => new CollectionWorkItemDto
+        {
+            ReservaPublicId = reserva.PublicId,
+            NumeroReserva = reserva.NumeroReserva,
+            CustomerName = reserva.Payer != null ? reserva.Payer.FullName : "Consumidor Final",
+            StartDate = reserva.StartDate,
+            ResponsibleUserName = reserva.ResponsibleUser != null ? reserva.ResponsibleUser.FullName : null,
+            TotalSale = reserva.TotalSale,
+            TotalPaid = reserva.TotalPaid,
+            Balance = reserva.Balance,
+            CollectionStatus = reserva.TotalPaid > 0 ? "Parcial" : "Pendiente",
+            UrgencyStatus =
+                reserva.StartDate.HasValue &&
+                reserva.StartDate.Value.Date >= today &&
+                reserva.StartDate.Value.Date <= threshold
+                    ? "Urgente"
+                    : "Normal",
+            BlocksOperational = blocksOperational,
+            BlocksVoucher = blocksVoucher
+        });
+
+        workItemsQuery = ApplyCollectionWorkItemOrdering(workItemsQuery, query);
+        return await workItemsQuery.ToPagedResponseAsync(query, cancellationToken);
     }
 
     public async Task<PagedResponse<PaymentDto>> GetAllPaymentsAsync(PaymentsListQuery query, CancellationToken cancellationToken)
@@ -541,6 +544,27 @@ public class PaymentService : IPaymentService
             _ => desc
                 ? query.OrderByDescending(payment => payment.PaidAt).ThenByDescending(payment => payment.Id)
                 : query.OrderBy(payment => payment.PaidAt).ThenBy(payment => payment.Id)
+        };
+    }
+
+    private static IQueryable<CollectionWorkItemDto> ApplyCollectionWorkItemOrdering(
+        IQueryable<CollectionWorkItemDto> query,
+        CollectionWorklistQuery request)
+    {
+        var sortBy = (request.SortBy ?? "startDate").Trim().ToLowerInvariant();
+        var desc = request.IsSortDescending();
+
+        return sortBy switch
+        {
+            "balance" => desc
+                ? query.OrderByDescending(item => item.Balance).ThenBy(item => item.StartDate ?? DateTime.MaxValue)
+                : query.OrderBy(item => item.Balance).ThenBy(item => item.StartDate ?? DateTime.MaxValue),
+            "numeroreserva" => desc
+                ? query.OrderByDescending(item => item.NumeroReserva).ThenBy(item => item.StartDate ?? DateTime.MaxValue)
+                : query.OrderBy(item => item.NumeroReserva).ThenBy(item => item.StartDate ?? DateTime.MaxValue),
+            _ => desc
+                ? query.OrderByDescending(item => item.StartDate ?? DateTime.MaxValue).ThenByDescending(item => item.Balance)
+                : query.OrderBy(item => item.StartDate ?? DateTime.MaxValue).ThenByDescending(item => item.Balance)
         };
     }
 }

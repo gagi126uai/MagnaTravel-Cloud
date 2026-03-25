@@ -1,14 +1,18 @@
 
+using TravelApi.Application.DTOs;
 
 namespace TravelApi.Application.Interfaces;
 
 public interface IRateService
 {
-    Task<IEnumerable<object>> GetAllAsync(int? supplierId, string? serviceType, bool activeOnly, CancellationToken ct);
-    Task<object?> GetByIdAsync(int id, CancellationToken ct);
-    Task<IEnumerable<object>> SearchAsync(int? supplierId, string? serviceType, string? query, CancellationToken ct);
-    Task<object> CreateAsync(RateDto request, CancellationToken ct);
-    Task<object?> UpdateAsync(int id, RateDto request, CancellationToken ct);
+    Task<PagedResponse<RateListItemDto>> GetAllAsync(RateListQuery query, CancellationToken ct);
+    Task<PagedResponse<HotelRateGroupDto>> GetHotelGroupsAsync(HotelRateGroupsQuery query, CancellationToken ct);
+    Task<RateSummaryDto> GetSummaryAsync(RateSummaryQuery query, CancellationToken ct);
+    Task<RateListItemDto?> GetByIdAsync(int id, CancellationToken ct);
+    Task<RateListItemDto?> GetByPublicIdAsync(string publicId, CancellationToken ct);
+    Task<IReadOnlyList<RateSearchItemDto>> SearchAsync(int? supplierId, string? serviceType, string? query, CancellationToken ct);
+    Task<RateListItemDto> CreateAsync(RateDto request, CancellationToken ct);
+    Task<RateListItemDto?> UpdateAsync(int id, RateDto request, CancellationToken ct);
     Task<bool> DeleteAsync(int id, CancellationToken ct);
 }
 

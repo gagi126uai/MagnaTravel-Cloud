@@ -372,8 +372,8 @@ export default function SettingsPage() {
 
   const loadSuppliers = async () => {
     try {
-      const data = await api.get("/suppliers");
-      const sorted = Array.isArray(data) ? data.sort((a, b) => {
+      const data = await api.get("/suppliers?page=1&pageSize=100&includeInactive=true");
+      const sorted = Array.isArray(data?.items) ? data.items.sort((a, b) => {
         if (a.isActive === b.isActive) return a.name.localeCompare(b.name);
         return a.isActive ? -1 : 1;
       }) : [];

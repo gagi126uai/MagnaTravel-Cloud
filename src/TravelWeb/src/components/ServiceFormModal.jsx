@@ -89,7 +89,7 @@ function RateSelector({ serviceType, supplierId, onSelect, suppliers }) {
                         const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
                         return (
                             <button
-                                key={rate.id}
+                                key={getPublicId(rate)}
                                 type="button"
                                 disabled={isExpired}
                                 onClick={() => {

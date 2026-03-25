@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { AlertTriangle, CalendarClock, ShieldAlert, User, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
 import { formatCurrency, formatDate } from "../lib/financeUtils";
@@ -47,9 +46,6 @@ function BlockTags({ item }) {
 }
 
 export function CollectionsTab({ items, onPay }) {
-  const [visibleCount, setVisibleCount] = useState(25);
-  const visibleItems = items.slice(0, visibleCount);
-
   return (
     <div className="space-y-6">
       <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
@@ -66,7 +62,7 @@ export function CollectionsTab({ items, onPay }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {visibleItems.map((item) => (
+            {items.map((item) => (
             <tr key={item.reservaPublicId} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                 <td className="px-6 py-4">
                   <div className="flex flex-col">
@@ -124,22 +120,10 @@ export function CollectionsTab({ items, onPay }) {
             ))}
           </tbody>
         </table>
-
-        {items.length > visibleCount && (
-          <div className="p-4 border-t border-slate-100 dark:border-slate-800 text-center">
-            <button
-              type="button"
-              onClick={() => setVisibleCount((current) => current + 25)}
-              className="px-6 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
-            >
-              Cargar mas reservas ({items.length - visibleCount} restantes)
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="md:hidden space-y-4">
-        {visibleItems.map((item) => (
+        {items.map((item) => (
           <div key={item.reservaPublicId} className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
             <div className="flex justify-between items-start gap-4">
               <div>

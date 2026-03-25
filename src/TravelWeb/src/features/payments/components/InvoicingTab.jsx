@@ -3,20 +3,59 @@ import { AlertCircle, CheckCircle2, ExternalLink, Receipt, ShieldAlert } from "l
 import { formatCurrency, formatDate, getInvoiceLabel } from "../lib/financeUtils";
 import { getPublicId } from "../../../lib/publicIds";
 
-function WorkItemSection({ title, caption, items, emptyText, onInvoice }) {
+function SegmentedTabs({ options, value, onChange }) {
+  return (
+    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-900">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            value === option.value
+              ? "bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white"
+              : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function WorkItemSection({ status, onStatusChange, items, onInvoice }) {
+  const isReadyTab = status === "ready";
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="border-b border-slate-100 px-6 py-5 dark:border-slate-800">
-        <div className="font-semibold text-slate-900 dark:text-white">{title}</div>
-        <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">{caption}</div>
+      <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-5 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="font-semibold text-slate-900 dark:text-white">Worklist AFIP</div>
+          <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Reservas con saldo fiscal pendiente, filtradas desde el servidor.
+          </div>
+        </div>
+        <SegmentedTabs
+          value={status}
+          onChange={onStatusChange}
+          options={[
+            { value: "ready", label: "Listas para facturar" },
+            { value: "blocked", label: "Bloqueadas" },
+          ]}
+        />
       </div>
 
       {items.length === 0 ? (
-        <div className="px-6 py-10 text-sm text-slate-500 dark:text-slate-400">{emptyText}</div>
+        <div className="px-6 py-10 text-sm text-slate-500 dark:text-slate-400">
+          {isReadyTab
+            ? "No hay reservas listas para emitir en AFIP en esta pagina."
+            : "No hay reservas bloqueadas por deuda en esta pagina."}
+        </div>
       ) : (
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {items.map((item) => (
-            <div key={`${title}-${item.reservaPublicId}`} className="flex flex-col justify-between gap-4 px-6 py-5 xl:flex-row xl:items-center">
+            <div key={item.reservaPublicId} className="flex flex-col justify-between gap-4 px-6 py-5 xl:flex-row xl:items-center">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <Link
@@ -50,7 +89,11 @@ function WorkItemSection({ title, caption, items, emptyText, onInvoice }) {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4 xl:min-w-[460px] xl:grid-cols-3">
+              <div className="grid grid-cols-2 gap-4 xl:min-w-[460px] xl:grid-cols-4">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Salida</div>
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white">{formatDate(item.startDate)}</div>
+                </div>
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Venta total</div>
                   <div className="text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(item.totalSale)}</div>
@@ -90,20 +133,46 @@ function WorkItemSection({ title, caption, items, emptyText, onInvoice }) {
   );
 }
 
-function InvoiceSection({ title, caption, items, emptyText, onDownloadPdf, onViewPdf, onRetryInvoice, onAnnulInvoice }) {
+function InvoiceSection({
+  invoiceKind,
+  onInvoiceKindChange,
+  items,
+  onDownloadPdf,
+  onViewPdf,
+  onRetryInvoice,
+  onAnnulInvoice,
+}) {
+  const isIssuedTab = invoiceKind === "issued";
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="border-b border-slate-100 px-6 py-5 dark:border-slate-800">
-        <div className="font-semibold text-slate-900 dark:text-white">{title}</div>
-        <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">{caption}</div>
+      <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-5 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="font-semibold text-slate-900 dark:text-white">Comprobantes AFIP</div>
+          <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            La pestaña activa define el filtro server-side de la pagina actual.
+          </div>
+        </div>
+        <SegmentedTabs
+          value={invoiceKind}
+          onChange={onInvoiceKindChange}
+          options={[
+            { value: "issued", label: "Emitidas" },
+            { value: "creditNote", label: "Notas de credito" },
+          ]}
+        />
       </div>
 
       {items.length === 0 ? (
-        <div className="px-6 py-10 text-sm text-slate-500 dark:text-slate-400">{emptyText}</div>
+        <div className="px-6 py-10 text-sm text-slate-500 dark:text-slate-400">
+          {isIssuedTab
+            ? "No hay comprobantes emitidos en esta pagina."
+            : "No hay notas de credito en esta pagina."}
+        </div>
       ) : (
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {items.map((invoice) => (
-            <div key={`${title}-${getPublicId(invoice)}`} className="flex flex-col justify-between gap-4 px-6 py-5 xl:flex-row xl:items-center">
+            <div key={getPublicId(invoice)} className="flex flex-col justify-between gap-4 px-6 py-5 xl:flex-row xl:items-center">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-900 dark:text-white">{getInvoiceLabel(invoice.tipoComprobante)}</span>
@@ -198,51 +267,30 @@ function InvoiceSection({ title, caption, items, emptyText, onDownloadPdf, onVie
 
 export function InvoicingTab({
   items,
-  issuedInvoices,
-  creditNotes,
+  invoices,
+  worklistStatus,
+  onWorklistStatusChange,
+  invoiceKind,
+  onInvoiceKindChange,
   onInvoice,
   onDownloadPdf,
   onViewPdf,
   onRetryInvoice,
   onAnnulInvoice,
 }) {
-  const readyItems = items.filter((item) => item.fiscalStatus === "ready");
-  const blockedItems = items.filter((item) => item.fiscalStatus === "blocked" || item.fiscalStatus === "override");
-
   return (
     <div className="space-y-6">
       <WorkItemSection
-        title="Para facturar"
-        caption="Reservas canceladas economicamente con saldo fiscal pendiente."
-        items={readyItems}
-        emptyText="No hay reservas listas para emitir en AFIP."
-        onInvoice={onInvoice}
-      />
-
-      <WorkItemSection
-        title="Bloqueadas"
-        caption="Reservas con deuda. Si la configuracion lo permite, el agente puede emitir por excepcion."
-        items={blockedItems}
-        emptyText="No hay reservas bloqueadas por deuda."
+        status={worklistStatus}
+        onStatusChange={onWorklistStatusChange}
+        items={items}
         onInvoice={onInvoice}
       />
 
       <InvoiceSection
-        title="Emitidas"
-        caption="Comprobantes fiscales de la pagina actual."
-        items={issuedInvoices}
-        emptyText="No hay comprobantes emitidos en esta pagina."
-        onDownloadPdf={onDownloadPdf}
-        onViewPdf={onViewPdf}
-        onRetryInvoice={onRetryInvoice}
-        onAnnulInvoice={onAnnulInvoice}
-      />
-
-      <InvoiceSection
-        title="Notas de credito"
-        caption="Notas de credito y documentos relacionados de la pagina actual."
-        items={creditNotes}
-        emptyText="No hay notas de credito en esta pagina."
+        invoiceKind={invoiceKind}
+        onInvoiceKindChange={onInvoiceKindChange}
+        items={invoices}
         onDownloadPdf={onDownloadPdf}
         onViewPdf={onViewPdf}
         onRetryInvoice={onRetryInvoice}

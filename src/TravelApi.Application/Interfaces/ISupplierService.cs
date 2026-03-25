@@ -1,56 +1,24 @@
 using TravelApi.Domain.Entities;
+using TravelApi.Application.DTOs;
 
 namespace TravelApi.Application.Interfaces;
 
 public interface ISupplierService
 {
-    Task<IEnumerable<Supplier>> GetSuppliersAsync(CancellationToken cancellationToken);
+    Task<PagedResponse<SupplierListItemDto>> GetSuppliersAsync(SupplierListQuery query, CancellationToken cancellationToken);
     Task<Supplier> GetSupplierAsync(int id, CancellationToken cancellationToken);
     Task<Supplier> CreateSupplierAsync(Supplier supplier, CancellationToken cancellationToken);
     Task<Supplier> UpdateSupplierAsync(int id, Supplier supplier, CancellationToken cancellationToken);
     Task DeleteSupplierAsync(int id, CancellationToken cancellationToken);
     Task ForceDeleteSupplierAsync(int id, CancellationToken cancellationToken);
     Task RecalculateAllBalancesAsync(CancellationToken cancellationToken);
-    Task<SupplierAccountDto> GetSupplierAccountAsync(int id, CancellationToken cancellationToken);
+    Task<SupplierAccountOverviewDto> GetSupplierAccountOverviewAsync(int id, CancellationToken cancellationToken);
+    Task<PagedResponse<SupplierAccountServiceListItemDto>> GetSupplierAccountServicesAsync(int id, SupplierAccountServicesQuery query, CancellationToken cancellationToken);
+    Task<PagedResponse<SupplierPaymentDto>> GetSupplierAccountPaymentsAsync(int id, SupplierAccountPaymentsQuery query, CancellationToken cancellationToken);
     Task<Guid> AddSupplierPaymentAsync(int id, SupplierPaymentRequest request, CancellationToken cancellationToken);
     Task UpdateSupplierPaymentAsync(int id, int paymentId, SupplierPaymentRequest request, CancellationToken cancellationToken);
     Task DeleteSupplierPaymentAsync(int id, int paymentId, CancellationToken cancellationToken);
     Task<IEnumerable<SupplierPaymentDto>> GetSupplierPaymentsHistoryAsync(int id, CancellationToken cancellationToken);
-}
-
-public class SupplierAccountDto
-{
-    public object Supplier { get; set; } = null!;
-    public IEnumerable<SupplierServiceDto> Services { get; set; } = new List<SupplierServiceDto>();
-    public IEnumerable<object> Payments { get; set; } = new List<object>();
-    public object Summary { get; set; } = null!;
-}
-
-public class SupplierServiceDto
-{
-    public Guid PublicId { get; set; }
-    public string Type { get; set; } = "";
-    public string? Description { get; set; } = "";
-    public string? Confirmation { get; set; }
-    public decimal NetCost { get; set; }
-    public decimal SalePrice { get; set; }
-    public DateTime Date { get; set; }
-    public string Status { get; set; } = "";
-    public string? NumeroReserva { get; set; }
-    public string? FileName { get; set; }
-}
-
-public class SupplierPaymentDto
-{
-    public Guid PublicId { get; set; }
-    public decimal Amount { get; set; }
-    public string Method { get; set; } = "";
-    public DateTime PaidAt { get; set; }
-    public string? Reference { get; set; }
-    public string? Notes { get; set; }
-    public string? NumeroReserva { get; set; }
-    public string? FileName { get; set; }
-    public Guid? ReservaPublicId { get; set; }
 }
 
 public record SupplierPaymentRequest(

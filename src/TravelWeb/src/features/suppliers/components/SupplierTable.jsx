@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from "react";
 import { Wallet, Pencil, Power, Info } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { Badge } from "../../../components/ui/badge";
@@ -6,21 +6,14 @@ import { getPublicId } from "../../../lib/publicIds";
 
 export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClick }) {
     const getInitials = (name) => {
-        return name?.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) || "PV";
-    };
-
-    const [visibleCount, setVisibleCount] = useState(50);
-    const visibleSuppliers = suppliers.slice(0, visibleCount);
-
-    const handleLoadMore = () => {
-        setVisibleCount(prev => prev + 50);
+        return name?.split(" ").map((part) => part[0]).join("").toUpperCase().slice(0, 2) || "PV";
     };
 
     const getRandomColor = (name) => {
         const colors = ["bg-blue-500", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-indigo-500"];
         let hash = 0;
-        for (let i = 0; i < name.length; i++) {
-            hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        for (let index = 0; index < name.length; index += 1) {
+            hash = name.charCodeAt(index) + ((hash << 5) - hash);
         }
         return colors[Math.abs(hash) % colors.length];
     };
@@ -38,7 +31,7 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                                     Saldo (Deuda)
                                     <Info className="h-3 w-3 text-slate-400" />
                                     <div className="absolute bottom-full mb-2 right-0 w-64 p-2 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                                        Solo incluye expedientes Reservados, Operativos o Cerrados. Los Presupuestos no suman deuda.
+                                        Solo incluye expedientes reservados, operativos o cerrados.
                                     </div>
                                 </div>
                             </th>
@@ -54,11 +47,16 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                                 </td>
                             </tr>
                         ) : (
-                            visibleSuppliers.map((supplier) => (
-                                <tr key={getPublicId(supplier)} className={`border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${!supplier.isActive ? 'opacity-60 bg-slate-50/50 dark:bg-slate-900/50' : ''}`}>
+                            suppliers.map((supplier) => (
+                                <tr
+                                    key={getPublicId(supplier)}
+                                    className={`border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
+                                        !supplier.isActive ? "opacity-60 bg-slate-50/50 dark:bg-slate-900/50" : ""
+                                    }`}
+                                >
                                     <td className="p-4 align-middle font-medium">
                                         <div className="flex items-center gap-3">
-                                            <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ${getRandomColor(supplier.name)}`}>
+                                            <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ${getRandomColor(supplier.name || "PV")}`}>
                                                 {getInitials(supplier.name)}
                                             </div>
                                             <div className="flex flex-col">
@@ -99,7 +97,11 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                                             </button>
                                             <button
                                                 onClick={() => onToggleStatus(supplier)}
-                                                className={`h-8 w-8 flex items-center justify-center rounded-md transition-colors ${supplier.isActive ? 'text-slate-500 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                                                className={`h-8 w-8 flex items-center justify-center rounded-md transition-colors ${
+                                                    supplier.isActive
+                                                        ? "text-slate-500 hover:text-rose-600 hover:bg-rose-50"
+                                                        : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
+                                                }`}
                                             >
                                                 <Power className="h-4 w-4" />
                                             </button>
@@ -111,16 +113,6 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                     </tbody>
                 </table>
             </div>
-            {suppliers.length > visibleCount && (
-                <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-center">
-                    <button 
-                        onClick={handleLoadMore}
-                        className="text-sm font-semibold text-slate-600 dark:text-slate-300 w-full sm:w-auto px-4 py-2 border rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    >
-                        Cargar más resultados ({suppliers.length - visibleCount} restantes)
-                    </button>
-                </div>
-            )}
         </div>
     );
 }

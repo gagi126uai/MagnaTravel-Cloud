@@ -75,6 +75,8 @@ public class PaymentsListQuery : PagedQuery
 
 public class InvoicesListQuery : PagedQuery
 {
+    public string Kind { get; set; } = "all";
+
     public InvoicesListQuery()
     {
         SortBy = "createdAt";
@@ -100,4 +102,90 @@ public class FinanceHistoryQuery : PagedQuery
         SortBy = "occurredAt";
         SortDir = "desc";
     }
+}
+
+public class SupplierListQuery : PagedQuery
+{
+    public bool IncludeInactive { get; set; }
+
+    public SupplierListQuery()
+    {
+        SortBy = "name";
+        SortDir = "asc";
+    }
+}
+
+public class SupplierAccountServicesQuery : PagedQuery
+{
+    public string? Type { get; set; }
+
+    public SupplierAccountServicesQuery()
+    {
+        SortBy = "date";
+        SortDir = "desc";
+    }
+}
+
+public class SupplierAccountPaymentsQuery : PagedQuery
+{
+    public SupplierAccountPaymentsQuery()
+    {
+        SortBy = "paidAt";
+        SortDir = "desc";
+    }
+}
+
+public class CollectionWorklistQuery : PagedQuery
+{
+    public string Urgency { get; set; } = "all";
+
+    public CollectionWorklistQuery()
+    {
+        SortBy = "startDate";
+        SortDir = "asc";
+    }
+}
+
+public class InvoicingWorklistQuery : PagedQuery
+{
+    public string Status { get; set; } = "ready";
+
+    public InvoicingWorklistQuery()
+    {
+        SortBy = "startDate";
+        SortDir = "asc";
+    }
+}
+
+public class RateListQuery : PagedQuery
+{
+    public string? SupplierId { get; set; }
+    public string? ServiceType { get; set; }
+    public bool ActiveOnly { get; set; }
+
+    public RateListQuery()
+    {
+        SortBy = "productName";
+        SortDir = "asc";
+    }
+}
+
+public class HotelRateGroupsQuery : PagedQuery
+{
+    public string? SupplierId { get; set; }
+    public bool ActiveOnly { get; set; }
+
+    public HotelRateGroupsQuery()
+    {
+        SortBy = "hotelName";
+        SortDir = "asc";
+    }
+}
+
+public class RateSummaryQuery
+{
+    public string? Search { get; set; }
+    public string? ServiceType { get; set; }
+    public string? SupplierId { get; set; }
+    public bool ActiveOnly { get; set; }
 }

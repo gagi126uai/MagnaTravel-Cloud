@@ -4,6 +4,8 @@ import { showError, showSuccess } from "../alerts";
 import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator, Plane, Hotel, Car, Package, Star, ChevronDown, ChevronRight, BedDouble } from "lucide-react";
 import Swal from "sweetalert2";
 import { getPublicId } from "../lib/publicIds";
+import { PaginationFooter } from "../components/ui/PaginationFooter";
+import { useDebounce } from "../hooks/useDebounce";
 
 const serviceTypes = [
     { value: "Aereo", label: "Aéreo", icon: Plane },
@@ -60,11 +62,26 @@ const labelClass = "block text-sm font-medium text-slate-700 dark:text-slate-300
 
 export default function RatesPage() {
     const [rates, setRates] = useState([]);
+    const [hotelGroups, setHotelGroups] = useState([]);
+    const [summary, setSummary] = useState(null);
     const [suppliers, setSuppliers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [filterType, setFilterType] = useState("");
+    const [supplierFilter, setSupplierFilter] = useState("");
+    const [activeOnly, setActiveOnly] = useState(false);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(25);
+    const [pageState, setPageState] = useState({
+        page: 1,
+        pageSize: 25,
+        totalCount: 0,
+        totalPages: 0,
+        hasPreviousPage: false,
+        hasNextPage: false,
+    });
+    const debouncedSearch = useDebounce(searchTerm, 300);
 
     // Grouping State
     const [expandedHotels, setExpandedHotels] = useState({});
@@ -90,30 +107,120 @@ export default function RatesPage() {
     const [commissionPercent, setCommissionPercent] = useState(10);
     const [isCalculating, setIsCalculating] = useState(false);
 
-    useEffect(() => {
-        loadRates();
-        loadSuppliers();
-    }, []);
-
-    const loadRates = async () => {
+    const loadRates = useCallback(async () => {
         setLoading(true);
         try {
-            const data = await api.get("/rates");
-            setRates(Array.isArray(data) ? data : []);
+            const summaryParams = new URLSearchParams();
+            const listParams = new URLSearchParams({
+                page: String(page),
+                pageSize: String(pageSize),
+                sortDir: filterType === "Hotel" ? "asc" : "desc",
+            });
+
+            if (debouncedSearch.trim()) {
+                summaryParams.set("search", debouncedSearch.trim());
+                listParams.set("search", debouncedSearch.trim());
+            }
+
+            if (supplierFilter) {
+                summaryParams.set("supplierId", supplierFilter);
+                listParams.set("supplierId", supplierFilter);
+            }
+
+            if (activeOnly) {
+                summaryParams.set("activeOnly", "true");
+                listParams.set("activeOnly", "true");
+            }
+
+            if (filterType) {
+                summaryParams.set("serviceType", filterType);
+                if (filterType !== "Hotel") {
+                    listParams.set("serviceType", filterType);
+                }
+            }
+
+            if (filterType === "Hotel") {
+                listParams.set("sortBy", "hotelName");
+                const [summaryData, groupsResponse] = await Promise.all([
+                    api.get(`/rates/summary?${summaryParams.toString()}`),
+                    api.get(`/rates/hotels?${listParams.toString()}`),
+                ]);
+
+                setSummary(summaryData || null);
+                setHotelGroups((groupsResponse?.items || []).map((group) => ({
+                    key: group.groupKey,
+                    name: group.hotelName,
+                    city: group.city,
+                    supplierName: group.supplierName,
+                    starRating: group.starRating,
+                    items: group.items || [],
+                    fromPrice: group.fromPrice,
+                    hasExpired: group.hasExpiredRates,
+                })));
+                setRates([]);
+                setPageState({
+                    page: groupsResponse?.page || page,
+                    pageSize: groupsResponse?.pageSize || pageSize,
+                    totalCount: groupsResponse?.totalCount || 0,
+                    totalPages: groupsResponse?.totalPages || 0,
+                    hasPreviousPage: Boolean(groupsResponse?.hasPreviousPage),
+                    hasNextPage: Boolean(groupsResponse?.hasNextPage),
+                });
+            } else {
+                listParams.set("sortBy", "validTo");
+                const [summaryData, ratesResponse] = await Promise.all([
+                    api.get(`/rates/summary?${summaryParams.toString()}`),
+                    api.get(`/rates?${listParams.toString()}`),
+                ]);
+
+                setSummary(summaryData || null);
+                setRates(ratesResponse?.items || []);
+                setHotelGroups([]);
+                setPageState({
+                    page: ratesResponse?.page || page,
+                    pageSize: ratesResponse?.pageSize || pageSize,
+                    totalCount: ratesResponse?.totalCount || 0,
+                    totalPages: ratesResponse?.totalPages || 0,
+                    hasPreviousPage: Boolean(ratesResponse?.hasPreviousPage),
+                    hasNextPage: Boolean(ratesResponse?.hasNextPage),
+                });
+            }
         } catch (error) {
             console.error("Error loading rates:", error);
             setRates([]);
+            setHotelGroups([]);
+            setSummary(null);
+            setPageState({
+                page: 1,
+                pageSize,
+                totalCount: 0,
+                totalPages: 0,
+                hasPreviousPage: false,
+                hasNextPage: false,
+            });
         } finally {
             setLoading(false);
         }
-    };
+    }, [activeOnly, debouncedSearch, filterType, page, pageSize, supplierFilter]);
 
-    const loadSuppliers = async () => {
+    useEffect(() => {
+        loadSuppliers();
+    }, []);
+
+    useEffect(() => {
+        loadRates();
+    }, [loadRates]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [debouncedSearch, filterType, supplierFilter, activeOnly, pageSize]);
+
+    async function loadSuppliers() {
         try {
-            const data = await api.get("/suppliers");
-            setSuppliers(data || []);
+            const data = await api.get("/suppliers?page=1&pageSize=100&includeInactive=true");
+            setSuppliers(data?.items || []);
         } catch { }
-    };
+    }
 
     const fetchCommission = useCallback(async (supplierId, serviceType) => {
         try {
@@ -349,8 +456,8 @@ export default function RatesPage() {
     const editRate = (rate) => {
         setRoomVariations([]); // Al editar una individual, limpiamos variaciones
         setForm({
-            id: rate.id,
-            supplierId: rate.supplierPublicId?.toString() || rate.supplierId?.toString() || "",
+            id: getPublicId(rate),
+            supplierId: rate.supplierPublicId?.toString() || "",
             serviceType: rate.serviceType || "Aereo",
             productName: rate.productName || "",
             description: rate.description || "",
@@ -391,17 +498,6 @@ export default function RatesPage() {
         await fetchCommission("", "Aereo");
     };
 
-    // Filter Logic
-    const filteredRates = rates.filter(rate => {
-        const matchSearch = !searchTerm ||
-            rate.productName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            rate.supplierName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            rate.hotelName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            rate.airline?.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchType = !filterType || rate.serviceType === filterType;
-        return matchSearch && matchType;
-    });
-
     // Toggle Hotel Expanded
     const toggleHotel = (hotelKey) => {
         setExpandedHotels(prev => ({
@@ -409,37 +505,9 @@ export default function RatesPage() {
             [hotelKey]: !prev[hotelKey]
         }));
     };
-
-    // Helper: Group by Hotel
-    const getGroupedRates = () => {
-        // Separe Hotels from others
-        const hotelRates = filteredRates.filter(r => r.serviceType === "Hotel");
-        const otherRates = filteredRates.filter(r => r.serviceType !== "Hotel");
-
-        // Group hotel rates by Name+City
-        const grouped = {};
-        hotelRates.forEach(rate => {
-            const key = `${rate.hotelName || "Sin Nombre"}_${rate.city || ""}`;
-            if (!grouped[key]) {
-                grouped[key] = {
-                    key,
-                    name: rate.hotelName || "Hotel Sin Nombre",
-                    city: rate.city,
-                    supplierName: rate.supplierName, // Take first one found
-                    starRating: rate.starRating,
-                    items: []
-                };
-            }
-            grouped[key].items.push(rate);
-        });
-
-        // Convert grouped to array
-        const hotelGroups = Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name));
-
-        return { hotelGroups, otherRates };
-    };
-
-    const { hotelGroups, otherRates } = getGroupedRates();
+    const isHotelView = filterType === "Hotel";
+    const filteredRates = rates;
+    const otherRates = rates;
 
     // Renderizar descripción resumida según tipo
     const getTypeDescription = (rate) => {
@@ -490,40 +558,56 @@ export default function RatesPage() {
                     <option value="">Todos los tipos</option>
                     {serviceTypes.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
+                <select className={inputClass} style={{ width: 'auto' }} value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
+                    <option value="">Todos los proveedores</option>
+                    {suppliers.map((supplier) => (
+                        <option key={getPublicId(supplier)} value={getPublicId(supplier)}>
+                            {supplier.name}
+                        </option>
+                    ))}
+                </select>
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                    <input
+                        type="checkbox"
+                        checked={activeOnly}
+                        onChange={(e) => setActiveOnly(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    Solo vigentes
+                </label>
             </div>
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                     <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Total</div>
-                    <div className="text-2xl font-bold mt-1 text-slate-900 dark:text-white">{rates.length}</div>
+                    <div className="text-2xl font-bold mt-1 text-slate-900 dark:text-white">{summary?.totalCount || 0}</div>
                 </div>
                 {["Aereo", "Traslado", "Paquete"].map(type => (
                     <div key={type} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                         <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">{type === "Aereo" ? "Aéreo" : type}</div>
                         <div className={`text-2xl font-bold mt-1 ${type === "Aereo" ? "text-sky-600" : type === "Traslado" ? "text-green-600" : "text-violet-600"}`}>
-                            {rates.filter(r => r.serviceType === type).length}
+                            {type === "Aereo"
+                                ? summary?.aereoCount || 0
+                                : type === "Traslado"
+                                    ? summary?.trasladoCount || 0
+                                    : summary?.paqueteCount || 0}
                         </div>
                     </div>
                 ))}
                 {/* Hotel stat: count unique hotels, not individual room rates */}
                 <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                     <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Hoteles</div>
-                    <div className="text-2xl font-bold mt-1 text-amber-600">
-                        {(() => {
-                            const hotelSet = new Set(rates.filter(r => r.serviceType === "Hotel").map(r => `${r.hotelName || ''}_${r.city || ''}`));
-                            return hotelSet.size;
-                        })()}
-                    </div>
+                    <div className="text-2xl font-bold mt-1 text-amber-600">{summary?.hotelGroupCount || 0}</div>
                     <div className="text-xs text-slate-400 mt-0.5">
-                        {rates.filter(r => r.serviceType === "Hotel").length} hab.
+                        {summary?.hotelRateCount || 0} hab.
                     </div>
                 </div>
-                {rates.some(r => r.validTo && new Date(r.validTo) < new Date()) && (
+                {(summary?.expiredCount || 0) > 0 && (
                     <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/30 dark:bg-red-900/10">
                         <div className="text-xs text-red-600 dark:text-red-400 uppercase font-bold">Vencidas</div>
                         <div className="text-lg font-bold mt-1 text-red-700 dark:text-red-300">
-                            {rates.filter(r => r.validTo && new Date(r.validTo) < new Date()).length} <span className="text-xs font-normal">Acción requerida</span>
+                            {summary?.expiredCount || 0} <span className="text-xs font-normal">Acción requerida</span>
                         </div>
                     </div>
                 )}
@@ -548,14 +632,14 @@ export default function RatesPage() {
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                             {loading ? (
                                 <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">Cargando...</td></tr>
-                            ) : (filteredRates.length === 0) ? (
+                            ) : (isHotelView ? hotelGroups.length === 0 : filteredRates.length === 0) ? (
                                 <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                                     {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas. Cree una nueva para comenzar."}
                                 </td></tr>
                             ) : (
                                 <>
                                     {/* 1. Render Hotel Groups */}
-                                    {(!filterType || filterType === "Hotel") && hotelGroups.map(group => {
+                                    {isHotelView && hotelGroups.map(group => {
                                         const isExpanded = expandedHotels[group.key];
                                         const minPrice = Math.min(...group.items.map(i => i.salePrice));
                                         const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
@@ -598,7 +682,7 @@ export default function RatesPage() {
                                                 {isExpanded && group.items.map(rate => {
                                                     const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
                                                     return (
-                                                        <tr key={rate.id} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-indigo-400'} animate-in fade-in slide-in-from-top-1 duration-200`}>
+                                                        <tr key={getPublicId(rate)} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-indigo-400'} animate-in fade-in slide-in-from-top-1 duration-200`}>
                                                             <td className="px-4 py-2 pl-8">
                                                                 <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
                                                                     <BedDouble className="h-3 w-3 text-slate-400" />
@@ -621,7 +705,7 @@ export default function RatesPage() {
                                                             <td className="px-4 py-2 text-center">
                                                                 <div className="flex justify-center gap-1">
                                                                     <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg"><Pencil className="h-4 w-4" /></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(rate.id); }} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg"><Trash2 className="h-4 w-4" /></button>
+                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg"><Trash2 className="h-4 w-4" /></button>
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -632,10 +716,10 @@ export default function RatesPage() {
                                     })}
 
                                     {/* 2. Render Other Rates (Flat) */}
-                                    {(!filterType || filterType !== "Hotel") && otherRates.map(rate => {
+                                    {!isHotelView && otherRates.map(rate => {
                                         const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
                                         return (
-                                            <tr key={rate.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
+                                            <tr key={getPublicId(rate)} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
                                                     <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
@@ -685,7 +769,7 @@ export default function RatesPage() {
                                                 <td className="px-4 py-3 text-center">
                                                     <div className="flex justify-center gap-2">
                                                         <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
-                                                        <button onClick={() => deleteRate(rate.id)} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
+                                                        <button onClick={() => deleteRate(getPublicId(rate))} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -701,14 +785,14 @@ export default function RatesPage() {
                 <div className="md:hidden divide-y divide-gray-200 dark:divide-slate-700">
                     {loading ? (
                         <div className="p-8 text-center text-slate-500">Cargando...</div>
-                    ) : (filteredRates.length === 0) ? (
+                    ) : (isHotelView ? hotelGroups.length === 0 : filteredRates.length === 0) ? (
                         <div className="p-8 text-center text-slate-500">
                             {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas."}
                         </div>
                     ) : (
                         <>
                             {/* Mobile: Hotel Groups */}
-                            {(!filterType || filterType === "Hotel") && hotelGroups.map(group => {
+                            {isHotelView && hotelGroups.map(group => {
                                 const isExpanded = expandedHotels[group.key];
                                 const minPrice = Math.min(...group.items.map(i => i.salePrice));
                                 const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
@@ -740,7 +824,7 @@ export default function RatesPage() {
                                                 {group.items.map(rate => {
                                                     const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
                                                     return (
-                                                        <div key={rate.id} className="p-4 pl-8 relative">
+                                                        <div key={getPublicId(rate)} className="p-4 pl-8 relative">
                                                             {isExpired && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />}
                                                             <div className="flex justify-between items-start">
                                                                 <div>
@@ -760,7 +844,7 @@ export default function RatesPage() {
                                                                 </div>
                                                                 <div className="flex gap-2">
                                                                     <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1 text-indigo-600 bg-indigo-50 rounded dark:bg-indigo-900/30 dark:text-indigo-400"><Pencil className="h-4 w-4" /></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(rate.id); }} className="p-1 text-rose-600 bg-rose-50 rounded dark:bg-rose-900/30 dark:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }} className="p-1 text-rose-600 bg-rose-50 rounded dark:bg-rose-900/30 dark:text-rose-400"><Trash2 className="h-4 w-4" /></button>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -773,10 +857,10 @@ export default function RatesPage() {
                             })}
 
                             {/* Mobile: Other Rates */}
-                            {(!filterType || filterType !== "Hotel") && otherRates.map(rate => {
+                            {!isHotelView && otherRates.map(rate => {
                                 const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
                                 return (
-                                    <div key={rate.id} className="p-4 bg-white dark:bg-slate-800 space-y-3">
+                                    <div key={getPublicId(rate)} className="p-4 bg-white dark:bg-slate-800 space-y-3">
                                         <div className="flex justify-between items-start">
                                             <div>
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase mb-1 ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
@@ -808,7 +892,7 @@ export default function RatesPage() {
                                             <button onClick={() => editRate(rate)} className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg dark:bg-indigo-900/20 dark:text-indigo-400">
                                                 <Pencil className="h-3.5 w-3.5" /> Editar
                                             </button>
-                                            <button onClick={() => deleteRate(rate.id)} className="flex items-center gap-1 text-xs font-medium text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg dark:bg-rose-900/20 dark:text-rose-400">
+                                            <button onClick={() => deleteRate(getPublicId(rate))} className="flex items-center gap-1 text-xs font-medium text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg dark:bg-rose-900/20 dark:text-rose-400">
                                                 <Trash2 className="h-3.5 w-3.5" /> Eliminar
                                             </button>
                                         </div>
@@ -819,6 +903,17 @@ export default function RatesPage() {
                     )}
                 </div>
             </div>
+
+            <PaginationFooter
+                page={pageState.page || page}
+                pageSize={pageState.pageSize || pageSize}
+                totalCount={pageState.totalCount || 0}
+                totalPages={pageState.totalPages || 0}
+                hasPreviousPage={Boolean(pageState.hasPreviousPage)}
+                hasNextPage={Boolean(pageState.hasNextPage)}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+            />
 
             {/* Modal */}
             <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={form.id ? "Editar Tarifa" : "Nueva Tarifa"} className="max-w-4xl">

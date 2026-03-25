@@ -28,8 +28,8 @@ export function useReservaDetail(reservaId, navigate) {
 
     const fetchSuppliers = useCallback(async () => {
         try {
-            const res = await api.get("/suppliers");
-            setSuppliers(res || []);
+            const res = await api.get("/suppliers?page=1&pageSize=100&includeInactive=true");
+            setSuppliers(res?.items || []);
         } catch (error) {
             console.error("Error fetching suppliers:", error);
         }

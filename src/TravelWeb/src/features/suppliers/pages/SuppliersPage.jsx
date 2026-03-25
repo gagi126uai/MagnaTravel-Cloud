@@ -6,6 +6,8 @@ import { useSuppliers } from "../hooks/useSuppliers";
 import { SupplierTable } from "../components/SupplierTable";
 import { SupplierMobileList } from "../components/SupplierMobileList";
 import { SupplierFormModal } from "../components/SupplierFormModal";
+import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { getPublicId } from "../../../lib/publicIds";
 
 export default function SuppliersPage() {
@@ -15,13 +17,22 @@ export default function SuppliersPage() {
 
     const {
         loading,
+        suppliers,
         searchTerm,
         setSearchTerm,
         showInactive,
         setShowInactive,
+        page,
+        pageSize,
+        totalCount,
+        totalPages,
+        hasPreviousPage,
+        hasNextPage,
+        setPage,
+        setPageSize,
         handleSaveSupplier,
         handleToggleStatus,
-        filteredSuppliers
+        databaseUnavailable,
     } = useSuppliers();
 
     const handleOpenModal = (supplier = null) => {
@@ -79,20 +90,33 @@ export default function SuppliersPage() {
                 </div>
             </div>
 
-            {loading && filteredSuppliers.length === 0 ? (
+            {loading && suppliers.length === 0 ? (
                 <div className="p-12 text-center text-slate-500">Cargando proveedores...</div>
+            ) : databaseUnavailable ? (
+                <DatabaseUnavailableState />
             ) : (
                 <>
                     <SupplierTable
-                        suppliers={filteredSuppliers}
+                        suppliers={suppliers}
                         onEdit={handleOpenModal}
                         onToggleStatus={handleToggleStatus}
                         onAccountClick={(supplier) => navigate(`/suppliers/${getPublicId(supplier)}/account`)}
                     />
                     <SupplierMobileList
-                        suppliers={filteredSuppliers}
+                        suppliers={suppliers}
                         onEdit={handleOpenModal}
+                        onToggleStatus={handleToggleStatus}
                         onAccountClick={(supplier) => navigate(`/suppliers/${getPublicId(supplier)}/account`)}
+                    />
+                    <PaginationFooter
+                        page={page}
+                        pageSize={pageSize}
+                        totalCount={totalCount}
+                        totalPages={totalPages}
+                        hasPreviousPage={hasPreviousPage}
+                        hasNextPage={hasNextPage}
+                        onPageChange={setPage}
+                        onPageSizeChange={setPageSize}
                     />
                 </>
             )}

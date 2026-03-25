@@ -29,9 +29,9 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpGet("collections-worklist")]
-    public async Task<ActionResult<IReadOnlyList<CollectionWorkItemDto>>> GetCollectionsWorklist(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResponse<CollectionWorkItemDto>>> GetCollectionsWorklist([FromQuery] CollectionWorklistQuery query, CancellationToken cancellationToken)
     {
-        return Ok(await _paymentService.GetCollectionsWorklistAsync(cancellationToken));
+        return Ok(await _paymentService.GetCollectionsWorklistAsync(query, cancellationToken));
     }
 
     [HttpGet]
