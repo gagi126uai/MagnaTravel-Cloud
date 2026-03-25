@@ -62,6 +62,21 @@ public class HotelRateGroupDto
     public IReadOnlyList<RateListItemDto> Items { get; set; } = Array.Empty<RateListItemDto>();
 }
 
+public class RateGroupDto
+{
+    public string GroupKey { get; set; } = string.Empty;
+    public string ServiceType { get; set; } = string.Empty;
+    public string GroupName { get; set; } = string.Empty;
+    public string? Subtitle { get; set; }
+    public int? StarRating { get; set; }
+    public Guid? SupplierPublicId { get; set; }
+    public string? SupplierName { get; set; }
+    public decimal FromPrice { get; set; }
+    public bool HasExpiredRates { get; set; }
+    public int ItemCount { get; set; }
+    public IReadOnlyList<RateListItemDto> Items { get; set; } = Array.Empty<RateListItemDto>();
+}
+
 public class RateSearchItemDto
 {
     public Guid PublicId { get; set; }

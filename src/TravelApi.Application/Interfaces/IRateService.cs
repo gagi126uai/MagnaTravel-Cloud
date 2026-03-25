@@ -6,6 +6,7 @@ namespace TravelApi.Application.Interfaces;
 public interface IRateService
 {
     Task<PagedResponse<RateListItemDto>> GetAllAsync(RateListQuery query, CancellationToken ct);
+    Task<PagedResponse<RateGroupDto>> GetGroupsAsync(RateGroupsQuery query, CancellationToken ct);
     Task<PagedResponse<HotelRateGroupDto>> GetHotelGroupsAsync(HotelRateGroupsQuery query, CancellationToken ct);
     Task<RateSummaryDto> GetSummaryAsync(RateSummaryQuery query, CancellationToken ct);
     Task<RateListItemDto?> GetByIdAsync(int id, CancellationToken ct);

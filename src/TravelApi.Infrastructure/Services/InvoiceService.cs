@@ -496,12 +496,10 @@ public class InvoiceService : IInvoiceService
                 AlreadyInvoiced = Math.Round(_context.Invoices
                     .AsNoTracking()
                     .Where(invoice => invoice.ReservaId == reserva.Id && invoice.Resultado == "A")
-                    .Select(invoice =>
+                    .Sum(invoice => (decimal?)(
                         invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
                             ? -invoice.ImporteTotal
-                            : invoice.ImporteTotal)
-                    .DefaultIfEmpty(0m)
-                    .Sum(), 2),
+                            : invoice.ImporteTotal)) ?? 0m, 2),
                 ForcedByUserName = _context.Invoices
                     .AsNoTracking()
                     .Where(invoice => invoice.ReservaId == reserva.Id && invoice.Resultado == "A" && invoice.WasForced)

@@ -25,6 +25,130 @@ public class RateService : IRateService
             .ToPagedResponseAsync(query, ct);
     }
 
+    public async Task<PagedResponse<RateGroupDto>> GetGroupsAsync(RateGroupsQuery query, CancellationToken ct)
+    {
+        var supplierId = await ResolveOptionalSupplierIdAsync(query.SupplierId, ct);
+        var ratesQuery = BuildFilteredRatesQuery(supplierId, query.ServiceType, query.ActiveOnly, query.Search);
+        var now = DateTime.UtcNow;
+
+        var groupedQuery = ratesQuery
+            .Select(rate => new
+            {
+                rate.ServiceType,
+                GroupName = rate.ServiceType == "Hotel"
+                    ? (rate.HotelName ?? "Hotel sin nombre")
+                    : rate.ProductName,
+                Subtitle = rate.ServiceType == "Hotel"
+                    ? rate.City
+                    : null,
+                StarRating = rate.ServiceType == "Hotel"
+                    ? rate.StarRating
+                    : null,
+                SupplierPublicId = rate.Supplier != null ? (Guid?)rate.Supplier.PublicId : null,
+                SupplierName = rate.Supplier != null ? rate.Supplier.Name : null,
+                rate.SalePrice,
+                IsExpired = rate.ValidTo.HasValue && rate.ValidTo.Value < now
+            })
+            .GroupBy(rate => new
+            {
+                rate.ServiceType,
+                rate.GroupName,
+                rate.Subtitle,
+                rate.StarRating,
+                rate.SupplierPublicId,
+                rate.SupplierName
+            })
+            .Select(group => new RateGroupSummary
+            {
+                ServiceType = group.Key.ServiceType,
+                GroupName = group.Key.GroupName,
+                Subtitle = group.Key.Subtitle,
+                StarRating = group.Key.StarRating,
+                SupplierPublicId = group.Key.SupplierPublicId,
+                SupplierName = group.Key.SupplierName,
+                FromPrice = group.Min(item => item.SalePrice),
+                HasExpiredRates = group.Any(item => item.IsExpired),
+                ItemCount = group.Count()
+            });
+
+        groupedQuery = ApplyRateGroupOrdering(groupedQuery, query);
+
+        var totalCount = await groupedQuery.CountAsync(ct);
+        var safePage = query.GetNormalizedPage();
+        var safePageSize = query.GetNormalizedPageSize();
+
+        var groups = await groupedQuery
+            .Skip((safePage - 1) * safePageSize)
+            .Take(safePageSize)
+            .ToListAsync(ct);
+
+        foreach (var group in groups)
+        {
+            group.GroupKey = BuildRateGroupKey(
+                group.ServiceType,
+                group.GroupName,
+                group.Subtitle,
+                group.SupplierName,
+                group.StarRating);
+        }
+
+        if (groups.Count == 0)
+        {
+            return PagedResponse<RateGroupDto>.Create(Array.Empty<RateGroupDto>(), safePage, safePageSize, totalCount);
+        }
+
+        var selectedHotelNames = groups
+            .Where(group => group.ServiceType == "Hotel")
+            .Select(group => group.GroupName)
+            .Distinct()
+            .ToList();
+
+        var selectedProductNames = groups
+            .Where(group => group.ServiceType != "Hotel")
+            .Select(group => group.GroupName)
+            .Distinct()
+            .ToList();
+
+        var selectedGroupKeys = groups
+            .Select(group => group.GroupKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var groupItems = await ProjectRateListItems(ratesQuery)
+            .Where(rate =>
+                (rate.ServiceType == "Hotel" && selectedHotelNames.Contains(rate.HotelName ?? "Hotel sin nombre")) ||
+                (rate.ServiceType != "Hotel" && selectedProductNames.Contains(rate.ProductName)))
+            .ToListAsync(ct);
+
+        var itemsByGroup = groupItems
+            .GroupBy(BuildRateGroupKey)
+            .Where(group => selectedGroupKeys.Contains(group.Key))
+            .ToDictionary(
+                group => group.Key,
+                group => OrderRateGroupItems(group).ToList() as IReadOnlyList<RateListItemDto>,
+                StringComparer.Ordinal);
+
+        var pageItems = groups
+            .Select(group => new RateGroupDto
+            {
+                GroupKey = group.GroupKey,
+                ServiceType = group.ServiceType,
+                GroupName = group.GroupName,
+                Subtitle = group.Subtitle,
+                StarRating = group.StarRating,
+                SupplierPublicId = group.SupplierPublicId,
+                SupplierName = group.SupplierName,
+                FromPrice = group.FromPrice,
+                HasExpiredRates = group.HasExpiredRates,
+                ItemCount = group.ItemCount,
+                Items = itemsByGroup.TryGetValue(group.GroupKey, out var items)
+                    ? items
+                    : Array.Empty<RateListItemDto>()
+            })
+            .ToList();
+
+        return PagedResponse<RateGroupDto>.Create(pageItems, safePage, safePageSize, totalCount);
+    }
+
     public async Task<PagedResponse<HotelRateGroupDto>> GetHotelGroupsAsync(HotelRateGroupsQuery query, CancellationToken ct)
     {
         var supplierId = await ResolveOptionalSupplierIdAsync(query.SupplierId, ct);
@@ -447,6 +571,30 @@ public class RateService : IRateService
         };
     }
 
+    private static IQueryable<RateGroupSummary> ApplyRateGroupOrdering(
+        IQueryable<RateGroupSummary> query,
+        RateGroupsQuery request)
+    {
+        var sortBy = (request.SortBy ?? "groupName").Trim().ToLowerInvariant();
+        var desc = !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return sortBy switch
+        {
+            "servicetype" => desc
+                ? query.OrderByDescending(group => group.ServiceType).ThenByDescending(group => group.GroupName)
+                : query.OrderBy(group => group.ServiceType).ThenBy(group => group.GroupName),
+            "suppliername" => desc
+                ? query.OrderByDescending(group => group.SupplierName).ThenByDescending(group => group.GroupName)
+                : query.OrderBy(group => group.SupplierName).ThenBy(group => group.GroupName),
+            "fromprice" => desc
+                ? query.OrderByDescending(group => group.FromPrice).ThenByDescending(group => group.GroupName)
+                : query.OrderBy(group => group.FromPrice).ThenBy(group => group.GroupName),
+            _ => desc
+                ? query.OrderByDescending(group => group.GroupName).ThenByDescending(group => group.ServiceType)
+                : query.OrderBy(group => group.GroupName).ThenBy(group => group.ServiceType)
+        };
+    }
+
     private static IQueryable<RateListItemDto> ProjectRateListItems(IQueryable<Rate> query)
     {
         return query.Select(rate => new RateListItemDto
@@ -503,6 +651,45 @@ public class RateService : IRateService
         return $"{hotelName ?? string.Empty}|{city ?? string.Empty}|{supplierName ?? string.Empty}|{starRating?.ToString() ?? string.Empty}";
     }
 
+    private static string BuildRateGroupKey(RateListItemDto item)
+    {
+        var groupName = item.ServiceType == "Hotel"
+            ? (item.HotelName ?? "Hotel sin nombre")
+            : item.ProductName;
+        var subtitle = item.ServiceType == "Hotel" ? item.City : null;
+        var starRating = item.ServiceType == "Hotel" ? item.StarRating : null;
+
+        return BuildRateGroupKey(item.ServiceType, groupName, subtitle, item.SupplierName, starRating);
+    }
+
+    private static string BuildRateGroupKey(
+        string serviceType,
+        string? groupName,
+        string? subtitle,
+        string? supplierName,
+        int? starRating)
+    {
+        return string.Join(
+            "|",
+            serviceType ?? string.Empty,
+            groupName ?? string.Empty,
+            subtitle ?? string.Empty,
+            supplierName ?? string.Empty,
+            starRating?.ToString() ?? string.Empty);
+    }
+
+    private static IEnumerable<RateListItemDto> OrderRateGroupItems(IEnumerable<RateListItemDto> items)
+    {
+        return items
+            .OrderBy(item => item.ServiceType == "Hotel" ? item.RoomType ?? string.Empty : item.ProductName)
+            .ThenBy(item => item.RoomCategory ?? string.Empty)
+            .ThenBy(item => item.Airline ?? string.Empty)
+            .ThenBy(item => item.VehicleType ?? string.Empty)
+            .ThenBy(item => item.DurationDays ?? 0)
+            .ThenBy(item => item.SalePrice)
+            .ThenBy(item => item.ValidTo);
+    }
+
     private sealed class HotelRateGroupSummary
     {
         public string GroupKey { get; set; } = string.Empty;
@@ -514,5 +701,19 @@ public class RateService : IRateService
         public decimal FromPrice { get; set; }
         public bool HasExpiredRates { get; set; }
         public int RoomCount { get; set; }
+    }
+
+    private sealed class RateGroupSummary
+    {
+        public string GroupKey { get; set; } = string.Empty;
+        public string ServiceType { get; set; } = string.Empty;
+        public string GroupName { get; set; } = string.Empty;
+        public string? Subtitle { get; set; }
+        public int? StarRating { get; set; }
+        public Guid? SupplierPublicId { get; set; }
+        public string? SupplierName { get; set; }
+        public decimal FromPrice { get; set; }
+        public bool HasExpiredRates { get; set; }
+        public int ItemCount { get; set; }
     }
 }

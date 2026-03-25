@@ -182,6 +182,19 @@ public class HotelRateGroupsQuery : PagedQuery
     }
 }
 
+public class RateGroupsQuery : PagedQuery
+{
+    public string? SupplierId { get; set; }
+    public string? ServiceType { get; set; }
+    public bool ActiveOnly { get; set; }
+
+    public RateGroupsQuery()
+    {
+        SortBy = "groupName";
+        SortDir = "asc";
+    }
+}
+
 public class RateSummaryQuery
 {
     public string? Search { get; set; }

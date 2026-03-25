@@ -34,6 +34,19 @@ public class RatesController : ControllerBase
         }
     }
 
+    [HttpGet("groups")]
+    public async Task<ActionResult<PagedResponse<RateGroupDto>>> GetGroups([FromQuery] RateGroupsQuery query, CancellationToken ct = default)
+    {
+        try
+        {
+            return Ok(await _rateService.GetGroupsAsync(query, ct));
+        }
+        catch (ArgumentException)
+        {
+            return NotFound("Proveedor no encontrado.");
+        }
+    }
+
     [HttpGet("hotels")]
     public async Task<ActionResult<PagedResponse<HotelRateGroupDto>>> GetHotels([FromQuery] HotelRateGroupsQuery query, CancellationToken ct = default)
     {
