@@ -358,7 +358,7 @@ public class ReservaService : IReservaService
         if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un método de pago");
         
         payment.ReservaId = reservaId;
-        payment.PaidAt = DateTime.UtcNow;
+        payment.PaidAt = payment.PaidAt == default ? DateTime.UtcNow : payment.PaidAt.ToUniversalTime();
         payment.Status = "Paid";
         payment.EntryType = PaymentEntryTypes.Payment;
         payment.AffectsCash = true;
@@ -385,6 +385,7 @@ public class ReservaService : IReservaService
         payment.Amount = updatedPayment.Amount;
         payment.Method = updatedPayment.Method;
         payment.PaidAt = updatedPayment.PaidAt.ToUniversalTime();
+        payment.Reference = updatedPayment.Reference;
         payment.Notes = updatedPayment.Notes;
 
         await _context.SaveChangesAsync();

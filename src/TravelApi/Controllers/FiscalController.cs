@@ -8,7 +8,7 @@ namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/fiscal")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class FiscalController : ControllerBase
 {
     private readonly HttpClient _httpClient;
@@ -103,7 +103,7 @@ public class FiscalController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning("AFIP search failed for query {Query}. Reason: {Msg}", q, ex.Message);
-            return BadRequest(new { message = $"AFIP: {ex.Message}" });
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "La consulta fiscal no pudo completarse.");
         }
     }
 

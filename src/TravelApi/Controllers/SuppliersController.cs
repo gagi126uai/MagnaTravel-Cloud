@@ -29,6 +29,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPost("recalculate-all")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult> RecalculateAllBalances(CancellationToken cancellationToken)
     {
         await _supplierService.RecalculateAllBalancesAsync(cancellationToken);
@@ -51,31 +52,31 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<Supplier>> CreateSupplier(Supplier supplier, CancellationToken cancellationToken)
+    public async Task<ActionResult<Supplier>> CreateSupplier(SupplierUpsertRequest supplier, CancellationToken cancellationToken)
     {
         try
         {
-            var result = await _supplierService.CreateSupplierAsync(supplier, cancellationToken);
+            var result = await _supplierService.CreateSupplierAsync(MapSupplier(supplier), cancellationToken);
             return CreatedAtAction(nameof(GetSupplier), new { publicIdOrLegacyId = result.PublicId }, ToSupplierResponse(result));
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo crear el proveedor." });
         }
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
-    public async Task<ActionResult<Supplier>> UpdateSupplier(string publicIdOrLegacyId, Supplier supplier, CancellationToken cancellationToken)
+    public async Task<ActionResult<Supplier>> UpdateSupplier(string publicIdOrLegacyId, SupplierUpsertRequest supplier, CancellationToken cancellationToken)
     {
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
-            var result = await _supplierService.UpdateSupplierAsync(id, supplier, cancellationToken);
+            var result = await _supplierService.UpdateSupplierAsync(id, MapSupplier(supplier), cancellationToken);
             return Ok(ToSupplierResponse(result));
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el proveedor." });
         }
         catch (KeyNotFoundException)
         {
@@ -93,13 +94,13 @@ public class SuppliersController : ControllerBase
             await _supplierService.DeleteSupplierAsync(id, cancellationToken);
             return Ok(new { Message = "Proveedor eliminado" });
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo eliminar el proveedor." });
         }
     }
 
@@ -113,9 +114,9 @@ public class SuppliersController : ControllerBase
             await _supplierService.ForceDeleteSupplierAsync(id, cancellationToken);
             return Ok(new { Message = "Proveedor eliminado (forzado)" });
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
     }
 
@@ -128,9 +129,9 @@ public class SuppliersController : ControllerBase
             var accountDto = await _supplierService.GetSupplierAccountAsync(id, cancellationToken);
             return Ok(accountDto);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
     }
 
@@ -143,17 +144,17 @@ public class SuppliersController : ControllerBase
             var paymentPublicId = await _supplierService.AddSupplierPaymentAsync(id, request, cancellationToken);
             return Ok(new { Message = "Pago registrado correctamente", PaymentPublicId = paymentPublicId });
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo registrar el pago al proveedor." });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo registrar el pago al proveedor." });
         }
     }
 
@@ -167,17 +168,17 @@ public class SuppliersController : ControllerBase
             await _supplierService.UpdateSupplierPaymentAsync(id, paymentId, request, cancellationToken);
             return Ok(new { Message = "Pago actualizado correctamente" });
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el pago al proveedor." });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el pago al proveedor." });
         }
     }
 
@@ -191,9 +192,9 @@ public class SuppliersController : ControllerBase
             await _supplierService.DeleteSupplierPaymentAsync(id, paymentId, cancellationToken);
             return Ok(new { Message = "Pago eliminado y saldo restaurado" });
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
     }
 
@@ -219,4 +220,26 @@ public class SuppliersController : ControllerBase
         supplier.CurrentBalance,
         supplier.CreatedAt
     };
+
+    private static Supplier MapSupplier(SupplierUpsertRequest request) => new()
+    {
+        Name = request.Name,
+        ContactName = request.ContactName,
+        Email = request.Email,
+        Phone = request.Phone,
+        TaxId = request.TaxId,
+        TaxCondition = request.TaxCondition,
+        Address = request.Address,
+        IsActive = request.IsActive
+    };
 }
+
+public record SupplierUpsertRequest(
+    string Name,
+    string? ContactName,
+    string? Email,
+    string? Phone,
+    string? TaxId,
+    string? TaxCondition,
+    string? Address,
+    bool IsActive = true);

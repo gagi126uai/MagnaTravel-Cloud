@@ -1,4 +1,5 @@
 using System.Text;
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -43,16 +44,16 @@ public class VoucherService : IVoucherService
         html.AppendLine("</style></head><body>");
 
         html.AppendLine("<div class='header'>");
-        html.AppendLine($"<div><h1>{agency?.AgencyName ?? "Agencia de Viajes"}</h1>");
-        html.AppendLine($"<p style='color:#64748b;font-size:12px'>{agency?.Address ?? ""} | {agency?.Phone ?? ""}</p></div>");
+        html.AppendLine($"<div><h1>{EscapeHtml(agency?.AgencyName ?? "Agencia de Viajes")}</h1>");
+        html.AppendLine($"<p style='color:#64748b;font-size:12px'>{EscapeHtml(agency?.Address)} | {EscapeHtml(agency?.Phone)}</p></div>");
         html.AppendLine($"<div style='text-align:right'><div style='font-size:12px;color:#94a3b8'>RESERVA</div>");
-        html.AppendLine($"<div style='font-size:20px;font-weight:800;color:#4f46e5'>{reserva.NumeroReserva}</div></div>");
+        html.AppendLine($"<div style='font-size:20px;font-weight:800;color:#4f46e5'>{EscapeHtml(reserva.NumeroReserva)}</div></div>");
         html.AppendLine("</div>");
 
         html.AppendLine("<h2>Datos del Pasajero</h2>");
         html.AppendLine("<div class='info-grid'>");
-        html.AppendLine($"<div class='info-item'><div class='info-label'>Titular</div><div class='info-value'>{reserva.Payer?.FullName ?? "---"}</div></div>");
-        html.AppendLine($"<div class='info-item'><div class='info-label'>Documento</div><div class='info-value'>{reserva.Payer?.DocumentNumber ?? "---"}</div></div>");
+        html.AppendLine($"<div class='info-item'><div class='info-label'>Titular</div><div class='info-value'>{EscapeHtml(reserva.Payer?.FullName ?? "---")}</div></div>");
+        html.AppendLine($"<div class='info-item'><div class='info-label'>Documento</div><div class='info-value'>{EscapeHtml(reserva.Payer?.DocumentNumber ?? "---")}</div></div>");
         html.AppendLine($"<div class='info-item'><div class='info-label'>Salida</div><div class='info-value'>{reserva.StartDate?.ToString("dd/MM/yyyy") ?? "---"}</div></div>");
         html.AppendLine($"<div class='info-item'><div class='info-label'>Regreso</div><div class='info-value'>{reserva.EndDate?.ToString("dd/MM/yyyy") ?? "---"}</div></div>");
         html.AppendLine("</div>");
@@ -65,7 +66,7 @@ public class VoucherService : IVoucherService
 
         html.AppendLine("<div class='footer'>");
         html.AppendLine($"<p>Voucher generado el {DateTime.UtcNow.AddHours(-3):dd/MM/yyyy HH:mm} hs (Argentina)</p>");
-        html.AppendLine($"<p><strong>{agency?.AgencyName ?? "MagnaTravel"}</strong> | {agency?.Email ?? ""} | {agency?.Phone ?? ""}</p>");
+        html.AppendLine($"<p><strong>{EscapeHtml(agency?.AgencyName ?? "MagnaTravel")}</strong> | {EscapeHtml(agency?.Email)} | {EscapeHtml(agency?.Phone)}</p>");
         html.AppendLine("<p style='margin-top:8px;font-style:italic'>Este documento no tiene validez como comprobante fiscal.</p>");
         html.AppendLine("</div></body></html>");
 
@@ -266,7 +267,7 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Pasajeros</h2><table><thead><tr><th>Nombre</th><th>Documento</th><th>Nacimiento</th></tr></thead><tbody>");
         foreach (var passenger in reserva.Passengers)
         {
-            html.AppendLine($"<tr><td>{passenger.FullName}</td><td>{passenger.DocumentType} {passenger.DocumentNumber}</td><td>{FormatDate(passenger.BirthDate)}</td></tr>");
+            html.AppendLine($"<tr><td>{EscapeHtml(passenger.FullName)}</td><td>{EscapeHtml($"{passenger.DocumentType} {passenger.DocumentNumber}".Trim())}</td><td>{FormatDate(passenger.BirthDate)}</td></tr>");
         }
         html.AppendLine("</tbody></table>");
     }
@@ -279,7 +280,7 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Alojamiento</h2><table><thead><tr><th>Hotel</th><th>Check-In</th><th>Check-Out</th><th>Noches</th><th>Habitacion</th><th>Confirmacion</th></tr></thead><tbody>");
         foreach (var hotel in reserva.HotelBookings)
         {
-            html.AppendLine($"<tr><td><strong>{hotel.HotelName}</strong><br/><span style='font-size:11px;color:#64748b'>{hotel.City}</span></td><td>{hotel.CheckIn:dd/MM/yyyy}</td><td>{hotel.CheckOut:dd/MM/yyyy}</td><td>{hotel.Nights}</td><td>{hotel.RoomType} ({hotel.MealPlan})</td><td>{hotel.ConfirmationNumber ?? "Pendiente"}</td></tr>");
+            html.AppendLine($"<tr><td><strong>{EscapeHtml(hotel.HotelName)}</strong><br/><span style='font-size:11px;color:#64748b'>{EscapeHtml(hotel.City)}</span></td><td>{hotel.CheckIn:dd/MM/yyyy}</td><td>{hotel.CheckOut:dd/MM/yyyy}</td><td>{hotel.Nights}</td><td>{EscapeHtml($"{hotel.RoomType} ({hotel.MealPlan})")}</td><td>{EscapeHtml(hotel.ConfirmationNumber ?? "Pendiente")}</td></tr>");
         }
         html.AppendLine("</tbody></table>");
     }
@@ -292,7 +293,7 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Vuelos</h2><table><thead><tr><th>Vuelo</th><th>Origen</th><th>Destino</th><th>Fecha</th><th>Clase</th><th>PNR</th></tr></thead><tbody>");
         foreach (var flight in reserva.FlightSegments)
         {
-            html.AppendLine($"<tr><td>{flight.AirlineCode} {flight.FlightNumber}</td><td>{flight.OriginCity ?? flight.Origin}</td><td>{flight.DestinationCity ?? flight.Destination}</td><td>{flight.DepartureTime:dd/MM/yyyy HH:mm}</td><td>{flight.CabinClass}</td><td>{flight.PNR ?? "---"}</td></tr>");
+            html.AppendLine($"<tr><td>{EscapeHtml($"{flight.AirlineCode} {flight.FlightNumber}")}</td><td>{EscapeHtml(flight.OriginCity ?? flight.Origin)}</td><td>{EscapeHtml(flight.DestinationCity ?? flight.Destination)}</td><td>{flight.DepartureTime:dd/MM/yyyy HH:mm}</td><td>{EscapeHtml(flight.CabinClass)}</td><td>{EscapeHtml(flight.PNR ?? "---")}</td></tr>");
         }
         html.AppendLine("</tbody></table>");
     }
@@ -305,7 +306,7 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Transfers</h2><table><thead><tr><th>Vehiculo</th><th>Origen</th><th>Destino</th><th>Fecha</th><th>Confirmacion</th></tr></thead><tbody>");
         foreach (var transfer in reserva.TransferBookings)
         {
-            html.AppendLine($"<tr><td>{transfer.VehicleType}</td><td>{transfer.PickupLocation}</td><td>{transfer.DropoffLocation}</td><td>{transfer.PickupDateTime:dd/MM/yyyy HH:mm}</td><td>{transfer.ConfirmationNumber ?? "Pendiente"}</td></tr>");
+            html.AppendLine($"<tr><td>{EscapeHtml(transfer.VehicleType)}</td><td>{EscapeHtml(transfer.PickupLocation)}</td><td>{EscapeHtml(transfer.DropoffLocation)}</td><td>{transfer.PickupDateTime:dd/MM/yyyy HH:mm}</td><td>{EscapeHtml(transfer.ConfirmationNumber ?? "Pendiente")}</td></tr>");
         }
         html.AppendLine("</tbody></table>");
     }
@@ -318,7 +319,7 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Paquetes</h2><table><thead><tr><th>Paquete</th><th>Destino</th><th>Fechas</th><th>Noches</th><th>Confirmacion</th></tr></thead><tbody>");
         foreach (var package in reserva.PackageBookings)
         {
-            html.AppendLine($"<tr><td>{package.PackageName}</td><td>{package.Destination}</td><td>{package.StartDate:dd/MM/yyyy} - {package.EndDate:dd/MM/yyyy}</td><td>{package.Nights}</td><td>{package.ConfirmationNumber ?? "Pendiente"}</td></tr>");
+            html.AppendLine($"<tr><td>{EscapeHtml(package.PackageName)}</td><td>{EscapeHtml(package.Destination)}</td><td>{package.StartDate:dd/MM/yyyy} - {package.EndDate:dd/MM/yyyy}</td><td>{package.Nights}</td><td>{EscapeHtml(package.ConfirmationNumber ?? "Pendiente")}</td></tr>");
         }
         html.AppendLine("</tbody></table>");
     }
@@ -326,5 +327,10 @@ public class VoucherService : IVoucherService
     private static string FormatDate(DateTime? date)
     {
         return date?.ToString("dd/MM/yyyy") ?? "---";
+    }
+
+    private static string EscapeHtml(string? value)
+    {
+        return WebUtility.HtmlEncode(value ?? string.Empty);
     }
 }

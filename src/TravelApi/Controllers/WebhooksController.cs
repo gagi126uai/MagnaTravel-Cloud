@@ -6,6 +6,8 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 using Microsoft.AspNetCore.RateLimiting;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace TravelApi.Controllers;
 
@@ -43,7 +45,14 @@ public class WebhooksController : ControllerBase
     {
         var expected = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
         var provided = Request.Headers["X-Webhook-Secret"].FirstOrDefault();
-        return !string.IsNullOrEmpty(provided) && provided == expected;
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(provided))
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(expected),
+            Encoding.UTF8.GetBytes(provided));
     }
 
     private static string NormalizePhone(string phone) => phone.Replace("+", "").Trim();
@@ -57,6 +66,17 @@ public class WebhooksController : ControllerBase
         string.IsNullOrWhiteSpace(lead.InterestedIn) ||
         string.IsNullOrWhiteSpace(lead.TravelDates) ||
         string.IsNullOrWhiteSpace(lead.Travelers);
+
+    private static string SanitizeMessageContent(string? value, int maxLength = 2000)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var cleaned = new string(value.Where(ch => !char.IsControl(ch) || ch == '\r' || ch == '\n' || ch == '\t').ToArray()).Trim();
+        return cleaned.Length <= maxLength ? cleaned : cleaned[..maxLength];
+    }
 
     private static void MergeStructuredWhatsAppCapture(Lead lead, WhatsAppWebhookDto dto)
     {
@@ -114,7 +134,7 @@ public class WebhooksController : ControllerBase
                 await _leadService.AddActivityAsync(existingLead.Id, new LeadActivity
                 {
                     Type = "WhatsApp",
-                    Description = $"Nueva conversacion con bot:\n{dto.Transcript}",
+                    Description = $"Nueva conversacion con bot:\n{SanitizeMessageContent(dto.Transcript)}",
                     CreatedBy = "WhatsApp Bot"
                 }, cancellationToken);
             }
@@ -146,7 +166,7 @@ public class WebhooksController : ControllerBase
             await _leadService.AddActivityAsync(created.Id, new LeadActivity
             {
                 Type = "WhatsApp",
-                Description = $"Conversacion capturada por bot:\n{dto.Transcript}",
+                Description = $"Conversacion capturada por bot:\n{SanitizeMessageContent(dto.Transcript)}",
                 CreatedBy = "WhatsApp Bot"
             }, cancellationToken);
         }
@@ -217,7 +237,7 @@ public class WebhooksController : ControllerBase
         await _leadService.AddActivityAsync(lead.Id, new LeadActivity
         {
             Type = "WhatsApp",
-            Description = dto.Message,
+            Description = SanitizeMessageContent(dto.Message, 1000),
             CreatedBy = dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"
         }, cancellationToken);
 
@@ -279,7 +299,7 @@ public class WebhooksController : ControllerBase
             await _leadService.AddActivityAsync(leadId, new LeadActivity
             {
                 Type = "WhatsApp",
-                Description = request.Message,
+                Description = SanitizeMessageContent(request.Message, 1000),
                 CreatedBy = userName
             }, cancellationToken);
 
@@ -294,7 +314,8 @@ public class WebhooksController : ControllerBase
     }
 
     [HttpGet("status")]
-    [Authorize]
+    [Authorize(Roles = "Admin")]
+    [EnableRateLimiting("afip")]
     public async Task<IActionResult> GetBotStatus()
     {
         var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
@@ -316,12 +337,13 @@ public class WebhooksController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error interno: {ex.Message}");
+            _logger.LogError(ex, "Error retrieving bot status");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo obtener el estado del bot.");
         }
     }
 
     [HttpPost("reload")]
-    [Authorize]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> ReloadBotConfig()
     {
         var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
@@ -338,12 +360,13 @@ public class WebhooksController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error interno: {ex.Message}");
+            _logger.LogError(ex, "Error reloading bot config");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo recargar la configuracion del bot.");
         }
     }
 
     [HttpPost("logout")]
-    [Authorize]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> LogoutBot()
     {
         var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
@@ -360,19 +383,22 @@ public class WebhooksController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error interno: {ex.Message}");
+            _logger.LogError(ex, "Error logging out bot");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo cerrar la sesion del bot.");
         }
     }
 
     [HttpGet("logs")]
-    [Authorize]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> GetBotLogs()
     {
         var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
+        var secret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
 
         try
         {
             var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Webhook-Secret", secret);
             var response = await client.GetAsync($"{botUrl}/logs");
 
             if (response.IsSuccessStatusCode)
@@ -385,7 +411,8 @@ public class WebhooksController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error interno: {ex.Message}");
+            _logger.LogError(ex, "Error retrieving bot logs");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudieron obtener los logs del bot.");
         }
     }
 }

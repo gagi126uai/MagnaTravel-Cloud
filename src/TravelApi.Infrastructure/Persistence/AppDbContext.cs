@@ -10,6 +10,25 @@ namespace TravelApi.Infrastructure.Persistence;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
+    private static readonly HashSet<string> SensitiveAuditFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "PasswordHash",
+        "SecurityStamp",
+        "ConcurrencyStamp",
+        "CertificateData",
+        "CertificatePassword",
+        "Token",
+        "Sign",
+        "PadronToken",
+        "PadronSign",
+        "TokenHash",
+        "ReplacedByTokenHash",
+        "WebhookSecret",
+        "RefreshToken",
+        "AccessToken",
+        "CsrfToken"
+    };
+
     private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public DbSet<Notification> Notifications => Set<Notification>();
@@ -89,9 +108,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 foreach (var property in entry.Properties)
                 {
                     if (property.Metadata.IsPrimaryKey()) continue;
+                    if (ShouldSkipAuditProperty(property)) continue;
                     if (property.CurrentValue != null)
                     {
-                        changes[property.Metadata.Name] = property.CurrentValue;
+                        changes[property.Metadata.Name] = SanitizeAuditValue(property.CurrentValue);
                     }
                 }
             }
@@ -101,7 +121,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 foreach (var property in entry.Properties)
                 {
                     if (property.Metadata.IsPrimaryKey()) continue;
-                    changes[property.Metadata.Name] = property.OriginalValue;
+                    if (ShouldSkipAuditProperty(property)) continue;
+                    changes[property.Metadata.Name] = SanitizeAuditValue(property.OriginalValue);
                 }
             }
             else if (entry.State == EntityState.Modified)
@@ -118,15 +139,21 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
                 foreach (var property in entry.Properties)
                 {
+                    if (ShouldSkipAuditProperty(property)) continue;
                     if (property.IsModified)
                     {
                         changes[property.Metadata.Name] = new
                         {
-                            Old = property.OriginalValue,
-                            New = property.CurrentValue
+                            Old = SanitizeAuditValue(property.OriginalValue),
+                            New = SanitizeAuditValue(property.CurrentValue)
                         };
                     }
                 }
+            }
+
+            if (changes.Count == 0)
+            {
+                continue;
             }
 
             auditLog.Changes = JsonSerializer.Serialize(changes);
@@ -185,9 +212,36 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         var primaryKey = keyName != null ? entry.Property(keyName).CurrentValue : null;
         return primaryKey?.ToString() ?? "0";
     }
-    
-    // I need to correct this. I will put the full logic in the replacement content properly.
 
+    private static bool ShouldSkipAuditProperty(PropertyEntry property)
+    {
+        if (SensitiveAuditFields.Contains(property.Metadata.Name))
+        {
+            return true;
+        }
+
+        if (property.Metadata.ClrType == typeof(byte[]) || property.CurrentValue is byte[] || property.OriginalValue is byte[])
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static object? SanitizeAuditValue(object? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value is string text)
+        {
+            return text.Length <= 256 ? text : $"{text[..256]}...[TRUNCATED]";
+        }
+
+        return value;
+    }
 
     // Core Entities - Retail ERP
     public DbSet<Customer> Customers => Set<Customer>();
@@ -225,6 +279,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<LeadActivity> LeadActivities => Set<LeadActivity>();
     public DbSet<WhatsAppBotConfig> WhatsAppBotConfigs => Set<WhatsAppBotConfig>();
     public DbSet<WhatsAppDelivery> WhatsAppDeliveries => Set<WhatsAppDelivery>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -481,6 +536,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(d => d.CustomerId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<RefreshToken>(entity =>
+        {
+            entity.ToTable("RefreshTokens");
+            entity.HasIndex(token => token.TokenHash).IsUnique();
+            entity.HasIndex(token => new { token.UserId, token.ExpiresAt });
+            entity.Property(token => token.TokenHash).HasMaxLength(256).IsRequired();
+            entity.Property(token => token.UserId).HasMaxLength(450).IsRequired();
+            entity.Property(token => token.CreatedByIp).HasMaxLength(64);
+            entity.Property(token => token.UserAgent).HasMaxLength(512);
+            entity.Property(token => token.ReplacedByTokenHash).HasMaxLength(256);
+
+            entity.HasOne(token => token.User)
+                  .WithMany(user => user.RefreshTokens)
+                  .HasForeignKey(token => token.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ReservaAttachment

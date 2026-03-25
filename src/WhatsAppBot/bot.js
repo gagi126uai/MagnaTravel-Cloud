@@ -59,7 +59,9 @@ function botLog(msg) {
 async function fetchConfig() {
     try {
         botLog("Sincronizando configuracion con API...");
-        const res = await axios.get(`${API_URL}/api/whatsapp/config/env`);
+        const res = await axios.get(`${API_URL}/api/whatsapp/config/env`, {
+            headers: { "X-Webhook-Secret": WEBHOOK_SECRET }
+        });
         const { agencyName: loadedAgencyName } = res.data;
 
         if (loadedAgencyName) {
@@ -591,11 +593,13 @@ app.post("/reload", async (req, res) => {
     res.json({ success: true, status: botStatus });
 });
 
-app.get("/status", (_req, res) => {
+app.get("/status", (req, res) => {
+    if (req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) return res.status(401).send();
     res.json({ status: botStatus, qr: lastQR, ready: isBotReady });
 });
 
-app.get("/logs", (_req, res) => {
+app.get("/logs", (req, res) => {
+    if (req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) return res.status(401).send();
     res.json(botLogs);
 });
 

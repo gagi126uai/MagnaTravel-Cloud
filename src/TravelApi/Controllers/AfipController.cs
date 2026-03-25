@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.Interfaces;
+using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/afip")]
-[Authorize]
+[Authorize(Roles = "Admin")]
+[EnableRateLimiting("afip")]
 public class AfipController : ControllerBase
 {
     private readonly IAfipService _afipService;
@@ -25,17 +28,12 @@ public class AfipController : ControllerBase
     }
 
     [HttpGet("settings")]
-    public async Task<ActionResult<AfipSettings>> GetSettings()
+    public async Task<ActionResult<AfipSettingsResponse>> GetSettings()
     {
         var settings = await _afipService.GetSettingsAsync();
         if (settings == null) return NotFound();
-        
-        // Hide sensitive data
-        settings.CertificatePassword = null; 
-        settings.Token = null;
-        settings.Sign = null;
 
-        return settings;
+        return Ok(MapResponse(settings));
     }
 
     public class AfipSettingsRequest
@@ -49,7 +47,7 @@ public class AfipController : ControllerBase
     }
 
     [HttpPost("settings")]
-    public async Task<ActionResult<AfipSettings>> UpdateSettings([FromForm] AfipSettingsRequest request)
+    public async Task<ActionResult<AfipSettingsResponse>> UpdateSettings([FromForm] AfipSettingsRequest request)
     {
         byte[]? certData = null;
         string? certFileName = null;
@@ -74,20 +72,30 @@ public class AfipController : ControllerBase
                 request.Password
             );
 
-            // Hide sensitive data before returning
-            settings.CertificatePassword = null;
-            settings.Token = null;
-            settings.Sign = null;
+            return Ok(MapResponse(settings));
+        }
+        catch (ArgumentException)
+        {
+            return BadRequest(new { message = "La configuracion AFIP enviada no es valida." });
+        }
+        catch
+        {
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "No se pudo validar la configuracion AFIP.");
+        }
+    }
 
-            return Ok(settings);
-        }
-        catch (ArgumentException ex)
+    private static AfipSettingsResponse MapResponse(AfipSettings settings)
+    {
+        return new AfipSettingsResponse
         {
-            return BadRequest(ex.Message);
-        }
-        catch (Exception ex)
-        {
-            return BadRequest($"Error validando certificado: {ex.Message}");
-        }
+            Cuit = settings.Cuit,
+            PuntoDeVenta = settings.PuntoDeVenta,
+            IsProduction = settings.IsProduction,
+            TaxCondition = settings.TaxCondition,
+            HasCertificate = settings.CertificateData != null && settings.CertificateData.Length > 0,
+            CertificateFileName = settings.CertificatePath,
+            HasAuthToken = !string.IsNullOrWhiteSpace(settings.Token),
+            HasPadronToken = !string.IsNullOrWhiteSpace(settings.PadronToken)
+        };
     }
 }

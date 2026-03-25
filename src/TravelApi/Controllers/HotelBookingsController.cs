@@ -55,13 +55,13 @@ public class HotelBookingsController : ControllerBase
             var hotel = await _bookingService.CreateHotelAsync(resolvedReservaId, req, ct);
             return Ok(hotel);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error creando hotel: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear la reserva de hotel.");
         }
     }
 
@@ -82,7 +82,7 @@ public class HotelBookingsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando hotel: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar la reserva de hotel.");
         }
     }
 
@@ -103,7 +103,7 @@ public class HotelBookingsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error eliminando hotel: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar la reserva de hotel.");
         }
     }
 }

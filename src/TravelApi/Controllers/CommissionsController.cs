@@ -42,9 +42,9 @@ public class CommissionsController : ControllerBase
             var rule = await _commissionService.CreateRuleAsync(request, cancellationToken);
             return Ok(rule);
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo crear la regla de comision." });
         }
     }
 

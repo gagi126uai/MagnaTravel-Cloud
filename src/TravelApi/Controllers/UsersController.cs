@@ -63,9 +63,9 @@ public class UsersController : ControllerBase
             var response = await _userService.CreateUserAsync(request);
             return Ok(response);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new[] { ex.Message });
+            return BadRequest(new[] { "No se pudo crear el usuario." });
         }
     }
 
@@ -81,9 +81,9 @@ public class UsersController : ControllerBase
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new[] { ex.Message });
+            return BadRequest(new[] { "No se pudo actualizar el usuario." });
         }
     }
 

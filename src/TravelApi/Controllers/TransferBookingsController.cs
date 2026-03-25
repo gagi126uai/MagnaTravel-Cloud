@@ -39,13 +39,13 @@ public class TransferBookingsController : ControllerBase
             var transfer = await _bookingService.CreateTransferAsync(resolvedReservaId, req, ct);
             return Ok(transfer);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error creando traslado: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el traslado.");
         }
     }
 
@@ -60,13 +60,13 @@ public class TransferBookingsController : ControllerBase
             var transfer = await _bookingService.UpdateTransferAsync(resolvedReservaId, resolvedTransferId, req, ct);
             return Ok(transfer);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando traslado: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el traslado.");
         }
     }
 
@@ -81,13 +81,13 @@ public class TransferBookingsController : ControllerBase
             await _bookingService.DeleteTransferAsync(resolvedReservaId, resolvedTransferId, ct);
             return Ok();
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error eliminando traslado: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el traslado.");
         }
     }
 }

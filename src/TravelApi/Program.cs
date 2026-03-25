@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
@@ -18,6 +19,7 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using TravelApi.Filters;
 using TravelApi.Application.Interfaces;
+using TravelApi.Application.Contracts.Auth;
 
 using TravelApi.Infrastructure.Logging;
 using TravelApi.Hubs;
@@ -156,14 +158,52 @@ builder.Services.AddAuthentication(options =>
             ValidAudience = jwtOptions.Audience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key)),
             NameClaimType = ClaimTypes.NameIdentifier,
-            RoleClaimType = ClaimTypes.Role
+            RoleClaimType = ClaimTypes.Role,
+            ClockSkew = TimeSpan.FromMinutes(1)
+        };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                if (!string.IsNullOrWhiteSpace(context.Token))
+                {
+                    return Task.CompletedTask;
+                }
+
+                if (context.Request.Path.StartsWithSegments("/hangfire") &&
+                    context.Request.Cookies.TryGetValue(AuthCookieNames.Hangfire, out var hangfireToken))
+                {
+                    context.Token = hangfireToken;
+                    return Task.CompletedTask;
+                }
+
+                if (context.Request.Cookies.TryGetValue(AuthCookieNames.Access, out var accessToken))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            }
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+});
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            message = "Demasiadas solicitudes. Intenta nuevamente en unos minutos."
+        }, cancellationToken);
+    };
+
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
         var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -179,20 +219,54 @@ builder.Services.AddRateLimiter(options =>
             });
     });
 
-    options.AddFixedWindowLimiter("auth", limiterOptions =>
+    options.AddPolicy("auth", context =>
     {
-        limiterOptions.PermitLimit = 10;
-        limiterOptions.Window = TimeSpan.FromMinutes(5);
-        limiterOptions.QueueLimit = 0;
-        limiterOptions.AutoReplenishment = true;
+        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
     });
 
-    options.AddFixedWindowLimiter("webhooks", limiterOptions =>
+    options.AddPolicy("webhooks", context =>
     {
-        limiterOptions.PermitLimit = 30;
-        limiterOptions.Window = TimeSpan.FromMinutes(1);
-        limiterOptions.QueueLimit = 0;
-        limiterOptions.AutoReplenishment = true;
+        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 45,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+
+    options.AddPolicy("uploads", context =>
+    {
+        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                     ?? context.Connection.RemoteIpAddress?.ToString()
+                     ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(userId, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 20,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+
+    options.AddPolicy("afip", context =>
+    {
+        var partitionKey = $"{context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous"}:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 30,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
     });
 });
 
@@ -220,6 +294,7 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<EntityReferenceResolver>();
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+builder.Services.AddSingleton<ISensitiveDataProtector, SensitiveDataProtector>();
 
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
@@ -340,7 +415,7 @@ using (var scope = app.Services.CreateScope())
 // 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy) - MUST BE FIRST
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
-    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 
 if (app.Environment.IsProduction())
@@ -351,12 +426,15 @@ if (app.Environment.IsProduction())
 app.Use(async (context, next) =>
 {
     context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; " +
+        "default-src 'self'; base-uri 'self'; frame-ancestors 'self'; object-src 'none'; " +
         "img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:; " +
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https: ws: wss:;";
+        "script-src 'self' https:; connect-src 'self' https: ws: wss:;";
     context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+    context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+    context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
+    context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
     await next();
 });
 
@@ -368,43 +446,9 @@ app.UseRateLimiter();
 // 2. CORS (Explicitly permissive for known origins + wildcard fallback if needed)
 app.UseCors("web");
 
-
-// Hangfire Dashboard Secure Access
-app.Use(async (context, next) =>
-{
-    if (context.Request.Path.StartsWithSegments("/hangfire"))
-    {
-        if (context.Request.Cookies.TryGetValue("hangfire_auth", out var token))
-        {
-            var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-            var jwtOptions = builder.Configuration.GetSection(TravelApi.Domain.Options.JwtOptions.SectionName).Get<TravelApi.Domain.Options.JwtOptions>();
-            
-            if (jwtOptions != null && handler.CanReadToken(token))
-            {
-                 try 
-                 {
-                     var principal = handler.ValidateToken(token, new TokenValidationParameters
-                     {
-                        ValidateIssuer = true,
-                        ValidateAudience = true,
-                        ValidateLifetime = true,
-                        ValidateIssuerSigningKey = true,
-                        ValidIssuer = jwtOptions.Issuer,
-                        ValidAudience = jwtOptions.Audience,
-                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key))
-                     }, out var validatedToken);
-
-                     context.User = principal;
-                 }
-                 catch 
-                 { 
-                     // Invalid token, ignore
-                 }
-            }
-        }
-    }
-    await next();
-});
+app.UseAuthentication();
+app.UseMiddleware<TravelApi.Middleware.CookieCsrfMiddleware>();
+app.UseAuthorization();
 
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
@@ -415,21 +459,6 @@ RecurringJob.AddOrUpdate<OperationalFinanceMonitorService>(
     "upcoming-unpaid-reservas",
     service => service.GenerateUpcomingUnpaidReservationNotificationsAsync(),
     Cron.Daily());
-
-app.MapGet("/api/auth/hangfire-login", (string token, HttpContext context) => 
-{
-    context.Response.Cookies.Append("hangfire_auth", token, new CookieOptions 
-    { 
-        HttpOnly = true, 
-        Secure = true, 
-        SameSite = SameSiteMode.Lax,
-        Expires = DateTime.UtcNow.AddHours(1) 
-    });
-    return Results.Redirect("/hangfire");
-});
-
-app.UseAuthentication();
-app.UseAuthorization();
 
 // 3. Health Check
 app.MapGet("/health", () => Results.Ok("Healthy")).AllowAnonymous();
@@ -462,7 +491,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapControllers();
-app.MapHub<LogsHub>("/hubs/logs");
+app.MapHub<LogsHub>("/hubs/logs").RequireAuthorization("AdminOnly");
 
     app.Run();
 }

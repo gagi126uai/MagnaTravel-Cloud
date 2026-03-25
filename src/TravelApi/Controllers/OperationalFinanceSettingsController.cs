@@ -18,6 +18,7 @@ public class OperationalFinanceSettingsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<OperationalFinanceSettingsDto>> Get(CancellationToken cancellationToken)
     {
         return Ok(await _service.GetAsync(cancellationToken));

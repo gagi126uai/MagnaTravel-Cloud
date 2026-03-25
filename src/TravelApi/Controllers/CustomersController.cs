@@ -43,49 +43,49 @@ public class CustomersController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<Customer>> CreateCustomer(Customer customer, CancellationToken cancellationToken)
+    public async Task<ActionResult<Customer>> CreateCustomer(CustomerUpsertRequest customer, CancellationToken cancellationToken)
     {
         try
         {
-            var result = await _customerService.CreateCustomerAsync(customer, cancellationToken);
+            var result = await _customerService.CreateCustomerAsync(MapCustomer(customer), cancellationToken);
             var response = await _customerService.GetCustomerAsync(result.Id, cancellationToken);
             return CreatedAtAction(nameof(GetCustomer), new { publicIdOrLegacyId = result.PublicId }, response);
         }
-        catch (Microsoft.EntityFrameworkCore.DbUpdateException ex)
+        catch (Microsoft.EntityFrameworkCore.DbUpdateException)
         {
-            return BadRequest($"Error creando cliente (Posible duplicado de Documento/Email): {ex.InnerException?.Message ?? ex.Message}");
+            return BadRequest(new { message = "No se pudo crear el cliente. Verifica que el documento y el email no esten duplicados." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error interno: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el cliente.");
         }
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
-    public async Task<ActionResult<Customer>> UpdateCustomer(string publicIdOrLegacyId, Customer customer, CancellationToken cancellationToken)
+    public async Task<ActionResult<Customer>> UpdateCustomer(string publicIdOrLegacyId, CustomerUpsertRequest customer, CancellationToken cancellationToken)
     {
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
-            var result = await _customerService.UpdateCustomerAsync(id, customer, cancellationToken);
+            var result = await _customerService.UpdateCustomerAsync(id, MapCustomer(customer), cancellationToken);
             var response = await _customerService.GetCustomerAsync(result.Id, cancellationToken);
             return Ok(response);
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el cliente." });
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Microsoft.EntityFrameworkCore.DbUpdateException ex)
+        catch (Microsoft.EntityFrameworkCore.DbUpdateException)
         {
-            return BadRequest($"Error actualizando cliente: {ex.InnerException?.Message ?? ex.Message}");
+            return BadRequest(new { message = "No se pudo actualizar el cliente. Verifica que el documento y el email no esten duplicados." });
         }
         catch (Exception ex)
         {
-             return StatusCode(500, $"Error interno: {ex.Message}");
+             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el cliente.");
         }
     }
 
@@ -101,13 +101,44 @@ public class CustomersController : ControllerBase
             var accountDto = await _customerService.GetCustomerAccountAsync(id, cancellationToken);
             return Ok(accountDto);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error obteniendo cuenta corriente: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener la cuenta corriente del cliente.");
         }
     }
+
+    private static Customer MapCustomer(CustomerUpsertRequest request)
+    {
+        return new Customer
+        {
+            FullName = request.FullName,
+            Email = request.Email,
+            Phone = request.Phone,
+            DocumentNumber = request.DocumentNumber,
+            Address = request.Address,
+            Notes = request.Notes,
+            TaxId = request.TaxId,
+            TaxCondition = request.TaxCondition ?? "Consumidor Final",
+            TaxConditionId = request.TaxConditionId,
+            CreditLimit = request.CreditLimit,
+            IsActive = request.IsActive
+        };
+    }
 }
+
+public record CustomerUpsertRequest(
+    string FullName,
+    string? Email,
+    string? Phone,
+    string? DocumentNumber,
+    string? Address,
+    string? Notes,
+    string? TaxId,
+    string? TaxCondition,
+    int? TaxConditionId,
+    decimal CreditLimit,
+    bool IsActive = true);

@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { clearAuthToken, isAdmin, isAuthenticated } from "./auth";
 import Swal from "sweetalert2";
+import { api } from "./api";
+import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState } from "./auth";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
@@ -22,55 +23,125 @@ import RatesPage from "./pages/RatesPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import QuotesPage from "./pages/QuotesPage";
 import CRMPage from "./pages/CRMPage";
-
 import PaymentsTrashPage from "./features/payments/pages/PaymentsTrashPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
 
-// LEGACY REMOVED: Cupos, Quotes, Tariffs, Agencies
+function FullScreenLoader() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 text-sm font-medium text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+        Validando sesion...
+      </div>
+    </div>
+  );
+}
 
 function PrivateRoute({ children }) {
-  if (!isAuthenticated()) {
+  const { user, loading } = useAuthState();
+
+  if (loading) {
+    return <FullScreenLoader />;
+  }
+
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
+
   return children;
 }
 
 export default function App() {
   const navigate = useNavigate();
-  const adminUser = isAdmin();
+  const { user, loading } = useAuthState();
+  const adminUser = Boolean(user?.isAdmin);
 
-  const handleLogout = () => {
-    clearAuthToken();
-    navigate("/login");
-  };
+  const handleLogout = useCallback(
+    async ({ callServer = true } = {}) => {
+      try {
+        if (callServer) {
+          await api.post("/auth/logout", undefined, { skipAuthRedirect: true });
+        }
+      } catch {
+        // Clear client state even if the API cannot be reached.
+      } finally {
+        clearAuthState();
+        navigate("/login", { replace: true });
+      }
+    },
+    [navigate]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const bootstrapSession = async () => {
+      setAuthLoading(true);
+
+      try {
+        const currentUser = await api.get("/auth/me", { skipAuthRedirect: true });
+        if (!cancelled) {
+          setCurrentUser(currentUser);
+        }
+      } catch {
+        if (!cancelled) {
+          clearAuthState();
+        }
+      }
+    };
+
+    bootstrapSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const handleUnauthorized = () => {
-      // Prevent multiple alerts stacking
-      if (document.querySelector('.swal2-container')) return;
+      if (!user) {
+        clearAuthState();
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      if (document.querySelector(".swal2-container")) {
+        return;
+      }
 
       Swal.fire({
-        title: 'Sesión Expirada',
-        text: 'Tu sesión ha caducado por seguridad. Por favor ingresa nuevamente.',
-        icon: 'warning',
-        confirmButtonText: 'Entendido',
-        confirmButtonColor: '#4f46e5', // Indigo-600
+        title: "Sesion expirada",
+        text: "Tu sesion ya no es valida. Ingresa nuevamente para continuar.",
+        icon: "warning",
+        confirmButtonText: "Entendido",
+        confirmButtonColor: "#4f46e5",
         allowOutsideClick: false,
-        allowEscapeKey: false
+        allowEscapeKey: false,
       }).then(() => {
-        handleLogout();
+        handleLogout({ callServer: false });
       });
     };
 
-    window.addEventListener('auth:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
-  }, [navigate]);
+    const handleForcedLogout = (event) => {
+      handleLogout({ callServer: event?.detail?.callServer ?? false });
+    };
+
+    window.addEventListener("auth:unauthorized", handleUnauthorized);
+    window.addEventListener("auth:logout", handleForcedLogout);
+
+    return () => {
+      window.removeEventListener("auth:unauthorized", handleUnauthorized);
+      window.removeEventListener("auth:logout", handleForcedLogout);
+    };
+  }, [handleLogout, navigate, user]);
 
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/login"
+        element={loading ? <FullScreenLoader /> : user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+      />
       <Route
         path="/*"
         element={
@@ -81,18 +152,12 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/dashboard" element={<DashboardPage />} />
-
-                  {/* Core ERP Modules */}
                   <Route path="/reservas" element={<ReservasPage />} />
                   <Route path="/reservas/:publicId" element={<ReservaDetailPage />} />
-
                   <Route path="/customers" element={<CustomersPage />} />
                   <Route path="/customers/:publicId/account" element={<CustomerAccountPage />} />
-
                   <Route path="/suppliers" element={<SuppliersPage />} />
                   <Route path="/suppliers/:publicId/account" element={<SupplierAccountPage />} />
-
-                  {/* Treasury */}
                   <Route path="/payments" element={<PaymentsPage />}>
                     <Route index element={<Navigate to="/payments/collections" replace />} />
                     <Route path="collections" element={<PaymentsCollectionsPage />} />
@@ -104,8 +169,6 @@ export default function App() {
                   <Route path="/rates" element={<RatesPage />} />
                   <Route path="/quotes" element={<QuotesPage />} />
                   <Route path="/crm" element={adminUser ? <CRMPage /> : <Navigate to="/dashboard" replace />} />
-
-                  {/* Admin */}
                   <Route
                     path="/reports"
                     element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
@@ -122,10 +185,7 @@ export default function App() {
                     path="/payments/trash"
                     element={adminUser ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
                   />
-                  <Route
-                    path="/notifications"
-                    element={<NotificationsPage />}
-                  />
+                  <Route path="/notifications" element={<NotificationsPage />} />
                 </Routes>
               </Layout>
             </AlertsProvider>

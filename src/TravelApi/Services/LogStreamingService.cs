@@ -27,7 +27,7 @@ namespace TravelApi.Services
                     {
                         while (LogChannel.Reader.TryRead(out var logMessage))
                         {
-                            await _hubContext.Clients.All.SendAsync("ReceiveLog", logMessage, stoppingToken);
+                            await _hubContext.Clients.Group(LogsHub.AdminGroup).SendAsync("ReceiveLog", logMessage, stoppingToken);
                         }
                     }
                 }

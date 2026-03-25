@@ -1,38 +1,64 @@
-export function setAuthToken(token) {
-  localStorage.setItem("token", token);
+import { useSyncExternalStore } from "react";
+
+const listeners = new Set();
+
+let authState = {
+  user: null,
+  loading: true,
+};
+
+function emitChange() {
+  for (const listener of listeners) {
+    listener();
+  }
 }
 
-export function clearAuthToken() {
-  localStorage.removeItem("token");
+function subscribe(listener) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function getSnapshot() {
+  return authState;
+}
+
+export function useAuthState() {
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+export function setAuthLoading(loading) {
+  authState = { ...authState, loading };
+  emitChange();
+}
+
+export function setCurrentUser(user) {
+  authState = {
+    user,
+    loading: false,
+  };
+  emitChange();
+}
+
+export function clearAuthState() {
+  authState = {
+    user: null,
+    loading: false,
+  };
+  emitChange();
+}
+
+export function getCurrentUser() {
+  return authState.user;
 }
 
 export function isAuthenticated() {
-  return Boolean(localStorage.getItem("token"));
+  return Boolean(authState.user);
 }
 
 export function getUserRoles() {
-  const token = localStorage.getItem("token");
-  if (!token) {
-    return [];
-  }
-
-  const parts = token.split(".");
-  if (parts.length !== 3) {
-    return [];
-  }
-
-  try {
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-    const roles = payload["role"] ?? payload["roles"] ?? payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"];
-    if (!roles) {
-      return [];
-    }
-    return Array.isArray(roles) ? roles : [roles];
-  } catch {
-    return [];
-  }
+  return Array.isArray(authState.user?.roles) ? authState.user.roles : [];
 }
 
 export function isAdmin() {
-  return getUserRoles().includes("Admin");
+  return Boolean(authState.user?.isAdmin || getUserRoles().includes("Admin"));
 }

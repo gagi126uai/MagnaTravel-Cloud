@@ -32,6 +32,8 @@ namespace TravelApi.Services
                 try
                 {
                     var client = _httpClientFactory.CreateClient();
+                    var secret = _configuration["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+                    client.DefaultRequestHeaders.Add("X-Webhook-Secret", secret);
                     var response = await client.GetAsync($"{botUrl}/logs", stoppingToken);
                     
                     if (response.IsSuccessStatusCode)
@@ -43,7 +45,7 @@ namespace TravelApi.Services
                             {
                                 if (!_seenLogs.Contains(log))
                                 {
-                                    await _hubContext.Clients.All.SendAsync("ReceiveLog", $"[BOT] {log}", stoppingToken);
+                                    await _hubContext.Clients.Group(LogsHub.AdminGroup).SendAsync("ReceiveLog", $"[BOT] {log}", stoppingToken);
                                     _seenLogs.Add(log);
                                     
                                     // Limit cache size

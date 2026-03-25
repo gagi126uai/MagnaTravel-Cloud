@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.Contracts.Users;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -10,11 +11,16 @@ public class UserService : IUserService
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
+    private readonly AppDbContext _dbContext;
 
-    public UserService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
+    public UserService(
+        UserManager<ApplicationUser> userManager,
+        RoleManager<IdentityRole> roleManager,
+        AppDbContext dbContext)
     {
         _userManager = userManager;
         _roleManager = roleManager;
+        _dbContext = dbContext;
     }
 
     public async Task<IEnumerable<UserSummaryResponse>> GetUsersAsync()
@@ -91,7 +97,7 @@ public class UserService : IUserService
         var result = await _userManager.CreateAsync(user, request.Password);
         if (!result.Succeeded)
         {
-            throw new Exception(string.Join(", ", result.Errors.Select(e => e.Description)));
+            throw new InvalidOperationException(string.Join(", ", result.Errors.Select(e => e.Description)));
         }
 
         if (!string.IsNullOrWhiteSpace(request.Role))
@@ -99,7 +105,7 @@ public class UserService : IUserService
             var roleResult = await _userManager.AddToRoleAsync(user, request.Role);
             if (!roleResult.Succeeded)
             {
-                throw new Exception(string.Join(", ", roleResult.Errors.Select(e => e.Description)));
+                throw new InvalidOperationException(string.Join(", ", roleResult.Errors.Select(e => e.Description)));
             }
         }
 
@@ -116,6 +122,7 @@ public class UserService : IUserService
     {
         var user = await _userManager.FindByIdAsync(id);
         if (user is null) throw new KeyNotFoundException("Usuario no encontrado");
+        var wasActive = user.IsActive;
 
         user.FullName = request.FullName;
         user.Email = request.Email;
@@ -125,19 +132,20 @@ public class UserService : IUserService
         var updateResult = await _userManager.UpdateAsync(user);
         if (!updateResult.Succeeded)
         {
-            throw new Exception(string.Join(", ", updateResult.Errors.Select(e => e.Description)));
+            throw new InvalidOperationException(string.Join(", ", updateResult.Errors.Select(e => e.Description)));
         }
 
         var currentRoles = await _userManager.GetRolesAsync(user);
         if (!string.IsNullOrWhiteSpace(request.Role))
         {
             var removeRoles = currentRoles.Where(role => role != request.Role).ToList();
+            var rolesChanged = removeRoles.Count > 0 || !currentRoles.Contains(request.Role);
             if (removeRoles.Count > 0)
             {
                 var removeResult = await _userManager.RemoveFromRolesAsync(user, removeRoles);
                 if (!removeResult.Succeeded)
                 {
-                    throw new Exception(string.Join(", ", removeResult.Errors.Select(e => e.Description)));
+                    throw new InvalidOperationException(string.Join(", ", removeResult.Errors.Select(e => e.Description)));
                 }
             }
 
@@ -146,9 +154,19 @@ public class UserService : IUserService
                 var addResult = await _userManager.AddToRoleAsync(user, request.Role);
                 if (!addResult.Succeeded)
                 {
-                    throw new Exception(string.Join(", ", addResult.Errors.Select(e => e.Description)));
+                    throw new InvalidOperationException(string.Join(", ", addResult.Errors.Select(e => e.Description)));
                 }
             }
+
+            if (rolesChanged)
+            {
+                await RevokeAllRefreshTokensAsync(user.Id);
+            }
+        }
+
+        if (wasActive && !request.IsActive)
+        {
+            await RevokeAllRefreshTokensAsync(user.Id);
         }
 
         var roles = await _userManager.GetRolesAsync(user);
@@ -175,6 +193,10 @@ public class UserService : IUserService
 
         var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
         var result = await _userManager.ResetPasswordAsync(user, resetToken, request.NewPassword);
+        if (result.Succeeded)
+        {
+            await RevokeAllRefreshTokensAsync(user.Id);
+        }
         return new UserServiceResult(result.Succeeded, result.Errors.Select(e => e.Description));
     }
 
@@ -188,5 +210,24 @@ public class UserService : IUserService
 
         var result = await _userManager.DeleteAsync(user);
         return new UserServiceResult(result.Succeeded, result.Errors.Select(e => e.Description));
+    }
+
+    private async Task RevokeAllRefreshTokensAsync(string userId)
+    {
+        var tokens = await _dbContext.RefreshTokens
+            .Where(token => token.UserId == userId && token.RevokedAt == null && token.ExpiresAt > DateTime.UtcNow)
+            .ToListAsync();
+
+        if (tokens.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var token in tokens)
+        {
+            token.RevokedAt = DateTime.UtcNow;
+        }
+
+        await _dbContext.SaveChangesAsync();
     }
 }

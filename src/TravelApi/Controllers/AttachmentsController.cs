@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -32,6 +33,7 @@ public class AttachmentsController : ControllerBase
     }
 
     [HttpPost("upload/{reservaPublicIdOrLegacyId}")]
+    [EnableRateLimiting("uploads")]
     public async Task<ActionResult> UploadAttachment(string reservaPublicIdOrLegacyId, IFormFile file, CancellationToken cancellationToken)
     {
         if (file == null || file.Length == 0)
@@ -51,13 +53,17 @@ public class AttachmentsController : ControllerBase
                 cancellationToken);
             return Ok(attachment);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (Exception ex)
+        catch (InvalidOperationException)
         {
-            return StatusCode(500, $"Error uploading attachment: {ex.Message}");
+            return BadRequest(new { message = "El archivo adjunto es invalido o no esta permitido." });
+        }
+        catch
+        {
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo cargar el archivo adjunto.");
         }
     }
 
@@ -76,7 +82,8 @@ public class AttachmentsController : ControllerBase
         }
         catch (FileNotFoundException ex)
         {
-            return NotFound(ex.Message);
+            _logger.LogWarning(ex, "Attachment file missing on disk for id {AttachmentId}", publicIdOrLegacyId);
+            return NotFound();
         }
     }
 

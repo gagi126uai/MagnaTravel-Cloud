@@ -39,13 +39,13 @@ public class PackageBookingsController : ControllerBase
             var package = await _bookingService.CreatePackageAsync(resolvedReservaId, req, ct);
             return Ok(package);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error creando paquete: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el paquete.");
         }
     }
 
@@ -60,13 +60,13 @@ public class PackageBookingsController : ControllerBase
             var package = await _bookingService.UpdatePackageAsync(resolvedReservaId, resolvedPackageId, req, ct);
             return Ok(package);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando paquete: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el paquete.");
         }
     }
 
@@ -81,13 +81,13 @@ public class PackageBookingsController : ControllerBase
             await _bookingService.DeletePackageAsync(resolvedReservaId, resolvedPackageId, ct);
             return Ok();
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-             return StatusCode(500, $"Error eliminando paquete: {ex.Message}");
+             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el paquete.");
         }
     }
 }

@@ -39,13 +39,13 @@ public class FlightSegmentsController : ControllerBase
             var flight = await _bookingService.CreateFlightAsync(resolvedReservaId, req, ct);
             return Ok(flight);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-             return StatusCode(500, $"Error creando vuelo: {ex.Message}");
+             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el vuelo.");
         }
     }
 
@@ -60,13 +60,13 @@ public class FlightSegmentsController : ControllerBase
             var flight = await _bookingService.UpdateFlightAsync(resolvedReservaId, resolvedFlightId, req, ct);
             return Ok(flight);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando vuelo: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el vuelo.");
         }
     }
 
@@ -81,13 +81,13 @@ public class FlightSegmentsController : ControllerBase
             await _bookingService.DeleteFlightAsync(resolvedReservaId, resolvedFlightId, ct);
             return Ok();
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error eliminando vuelo: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el vuelo.");
         }
     }
 }

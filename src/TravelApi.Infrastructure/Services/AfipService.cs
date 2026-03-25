@@ -30,6 +30,7 @@ public class AfipService : IAfipService
     private readonly AppDbContext _context;
     private readonly ILogger<AfipService> _logger;
     private readonly HttpClient _httpClient;
+    private readonly ISensitiveDataProtector _sensitiveDataProtector;
 
     // URLs (TODO: move to config)
     private const string WsaaUrlDev = "https://wsaahomo.afip.gov.ar/ws/services/LoginCms";
@@ -39,11 +40,49 @@ public class AfipService : IAfipService
     private const string WsPadronUrlDev = "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA5";
     private const string WsPadronUrlProd = "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5";
 
-    public AfipService(AppDbContext context, ILogger<AfipService> logger, HttpClient httpClient)
+    public AfipService(
+        AppDbContext context,
+        ILogger<AfipService> logger,
+        HttpClient httpClient,
+        ISensitiveDataProtector sensitiveDataProtector)
     {
         _context = context;
         _logger = logger;
         _httpClient = httpClient;
+        _sensitiveDataProtector = sensitiveDataProtector;
+    }
+
+    private byte[]? GetCertificateData(AfipSettings settings) => _sensitiveDataProtector.UnprotectBytes(settings.CertificateData);
+
+    private string? GetCertificatePassword(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.CertificatePassword);
+
+    private string? GetAuthToken(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.Token);
+
+    private string? GetAuthSign(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.Sign);
+
+    private string? GetPadronToken(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.PadronToken);
+
+    private string? GetPadronSign(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.PadronSign);
+
+    private AfipSettings MapDecryptedSettings(AfipSettings settings)
+    {
+        return new AfipSettings
+        {
+            Id = settings.Id,
+            Cuit = settings.Cuit,
+            PuntoDeVenta = settings.PuntoDeVenta,
+            IsProduction = settings.IsProduction,
+            CertificatePath = settings.CertificatePath,
+            CertificateData = GetCertificateData(settings),
+            CertificatePassword = GetCertificatePassword(settings),
+            Token = GetAuthToken(settings),
+            Sign = GetAuthSign(settings),
+            TokenExpiration = settings.TokenExpiration,
+            PadronToken = GetPadronToken(settings),
+            PadronSign = GetPadronSign(settings),
+            PadronTokenExpiration = settings.PadronTokenExpiration,
+            TaxCondition = settings.TaxCondition
+        };
     }
 
     public Task<bool> ValidateCertificate(byte[] certData, string password)
@@ -67,8 +106,9 @@ public class AfipService : IAfipService
         try
         {
             var settings = await _context.AfipSettings.FirstOrDefaultAsync();
+            var certificateData = settings is null ? null : GetCertificateData(settings);
             if (settings == null) return "No Configurado";
-            if (settings.CertificateData == null || settings.CertificateData.Length == 0) return "Certificado Faltante";
+            if (certificateData == null || certificateData.Length == 0) return "Certificado Faltante";
 
             // Token Validity Check (Handle potential Timezone mismatch from previous saves)
             // Existing data might be stored as Argentina Time (e.g. 18:00) but without offset.
@@ -78,7 +118,7 @@ public class AfipService : IAfipService
             
             bool isValid = false;
             
-            if (!string.IsNullOrEmpty(settings.Token))
+            if (!string.IsNullOrEmpty(GetAuthToken(settings)))
             {
                  if (settings.TokenExpiration > DateTime.UtcNow) 
                  {
@@ -105,13 +145,14 @@ public class AfipService : IAfipService
         catch (Exception ex)
         {
             _logger.LogError(ex, "AFIP Status Error");
-            return $"Error: {ex.Message}";
+            return "Error de conexion o autenticacion";
         }
     }
 
     public async Task<AfipSettings?> GetSettingsAsync()
     {
-        return await _context.AfipSettings.FirstOrDefaultAsync();
+        var settings = await _context.AfipSettings.AsNoTracking().FirstOrDefaultAsync();
+        return settings is null ? null : MapDecryptedSettings(settings);
     }
 
     public async Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, byte[]? certificateData, string? certificateFileName, string? password)
@@ -130,23 +171,23 @@ public class AfipService : IAfipService
 
         if (certificateData != null)
         {
-            var certPassword = !string.IsNullOrEmpty(password) ? password : settings.CertificatePassword;
+            var certPassword = !string.IsNullOrEmpty(password) ? password : GetCertificatePassword(settings);
             if (!await ValidateCertificate(certificateData, certPassword ?? ""))
             {
                 throw new ArgumentException("El certificado es inválido o la contraseña es incorrecta. Asegurate de que sea un archivo .pfx válido.");
             }
 
-            settings.CertificateData = certificateData;
+            settings.CertificateData = _sensitiveDataProtector.ProtectBytes(certificateData);
             settings.CertificatePath = certificateFileName;
         }
 
         if (!string.IsNullOrEmpty(password))
         {
-            settings.CertificatePassword = password;
+            settings.CertificatePassword = _sensitiveDataProtector.ProtectString(password);
         }
 
         await _context.SaveChangesAsync();
-        return settings;
+        return MapDecryptedSettings(settings);
     }
 
     private async Task<string> CheckWsfeStatus(AfipSettings settings)
@@ -172,8 +213,8 @@ public class AfipService : IAfipService
   <soap:Body>
     <FECompUltimoAutorizado xmlns=""http://ar.gov.afip.dif.FEV1/"">
       <Auth>
-        <Token>{settings.Token}</Token>
-        <Sign>{settings.Sign}</Sign>
+        <Token>{GetAuthToken(settings)}</Token>
+        <Sign>{GetAuthSign(settings)}</Sign>
         <Cuit>{settings.Cuit}</Cuit>
       </Auth>
       <PtoVta>{settings.PuntoDeVenta}</PtoVta>
@@ -210,12 +251,14 @@ public class AfipService : IAfipService
     private async Task EnsureAuth(AfipSettings settings)
     {
         // ... (Certificate checks) ...
-        if (settings.CertificateData == null) throw new Exception("Certificado no configurado");
+        var certificateData = GetCertificateData(settings);
+        var certificatePassword = GetCertificatePassword(settings);
+        if (certificateData == null) throw new Exception("Certificado no configurado");
 
         try 
         {
             // 1. Load Certificate
-            var cert = new X509Certificate2(settings.CertificateData, settings.CertificatePassword, X509KeyStorageFlags.Exportable);
+            var cert = new X509Certificate2(certificateData, certificatePassword, X509KeyStorageFlags.Exportable);
 
             // 2. Create Login Ticket
             // UniqueId must be 32-bit unsigned int
@@ -286,7 +329,7 @@ public class AfipService : IAfipService
                 // Handle "Already Authenticated" - If we have a token, assume it's valid
                 if (faultCode != null && faultCode.Contains("alreadyAuthenticated"))
                 {
-                     if (!string.IsNullOrEmpty(settings.Token)) 
+                     if (!string.IsNullOrEmpty(GetAuthToken(settings))) 
                      {
                         _logger.LogWarning("AFIP reported alreadyAuthenticated. Using existing local token.");
                         return;
@@ -329,8 +372,8 @@ public class AfipService : IAfipService
             // So 17:00 ART + 3 = 20:00 UTC.
             
             // 6. Save to DB
-            settings.Token = token;
-            settings.Sign = sign;
+            settings.Token = _sensitiveDataProtector.ProtectString(token);
+            settings.Sign = _sensitiveDataProtector.ProtectString(sign);
             settings.TokenExpiration = expirationUtc;
             
             try 
@@ -640,8 +683,8 @@ public class AfipService : IAfipService
       <soap:Body>
         <FECAESolicitar xmlns=""http://ar.gov.afip.dif.FEV1/"">
           <Auth>
-            <Token>{settings.Token}</Token>
-            <Sign>{settings.Sign}</Sign>
+            <Token>{GetAuthToken(settings)}</Token>
+            <Sign>{GetAuthSign(settings)}</Sign>
             <Cuit>{settings.Cuit}</Cuit>
           </Auth>
           <FeCAEReq>
@@ -875,8 +918,8 @@ public class AfipService : IAfipService
   <soap:Body>
     <FECompUltimoAutorizado xmlns=""http://ar.gov.afip.dif.FEV1/"">
       <Auth>
-        <Token>{settings.Token}</Token>
-        <Sign>{settings.Sign}</Sign>
+        <Token>{GetAuthToken(settings)}</Token>
+        <Sign>{GetAuthSign(settings)}</Sign>
         <Cuit>{settings.Cuit}</Cuit>
       </Auth>
       <PtoVta>{settings.PuntoDeVenta}</PtoVta>
@@ -923,8 +966,8 @@ public class AfipService : IAfipService
   <soap:Body>
     <FECompConsultar xmlns=""http://ar.gov.afip.dif.FEV1/"">
       <Auth>
-        <Token>{settings.Token}</Token>
-        <Sign>{settings.Sign}</Sign>
+        <Token>{GetAuthToken(settings)}</Token>
+        <Sign>{GetAuthSign(settings)}</Sign>
         <Cuit>{settings.Cuit}</Cuit>
       </Auth>
       <FeCompConsReq>
@@ -1025,7 +1068,7 @@ public class AfipService : IAfipService
     public async Task<object?> GetPersonaDetailsAsync(long cuit)
     {
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
-        if (settings == null || settings.CertificateData == null)
+        if (settings == null || GetCertificateData(settings) == null)
             throw new Exception("AFIP no configurado o certificado faltante.");
 
         // We need a specific token for ws_sr_padron_a5, not wsfe.
@@ -1140,15 +1183,15 @@ public class AfipService : IAfipService
     private async Task<(string token, string sign)> GetPadronAuth(AfipSettings settings)
     {
         // 1. Check valid cached token
-        if (!string.IsNullOrEmpty(settings.PadronToken) && !string.IsNullOrEmpty(settings.PadronSign))
+        if (!string.IsNullOrEmpty(GetPadronToken(settings)) && !string.IsNullOrEmpty(GetPadronSign(settings)))
         {
             if (settings.PadronTokenExpiration.HasValue && settings.PadronTokenExpiration.Value > DateTime.UtcNow.AddMinutes(5))
             {
-                return (settings.PadronToken, settings.PadronSign);
+                return (GetPadronToken(settings)!, GetPadronSign(settings)!);
             }
         }
 
-        var cert = new X509Certificate2(settings.CertificateData, settings.CertificatePassword, X509KeyStorageFlags.Exportable);
+        var cert = new X509Certificate2(GetCertificateData(settings), GetCertificatePassword(settings), X509KeyStorageFlags.Exportable);
         var uniqueId = (uint)(DateTime.UtcNow.Ticks % uint.MaxValue);
         var argentinaTime = DateTime.UtcNow.AddHours(-3);
         
@@ -1227,8 +1270,8 @@ public class AfipService : IAfipService
         var expirationLocal = DateTime.Parse(expirationStr);
         var expirationUtc = DateTime.SpecifyKind(expirationLocal.AddHours(3), DateTimeKind.Utc);
 
-        settings.PadronToken = token;
-        settings.PadronSign = sign;
+        settings.PadronToken = _sensitiveDataProtector.ProtectString(token);
+        settings.PadronSign = _sensitiveDataProtector.ProtectString(sign);
         settings.PadronTokenExpiration = expirationUtc;
 
         try

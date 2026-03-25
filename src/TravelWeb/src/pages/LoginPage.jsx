@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiRequest } from "../api";
-import { setAuthToken } from "../auth";
+import { api } from "../api";
+import { setCurrentUser } from "../auth";
 import { showError, showSuccess } from "../alerts";
 import { Mail, Lock, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
 import clsx from "clsx";
@@ -19,21 +19,17 @@ export default function LoginPage() {
 
     setIsLoading(true);
     try {
-      const response = await apiRequest("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
+      const response = await api.post("/auth/login", {
+        email,
+        password,
+        rememberMe: keepSignedIn,
       });
 
-      setAuthToken(response.token);
-
-      if (keepSignedIn) {
-        localStorage.setItem("keepSignedIn", "true");
-      }
-
-      await showSuccess("Bienvenido de nuevo.");
+      setCurrentUser(response.user);
+      showSuccess("Bienvenido de nuevo.");
       navigate("/dashboard");
     } catch (err) {
-      await showError(err.message || "Credenciales incorrectas o error de conexion.");
+      showError(err.message || "Credenciales incorrectas o error de conexion.");
     } finally {
       setIsLoading(false);
     }

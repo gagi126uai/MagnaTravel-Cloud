@@ -18,17 +18,20 @@ public class ReservasController : ControllerBase
     private readonly IVoucherService _voucherService;
     private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
     private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly ILogger<ReservasController> _logger;
 
     public ReservasController(
         IReservaService reservaService,
         IVoucherService voucherService,
         IWhatsAppDeliveryService whatsAppDeliveryService,
-        EntityReferenceResolver entityReferenceResolver)
+        EntityReferenceResolver entityReferenceResolver,
+        ILogger<ReservasController> logger)
     {
         _reservaService = reservaService;
         _voucherService = voucherService;
         _whatsAppDeliveryService = whatsAppDeliveryService;
         _entityReferenceResolver = entityReferenceResolver;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -41,7 +44,8 @@ public class ReservasController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { Error = ex.Message, Stack = ex.ToString() });
+            _logger.LogError(ex, "Unexpected error getting reservas");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudieron obtener las reservas.");
         }
     }
 
@@ -54,13 +58,14 @@ public class ReservasController : ControllerBase
             var dto = await _reservaService.GetReservaByIdAsync(id);
             return Ok(dto);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { Error = ex.Message, Stack = ex.StackTrace });
+            _logger.LogError(ex, "Unexpected error getting reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener la reserva.");
         }
     }
 
@@ -76,7 +81,8 @@ public class ReservasController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error creando reserva: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error creating reserva");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear la reserva.");
         }
     }
 
@@ -92,17 +98,18 @@ public class ReservasController : ControllerBase
                 
             return Ok(servicio);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo agregar el servicio." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error agregando servicio: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error adding service to reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo agregar el servicio.");
         }
     }
 
@@ -115,17 +122,18 @@ public class ReservasController : ControllerBase
             var service = await _reservaService.UpdateServiceAsync(serviceId, request);
             return Ok(service);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el servicio." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando servicio: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error updating service {ServiceId}", servicePublicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el servicio.");
         }
     }
 
@@ -144,7 +152,8 @@ public class ReservasController : ControllerBase
         }
         catch (Exception ex)
         {
-             return StatusCode(500, $"Error eliminando servicio: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error removing service {ServiceId}", servicePublicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el servicio.");
         }
     }
 
@@ -158,48 +167,50 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/passengers")]
-    public async Task<ActionResult> AddPassenger(string publicIdOrLegacyId, Passenger passenger)
+    public async Task<ActionResult> AddPassenger(string publicIdOrLegacyId, PassengerUpsertRequest passenger)
     {
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.AddPassengerAsync(id, passenger);
+            var dto = await _reservaService.AddPassengerAsync(id, MapPassenger(passenger));
             return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId }, dto);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo agregar el pasajero." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error agregando pasajero: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error adding passenger to reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo agregar el pasajero.");
         }
     }
 
     [HttpPut("passengers/{passengerPublicIdOrLegacyId}")]
-    public async Task<ActionResult> UpdatePassenger(string passengerPublicIdOrLegacyId, Passenger updated)
+    public async Task<ActionResult> UpdatePassenger(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated)
     {
         try
         {
             var passengerId = await _entityReferenceResolver.ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.UpdatePassengerAsync(passengerId, updated);
+            var dto = await _reservaService.UpdatePassengerAsync(passengerId, MapPassenger(updated));
             return Ok(dto);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el pasajero." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando pasajero: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error updating passenger {PassengerId}", passengerPublicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el pasajero.");
         }
     }
 
@@ -218,7 +229,8 @@ public class ReservasController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error eliminando pasajero: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error removing passenger {PassengerId}", passengerPublicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el pasajero.");
         }
     }
 
@@ -232,49 +244,51 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/payments")]
-    public async Task<ActionResult> AddPayment(string publicIdOrLegacyId, Payment payment)
+    public async Task<ActionResult> AddPayment(string publicIdOrLegacyId, PaymentUpsertRequest payment)
     {
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.AddPaymentAsync(id, payment);
+            var dto = await _reservaService.AddPaymentAsync(id, MapPayment(payment));
             return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId }, dto);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo registrar el pago." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error registrando pago: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error adding payment to reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo registrar el pago.");
         }
     }
 
     [HttpPut("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
-    public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, Payment updatedPayment)
+    public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, PaymentUpsertRequest updatedPayment)
     {
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
             var paymentId = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.UpdatePaymentAsync(id, paymentId, updatedPayment);
+            var dto = await _reservaService.UpdatePaymentAsync(id, paymentId, MapPayment(updatedPayment));
             return Ok(dto);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el pago." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando pago: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error updating payment {PaymentId} for reserva {ReservaId}", paymentPublicIdOrLegacyId, publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el pago.");
         }
     }
 
@@ -288,17 +302,18 @@ public class ReservasController : ControllerBase
             await _reservaService.DeletePaymentAsync(id, paymentId);
             return Ok();
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo eliminar el pago." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error eliminando pago: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error deleting payment {PaymentId} for reserva {ReservaId}", paymentPublicIdOrLegacyId, publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el pago.");
         }
     }
 
@@ -316,21 +331,22 @@ public class ReservasController : ControllerBase
             }
             return Ok(reserva);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar el estado de la reserva." });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-             return BadRequest(ex.Message);
+             return BadRequest(new { message = "No se pudo actualizar el estado de la reserva." });
         }
         catch (Exception ex)
         {
-             return StatusCode(500, $"Error actualizando estado: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error updating status for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el estado de la reserva.");
         }
     }
 
@@ -343,13 +359,14 @@ public class ReservasController : ControllerBase
             var reserva = await _reservaService.ArchiveReservaAsync(id);
             return Ok(reserva);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error archivando reserva: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error archiving reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo archivar la reserva.");
         }
     }
 
@@ -362,17 +379,18 @@ public class ReservasController : ControllerBase
             await _reservaService.DeleteReservaAsync(id);
             return Ok();
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo eliminar la reserva." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error eliminando reserva: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error deleting reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar la reserva.");
         }
     }
 
@@ -386,13 +404,14 @@ public class ReservasController : ControllerBase
             var html = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
             return File(html, "text/html", $"voucher-{publicIdOrLegacyId}.html");
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error generando voucher: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error generating voucher for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo generar el voucher.");
         }
     }
 
@@ -405,13 +424,14 @@ public class ReservasController : ControllerBase
             var pdf = await _voucherService.GenerateVoucherPdfAsync(id, cancellationToken);
             return File(pdf, "application/pdf", $"voucher-{publicIdOrLegacyId}.pdf");
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error generando voucher PDF: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error generating voucher PDF for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo generar el voucher PDF.");
         }
     }
 
@@ -430,13 +450,14 @@ public class ReservasController : ControllerBase
                 cancellationToken);
             return Ok(preview);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error actualizando contacto WhatsApp: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error updating WhatsApp contact for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el contacto de WhatsApp.");
         }
     }
 
@@ -449,13 +470,14 @@ public class ReservasController : ControllerBase
             var preview = await _whatsAppDeliveryService.GetVoucherPreviewAsync(id, cancellationToken);
             return Ok(preview);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error obteniendo preview WhatsApp: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error getting WhatsApp preview for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener la vista previa del voucher.");
         }
     }
 
@@ -472,17 +494,18 @@ public class ReservasController : ControllerBase
             var delivery = await _whatsAppDeliveryService.SendVoucherAsync(id, request.Caption, performedBy, cancellationToken);
             return Ok(delivery);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo enviar el voucher por WhatsApp." });
         }
         catch (Exception ex)
         {
-            return StatusCode(502, new { message = ex.Message });
+            _logger.LogError(ex, "Unexpected error sending WhatsApp voucher for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo enviar el voucher por WhatsApp.");
         }
     }
 
@@ -497,9 +520,54 @@ public class ReservasController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error obteniendo historial WhatsApp: {ex.Message}");
+            _logger.LogError(ex, "Unexpected error getting WhatsApp history for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el historial de WhatsApp.");
         }
+    }
+
+    private static Passenger MapPassenger(PassengerUpsertRequest passenger)
+    {
+        return new Passenger
+        {
+            FullName = passenger.FullName,
+            DocumentType = passenger.DocumentType,
+            DocumentNumber = passenger.DocumentNumber,
+            BirthDate = passenger.BirthDate,
+            Nationality = passenger.Nationality,
+            Phone = passenger.Phone,
+            Email = passenger.Email,
+            Gender = passenger.Gender,
+            Notes = passenger.Notes
+        };
+    }
+
+    private static Payment MapPayment(PaymentUpsertRequest payment)
+    {
+        return new Payment
+        {
+            Amount = payment.Amount,
+            PaidAt = payment.PaidAt,
+            Method = payment.Method,
+            Reference = payment.Reference,
+            Notes = payment.Notes
+        };
     }
 }
 
 public record UpdateStatusDto(string Status);
+public record PassengerUpsertRequest(
+    string FullName,
+    string? DocumentType,
+    string? DocumentNumber,
+    DateTime? BirthDate,
+    string? Nationality,
+    string? Phone,
+    string? Email,
+    string? Gender,
+    string? Notes);
+public record PaymentUpsertRequest(
+    decimal Amount,
+    DateTime PaidAt,
+    string Method,
+    string? Reference,
+    string? Notes);

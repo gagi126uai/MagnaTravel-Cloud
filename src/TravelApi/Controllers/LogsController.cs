@@ -36,9 +36,9 @@ namespace TravelApi.Controllers
                 var lines = ReadLastLines(latestFile, 100);
                 return Ok(lines.Select(l => $"[API] {l}"));
             }
-            catch (Exception ex)
+            catch
             {
-                return BadRequest(ex.Message);
+                return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudieron leer los logs de API.");
             }
         }
 
@@ -48,7 +48,9 @@ namespace TravelApi.Controllers
             try
             {
                 var botUrl = _configuration["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
+                var secret = _configuration["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
                 var client = _httpClientFactory.CreateClient();
+                client.DefaultRequestHeaders.Add("X-Webhook-Secret", secret);
                 var response = await client.GetAsync($"{botUrl}/logs");
                 
                 if (response.IsSuccessStatusCode)

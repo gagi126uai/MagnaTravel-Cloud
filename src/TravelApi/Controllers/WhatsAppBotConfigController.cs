@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -12,15 +14,23 @@ namespace TravelApi.Controllers;
 public class WhatsAppBotConfigController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IConfiguration _configuration;
 
-    public WhatsAppBotConfigController(AppDbContext db)
+    public WhatsAppBotConfigController(AppDbContext db, IConfiguration configuration)
     {
         _db = db;
+        _configuration = configuration;
     }
 
     [HttpGet("env")]
+    [AllowAnonymous]
     public async Task<ActionResult> GetBotEnv()
     {
+        if (!IsInternalBotRequest())
+        {
+            return Unauthorized();
+        }
+
         var config = await _db.WhatsAppBotConfigs.FirstOrDefaultAsync() ?? new WhatsAppBotConfig();
         var agency = await _db.AgencySettings.FirstOrDefaultAsync() ?? new AgencySettings();
         
@@ -64,5 +74,19 @@ public class WhatsAppBotConfigController : ControllerBase
 
         await _db.SaveChangesAsync();
         return NoContent();
+    }
+
+    private bool IsInternalBotRequest()
+    {
+        var expected = _configuration["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+        var provided = Request.Headers["X-Webhook-Secret"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(provided))
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(expected),
+            Encoding.UTF8.GetBytes(provided));
     }
 }

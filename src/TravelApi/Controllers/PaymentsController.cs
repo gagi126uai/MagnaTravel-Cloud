@@ -60,9 +60,9 @@ public class PaymentsController : ControllerBase
             var payment = await _paymentService.CreatePaymentAsync(request, cancellationToken);
             return CreatedAtAction(nameof(GetPaymentsForReserva), new { reservaPublicIdOrLegacyId = request.ReservaId }, payment);
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo registrar el pago." });
         }
     }
 
@@ -75,13 +75,13 @@ public class PaymentsController : ControllerBase
             var receipt = await _paymentService.IssueReceiptAsync(id, cancellationToken);
             return Ok(receipt);
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo emitir el comprobante del pago." });
         }
     }
 
@@ -94,13 +94,13 @@ public class PaymentsController : ControllerBase
             var pdf = await _paymentService.GetReceiptPdfAsync(id, cancellationToken);
             return File(pdf, "application/pdf", $"recibo-pago-{publicIdOrLegacyId}.pdf");
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo generar el PDF del comprobante." });
         }
     }
 
@@ -128,9 +128,9 @@ public class PaymentsController : ControllerBase
             var paymentPublicId = await _paymentService.RestorePaymentAsync(id, cancellationToken);
             return Ok(new { message = "Pago restaurado correctamente.", paymentPublicId });
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
     }
 }

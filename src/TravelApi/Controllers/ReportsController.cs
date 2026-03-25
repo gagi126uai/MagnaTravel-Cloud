@@ -69,6 +69,7 @@ public class ReportsController : ControllerBase
     /// Obtener configuración de la agencia
     /// </summary>
     [HttpGet("settings")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult> GetAgencySettings(CancellationToken cancellationToken)
     {
         var settings = await _reportService.GetAgencySettingsAsync(cancellationToken);
@@ -80,9 +81,9 @@ public class ReportsController : ControllerBase
     /// </summary>
     [HttpPut("settings")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult> UpdateAgencySettings([FromBody] AgencySettings updated, CancellationToken cancellationToken)
+    public async Task<ActionResult> UpdateAgencySettings([FromBody] AgencySettingsUpsertRequest updated, CancellationToken cancellationToken)
     {
-        var settings = await _reportService.UpdateAgencySettingsAsync(updated, cancellationToken);
+        var settings = await _reportService.UpdateAgencySettingsAsync(MapAgencySettings(updated), cancellationToken);
         return Ok(settings);
     }
 
@@ -122,4 +123,33 @@ public class ReportsController : ControllerBase
         var result = await _reportService.GetYearOverYearAsync(cancellationToken);
         return Ok(result);
     }
+
+    private static AgencySettings MapAgencySettings(AgencySettingsUpsertRequest request)
+    {
+        return new AgencySettings
+        {
+            AgencyName = request.AgencyName,
+            LegalName = request.LegalName,
+            TaxCondition = request.TaxCondition,
+            ActivityStartDate = request.ActivityStartDate,
+            TaxId = request.TaxId,
+            Address = request.Address,
+            Phone = request.Phone,
+            Email = request.Email,
+            DefaultCommissionPercent = request.DefaultCommissionPercent,
+            Currency = request.Currency
+        };
+    }
 }
+
+public record AgencySettingsUpsertRequest(
+    string AgencyName,
+    string? LegalName,
+    string? TaxCondition,
+    DateTime? ActivityStartDate,
+    string? TaxId,
+    string? Address,
+    string? Phone,
+    string? Email,
+    decimal DefaultCommissionPercent,
+    string Currency);

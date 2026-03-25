@@ -52,9 +52,9 @@ public class TreasuryController : ControllerBase
             var movement = await _treasuryService.CreateManualMovementAsync(request, createdBy, cancellationToken);
             return Ok(movement);
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo registrar el movimiento manual." });
         }
     }
 
@@ -70,17 +70,17 @@ public class TreasuryController : ControllerBase
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<ManualCashMovement>(publicIdOrLegacyId, cancellationToken);
             return Ok(await _treasuryService.UpdateManualMovementAsync(id, request, cancellationToken));
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo actualizar el movimiento manual." });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo actualizar el movimiento manual." });
         }
     }
 
@@ -94,9 +94,9 @@ public class TreasuryController : ControllerBase
             await _treasuryService.DeleteManualMovementAsync(id, cancellationToken);
             return NoContent();
         }
-        catch (KeyNotFoundException ex)
+        catch (KeyNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound();
         }
     }
 }

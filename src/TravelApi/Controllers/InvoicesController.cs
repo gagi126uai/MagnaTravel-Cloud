@@ -51,9 +51,13 @@ public class InvoicesController : ControllerBase
             var invoice = await _invoiceService.CreateAsync(request, userId, userName, ct);
             return Accepted(invoice);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo generar la factura." });
+        }
+        catch
+        {
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo generar la factura.");
         }
     }
 
@@ -68,9 +72,9 @@ public class InvoicesController : ControllerBase
 
             return Accepted(new { message = "Reintento encolado." });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "La factura no pudo reintentarse." });
         }
     }
 
@@ -95,13 +99,13 @@ public class InvoicesController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = "No se pudo generar el PDF de la factura." });
         }
-        catch (Exception ex)
+        catch
         {
-            return StatusCode(500, new { message = $"Error generando PDF: {ex.Message}" });
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo generar el PDF de la factura.");
         }
     }
 

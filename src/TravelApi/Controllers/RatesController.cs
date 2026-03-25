@@ -76,9 +76,9 @@ public class RatesController : ControllerBase
             var rate = await _rateService.CreateAsync(req, ct);
             return Ok(rate);
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo crear la tarifa." });
         }
     }
 
@@ -92,9 +92,9 @@ public class RatesController : ControllerBase
             if (rate == null) return NotFound();
             return Ok(rate);
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = "No se pudo actualizar la tarifa." });
         }
     }
 
