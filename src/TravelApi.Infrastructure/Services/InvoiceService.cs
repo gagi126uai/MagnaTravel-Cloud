@@ -89,33 +89,64 @@ public class InvoiceService : IInvoiceService
 
     public async Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct)
     {
-        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        var workItemsQuery = BuildInvoicingWorkItemsQuery(settings);
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
         var approvedInvoices = _context.Invoices
             .AsNoTracking()
             .Where(i => i.Resultado == "A");
 
-        return new InvoicingSummaryDto
-        {
-            ReadyAmount = Math.Round(await workItemsQuery
-                .Where(item => item.FiscalStatus == "ready")
-                .Select(item => item.PendingFiscalAmount)
-                .DefaultIfEmpty(0m)
-                .SumAsync(ct), 2),
-            ReadyCount = await workItemsQuery.CountAsync(item => item.FiscalStatus == "ready", ct),
-            BlockedCount = await workItemsQuery.CountAsync(
-                item => item.FiscalStatus == "blocked" || item.FiscalStatus == "override",
-                ct),
-            InvoicedThisMonth = Math.Round(await approvedInvoices
-                .Where(invoice => invoice.CreatedAt >= startOfMonth)
-                .Select(invoice =>
+        var invoiceTotalsByReserva = approvedInvoices
+            .GroupBy(invoice => invoice.ReservaId)
+            .Select(group => new
+            {
+                ReservaId = group.Key,
+                AlreadyInvoiced = group.Sum(invoice =>
                     invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
                         ? -invoice.ImporteTotal
                         : invoice.ImporteTotal)
-                .DefaultIfEmpty(0m)
-                .SumAsync(ct), 2),
+            });
+
+        var pendingFiscalQuery = _context.Reservas
+            .AsNoTracking()
+            .Where(reserva => ActiveInvoicingStatuses.Contains(reserva.Status))
+            .GroupJoin(
+                invoiceTotalsByReserva,
+                reserva => reserva.Id,
+                totals => totals.ReservaId,
+                (reserva, totals) => new
+                {
+                    Balance = Math.Round(reserva.Balance, 2),
+                    TotalSale = Math.Round(reserva.TotalSale, 2),
+                    AlreadyInvoiced = Math.Round(
+                        totals.Select(total => (decimal?)total.AlreadyInvoiced).FirstOrDefault() ?? 0m,
+                        2)
+                })
+            .Select(item => new
+            {
+                item.Balance,
+                PendingFiscalAmount = item.TotalSale > item.AlreadyInvoiced
+                    ? Math.Round(item.TotalSale - item.AlreadyInvoiced, 2)
+                    : 0m
+            })
+            .Where(item => item.PendingFiscalAmount > 0m);
+
+        var readyAmount = await pendingFiscalQuery
+            .Where(item => item.Balance <= 0m)
+            .SumAsync(item => (decimal?)item.PendingFiscalAmount, ct) ?? 0m;
+
+        var invoicedThisMonth = await approvedInvoices
+            .Where(invoice => invoice.CreatedAt >= startOfMonth)
+            .SumAsync(invoice => (decimal?)(
+                invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
+                    ? -invoice.ImporteTotal
+                    : invoice.ImporteTotal), ct) ?? 0m;
+
+        return new InvoicingSummaryDto
+        {
+            ReadyAmount = Math.Round(readyAmount, 2),
+            ReadyCount = await pendingFiscalQuery.CountAsync(item => item.Balance <= 0m, ct),
+            BlockedCount = await pendingFiscalQuery.CountAsync(item => item.Balance > 0m, ct),
+            InvoicedThisMonth = Math.Round(invoicedThisMonth, 2),
             ForcedCount = await approvedInvoices.CountAsync(invoice => invoice.WasForced, ct)
         };
     }
