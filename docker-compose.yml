@@ -35,6 +35,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:-travelpass}
+      Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY:-CHANGE_THIS_SECURITY_ENCRYPTION_KEY_WITH_AT_LEAST_32_CHARS}
       Jwt__Key: ${JWT_KEY:-CHANGE_THIS_SECRET_IN_PRODUCTION}
       Jwt__Issuer: ${JWT_ISSUER:-MagnaTravel}
       Jwt__Audience: ${JWT_AUDIENCE:-MagnaTravelUsers}
