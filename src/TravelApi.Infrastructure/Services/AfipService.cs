@@ -106,8 +106,19 @@ public class AfipService : IAfipService
         try
         {
             var settings = await _context.AfipSettings.FirstOrDefaultAsync();
-            var certificateData = settings is null ? null : GetCertificateData(settings);
             if (settings == null) return "No Configurado";
+
+            byte[]? certificateData;
+            try
+            {
+                certificateData = GetCertificateData(settings);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "AFIP status unavailable because Security__EncryptionKey is not configured.");
+                return "Falta clave Security__EncryptionKey";
+            }
+
             if (certificateData == null || certificateData.Length == 0) return "Certificado Faltante";
 
             // Token Validity Check (Handle potential Timezone mismatch from previous saves)
@@ -118,7 +129,18 @@ public class AfipService : IAfipService
             
             bool isValid = false;
             
-            if (!string.IsNullOrEmpty(GetAuthToken(settings)))
+            string? authToken;
+            try
+            {
+                authToken = GetAuthToken(settings);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "AFIP token could not be read because Security__EncryptionKey is not configured.");
+                return "Falta clave Security__EncryptionKey";
+            }
+
+            if (!string.IsNullOrEmpty(authToken))
             {
                  if (settings.TokenExpiration > DateTime.UtcNow) 
                  {
@@ -152,7 +174,20 @@ public class AfipService : IAfipService
     public async Task<AfipSettings?> GetSettingsAsync()
     {
         var settings = await _context.AfipSettings.AsNoTracking().FirstOrDefaultAsync();
-        return settings is null ? null : MapDecryptedSettings(settings);
+        if (settings is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return MapDecryptedSettings(settings);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "AFIP settings were loaded without decrypting sensitive fields because Security__EncryptionKey is missing.");
+            return settings;
+        }
     }
 
     public async Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, byte[]? certificateData, string? certificateFileName, string? password)

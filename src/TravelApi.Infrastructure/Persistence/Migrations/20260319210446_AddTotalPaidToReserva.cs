@@ -10,64 +10,203 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropForeignKey(
-                name: "FK_ReservaAttachments_TravelFiles_TravelFileId",
-                table: "ReservaAttachments");
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE constraint_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND constraint_name = 'FK_ReservaAttachments_TravelFiles_TravelFileId'
+                    ) THEN
+                        ALTER TABLE "ReservaAttachments"
+                            DROP CONSTRAINT "FK_ReservaAttachments_TravelFiles_TravelFileId";
+                    END IF;
+                END
+                $$;
+                """);
 
-            migrationBuilder.RenameColumn(
-                name: "TravelFileId",
-                table: "ReservaAttachments",
-                newName: "ReservaId");
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND column_name = 'TravelFileId'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND column_name = 'ReservaId'
+                    ) THEN
+                        ALTER TABLE "ReservaAttachments"
+                            RENAME COLUMN "TravelFileId" TO "ReservaId";
+                    END IF;
+                END
+                $$;
+                """);
 
-            migrationBuilder.RenameIndex(
-                name: "IX_ReservaAttachments_TravelFileId",
-                table: "ReservaAttachments",
-                newName: "IX_ReservaAttachments_ReservaId");
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'ReservaAttachments'
+                          AND indexname = 'IX_ReservaAttachments_TravelFileId'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'ReservaAttachments'
+                          AND indexname = 'IX_ReservaAttachments_ReservaId'
+                    ) THEN
+                        ALTER INDEX "IX_ReservaAttachments_TravelFileId"
+                            RENAME TO "IX_ReservaAttachments_ReservaId";
+                    END IF;
+                END
+                $$;
+                """);
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "TotalPaid",
-                table: "TravelFiles",
-                type: "numeric(18,2)",
-                nullable: false,
-                defaultValue: 0m);
+            migrationBuilder.Sql(
+                """
+                ALTER TABLE "TravelFiles"
+                    ADD COLUMN IF NOT EXISTS "TotalPaid" numeric(18,2) NOT NULL DEFAULT 0.0;
+                """);
 
-            migrationBuilder.AddForeignKey(
-                name: "FK_ReservaAttachments_TravelFiles_ReservaId",
-                table: "ReservaAttachments",
-                column: "ReservaId",
-                principalTable: "TravelFiles",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND column_name = 'ReservaId'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE constraint_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND constraint_name = 'FK_ReservaAttachments_TravelFiles_ReservaId'
+                    ) THEN
+                        ALTER TABLE "ReservaAttachments"
+                            ADD CONSTRAINT "FK_ReservaAttachments_TravelFiles_ReservaId"
+                            FOREIGN KEY ("ReservaId") REFERENCES "TravelFiles" ("Id") ON DELETE CASCADE;
+                    END IF;
+                END
+                $$;
+                """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropForeignKey(
-                name: "FK_ReservaAttachments_TravelFiles_ReservaId",
-                table: "ReservaAttachments");
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE constraint_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND constraint_name = 'FK_ReservaAttachments_TravelFiles_ReservaId'
+                    ) THEN
+                        ALTER TABLE "ReservaAttachments"
+                            DROP CONSTRAINT "FK_ReservaAttachments_TravelFiles_ReservaId";
+                    END IF;
+                END
+                $$;
+                """);
 
-            migrationBuilder.DropColumn(
-                name: "TotalPaid",
-                table: "TravelFiles");
+            migrationBuilder.Sql(
+                """
+                ALTER TABLE "TravelFiles"
+                    DROP COLUMN IF EXISTS "TotalPaid";
+                """);
 
-            migrationBuilder.RenameColumn(
-                name: "ReservaId",
-                table: "ReservaAttachments",
-                newName: "TravelFileId");
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND column_name = 'ReservaId'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND column_name = 'TravelFileId'
+                    ) THEN
+                        ALTER TABLE "ReservaAttachments"
+                            RENAME COLUMN "ReservaId" TO "TravelFileId";
+                    END IF;
+                END
+                $$;
+                """);
 
-            migrationBuilder.RenameIndex(
-                name: "IX_ReservaAttachments_ReservaId",
-                table: "ReservaAttachments",
-                newName: "IX_ReservaAttachments_TravelFileId");
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'ReservaAttachments'
+                          AND indexname = 'IX_ReservaAttachments_ReservaId'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'ReservaAttachments'
+                          AND indexname = 'IX_ReservaAttachments_TravelFileId'
+                    ) THEN
+                        ALTER INDEX "IX_ReservaAttachments_ReservaId"
+                            RENAME TO "IX_ReservaAttachments_TravelFileId";
+                    END IF;
+                END
+                $$;
+                """);
 
-            migrationBuilder.AddForeignKey(
-                name: "FK_ReservaAttachments_TravelFiles_TravelFileId",
-                table: "ReservaAttachments",
-                column: "TravelFileId",
-                principalTable: "TravelFiles",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND column_name = 'TravelFileId'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE constraint_schema = 'public'
+                          AND table_name = 'ReservaAttachments'
+                          AND constraint_name = 'FK_ReservaAttachments_TravelFiles_TravelFileId'
+                    ) THEN
+                        ALTER TABLE "ReservaAttachments"
+                            ADD CONSTRAINT "FK_ReservaAttachments_TravelFiles_TravelFileId"
+                            FOREIGN KEY ("TravelFileId") REFERENCES "TravelFiles" ("Id") ON DELETE CASCADE;
+                    END IF;
+                END
+                $$;
+                """);
         }
     }
 }
