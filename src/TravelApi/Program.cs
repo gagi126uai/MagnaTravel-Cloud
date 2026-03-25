@@ -386,6 +386,18 @@ using (var scope = app.Services.CreateScope())
         app.Logger.LogWarning("Operational finance bootstrap skipped or failed: {Message}", ex.Message);
     }
 
+    try
+    {
+        app.Logger.LogInformation("Bootstrapping refresh token schema via raw SQL...");
+        await RefreshTokenSchemaBootstrapper.EnsureAsync(db);
+        await RefreshTokenSchemaBootstrapper.MarkRefreshTokenMigrationAsAppliedAsync(db);
+        app.Logger.LogInformation("Refresh token bootstrap finished.");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning("Refresh token bootstrap skipped or failed: {Message}", ex.Message);
+    }
+
     int retries = 5;
     while (retries > 0)
     {

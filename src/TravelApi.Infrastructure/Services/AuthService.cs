@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using TravelApi.Application.Contracts.Auth;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -227,7 +228,30 @@ public class AuthService : IAuthService
             IsPersistent = isPersistent
         });
 
-        await _dbContext.SaveChangesAsync();
+        try
+        {
+            await _dbContext.SaveChangesAsync();
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            _logger.LogWarning(ex, "RefreshTokens table was missing during session issuance. Bootstrapping schema and retrying.");
+            _dbContext.ChangeTracker.Clear();
+            await RefreshTokenSchemaBootstrapper.EnsureAsync(_dbContext);
+            await RefreshTokenSchemaBootstrapper.MarkRefreshTokenMigrationAsAppliedAsync(_dbContext);
+
+            _dbContext.RefreshTokens.Add(new RefreshToken
+            {
+                UserId = user.Id,
+                TokenHash = refreshTokenHash,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = refreshTokenExpiresAt,
+                CreatedByIp = ipAddress,
+                UserAgent = userAgent?.Length > 512 ? userAgent[..512] : userAgent,
+                IsPersistent = isPersistent
+            });
+
+            await _dbContext.SaveChangesAsync();
+        }
 
         return new AuthTokensResult(
             accessToken,

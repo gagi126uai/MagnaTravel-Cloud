@@ -31,8 +31,8 @@ public class WhatsAppBotConfigController : ControllerBase
             return Unauthorized();
         }
 
-        var config = await _db.WhatsAppBotConfigs.FirstOrDefaultAsync() ?? new WhatsAppBotConfig();
-        var agency = await _db.AgencySettings.FirstOrDefaultAsync() ?? new AgencySettings();
+        var config = await _db.WhatsAppBotConfigs.OrderBy(item => item.Id).FirstOrDefaultAsync() ?? new WhatsAppBotConfig();
+        var agency = await _db.AgencySettings.OrderBy(item => item.Id).FirstOrDefaultAsync() ?? new AgencySettings();
         
         return Ok(new {
             config,
@@ -43,7 +43,7 @@ public class WhatsAppBotConfigController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<WhatsAppBotConfig>> GetConfig()
     {
-        var config = await _db.WhatsAppBotConfigs.FirstOrDefaultAsync();
+        var config = await _db.WhatsAppBotConfigs.OrderBy(item => item.Id).FirstOrDefaultAsync();
         if (config == null)
         {
             config = new WhatsAppBotConfig();
@@ -56,7 +56,7 @@ public class WhatsAppBotConfigController : ControllerBase
     [HttpPut]
     public async Task<IActionResult> UpdateConfig(WhatsAppBotConfig updated)
     {
-        var config = await _db.WhatsAppBotConfigs.FirstOrDefaultAsync();
+        var config = await _db.WhatsAppBotConfigs.OrderBy(item => item.Id).FirstOrDefaultAsync();
         if (config == null)
         {
             config = new WhatsAppBotConfig();
