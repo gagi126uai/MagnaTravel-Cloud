@@ -127,6 +127,8 @@ public class TreasuryService : ITreasuryService
                 Reference = p.Reference,
                 ReservaPublicId = p.Reserva != null ? (Guid?)p.Reserva.PublicId : null,
                 NumeroReserva = p.Reserva != null ? p.Reserva.NumeroReserva : null,
+                SupplierPublicId = null,
+                SupplierName = null,
                 IsManual = false
             });
 
