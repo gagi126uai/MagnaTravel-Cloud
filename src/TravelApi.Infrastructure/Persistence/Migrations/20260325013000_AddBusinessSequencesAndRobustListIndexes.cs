@@ -35,6 +35,78 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 """);
 
             migrationBuilder.Sql("""
+                WITH duplicate_candidates AS (
+                    SELECT
+                        "Id",
+                        COALESCE(NULLIF(BTRIM("FileNumber"), ''), '__EMPTY__') AS normalized_number,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(NULLIF(BTRIM("FileNumber"), ''), '__EMPTY__')
+                            ORDER BY COALESCE("CreatedAt", CURRENT_TIMESTAMP), "Id"
+                        ) AS occurrence,
+                        COALESCE(EXTRACT(YEAR FROM "CreatedAt")::integer, EXTRACT(YEAR FROM CURRENT_TIMESTAMP)::integer) AS target_year
+                    FROM "TravelFiles"
+                ),
+                rows_to_renumber AS (
+                    SELECT
+                        "Id",
+                        target_year
+                    FROM duplicate_candidates
+                    WHERE normalized_number = '__EMPTY__' OR occurrence > 1
+                ),
+                current_max_per_year AS (
+                    SELECT
+                        year_seed.target_year,
+                        GREATEST(COALESCE(MAX(year_seed.last_value), 999), 999) AS last_value
+                    FROM (
+                        SELECT
+                            COALESCE(EXTRACT(YEAR FROM "CreatedAt")::integer, EXTRACT(YEAR FROM CURRENT_TIMESTAMP)::integer) AS target_year,
+                            NULL::bigint AS last_value
+                        FROM "TravelFiles"
+                        UNION ALL
+                        SELECT
+                            CAST(split_part("FileNumber", '-', 2) AS integer) AS target_year,
+                            CAST(split_part("FileNumber", '-', 3) AS bigint) AS last_value
+                        FROM "TravelFiles"
+                        WHERE "FileNumber" ~ '^F-[0-9]{4}-[0-9]+$'
+                    ) AS year_seed
+                    GROUP BY year_seed.target_year
+                ),
+                assigned_numbers AS (
+                    SELECT
+                        rows_to_renumber."Id",
+                        rows_to_renumber.target_year,
+                        current_max_per_year.last_value
+                            + ROW_NUMBER() OVER (
+                                PARTITION BY rows_to_renumber.target_year
+                                ORDER BY rows_to_renumber."Id"
+                            ) AS next_value
+                    FROM rows_to_renumber
+                    INNER JOIN current_max_per_year
+                        ON current_max_per_year.target_year = rows_to_renumber.target_year
+                )
+                UPDATE "TravelFiles" AS travel_file
+                SET "FileNumber" = 'F-' || assigned_numbers.target_year::text || '-' || assigned_numbers.next_value::text
+                FROM assigned_numbers
+                WHERE travel_file."Id" = assigned_numbers."Id";
+                """);
+
+            migrationBuilder.Sql("""
+                INSERT INTO "BusinessSequences" ("DocumentType", "Year", "LastValue", "UpdatedAt")
+                SELECT
+                    'Reserva',
+                    CAST(split_part("FileNumber", '-', 2) AS integer),
+                    MAX(CAST(split_part("FileNumber", '-', 3) AS bigint)),
+                    CURRENT_TIMESTAMP
+                FROM "TravelFiles"
+                WHERE "FileNumber" ~ '^F-[0-9]{4}-[0-9]+$'
+                GROUP BY CAST(split_part("FileNumber", '-', 2) AS integer)
+                ON CONFLICT ("DocumentType", "Year")
+                DO UPDATE SET
+                    "LastValue" = GREATEST("BusinessSequences"."LastValue", EXCLUDED."LastValue"),
+                    "UpdatedAt" = CURRENT_TIMESTAMP;
+                """);
+
+            migrationBuilder.Sql("""
                 CREATE UNIQUE INDEX IF NOT EXISTS "IX_TravelFiles_NumeroReserva"
                 ON "TravelFiles" ("FileNumber");
                 """);
