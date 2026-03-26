@@ -5,6 +5,7 @@ import Sidebar from "./Sidebar";
 import { Button } from "./ui/button";
 import ChangePasswordModal from "./ChangePasswordModal";
 import SearchPalette from "./SearchPalette";
+import NotificationBell from "./NotificationBell";
 
 export default function Layout({ children, onLogout, isAdmin }) {
     const { theme, setTheme } = useTheme();
@@ -138,6 +139,9 @@ export default function Layout({ children, onLogout, isAdmin }) {
                             <Moon className="absolute h-4 w-4 md:h-5 md:w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
                             <span className="sr-only">Cambiar tema</span>
                         </Button>
+
+                        {/* Notifications Bell */}
+                        <NotificationBell />
 
                         {/* User Menu Dropdown */}
                         <div className="relative">

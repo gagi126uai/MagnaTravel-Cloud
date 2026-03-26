@@ -545,6 +545,7 @@ using (var scope = app.Services.CreateScope())
 
 app.MapControllers();
 app.MapHub<LogsHub>("/hubs/logs").RequireAuthorization("AdminOnly");
+app.MapHub<NotificationHub>("/hubs/notifications");
 
     app.Run();
 }
