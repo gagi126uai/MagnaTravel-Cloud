@@ -77,7 +77,7 @@ export function useReservas() {
       await loadReservas();
       return true;
     } catch (error) {
-      showError(error.message || "Error al archivar");
+      showError(error.response?.data?.message || error.response?.data || error.message || "Error al archivar");
       return false;
     }
   };

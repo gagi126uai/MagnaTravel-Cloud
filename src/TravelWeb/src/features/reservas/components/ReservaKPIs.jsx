@@ -1,10 +1,12 @@
 import React from 'react';
 import { FolderOpen, Plane, TrendingUp, Wallet, AlertCircle } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
+import { isAdmin } from "../../../auth";
 
 export function ReservaKPIs({ stats }) {
+    const admin = isAdmin();
     return (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className={`grid grid-cols-2 ${admin ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
             <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
                 <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
                     <FolderOpen className="h-3.5 w-3.5" />
@@ -26,13 +28,15 @@ export function ReservaKPIs({ stats }) {
                 </div>
                 <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(stats.totalSaleActive)}</div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-                    <Wallet className="h-3.5 w-3.5" />
-                    Rentabilidad Est.
+            {admin && (
+                <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
+                        <Wallet className="h-3.5 w-3.5" />
+                        Rentabilidad Est.
+                    </div>
+                    <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{formatCurrency(stats.grossProfit)}</div>
                 </div>
-                <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{formatCurrency(stats.grossProfit)}</div>
-            </div>
+            )}
             <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
                 <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
                     <AlertCircle className="h-3.5 w-3.5" />

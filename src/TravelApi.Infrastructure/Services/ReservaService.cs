@@ -259,6 +259,13 @@ public class ReservaService : IReservaService
             
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
 
+        if (service.ReservaId.HasValue)
+        {
+            var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == service.ReservaId && !p.IsDeleted);
+            if (hasPayments)
+                throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con pagos realizados.");
+        }
+
         _context.Servicios.Remove(service);
         var resId = service.ReservaId;
         await _context.SaveChangesAsync();
@@ -420,15 +427,31 @@ public class ReservaService : IReservaService
 
         if (file.Status == EstadoReserva.Reserved && status == EstadoReserva.Budget)
         {
-             var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id);
+             var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted);
              if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. Elimínalos primero.");
 
              var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id);
              if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Crédito).");
+
+             var hasServices = await HasServicesAsync(id);
+             if (hasServices) throw new InvalidOperationException("No se puede volver a Presupuesto porque tiene servicios cargados. Elimínalos primero.");
         }
 
         if (status == EstadoReserva.Operational)
         {
+            var fullReserva = await _context.Reservas
+                .Include(r => r.Servicios)
+                .Include(r => r.HotelBookings)
+                .Include(r => r.FlightSegments)
+                .Include(r => r.TransferBookings)
+                .Include(r => r.PackageBookings)
+                .FirstOrDefaultAsync(r => r.Id == id);
+            if (fullReserva == null) throw new KeyNotFoundException("Reserva no encontrada");
+
+            var emptyReason = EconomicRulesHelper.GetEmptyReservaBlockReason(fullReserva);
+            if (!string.IsNullOrWhiteSpace(emptyReason))
+                throw new InvalidOperationException($"No se puede pasar a Operativo: {emptyReason}");
+
             var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
             var blockReason = EconomicRulesHelper.GetOperativeBlockReason(file, settings);
             if (!string.IsNullOrWhiteSpace(blockReason))
@@ -444,9 +467,16 @@ public class ReservaService : IReservaService
 
     public async Task<Reserva> ArchiveReservaAsync(int id)
     {
-        var file = await _context.Reservas.FindAsync(id);
+        var file = await _context.Reservas
+            .Include(r => r.Payments)
+            .Include(r => r.Servicios)
+            .FirstOrDefaultAsync(r => r.Id == id);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-        
+
+        var archiveBlock = EconomicRulesHelper.GetArchiveBlockReason(file);
+        if (!string.IsNullOrWhiteSpace(archiveBlock))
+            throw new InvalidOperationException(archiveBlock);
+
         file.Status = "Archived";
         await _context.SaveChangesAsync();
         return file;
@@ -471,7 +501,7 @@ public class ReservaService : IReservaService
 
             if (file.Status != EstadoReserva.Reserved && file.Status != EstadoReserva.Budget)
             {
-                throw new InvalidOperationException("Solo se pueden eliminar Reservas en estado Reservado (o Presupuesto heredado).");
+                throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado.");
             }
 
             if (file.Payments.Any())
@@ -579,8 +609,8 @@ public class ReservaService : IReservaService
             "operative" => query.Where(r => r.Status == EstadoReserva.Operational),
             "closed" => query.Where(r =>
                 r.Status == EstadoReserva.Closed ||
-                r.Status == EstadoReserva.Cancelled ||
-                r.Status == "Archived"),
+                r.Status == EstadoReserva.Cancelled),
+            "archived" => query.Where(r => r.Status == "Archived"),
             _ => query.Where(r =>
                 r.Status != EstadoReserva.Closed &&
                 r.Status != EstadoReserva.Cancelled &&
@@ -611,6 +641,15 @@ public class ReservaService : IReservaService
                 ? query.OrderBy(r => r.StartDate == null).ThenByDescending(r => r.StartDate).ThenByDescending(r => r.CreatedAt)
                 : query.OrderBy(r => r.StartDate == null).ThenBy(r => r.StartDate).ThenByDescending(r => r.CreatedAt)
         };
+    }
+
+    private async Task<bool> HasServicesAsync(int reservaId)
+    {
+        return await _context.Servicios.AnyAsync(s => s.ReservaId == reservaId)
+            || await _context.HotelBookings.AnyAsync(h => h.ReservaId == reservaId)
+            || await _context.FlightSegments.AnyAsync(f => f.ReservaId == reservaId)
+            || await _context.TransferBookings.AnyAsync(t => t.ReservaId == reservaId)
+            || await _context.PackageBookings.AnyAsync(p => p.ReservaId == reservaId);
     }
 
     private async Task<string> GenerateNumeroReservaAsync(CancellationToken cancellationToken)

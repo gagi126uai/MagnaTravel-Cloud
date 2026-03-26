@@ -17,6 +17,7 @@ public class BookingService : IBookingService
     private readonly IRepository<TransferBooking> _transferRepo;
     private readonly IRepository<Reserva> _fileRepo;
     private readonly IRepository<Supplier> _supplierRepo;
+    private readonly AppDbContext _db;
     private readonly IMapper _mapper;
 
     public BookingService(
@@ -26,6 +27,7 @@ public class BookingService : IBookingService
         IRepository<TransferBooking> transferRepo,
         IRepository<Reserva> fileRepo,
         IRepository<Supplier> supplierRepo,
+        AppDbContext db,
         IMapper mapper)
     {
         _flightRepo = flightRepo;
@@ -34,6 +36,7 @@ public class BookingService : IBookingService
         _transferRepo = transferRepo;
         _fileRepo = fileRepo;
         _supplierRepo = supplierRepo;
+        _db = db;
         _mapper = mapper;
     }
 
@@ -124,6 +127,8 @@ public class BookingService : IBookingService
     {
         var flight = await _flightRepo.GetByIdAsync(id, ct);
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
+
+        await EnsureNoPaymentsAsync(reservaId, ct);
 
         if (flight.SupplierId > 0)
         {
@@ -235,6 +240,8 @@ public class BookingService : IBookingService
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
+        await EnsureNoPaymentsAsync(reservaId, ct);
+
         if (hotel.SupplierId > 0)
         {
             var supplier = await _supplierRepo.GetByIdAsync(hotel.SupplierId, ct);
@@ -337,6 +344,8 @@ public class BookingService : IBookingService
     {
         var package = await _packageRepo.GetByIdAsync(id, ct);
         if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
+
+        await EnsureNoPaymentsAsync(reservaId, ct);
 
         if (package.SupplierId > 0)
         {
@@ -441,6 +450,8 @@ public class BookingService : IBookingService
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
         if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
+        await EnsureNoPaymentsAsync(reservaId, ct);
+
         if (transfer.SupplierId > 0)
         {
             var supplier = await _supplierRepo.GetByIdAsync(transfer.SupplierId, ct);
@@ -452,6 +463,13 @@ public class BookingService : IBookingService
         }
 
         await _transferRepo.DeleteAsync(transfer, ct);
+    }
+
+    private async Task EnsureNoPaymentsAsync(int reservaId, CancellationToken ct)
+    {
+        var hasPayments = await _db.Payments.AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
+        if (hasPayments)
+            throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con pagos realizados.");
     }
 
     private async Task<int> ResolveSupplierIdAsync(string supplierPublicIdOrLegacyId, CancellationToken ct)

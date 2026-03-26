@@ -15,6 +15,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
               <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Reserva</th>
               <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Cliente / Pasajeros</th>
               <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Estado</th>
+              <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Creada</th>
               <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Finanzas</th>
               <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Acciones</th>
             </tr>
@@ -56,6 +57,18 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                 </td>
                 <td className="px-4 py-4">
                   <ReservaStatusBadge status={reserva.status} />
+                </td>
+                <td className="px-4 py-4">
+                  <div className="flex flex-col">
+                    <span className="text-xs text-slate-600 dark:text-slate-300">
+                      {reserva.createdAt ? formatDate(reserva.createdAt) : '-'}
+                    </span>
+                    {reserva.responsibleUserName && (
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+                        {reserva.responsibleUserName}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-4 text-right">
                   <div className="flex flex-col items-end gap-1">
@@ -103,7 +116,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
             ))}
             {reservas.length === 0 && (
               <tr>
-                <td colSpan="5" className="px-4 py-12 text-center">
+                <td colSpan="7" className="px-4 py-12 text-center">
                   <div className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-600">
                     <Archive className="mb-3 h-12 w-12 opacity-20" />
                     <p className="text-sm font-medium">No se encontraron reservas</p>

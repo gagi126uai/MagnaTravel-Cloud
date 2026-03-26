@@ -49,6 +49,28 @@ internal static class EconomicRulesHelper
             ?? EvaluateAfip(reserva, settings).BlockReason;
     }
 
+    public static string? GetEmptyReservaBlockReason(Reserva reserva)
+    {
+        var hasServices = (reserva.Servicios?.Any() ?? false)
+            || (reserva.HotelBookings?.Any() ?? false)
+            || (reserva.FlightSegments?.Any() ?? false)
+            || (reserva.TransferBookings?.Any() ?? false)
+            || (reserva.PackageBookings?.Any() ?? false);
+
+        return hasServices ? null : "La reserva debe tener al menos un servicio cargado.";
+    }
+
+    public static string? GetArchiveBlockReason(Reserva reserva)
+    {
+        if (reserva.Status != EstadoReserva.Operational && reserva.Status != EstadoReserva.Closed)
+            return "Solo se pueden archivar reservas que hayan pasado a Operativo o estén Cerradas.";
+
+        if (Math.Round(reserva.Balance, 2, MidpointRounding.AwayFromZero) > 0m)
+            return "No se puede archivar una reserva con saldo pendiente.";
+
+        return null;
+    }
+
     public static decimal RoundCurrency(decimal amount)
     {
         return Math.Round(amount, 2, MidpointRounding.AwayFromZero);

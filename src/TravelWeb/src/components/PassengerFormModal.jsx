@@ -6,7 +6,7 @@ import { showError, showSuccess, showWarning } from "../alerts";
 import { getPublicId } from "../lib/publicIds";
 
 // Clases reutilizables
-const inputClass = "w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors";
+const inputClass = "w-full px-3 py-2.5 rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm";
 const labelClass = "block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1";
 
 export default function PassengerFormModal({ isOpen, onClose, reservaId, onSuccess, passengerToEdit }) {

@@ -35,6 +35,7 @@ export function useReservaDetail(reservaId, navigate) {
         }
     }, []);
 
+
     useEffect(() => {
         fetchReserva();
         fetchSuppliers();
@@ -48,7 +49,7 @@ export function useReservaDetail(reservaId, navigate) {
             if (navigate) navigate("/reservas");
             return true;
         } catch (error) {
-            showError("Error al archivar");
+            showError(error.response?.data?.message || error.response?.data || "Error al archivar la reserva");
             return false;
         }
     };
@@ -60,7 +61,7 @@ export function useReservaDetail(reservaId, navigate) {
             if (navigate) navigate("/reservas");
             return true;
         } catch (error) {
-            showError(error.response?.data || "Error al eliminar");
+            showError(error.response?.data?.message || error.response?.data || "Error al eliminar");
             return false;
         }
     };
@@ -83,7 +84,8 @@ export function useReservaDetail(reservaId, navigate) {
             showSuccess(`Estado actualizado a ${newStatus}`);
             return true;
         } catch (error) {
-            showError("Error al cambiar estado");
+            const msg = error.response?.data?.message || error.response?.data || "Error al cambiar estado";
+            showError(typeof msg === 'string' ? msg : "Error al cambiar estado");
             return false;
         }
     };
@@ -104,7 +106,8 @@ export function useReservaDetail(reservaId, navigate) {
             showSuccess("Servicio eliminado");
             return true;
         } catch (error) {
-            showError("Error al eliminar servicio");
+            const msg = error.response?.data?.message || error.response?.data || "Error al eliminar servicio";
+            showError(typeof msg === 'string' ? msg : "Error al eliminar servicio");
             return false;
         }
     };

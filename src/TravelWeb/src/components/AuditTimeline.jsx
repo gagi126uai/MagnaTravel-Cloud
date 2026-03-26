@@ -4,6 +4,56 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Clock, User, Activity, ArrowRight } from "lucide-react";
 
+const fieldTranslations = {
+    Status: 'Estado',
+    Balance: 'Saldo',
+    TotalSale: 'Venta Total',
+    TotalCost: 'Costo Total',
+    TotalPaid: 'Total Pagado',
+    Name: 'Nombre',
+    Description: 'Descripción',
+    SalePrice: 'Precio Venta',
+    NetCost: 'Costo Neto',
+    Commission: 'Comisión',
+    FullName: 'Nombre Completo',
+    DocumentType: 'Tipo Documento',
+    DocumentNumber: 'Nro. Documento',
+    BirthDate: 'Fecha Nacimiento',
+    Nationality: 'Nacionalidad',
+    Phone: 'Teléfono',
+    Email: 'Email',
+    Gender: 'Género',
+    Notes: 'Notas',
+    StartDate: 'Fecha Salida',
+    EndDate: 'Fecha Regreso',
+    CreatedAt: 'Fecha Creación',
+    ClosedAt: 'Fecha Cierre',
+    NumeroReserva: 'Nro. Reserva',
+    ServiceType: 'Tipo Servicio',
+    ProductType: 'Tipo Producto',
+    ConfirmationNumber: 'Nro. Confirmación',
+    DepartureDate: 'Fecha Salida',
+    ReturnDate: 'Fecha Regreso',
+    Method: 'Método de Pago',
+    Amount: 'Importe',
+    PaidAt: 'Fecha de Pago',
+    Reference: 'Referencia',
+    HotelName: 'Hotel',
+    CheckIn: 'Check-In',
+    CheckOut: 'Check-Out',
+    RoomType: 'Habitación',
+    MealPlan: 'Régimen',
+    Nights: 'Noches',
+    City: 'Ciudad',
+    IsDeleted: 'Eliminado',
+    DeletedAt: 'Fecha Eliminación',
+    AffectsCash: 'Afecta Caja',
+};
+
+function translateField(field) {
+    return fieldTranslations[field] || field;
+}
+
 export default function AuditTimeline({ entityName, entityId }) {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -78,7 +128,7 @@ export default function AuditTimeline({ entityName, entityId }) {
                                                 <div className="mt-2 text-sm text-gray-700 dark:text-slate-300 bg-gray-50 dark:bg-slate-800 p-2 rounded border border-gray-100 dark:border-slate-700">
                                                     {Object.entries(changes).map(([key, value]) => (
                                                         <div key={key} className="flex flex-wrap gap-1 mb-1 last:mb-0">
-                                                            <span className="font-medium text-gray-500 dark:text-slate-400">{key}:</span>
+                                                            <span className="font-medium text-gray-500 dark:text-slate-400">{translateField(key)}:</span>
                                                             {renderChangeValue(value)}
                                                         </div>
                                                     ))}
