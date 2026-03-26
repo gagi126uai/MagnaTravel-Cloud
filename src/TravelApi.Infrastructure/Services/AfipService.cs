@@ -199,6 +199,7 @@ public class AfipService : IAfipService
             _context.AfipSettings.Add(settings);
         }
 
+        if (settings.IsProduction != isProduction) { settings.Token = null; settings.Sign = null; settings.TokenExpiration = null; settings.PadronToken = null; settings.PadronSign = null; settings.PadronTokenExpiration = null; }
         settings.Cuit = cuit;
         settings.PuntoDeVenta = puntoDeVenta;
         settings.IsProduction = isProduction;
