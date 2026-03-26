@@ -261,67 +261,66 @@ public class VoucherService : IVoucherService
 
     private static void AppendPassengers(Reserva reserva, StringBuilder html)
     {
-        if (!reserva.Passengers.Any())
-            return;
+        if (!reserva.Passengers.Any()) return;
 
-        html.AppendLine("<h2>Pasajeros</h2><table><thead><tr><th>Nombre</th><th>Documento</th><th>Nacimiento</th></tr></thead><tbody>");
-        foreach (var passenger in reserva.Passengers)
+        html.AppendLine("<h2>Pasajeros</h2><div class='table-container'><table><thead><tr><th>Nombre Completo</th><th>Documento</th><th>Fecha Nac.</th></tr></thead><tbody>");
+        foreach (var p in reserva.Passengers)
         {
-            html.AppendLine($"<tr><td>{EscapeHtml(passenger.FullName)}</td><td>{EscapeHtml($"{passenger.DocumentType} {passenger.DocumentNumber}".Trim())}</td><td>{FormatDate(passenger.BirthDate)}</td></tr>");
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(p.FullName)}</td><td>{EscapeHtml($"{p.DocumentType} {p.DocumentNumber}".Trim())}</td><td>{FormatDate(p.BirthDate)}</td></tr>");
         }
-        html.AppendLine("</tbody></table>");
+        html.AppendLine("</tbody></table></div>");
     }
 
     private static void AppendHotels(Reserva reserva, StringBuilder html)
     {
-        if (!reserva.HotelBookings.Any())
-            return;
+        if (!reserva.HotelBookings.Any()) return;
 
-        html.AppendLine("<h2>Alojamiento</h2><table><thead><tr><th>Hotel</th><th>Check-In</th><th>Check-Out</th><th>Noches</th><th>Habitacion</th><th>Confirmacion</th></tr></thead><tbody>");
-        foreach (var hotel in reserva.HotelBookings)
+        html.AppendLine("<h2>Alojamiento</h2><div class='table-container'><table><thead><tr><th>Hotel / Destino</th><th>Fechas</th><th>Noches</th><th>Habitación / Régimen</th><th>Estado</th></tr></thead><tbody>");
+        foreach (var h in reserva.HotelBookings)
         {
-            html.AppendLine($"<tr><td><strong>{EscapeHtml(hotel.HotelName)}</strong><br/><span style='font-size:11px;color:#64748b'>{EscapeHtml(hotel.City)}</span></td><td>{hotel.CheckIn:dd/MM/yyyy}</td><td>{hotel.CheckOut:dd/MM/yyyy}</td><td>{hotel.Nights}</td><td>{EscapeHtml($"{hotel.RoomType} ({hotel.MealPlan})")}</td><td>{EscapeHtml(hotel.ConfirmationNumber ?? "Pendiente")}</td></tr>");
+            var isConfirmed = h.status == "Confirmed" || h.status == "Confirmado";
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(h.HotelName)}<br/><span style='font-size:11px;color:#64748b;font-weight:400'>{EscapeHtml(h.City)}</span></td><td>{h.CheckIn:dd/MM/yyyy} - {h.CheckOut:dd/MM/yyyy}</td><td>{h.Nights}</td><td>{EscapeHtml($"{h.RoomType} ({h.MealPlan})")}</td>");
+            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(h.status ?? "Pendiente")}</span></td></tr>");
         }
-        html.AppendLine("</tbody></table>");
+        html.AppendLine("</tbody></table></div>");
     }
 
     private static void AppendFlights(Reserva reserva, StringBuilder html)
     {
-        if (!reserva.FlightSegments.Any())
-            return;
+        if (!reserva.FlightSegments.Any()) return;
 
-        html.AppendLine("<h2>Vuelos</h2><table><thead><tr><th>Vuelo</th><th>Origen</th><th>Destino</th><th>Fecha</th><th>Clase</th><th>PNR</th></tr></thead><tbody>");
-        foreach (var flight in reserva.FlightSegments)
+        html.AppendLine("<h2>Vuelos</h2><div class='table-container'><table><thead><tr><th>Vuelo</th><th>Origen</th><th>Destino</th><th>Salida</th><th>Clase</th><th>PNR</th></tr></thead><tbody>");
+        foreach (var f in reserva.FlightSegments)
         {
-            html.AppendLine($"<tr><td>{EscapeHtml($"{flight.AirlineCode} {flight.FlightNumber}")}</td><td>{EscapeHtml(flight.OriginCity ?? flight.Origin)}</td><td>{EscapeHtml(flight.DestinationCity ?? flight.Destination)}</td><td>{flight.DepartureTime:dd/MM/yyyy HH:mm}</td><td>{EscapeHtml(flight.CabinClass)}</td><td>{EscapeHtml(flight.PNR ?? "---")}</td></tr>");
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml($"{f.AirlineCode} {f.FlightNumber}")}</td><td>{EscapeHtml(f.OriginCity ?? f.Origin)}</td><td>{EscapeHtml(f.DestinationCity ?? f.Destination)}</td><td>{f.DepartureTime:dd/MM/yyyy HH:mm}</td><td>{EscapeHtml(f.CabinClass)}</td><td style='font-family:monospace;font-weight:700'>{EscapeHtml(f.PNR ?? "---")}</td></tr>");
         }
-        html.AppendLine("</tbody></table>");
+        html.AppendLine("</tbody></table></div>");
     }
 
     private static void AppendTransfers(Reserva reserva, StringBuilder html)
     {
-        if (!reserva.TransferBookings.Any())
-            return;
+        if (!reserva.TransferBookings.Any()) return;
 
-        html.AppendLine("<h2>Transfers</h2><table><thead><tr><th>Vehiculo</th><th>Origen</th><th>Destino</th><th>Fecha</th><th>Confirmacion</th></tr></thead><tbody>");
-        foreach (var transfer in reserva.TransferBookings)
+        html.AppendLine("<h2>Traslados</h2><div class='table-container'><table><thead><tr><th>Tipo de Servicio</th><th>Recogida</th><th>Destino</th><th>Fecha y Hora</th><th>Confirmación</th></tr></thead><tbody>");
+        foreach (var t in reserva.TransferBookings)
         {
-            html.AppendLine($"<tr><td>{EscapeHtml(transfer.VehicleType)}</td><td>{EscapeHtml(transfer.PickupLocation)}</td><td>{EscapeHtml(transfer.DropoffLocation)}</td><td>{transfer.PickupDateTime:dd/MM/yyyy HH:mm}</td><td>{EscapeHtml(transfer.ConfirmationNumber ?? "Pendiente")}</td></tr>");
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(t.VehicleType)}</td><td>{EscapeHtml(t.PickupLocation)}</td><td>{EscapeHtml(t.DropoffLocation)}</td><td>{t.PickupDateTime:dd/MM/yyyy HH:mm}</td><td style='font-weight:600'>{EscapeHtml(t.ConfirmationNumber ?? "Pendiente")}</td></tr>");
         }
-        html.AppendLine("</tbody></table>");
+        html.AppendLine("</tbody></table></div>");
     }
 
     private static void AppendPackages(Reserva reserva, StringBuilder html)
     {
-        if (!reserva.PackageBookings.Any())
-            return;
+        if (!reserva.PackageBookings.Any()) return;
 
-        html.AppendLine("<h2>Paquetes</h2><table><thead><tr><th>Paquete</th><th>Destino</th><th>Fechas</th><th>Noches</th><th>Confirmacion</th></tr></thead><tbody>");
-        foreach (var package in reserva.PackageBookings)
+        html.AppendLine("<h2>Paquetes Turísticos</h2><div class='table-container'><table><thead><tr><th>Paquete</th><th>Destino</th><th>Fechas</th><th>Noches</th><th>Estado</th></tr></thead><tbody>");
+        foreach (var p in reserva.PackageBookings)
         {
-            html.AppendLine($"<tr><td>{EscapeHtml(package.PackageName)}</td><td>{EscapeHtml(package.Destination)}</td><td>{package.StartDate:dd/MM/yyyy} - {package.EndDate:dd/MM/yyyy}</td><td>{package.Nights}</td><td>{EscapeHtml(package.ConfirmationNumber ?? "Pendiente")}</td></tr>");
+            var isConfirmed = p.status == "Confirmed" || p.status == "Confirmado";
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(p.PackageName)}</td><td>{EscapeHtml(p.Destination)}</td><td>{p.StartDate:dd/MM/yyyy} - {p.EndDate:dd/MM/yyyy}</td><td>{p.Nights}</td>");
+            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(p.status ?? "Pendiente")}</span></td></tr>");
         }
-        html.AppendLine("</tbody></table>");
+        html.AppendLine("</tbody></table></div>");
     }
 
     private static string FormatDate(DateTime? date)

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -66,12 +66,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 oldType: "uuid",
                 oldDefaultValueSql: "gen_random_uuid()");
 
-            migrationBuilder.AddColumn<Guid>(
-                name: "PublicId",
-                table: "Rates",
-                type: "uuid",
-                nullable: false,
-                defaultValue: new Guid("00000000-0000-0000-0000-000000000000"));
 
             migrationBuilder.AlterColumn<Guid>(
                 name: "PublicId",
@@ -298,11 +292,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 table: "TravelFiles",
                 columns: new[] { "Status", "StartDate", "CreatedAt" });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_Rates_PublicId",
-                table: "Rates",
-                column: "PublicId",
-                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_Payments_PaidAt",
@@ -359,9 +348,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 name: "IX_TravelFiles_Status_StartDate_CreatedAt",
                 table: "TravelFiles");
 
-            migrationBuilder.DropIndex(
-                name: "IX_Rates_PublicId",
-                table: "Rates");
 
             migrationBuilder.DropIndex(
                 name: "IX_Payments_PaidAt",
@@ -379,9 +365,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 name: "IX_Customers_IsActive_FullName",
                 table: "Customers");
 
-            migrationBuilder.DropColumn(
-                name: "PublicId",
-                table: "Rates");
 
             migrationBuilder.DropColumn(
                 name: "ProdCertificateData",

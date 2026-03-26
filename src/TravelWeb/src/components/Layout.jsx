@@ -65,10 +65,10 @@ export default function Layout({ children, onLogout, isAdmin }) {
     return (
         <div className="flex flex-col min-h-screen bg-background text-foreground transition-colors duration-300">
             {afipSettings && !afipSettings.isProduction && (
-                <div className="bg-amber-500 text-white text-[10px] md:text-[11px] py-1 px-4 text-center font-bold uppercase tracking-widest shadow-sm z-[60] flex items-center justify-center gap-2">
-                    <AlertCircle className="h-3 w-3" />
-                    <span>ENTORNO DE HOMOLOGACIÓN (PRUEBAS) — Facturas sin validez legal</span>
-                    <AlertCircle className="h-3 w-3" />
+                <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 text-white text-[9px] md:text-[10px] py-1.5 px-4 text-center font-black uppercase tracking-[0.2em] shadow-lg z-[60] flex items-center justify-center gap-3 border-b border-amber-400/20">
+                    <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
+                    <span className="drop-shadow-sm">Modo Homologación Activo • Comprobantes sin validez legal</span>
+                    <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
                 </div>
             )}
 
