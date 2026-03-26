@@ -278,9 +278,9 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Alojamiento</h2><div class='table-container'><table><thead><tr><th>Hotel / Destino</th><th>Fechas</th><th>Noches</th><th>Habitación / Régimen</th><th>Estado</th></tr></thead><tbody>");
         foreach (var h in reserva.HotelBookings)
         {
-            var isConfirmed = h.status == "Confirmed" || h.status == "Confirmado";
+            var isConfirmed = h.Status == "Confirmed" || h.Status == "Confirmado";
             html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(h.HotelName)}<br/><span style='font-size:11px;color:#64748b;font-weight:400'>{EscapeHtml(h.City)}</span></td><td>{h.CheckIn:dd/MM/yyyy} - {h.CheckOut:dd/MM/yyyy}</td><td>{h.Nights}</td><td>{EscapeHtml($"{h.RoomType} ({h.MealPlan})")}</td>");
-            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(h.status ?? "Pendiente")}</span></td></tr>");
+            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(h.Status ?? "Pendiente")}</span></td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }
@@ -316,9 +316,9 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Paquetes Turísticos</h2><div class='table-container'><table><thead><tr><th>Paquete</th><th>Destino</th><th>Fechas</th><th>Noches</th><th>Estado</th></tr></thead><tbody>");
         foreach (var p in reserva.PackageBookings)
         {
-            var isConfirmed = p.status == "Confirmed" || p.status == "Confirmado";
+            var isConfirmed = p.Status == "Confirmed" || p.Status == "Confirmado";
             html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(p.PackageName)}</td><td>{EscapeHtml(p.Destination)}</td><td>{p.StartDate:dd/MM/yyyy} - {p.EndDate:dd/MM/yyyy}</td><td>{p.Nights}</td>");
-            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(p.status ?? "Pendiente")}</span></td></tr>");
+            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(p.Status ?? "Pendiente")}</span></td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }
