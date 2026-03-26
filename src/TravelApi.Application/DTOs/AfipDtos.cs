@@ -25,3 +25,15 @@ public class TributeDetail
     public decimal Alic { get; set; }
     public decimal Importe { get; set; }
 }
+
+public class AfipSettingsDto
+{
+    public long Cuit { get; set; }
+    public int PuntoDeVenta { get; set; }
+    public bool IsProduction { get; set; }
+    public string TaxCondition { get; set; } = "Responsable Inscripto";
+    public bool HasCertificate { get; set; }
+    public bool HasProdCertificate { get; set; }
+    public string? CertificatePath { get; set; }
+    public string? ProdCertificatePath { get; set; }
+}

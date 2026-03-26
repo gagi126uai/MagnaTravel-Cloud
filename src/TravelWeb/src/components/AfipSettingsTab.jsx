@@ -11,10 +11,14 @@ export default function AfipSettingsTab() {
         cuit: "",
         puntoDeVenta: 1,
         isProduction: false,
-        certificatePassword: ""
+        taxCondition: "Responsable Inscripto",
+        certificatePassword: "",
+        prodCertificatePassword: ""
     });
     const [certificateFile, setCertificateFile] = useState(null);
     const [certificateName, setCertificateName] = useState(null);
+    const [prodCertificateFile, setProdCertificateFile] = useState(null);
+    const [prodCertificateName, setProdCertificateName] = useState(null);
 
     useEffect(() => {
         loadSettings();
@@ -31,10 +35,14 @@ export default function AfipSettingsTab() {
                     puntoDeVenta: data.puntoDeVenta || 1,
                     isProduction: data.isProduction || false,
                     taxCondition: data.taxCondition || "Responsable Inscripto",
-                    certificatePassword: "" // Don't show password
+                    certificatePassword: "", // Don't show password
+                    prodCertificatePassword: ""
                 });
-                if (data.certificatePath) {
-                    setCertificateName("Certificado cargado (pfx)");
+                if (data.hasCertificate) {
+                    setCertificateName(data.certificateFileName || "Certificado homologación cargado");
+                }
+                if (data.hasProdCertificate) {
+                    setProdCertificateName(data.prodCertificateFileName || "Certificado producción cargado");
                 }
             }
         } catch (error) {
@@ -57,11 +65,16 @@ export default function AfipSettingsTab() {
         }
     };
 
-    const handleFileChange = (e) => {
+    const handleFileChange = (e, isProd = false) => {
         const file = e.target.files[0];
         if (file) {
-            setCertificateFile(file);
-            setCertificateName(file.name);
+            if (isProd) {
+                setProdCertificateFile(file);
+                setProdCertificateName(file.name);
+            } else {
+                setCertificateFile(file);
+                setCertificateName(file.name);
+            }
         }
     };
 
@@ -74,6 +87,7 @@ export default function AfipSettingsTab() {
         formData.append("PuntoDeVenta", form.puntoDeVenta);
         formData.append("IsProduction", form.isProduction);
         formData.append("TaxCondition", form.taxCondition);
+        
         if (form.certificatePassword) {
             formData.append("Password", form.certificatePassword);
         }
@@ -81,19 +95,27 @@ export default function AfipSettingsTab() {
             formData.append("Certificate", certificateFile);
         }
 
+        if (form.prodCertificatePassword) {
+            formData.append("ProdPassword", form.prodCertificatePassword);
+        }
+        if (prodCertificateFile) {
+            formData.append("ProdCertificate", prodCertificateFile);
+        }
+
         try {
             await api.post("/afip/settings", formData);
             showSuccess("Configuración de AFIP guardada.");
+            loadSettings(); // Reload to refresh names and status
             checkStatus();
         } catch (error) {
-            showError("Error guardando configuración: " + (error.response?.data || error.message));
+            showError("Error guardando configuración: " + (error.response?.data?.message || error.message));
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="space-y-6 max-w-4xl">
+        <div className="space-y-6 max-w-5xl">
             {/* Header / Status */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
                 <div>
@@ -101,7 +123,7 @@ export default function AfipSettingsTab() {
                         <ShieldCheck className="h-5 w-5 text-indigo-600" />
                         Estado de Conexión
                     </h3>
-                    <p className="text-sm text-slate-500 mt-1">Verifica la conexión con los servidores de AFIP</p>
+                    <p className="text-sm text-slate-500 mt-1">Verifica la conexión con los servidores de AFIP en el entorno actual ({form.isProduction ? "Producción" : "Homologación"})</p>
                 </div>
                 <div className="flex items-center gap-4">
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium ${status?.includes("Online")
@@ -122,126 +144,164 @@ export default function AfipSettingsTab() {
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Configuración General */}
-                <div className="space-y-6">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50 h-full">
-                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Datos Fiscales</h3>
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
+                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Datos Fiscales Generales</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">CUIT Emisor</label>
+                            <input
+                                type="number"
+                                required
+                                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                value={form.cuit}
+                                onChange={e => setForm({ ...form, cuit: e.target.value })}
+                                placeholder="20123456789"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Punto de Venta</label>
+                            <input
+                                type="number"
+                                required
+                                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                value={form.puntoDeVenta}
+                                onChange={e => setForm({ ...form, puntoDeVenta: e.target.value })}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condición Fiscal</label>
+                            <select
+                                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                value={form.taxCondition}
+                                onChange={e => setForm({ ...form, taxCondition: e.target.value })}
+                            >
+                                <option value="Responsable Inscripto">Responsable Inscripto</option>
+                                <option value="Monotributo">Monotributo</option>
+                                <option value="Exento">Exento</option>
+                            </select>
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50">
+                            <div>
+                                <span className="block text-xs font-semibold uppercase text-slate-500">Entorno Activo</span>
+                                <span className={`text-sm font-bold ${form.isProduction ? "text-amber-600" : "text-indigo-600"}`}>
+                                    {form.isProduction ? "PRODUCCIÓN" : "HOMOLOGACIÓN"}
+                                </span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={form.isProduction}
+                                    onChange={e => setForm({ ...form, isProduction: e.target.checked })}
+                                />
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Certificados */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Homologación */}
+                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-6 dark:border-indigo-900/30 dark:bg-indigo-900/10">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg">
+                                <FileKey className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-slate-900 dark:text-white">Certificado Homologación</h4>
+                                <p className="text-xs text-slate-500">Para pruebas y desarrollo (Testing)</p>
+                            </div>
+                        </div>
 
                         <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condición Fiscal</label>
-                                <select
-                                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                                    value={form.taxCondition}
-                                    onChange={e => setForm({ ...form, taxCondition: e.target.value })}
-                                >
-                                    <option value="Responsable Inscripto">Responsable Inscripto</option>
-                                    <option value="Monotributo">Monotributo</option>
-                                    <option value="Exento">Exento</option>
-                                </select>
-                                <p className="text-xs text-slate-500 mt-1">Determina el tipo de comprobante (A, B o C).</p>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">CUIT Emisor</label>
-                                <input
-                                    type="number"
-                                    required
-                                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                                    value={form.cuit}
-                                    onChange={e => setForm({ ...form, cuit: e.target.value })}
-                                    placeholder="20123456789"
-                                />
-                                <p className="text-xs text-slate-500 mt-1">Debe coincidir con el del certificado.</p>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Punto de Venta</label>
-                                <input
-                                    type="number"
-                                    required
-                                    className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                                    value={form.puntoDeVenta}
-                                    onChange={e => setForm({ ...form, puntoDeVenta: e.target.value })}
-                                />
-                                <p className="text-xs text-slate-500 mt-1">Número de Punto de Venta dado de alta en AFIP para Web Services.</p>
-                            </div>
-
-                            <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50">
-                                <div>
-                                    <span className="block text-sm font-medium text-slate-900 dark:text-white">Modo Producción</span>
-                                    <span className="text-xs text-slate-500">Activa el envío real de facturas.</span>
-                                </div>
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        className="sr-only peer"
-                                        checked={form.isProduction}
-                                        onChange={e => setForm({ ...form, isProduction: e.target.checked })}
-                                    />
-                                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                            <div className="border-2 border-dashed border-indigo-200 dark:border-indigo-800 rounded-xl p-4 flex flex-col items-center justify-center bg-white dark:bg-slate-900/50 hover:bg-slate-50 transition-colors">
+                                <p className="text-xs text-slate-600 dark:text-slate-300 mb-3 text-center line-clamp-1">
+                                    {certificateName || "Sin certificado de pruebas"}
+                                </p>
+                                <label className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500 shadow-sm transition-all active:scale-95">
+                                    Cargar PFX Pruebas
+                                    <input type="file" accept=".pfx" className="hidden" onChange={(e) => handleFileChange(e, false)} />
                                 </label>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">Contraseña PFX Pruebas</label>
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <Key className="h-3.5 w-3.5 text-slate-400" />
+                                    </div>
+                                    <input
+                                        type="password"
+                                        className="block w-full rounded-xl border border-slate-200 bg-white pl-9 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                        value={form.certificatePassword}
+                                        onChange={e => setForm({ ...form, certificatePassword: e.target.value })}
+                                        placeholder="Solo para cambiar"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Producción */}
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50/30 p-6 dark:border-amber-900/30 dark:bg-amber-900/10">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 bg-amber-100 dark:bg-amber-900/50 rounded-lg">
+                                <ShieldCheck className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-slate-900 dark:text-white">Certificado Producción</h4>
+                                <p className="text-xs text-slate-500">Para facturación real y legal</p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="border-2 border-dashed border-amber-200 dark:border-amber-800 rounded-xl p-4 flex flex-col items-center justify-center bg-white dark:bg-slate-900/50 hover:bg-slate-100/50 transition-colors">
+                                <p className="text-xs text-slate-600 dark:text-slate-300 mb-3 text-center line-clamp-1">
+                                    {prodCertificateName || "Sin certificado real"}
+                                </p>
+                                <label className="cursor-pointer rounded-lg bg-amber-600 px-4 py-2 text-xs font-medium text-white hover:bg-amber-500 shadow-sm transition-all active:scale-95">
+                                    Cargar PFX Real
+                                    <input type="file" accept=".pfx" className="hidden" onChange={(e) => handleFileChange(e, true)} />
+                                </label>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">Contraseña PFX Real</label>
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <Key className="h-3.5 w-3.5 text-slate-400" />
+                                    </div>
+                                    <input
+                                        type="password"
+                                        className="block w-full rounded-xl border border-slate-200 bg-white pl-9 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                        value={form.prodCertificatePassword}
+                                        onChange={e => setForm({ ...form, prodCertificatePassword: e.target.value })}
+                                        placeholder="Solo para cambiar"
+                                    />
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Certificado */}
-                <div className="space-y-6">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50 h-full">
-                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Certificado Digital</h3>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Archivo .PFX</label>
-                                <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-6 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 transition-colors">
-                                    <FileKey className="h-10 w-10 text-slate-400 mb-2" />
-                                    <p className="text-sm text-slate-600 dark:text-slate-300 mb-2 text-center">
-                                        {certificateName || "Arrastra o selecciona tu certificado"}
-                                    </p>
-                                    <label className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
-                                        Seleccionar Archivo
-                                        <input type="file" accept=".pfx" className="hidden" onChange={handleFileChange} />
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Contraseña del Certificado</label>
-                                <div className="relative mt-1">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                        <Key className="h-4 w-4 text-slate-400" />
-                                    </div>
-                                    <input
-                                        type="password"
-                                        className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                                        value={form.certificatePassword}
-                                        onChange={e => setForm({ ...form, certificatePassword: e.target.value })}
-                                        placeholder="Solo si la vas a cambiar"
-                                    />
-                                </div>
-                                <p className="text-xs text-slate-500 mt-1">Déjalo en blanco para mantener la contraseña actual.</p>
-                            </div>
-
-                            <div className="pt-4 flex justify-end">
-                                <button
-                                    type="submit"
-                                    disabled={loading}
-                                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
-                                >
-                                    {loading ? (
-                                        <>Guardando...</>
-                                    ) : (
-                                        <>
-                                            <Upload className="h-4 w-4" />
-                                            Guardar Configuración
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                <div className="flex justify-end pt-2">
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className="flex items-center gap-2 rounded-2xl bg-slate-900 px-10 py-3 text-sm font-bold text-white shadow-xl hover:bg-slate-800 disabled:opacity-50 transition-all active:scale-95 dark:bg-indigo-600 dark:hover:bg-indigo-500"
+                    >
+                        {loading ? (
+                            <><RefreshCw className="h-4 w-4 animate-spin" /> Guardando...</>
+                        ) : (
+                            <>
+                                <Upload className="h-4 w-4" />
+                                Guardar Toda la Configuración
+                            </>
+                        )}
+                    </button>
                 </div>
             </form>
         </div>

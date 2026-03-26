@@ -462,8 +462,8 @@ public class ReservasController : ControllerBase
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
-            var html = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
-            return File(html, "text/html", $"voucher-{publicIdOrLegacyId}.html");
+            var htmlBytes = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
+            return File(htmlBytes, "text/html", $"voucher-{publicIdOrLegacyId}.html");
         }
         catch (KeyNotFoundException)
         {
@@ -473,6 +473,27 @@ public class ReservasController : ControllerBase
         {
             _logger.LogError(ex, "Unexpected error generating voucher for reserva {ReservaId}", publicIdOrLegacyId);
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo generar el voucher.");
+        }
+    }
+
+    [HttpGet("{publicIdOrLegacyId}/voucher/preview")]
+    public async Task<IActionResult> GetVoucherHtmlPreview(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
+            var htmlBytes = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
+            var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
+            return Ok(new { html });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error generating voucher preview for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo generar la vista previa del voucher.");
         }
     }
 

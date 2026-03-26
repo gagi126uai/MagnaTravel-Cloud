@@ -52,17 +52,35 @@ public class AfipService : IAfipService
         _sensitiveDataProtector = sensitiveDataProtector;
     }
 
-    private byte[]? GetCertificateData(AfipSettings settings) => _sensitiveDataProtector.UnprotectBytes(settings.CertificateData);
-
-    private string? GetCertificatePassword(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.CertificatePassword);
-
-    private string? GetAuthToken(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.Token);
-
-    private string? GetAuthSign(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.Sign);
-
-    private string? GetPadronToken(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.PadronToken);
-
-    private string? GetPadronSign(AfipSettings settings) => _sensitiveDataProtector.UnprotectString(settings.PadronSign);
+    private byte[]? GetCertificateData(AfipSettings settings) => 
+        settings.IsProduction 
+            ? _sensitiveDataProtector.UnprotectBytes(settings.ProdCertificateData)
+            : _sensitiveDataProtector.UnprotectBytes(settings.CertificateData);
+    
+    private string? GetCertificatePassword(AfipSettings settings) => 
+        settings.IsProduction 
+            ? _sensitiveDataProtector.UnprotectString(settings.ProdCertificatePassword)
+            : _sensitiveDataProtector.UnprotectString(settings.CertificatePassword);
+    
+    private string? GetAuthToken(AfipSettings settings) => 
+        settings.IsProduction 
+            ? _sensitiveDataProtector.UnprotectString(settings.ProdToken)
+            : _sensitiveDataProtector.UnprotectString(settings.Token);
+    
+    private string? GetAuthSign(AfipSettings settings) => 
+        settings.IsProduction 
+            ? _sensitiveDataProtector.UnprotectString(settings.ProdSign)
+            : _sensitiveDataProtector.UnprotectString(settings.Sign);
+    
+    private string? GetPadronToken(AfipSettings settings) => 
+        settings.IsProduction 
+            ? _sensitiveDataProtector.UnprotectString(settings.ProdPadronToken)
+            : _sensitiveDataProtector.UnprotectString(settings.PadronToken);
+    
+    private string? GetPadronSign(AfipSettings settings) => 
+        settings.IsProduction 
+            ? _sensitiveDataProtector.UnprotectString(settings.ProdPadronSign)
+            : _sensitiveDataProtector.UnprotectString(settings.PadronSign);
 
     private AfipSettings MapDecryptedSettings(AfipSettings settings)
     {
@@ -73,14 +91,25 @@ public class AfipService : IAfipService
             PuntoDeVenta = settings.PuntoDeVenta,
             IsProduction = settings.IsProduction,
             CertificatePath = settings.CertificatePath,
-            CertificateData = GetCertificateData(settings),
-            CertificatePassword = GetCertificatePassword(settings),
-            Token = GetAuthToken(settings),
-            Sign = GetAuthSign(settings),
+            CertificateData = _sensitiveDataProtector.UnprotectBytes(settings.CertificateData),
+            CertificatePassword = _sensitiveDataProtector.UnprotectString(settings.CertificatePassword),
+            Token = _sensitiveDataProtector.UnprotectString(settings.Token),
+            Sign = _sensitiveDataProtector.UnprotectString(settings.Sign),
             TokenExpiration = settings.TokenExpiration,
-            PadronToken = GetPadronToken(settings),
-            PadronSign = GetPadronSign(settings),
+            PadronToken = _sensitiveDataProtector.UnprotectString(settings.PadronToken),
+            PadronSign = _sensitiveDataProtector.UnprotectString(settings.PadronSign),
             PadronTokenExpiration = settings.PadronTokenExpiration,
+            
+            ProdCertificatePath = settings.ProdCertificatePath,
+            ProdCertificateData = _sensitiveDataProtector.UnprotectBytes(settings.ProdCertificateData),
+            ProdCertificatePassword = _sensitiveDataProtector.UnprotectString(settings.ProdCertificatePassword),
+            ProdToken = _sensitiveDataProtector.UnprotectString(settings.ProdToken),
+            ProdSign = _sensitiveDataProtector.UnprotectString(settings.ProdSign),
+            ProdTokenExpiration = settings.ProdTokenExpiration,
+            ProdPadronToken = _sensitiveDataProtector.UnprotectString(settings.ProdPadronToken),
+            ProdPadronSign = _sensitiveDataProtector.UnprotectString(settings.ProdPadronSign),
+            ProdPadronTokenExpiration = settings.ProdPadronTokenExpiration,
+
             TaxCondition = settings.TaxCondition
         };
     }
@@ -190,7 +219,9 @@ public class AfipService : IAfipService
         }
     }
 
-    public async Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, byte[]? certificateData, string? certificateFileName, string? password)
+    public async Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, 
+        byte[]? certificateData, string? certificateFileName, string? password,
+        byte[]? prodCertificateData, string? prodCertificateFileName, string? prodPassword)
     {
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
         if (settings == null)
@@ -199,18 +230,28 @@ public class AfipService : IAfipService
             _context.AfipSettings.Add(settings);
         }
 
-        if (settings.IsProduction != isProduction) { settings.Token = null; settings.Sign = null; settings.TokenExpiration = null; settings.PadronToken = null; settings.PadronSign = null; settings.PadronTokenExpiration = null; }
+        // Si cambia el entorno, no necesitamos borrar todo porque ahora cada entorno tiene sus propios campos de token.
+        // Pero si el usuario cambia el CUIT, sí deberíamos invalidar ambos.
+        if (settings.Cuit != cuit)
+        {
+            settings.Token = null; settings.Sign = null; settings.TokenExpiration = null;
+            settings.ProdToken = null; settings.ProdSign = null; settings.ProdTokenExpiration = null;
+            settings.PadronToken = null; settings.PadronSign = null; settings.PadronTokenExpiration = null;
+            settings.ProdPadronToken = null; settings.ProdPadronSign = null; settings.ProdPadronTokenExpiration = null;
+        }
+
         settings.Cuit = cuit;
         settings.PuntoDeVenta = puntoDeVenta;
         settings.IsProduction = isProduction;
         settings.TaxCondition = taxCondition;
 
+        // Process DEV Certificate
         if (certificateData != null)
         {
-            var certPassword = !string.IsNullOrEmpty(password) ? password : GetCertificatePassword(settings);
+            var certPassword = !string.IsNullOrEmpty(password) ? password : _sensitiveDataProtector.UnprotectString(settings.CertificatePassword);
             if (!await ValidateCertificate(certificateData, certPassword ?? ""))
             {
-                throw new ArgumentException("El certificado es inválido o la contraseña es incorrecta. Asegurate de que sea un archivo .pfx válido.");
+                throw new ArgumentException("El certificado de Homologación es inválido o la contraseña es incorrecta.");
             }
 
             settings.CertificateData = _sensitiveDataProtector.ProtectBytes(certificateData);
@@ -220,6 +261,24 @@ public class AfipService : IAfipService
         if (!string.IsNullOrEmpty(password))
         {
             settings.CertificatePassword = _sensitiveDataProtector.ProtectString(password);
+        }
+
+        // Process PROD Certificate
+        if (prodCertificateData != null)
+        {
+            var certPassword = !string.IsNullOrEmpty(prodPassword) ? prodPassword : _sensitiveDataProtector.UnprotectString(settings.ProdCertificatePassword);
+            if (!await ValidateCertificate(prodCertificateData, certPassword ?? ""))
+            {
+                throw new ArgumentException("El certificado de Producción es inválido o la contraseña es incorrecta.");
+            }
+
+            settings.ProdCertificateData = _sensitiveDataProtector.ProtectBytes(prodCertificateData);
+            settings.ProdCertificatePath = prodCertificateFileName;
+        }
+
+        if (!string.IsNullOrEmpty(prodPassword))
+        {
+            settings.ProdCertificatePassword = _sensitiveDataProtector.ProtectString(prodPassword);
         }
 
         await _context.SaveChangesAsync();
@@ -408,9 +467,19 @@ public class AfipService : IAfipService
             // So 17:00 ART + 3 = 20:00 UTC.
             
             // 6. Save to DB
-            settings.Token = _sensitiveDataProtector.ProtectString(token);
-            settings.Sign = _sensitiveDataProtector.ProtectString(sign);
-            settings.TokenExpiration = expirationUtc;
+            // 6. Save to DB
+            if (settings.IsProduction)
+            {
+                settings.ProdToken = _sensitiveDataProtector.ProtectString(token);
+                settings.ProdSign = _sensitiveDataProtector.ProtectString(sign);
+                settings.ProdTokenExpiration = expirationUtc;
+            }
+            else
+            {
+                settings.Token = _sensitiveDataProtector.ProtectString(token);
+                settings.Sign = _sensitiveDataProtector.ProtectString(sign);
+                settings.TokenExpiration = expirationUtc;
+            }
             
             try 
             {
@@ -1306,9 +1375,18 @@ public class AfipService : IAfipService
         var expirationLocal = DateTime.Parse(expirationStr);
         var expirationUtc = DateTime.SpecifyKind(expirationLocal.AddHours(3), DateTimeKind.Utc);
 
-        settings.PadronToken = _sensitiveDataProtector.ProtectString(token);
-        settings.PadronSign = _sensitiveDataProtector.ProtectString(sign);
-        settings.PadronTokenExpiration = expirationUtc;
+        if (settings.IsProduction)
+        {
+            settings.ProdPadronToken = _sensitiveDataProtector.ProtectString(token);
+            settings.ProdPadronSign = _sensitiveDataProtector.ProtectString(sign);
+            settings.ProdPadronTokenExpiration = expirationUtc;
+        }
+        else
+        {
+            settings.PadronToken = _sensitiveDataProtector.ProtectString(token);
+            settings.PadronSign = _sensitiveDataProtector.ProtectString(sign);
+            settings.PadronTokenExpiration = expirationUtc;
+        }
 
         try
         {

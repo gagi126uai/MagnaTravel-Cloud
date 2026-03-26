@@ -10,7 +10,9 @@ public interface IAfipService
     Task<bool> ValidateCertificate(byte[] certData, string password);
     Task<string> GetStatus();
     Task<AfipSettings?> GetSettingsAsync();
-    Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, byte[]? certificateData, string? certificateFileName, string? password);
+    Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, 
+        byte[]? certificateData, string? certificateFileName, string? password,
+        byte[]? prodCertificateData, string? prodCertificateFileName, string? prodPassword);
 
     // Core
     Task<Invoice> CreatePendingInvoice(int ReservaId, CreateInvoiceRequest request);

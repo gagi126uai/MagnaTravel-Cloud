@@ -11,12 +11,14 @@ import PaymentModal from "../../../components/PaymentModal";
 import AuditTimeline from "../../../components/AuditTimeline";
 import { ReservaAttachmentsTab } from "../../../components/ReservaAttachmentsTab";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
+import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
 
 import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { CapacityWarning } from "../components/CapacityWarning";
 import { ServiceList } from "../components/ServiceList";
 import { PassengerList } from "../components/PassengerList";
+import ConfirmModal from "../../../components/ConfirmModal";
 
 export default function ReservaDetailPage() {
     const { publicId } = useParams();
@@ -27,6 +29,26 @@ export default function ReservaDetailPage() {
     const [showPassengerForm, setShowPassengerForm] = useState(false);
     const [editingPassenger, setEditingPassenger] = useState(null);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [confirmConfig, setConfirmConfig] = useState({ 
+        isOpen: false, 
+        title: "", 
+        message: "", 
+        onConfirm: null, 
+        type: "warning" 
+    });
+
+    const askConfirmation = (config) => {
+        setConfirmConfig({
+            isOpen: true,
+            title: config.title || "Confirmar acción",
+            message: config.message || "¿Estás seguro?",
+            type: config.type || "warning",
+            onConfirm: () => {
+                config.onConfirm();
+                setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+            }
+        });
+    };
 
     const {
         reserva,
@@ -61,9 +83,30 @@ export default function ReservaDetailPage() {
             <ReservaHeader
                 reserva={reserva}
                 onBack={() => navigate("/reservas")}
-                onStatusChange={handleStatusChange}
-                onDelete={() => { if (confirm("¿Eliminar Reserva? Acción irreversible. Solo aplicable a reservas sin pagos.")) handleDeleteReserva(); }}
-                onArchive={() => { if (confirm("¿Archivar Reserva? El estado pasará a 'Archivado'.")) handleArchiveReserva(); }}
+                onStatusChange={(newStatus) => {
+                    if (newStatus === 'Presupuesto' && reserva.status === 'Reservado') {
+                        askConfirmation({
+                            title: "¿Deshacer Reserva?",
+                            message: "¿Seguro que deseas volver el estado a 'Presupuesto'?",
+                            type: "warning",
+                            onConfirm: () => handleStatusChange(newStatus)
+                        });
+                    } else {
+                        handleStatusChange(newStatus);
+                    }
+                }}
+                onDelete={() => askConfirmation({
+                    title: "¿Eliminar Reserva?",
+                    message: "Acción irreversible. Solo aplicable a reservas sin pagos.",
+                    type: "danger",
+                    onConfirm: handleDeleteReserva
+                })}
+                onArchive={() => askConfirmation({
+                    title: "¿Archivar Reserva?",
+                    message: "El estado pasará a 'Archivado'.",
+                    type: "warning",
+                    onConfirm: handleArchiveReserva
+                })}
             />
 
             <ReservaSummaryStrip reserva={reserva} />
@@ -110,6 +153,7 @@ export default function ReservaDetailPage() {
                             { id: 'passengers', label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
                             { id: 'history', label: 'Historial', icon: Clock },
                             { id: 'account', label: 'Estado de Cuenta', icon: CreditCard },
+                            { id: 'voucher', label: 'Voucher', icon: FileText },
                             { id: 'attachments', label: 'Documentos', icon: Paperclip },
                         ].map(tab => (
                             <button
@@ -131,7 +175,12 @@ export default function ReservaDetailPage() {
                             services={allServices}
                             onAddService={() => { setServiceToEdit(null); setShowServiceModal(true); }}
                             onEditService={(svc) => { setServiceToEdit(svc); setShowServiceModal(true); }}
-                            onDeleteService={(svc) => { if (confirm("¿Eliminar Servicio?")) handleDeleteService(svc); }}
+                            onDeleteService={(svc) => askConfirmation({
+                                title: "¿Eliminar Servicio?",
+                                message: `¿Estás seguro de eliminar el servicio ${svc.description || ''}?`,
+                                type: "danger",
+                                onConfirm: () => handleDeleteService(svc)
+                            })}
                         />
                     )}
 
@@ -140,13 +189,20 @@ export default function ReservaDetailPage() {
                             passengers={reserva.passengers}
                             onAddPassenger={() => { setEditingPassenger(null); setShowPassengerForm(true); }}
                             onEditPassenger={(pax) => { setEditingPassenger(pax); setShowPassengerForm(true); }}
-                            onDeletePassenger={(paxId) => { if (confirm("¿Eliminar pasajero?")) handleDeletePassenger(paxId); }}
+                            onDeletePassenger={(paxId) => askConfirmation({
+                                title: "¿Eliminar Pasajero?",
+                                message: "¿Estás seguro de eliminar este pasajero de la reserva?",
+                                type: "danger",
+                                onConfirm: () => handleDeletePassenger(paxId)
+                            })}
                         />
                     )}
 
                     {activeTab === 'history' && <AuditTimeline entityName="Reserva" entityId={publicId} />}
 
                     {activeTab === 'attachments' && <ReservaAttachmentsTab reservaId={publicId} />}
+
+                    {activeTab === 'voucher' && <ReservaVoucherTab reservaId={publicId} />}
 
                     {activeTab === 'account' && (
                         <div className="space-y-6 animate-in fade-in duration-500">
@@ -299,6 +355,15 @@ export default function ReservaDetailPage() {
                 reservaId={publicId}
                 passengerToEdit={editingPassenger}
                 onSuccess={fetchReserva}
+            />
+
+            <ConfirmModal 
+                isOpen={confirmConfig.isOpen}
+                title={confirmConfig.title}
+                message={confirmConfig.message}
+                type={confirmConfig.type}
+                onConfirm={confirmConfig.onConfirm}
+                onClose={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
             />
         </div>
     );

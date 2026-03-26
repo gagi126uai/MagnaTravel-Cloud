@@ -18,19 +18,32 @@ public class AfipSettings
     // Alternatively, we could store the path if volume mounting is guaranteed.
     public string? CertificatePath { get; set; }
     
-    public byte[]? CertificateData { get; set; } // Stored in DB for docker persistence
+    public byte[]? CertificateData { get; set; } // DEV / Homologation Certificate
 
     public string? CertificatePassword { get; set; }
     
-    // Token caching fields (to avoid re-authing every request)
+    // DEV Token caching fields (to avoid re-authing every request)
     public string? Token { get; set; }
     public string? Sign { get; set; }
     public DateTime? TokenExpiration { get; set; }
 
-    // Padron token caching fields
+    // DEV Padron token caching fields
     public string? PadronToken { get; set; }
     public string? PadronSign { get; set; }
     public DateTime? PadronTokenExpiration { get; set; }
+
+    // PRODUCTION Overrides
+    public string? ProdCertificatePath { get; set; }
+    public byte[]? ProdCertificateData { get; set; }
+    public string? ProdCertificatePassword { get; set; }
+    
+    public string? ProdToken { get; set; }
+    public string? ProdSign { get; set; }
+    public DateTime? ProdTokenExpiration { get; set; }
+
+    public string? ProdPadronToken { get; set; }
+    public string? ProdPadronSign { get; set; }
+    public DateTime? ProdPadronTokenExpiration { get; set; }
 
     [MaxLength(50)]
     public string TaxCondition { get; set; } = "Responsable Inscripto"; // Monotributo, Exento

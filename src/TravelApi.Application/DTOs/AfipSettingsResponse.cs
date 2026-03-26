@@ -10,4 +10,9 @@ public class AfipSettingsResponse
     public string? CertificateFileName { get; set; }
     public bool HasAuthToken { get; set; }
     public bool HasPadronToken { get; set; }
+    
+    public bool HasProdCertificate { get; set; }
+    public string? ProdCertificateFileName { get; set; }
+    public bool HasProdAuthToken { get; set; }
+    public bool HasProdPadronToken { get; set; }
 }

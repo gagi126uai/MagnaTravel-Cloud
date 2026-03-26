@@ -42,8 +42,12 @@ public class AfipController : ControllerBase
         public int PuntoDeVenta { get; set; }
         public bool IsProduction { get; set; }
         public string TaxCondition { get; set; } = "Responsable Inscripto";
+        
         public IFormFile? Certificate { get; set; }
         public string? Password { get; set; }
+        
+        public IFormFile? ProdCertificate { get; set; }
+        public string? ProdPassword { get; set; }
     }
 
     [HttpPost("settings")]
@@ -51,13 +55,22 @@ public class AfipController : ControllerBase
     {
         byte[]? certData = null;
         string? certFileName = null;
-
         if (request.Certificate != null)
         {
             using var memoryStream = new MemoryStream();
             await request.Certificate.CopyToAsync(memoryStream);
             certData = memoryStream.ToArray();
             certFileName = request.Certificate.FileName;
+        }
+
+        byte[]? prodCertData = null;
+        string? prodCertFileName = null;
+        if (request.ProdCertificate != null)
+        {
+            using var memoryStream = new MemoryStream();
+            await request.ProdCertificate.CopyToAsync(memoryStream);
+            prodCertData = memoryStream.ToArray();
+            prodCertFileName = request.ProdCertificate.FileName;
         }
 
         try
@@ -69,18 +82,21 @@ public class AfipController : ControllerBase
                 request.TaxCondition, 
                 certData, 
                 certFileName, 
-                request.Password
+                request.Password,
+                prodCertData,
+                prodCertFileName,
+                request.ProdPassword
             );
 
             return Ok(MapResponse(settings));
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            return BadRequest(new { message = "La configuracion AFIP enviada no es valida." });
+            return BadRequest(new { message = ex.Message });
         }
-        catch
+        catch (Exception ex)
         {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "No se pudo validar la configuracion AFIP.");
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"No se pudo validar la configuracion AFIP: {ex.Message}");
         }
     }
 
@@ -92,10 +108,16 @@ public class AfipController : ControllerBase
             PuntoDeVenta = settings.PuntoDeVenta,
             IsProduction = settings.IsProduction,
             TaxCondition = settings.TaxCondition,
+            
             HasCertificate = settings.CertificateData != null && settings.CertificateData.Length > 0,
             CertificateFileName = settings.CertificatePath,
             HasAuthToken = !string.IsNullOrWhiteSpace(settings.Token),
-            HasPadronToken = !string.IsNullOrWhiteSpace(settings.PadronToken)
+            HasPadronToken = !string.IsNullOrWhiteSpace(settings.PadronToken),
+            
+            HasProdCertificate = settings.ProdCertificateData != null && settings.ProdCertificateData.Length > 0,
+            ProdCertificateFileName = settings.ProdCertificatePath,
+            HasProdAuthToken = !string.IsNullOrWhiteSpace(settings.ProdToken),
+            HasProdPadronToken = !string.IsNullOrWhiteSpace(settings.ProdPadronToken)
         };
     }
 }

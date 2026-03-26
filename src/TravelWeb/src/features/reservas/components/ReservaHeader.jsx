@@ -52,7 +52,7 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                             <button onClick={() => onStatusChange('Operativo')} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95">
                                 Pasar a Operativo
                             </button>
-                            <button onClick={() => { if (confirm("¿Volver a Presupuesto?")) onStatusChange('Presupuesto'); }} className="bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300 px-5 py-2.5 rounded-xl font-bold text-sm transition-all active:scale-95">
+                            <button onClick={() => onStatusChange('Presupuesto')} className="bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300 px-5 py-2.5 rounded-xl font-bold text-sm transition-all active:scale-95">
                                 Deshacer Reserva
                             </button>
                         </div>
