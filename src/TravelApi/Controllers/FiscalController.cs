@@ -56,7 +56,7 @@ public class FiscalController : ControllerBase
     }
 
     [HttpGet("search")]
-    public async Task<IActionResult> Search(string q)
+    public async Task<IActionResult> Search(string q, [FromQuery] string? gender = null)
     {
         try
         {
@@ -77,8 +77,13 @@ public class FiscalController : ControllerBase
             // 2. If it's numeric and 7-8 chars, it's likely a DNI.
             if ((cleanQuery.Length == 7 || cleanQuery.Length == 8) && long.TryParse(cleanQuery, out _))
             {
-                _logger.LogInformation("Input looks like a DNI ({Dni}). Trying possible CUILs.", cleanQuery);
-                var prefixes = new[] { "20", "27", "23" };
+                _logger.LogInformation("Input looks like a DNI ({Dni}) with Gender {Gender}. Trying possible CUILs.", cleanQuery, gender ?? "N/A");
+                
+                var prefixes = new List<string>();
+                if (gender?.ToUpper() == "M") prefixes.AddRange(new[] { "20", "23", "24", "27" });
+                else if (gender?.ToUpper() == "F") prefixes.AddRange(new[] { "27", "23", "24", "20" });
+                else prefixes.AddRange(new[] { "20", "27", "23", "24" });
+
                 foreach (var prefix in prefixes)
                 {
                     var cuil = CalculateCuil(cleanQuery, prefix);

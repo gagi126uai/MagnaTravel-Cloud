@@ -40,7 +40,8 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         setLoadingAfip(true);
         setSearchingField(field);
         try {
-            const data = await api.get(`/fiscal/search?q=${encodeURIComponent(query)}`);
+            const genderParam = formData.gender ? `&gender=${formData.gender}` : '';
+            const data = await api.get(`/fiscal/search?q=${encodeURIComponent(query)}${genderParam}`);
             setAfipResults(data);
             if (data.length === 0) {
                 showWarning("No se encontraron resultados con ese DNI.", "Padrón AFIP");
@@ -180,12 +181,26 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                             </select>
                         </div>
                         <div>
+                            <label className={labelClass}>Género (para CUIT automático)</label>
+                            <select
+                                className={inputClass}
+                                value={formData.gender || "M"}
+                                onChange={(e) => {
+                                    setFormData({ ...formData, gender: e.target.value });
+                                    setSearchingField(null); // Force re-search if needed
+                                }}
+                            >
+                                <option value="M">Masculino</option>
+                                <option value="F">Femenino</option>
+                                <option value="X">No Binario / Otro</option>
+                            </select>
+                        </div>
+                        <div>
                             <label className={labelClass}>Número de Documento</label>
                             <div className="relative">
-                                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                                 <input
                                     type="text"
-                                    className={`${inputClass} pl-10 pr-10`}
+                                    className={`${inputClass} pr-10`}
                                     placeholder="DNI o CUIT"
                                     value={formData.documentNumber || ""}
                                     onChange={(e) => {
