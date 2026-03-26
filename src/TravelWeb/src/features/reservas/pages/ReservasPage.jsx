@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 
 import { useReservas } from "../hooks/useReservas";
 import { Button } from "../../../components/ui/button";
@@ -39,6 +39,8 @@ export default function ReservasPage() {
     hasNextPage,
     setPage,
     setPageSize,
+    currentMonth,
+    setCurrentMonth,
     loadReservas,
     handleArchive,
     tabCounts,
@@ -54,6 +56,14 @@ export default function ReservasPage() {
   if (loading && reservas.length === 0) {
     return <FilesPageSkeleton />;
   }
+
+  const handlePrevMonth = () => {
+    setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+  };
+  const handleNextMonth = () => {
+    setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  };
+  const monthName = currentMonth.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
 
   return (
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
@@ -95,14 +105,32 @@ export default function ReservasPage() {
           ))}
         </div>
 
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            className="w-full border-none bg-transparent py-2 pl-9 pr-4 text-sm placeholder:text-slate-500/70 focus:outline-none"
-            placeholder="Buscar por reserva, nombre o cliente..."
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-          />
+        <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-3">
+          {/* Month Picker */}
+          <div className="flex items-center justify-between sm:justify-center gap-1 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-1 border border-slate-200 dark:border-slate-700 w-full sm:w-auto">
+            <button onClick={handlePrevMonth} className="p-1.5 hover:bg-white dark:hover:bg-slate-700 rounded text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white transition-colors" title="Mes anterior">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-1.5 px-1 sm:px-2">
+              <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200 capitalize w-[110px] text-center">
+                {monthName}
+              </span>
+            </div>
+            <button onClick={handleNextMonth} className="p-1.5 hover:bg-white dark:hover:bg-slate-700 rounded text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white transition-colors" title="Mes siguiente">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="relative w-full sm:max-w-[200px] md:max-w-[240px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              className="w-full border-none bg-slate-50 dark:bg-slate-800/50 rounded-lg py-2 pl-9 pr-4 text-sm placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-shadow"
+              placeholder="Buscar reserva..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+            />
+          </div>
         </div>
       </div>
 

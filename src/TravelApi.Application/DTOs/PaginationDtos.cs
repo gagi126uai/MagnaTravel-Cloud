@@ -47,6 +47,9 @@ public class PagedResponse<T>
 public class ReservaListQuery : PagedQuery
 {
     public string View { get; set; } = "active";
+    public DateTime? CreatedFrom { get; set; }
+    public DateTime? CreatedTo { get; set; }
+
     public ReservaListQuery()
     {
         SortBy = "startDate";

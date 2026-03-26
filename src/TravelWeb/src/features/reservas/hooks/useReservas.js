@@ -32,6 +32,11 @@ export function useReservas() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
+  
+  // Rango de fechas por defecto: Mes actual
+  const today = new Date();
+  const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+
   const debouncedSearch = useDebounce(searchTerm, 300);
 
   const loadReservas = useCallback(async () => {
@@ -42,6 +47,13 @@ export function useReservas() {
         pageSize: String(pageSize),
         view: viewFilter,
       });
+
+      // Calcular fechas del mes seleccionado
+      const from = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+      const to = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59, 59);
+      
+      params.set("createdFrom", from.toISOString());
+      params.set("createdTo", to.toISOString());
 
       if (debouncedSearch.trim()) {
         params.set("search", debouncedSearch.trim());
@@ -58,7 +70,7 @@ export function useReservas() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, pageSize, viewFilter]);
+  }, [debouncedSearch, page, pageSize, viewFilter, currentMonth]);
 
   useEffect(() => {
     loadReservas();
@@ -96,9 +108,10 @@ export function useReservas() {
     totalCount: reservasPage.totalCount || 0,
     totalPages: reservasPage.totalPages || 0,
     hasPreviousPage: Boolean(reservasPage.hasPreviousPage),
-    hasNextPage: Boolean(reservasPage.hasNextPage),
     setPage,
     setPageSize,
+    currentMonth,
+    setCurrentMonth,
     loadReservas,
     handleArchive,
     databaseUnavailable,

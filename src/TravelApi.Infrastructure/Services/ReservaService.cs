@@ -30,6 +30,19 @@ public class ReservaService : IReservaService
     {
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
         var summaryBaseQuery = ApplyReservaSearch(_context.Reservas.AsNoTracking(), query.Search);
+        
+        if (query.CreatedFrom.HasValue)
+        {
+            var from = query.CreatedFrom.Value.ToUniversalTime();
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt >= from);
+        }
+        
+        if (query.CreatedTo.HasValue)
+        {
+            var to = query.CreatedTo.Value.ToUniversalTime();
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt <= to);
+        }
+
         var filteredQuery = ApplyReservaView(summaryBaseQuery, query.View);
 
         var summary = new ReservaListSummaryDto
