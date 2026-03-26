@@ -458,8 +458,14 @@ public class ReservaService : IReservaService
                 throw new InvalidOperationException(blockReason);
         }
 
+        if (status == EstadoReserva.Closed)
+        {
+            if (file.Balance > 0)
+                throw new InvalidOperationException($"No se puede cerrar la reserva porque tiene un saldo pendiente de {file.Balance:N2}.");
+            file.ClosedAt = DateTime.UtcNow;
+        }
+
         file.Status = status;
-        if (status == EstadoReserva.Closed) file.ClosedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
         return file;

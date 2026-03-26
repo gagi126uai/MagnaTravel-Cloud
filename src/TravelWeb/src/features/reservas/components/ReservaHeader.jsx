@@ -58,7 +58,12 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                         </div>
                     )}
                     {reserva.status === 'Operativo' && (
-                        <button onClick={() => onStatusChange('Cerrado')} className="bg-slate-900 dark:bg-white dark:text-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95">
+                        <button
+                            onClick={() => onStatusChange('Cerrado')}
+                            disabled={reserva.balance > 0}
+                            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${reserva.balance <= 0 ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
+                            title={reserva.balance > 0 ? "No se puede cerrar una reserva con saldo pendiente" : "Finalizar Reserva"}
+                        >
                             Finalizar Reserva
                         </button>
                     )}
