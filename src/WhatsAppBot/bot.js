@@ -34,16 +34,16 @@ let isStartingClient = false;
 
 let agencyName = "MagnaTravel";
 let MSG = {
-    welcome: () => `Hola, soy el asistente de *${agencyName}*.\n\nPara ayudarte mejor, como te llamas?`,
-    badName: "No llegue a tomar tu nombre. Me lo repetis, por favor?",
-    askNameAfterInterest: (interest) => `Buenisimo, ya tomo que te interesa *${interest}*.\n\nAntes de seguir, como te llamas?`,
-    askInterest: (name) => `Gracias, *${shortName(name)}*.\n\nQue destino o tipo de viaje te interesa?`,
-    askDates: (interest) => `Perfecto.\n\nTenes una fecha o epoca estimada para *${interest}*?`,
-    askTravelers: () => "Y cuantas personas viajan?",
-    thanks: (name) => `Perfecto, *${shortName(name)}*.\n\nYa le comparti tu consulta a un asesor de *${agencyName}* y va a seguir la conversacion por aca.`,
-    agentRequest: (name) => `Perfecto${name ? `, *${shortName(name)}*` : ""}.\n\nLe aviso a un asesor de *${agencyName}* para que siga la conversacion por este medio.`,
-    duplicate: `Ya tengo tu consulta cargada.\n\nEn breve un asesor de *${agencyName}* sigue con vos por este medio.`,
-    error: `Tuve un problema para registrar la consulta.\n\nSi queres, escribime de nuevo en unos minutos o comunicate con *${agencyName}*.`
+    welcome: () => `¡Hola! Soy el asistente virtual de *${agencyName}*.\n\nPara poder brindarte una mejor atención, ¿me podrías indicar tu nombre?`,
+    badName: "No logré registrar tu nombre correctamente. ¿Podrías confirmármelo, por favor?",
+    askNameAfterInterest: (interest) => `¡Excelente elección! Ya dejé asentado que te interesa *${interest}*.\n\nAntes de continuar, ¿me podrías indicar tu nombre?`,
+    askInterest: (name) => `¡Un gusto saludarte, *${shortName(name)}*!\n\n¿Qué destino o tipo de viaje tenés en mente?`,
+    askDates: (interest) => `¡Perfecto!\n\n¿Tenés alguna fecha o época estimada para viajar a *${interest}*?`,
+    askTravelers: () => "Por último, ¿cuántas personas viajarían?",
+    thanks: (name) => `¡Muchas gracias por los datos, *${shortName(name)}*!\n\nYa derivé tu solicitud a uno de nuestros asesores en *${agencyName}*. En breve un especialista continuará la atención por acá mismo.`,
+    agentRequest: (name) => `Entendido${name ? `, *${shortName(name)}*` : ""}.\n\nEn un momento te contactaré con uno de nuestros asesores expertos de *${agencyName}* para continuar por este medio.`,
+    duplicate: `Ya tenemos registrada tu consulta en nuestro sistema.\n\nEn breve uno de nuestros asesores de *${agencyName}* se pondrá en contacto con vos por esta misma vía.`,
+    error: `Tuvimos un inconveniente al procesar tu solicitud.\n\nPor favor, volvé a escribirnos en unos minutos o comunicate con las oficinas de *${agencyName}*.`
 };
 
 const RECOVERABLE_BROWSER_ERRORS = /(Execution context was destroyed|Target closed|Session closed|Protocol error|frame was detached)/i;
@@ -175,7 +175,7 @@ function looksLikeTravelers(text) {
 }
 
 function buildTravelerRetryMessage() {
-    return "Necesito la cantidad de viajeros para cerrar la consulta. Por ejemplo: *2 adultos*, *familia de 4* o *3 pasajeros*.";
+    return "Para completar tu consulta, necesitaría saber la cantidad de viajeros. Por ejemplo: *2 adultos*, *familia de 4* o *3 pasajeros*.";
 }
 
 function extractPhone(chatId) {
@@ -461,7 +461,7 @@ client.on("message", async (message) => {
 
             case "WAITING_INTEREST": {
                 if (!looksLikeInterest(body)) {
-                    const retryMessage = "Contame el destino o tipo de viaje que te interesa. Por ejemplo: *Brasil*, *Bariloche* o *playa en octubre*.";
+                    const retryMessage = "Para orientarte mejor, ¿me contarías qué tipo de destino buscás? Por ejemplo: *Brasil*, *Bariloche* o *Playa en octubre*.";
                     await sendChatText(chatId, retryMessage);
                     session.transcript.push(`[Bot]: ${retryMessage}`);
                     return;
@@ -477,7 +477,7 @@ client.on("message", async (message) => {
 
             case "WAITING_DATES": {
                 if (!looksLikeDates(body)) {
-                    const retryMessage = "Decime una fecha o rango aproximado. Por ejemplo: *octubre 2026*, *vacaciones de invierno* o *a definir*.";
+                    const retryMessage = "Por favor, indicame una fecha aproximada. Por ejemplo: *octubre 2026*, *vacaciones de invierno* o si tenés fechas *a definir*.";
                     await sendChatText(chatId, retryMessage);
                     session.transcript.push(`[Bot]: ${retryMessage}`);
                     return;
