@@ -53,6 +53,7 @@ public class BookingService : IBookingService
 
     public async Task<FlightSegmentDto> CreateFlightAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -78,6 +79,7 @@ public class BookingService : IBookingService
 
     public async Task<FlightSegmentDto> UpdateFlightAsync(int reservaId, int id, UpdateFlightRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var flight = await _flightRepo.GetByIdAsync(id, ct);
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
@@ -165,6 +167,7 @@ public class BookingService : IBookingService
 
     public async Task<HotelBookingDto> CreateHotelAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -190,6 +193,7 @@ public class BookingService : IBookingService
 
     public async Task<HotelBookingDto> UpdateHotelAsync(int reservaId, int id, UpdateHotelRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
@@ -270,6 +274,7 @@ public class BookingService : IBookingService
 
     public async Task<PackageBookingDto> CreatePackageAsync(int reservaId, CreatePackageRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -295,6 +300,7 @@ public class BookingService : IBookingService
 
     public async Task<PackageBookingDto> UpdatePackageAsync(int reservaId, int id, UpdatePackageRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var package = await _packageRepo.GetByIdAsync(id, ct);
         if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
@@ -375,6 +381,7 @@ public class BookingService : IBookingService
 
     public async Task<TransferBookingDto> CreateTransferAsync(int reservaId, CreateTransferRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -400,6 +407,7 @@ public class BookingService : IBookingService
 
     public async Task<TransferBookingDto> UpdateTransferAsync(int reservaId, int id, UpdateTransferRequest req, CancellationToken ct)
     {
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
         if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
