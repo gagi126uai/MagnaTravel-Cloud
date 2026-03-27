@@ -10,15 +10,18 @@ public class OperationalFinanceMonitorService
 {
     private readonly AppDbContext _dbContext;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
+    private readonly INotificationService _notificationService;
     private readonly UserManager<ApplicationUser> _userManager;
 
     public OperationalFinanceMonitorService(
         AppDbContext dbContext,
         IOperationalFinanceSettingsService operationalFinanceSettingsService,
+        INotificationService notificationService,
         UserManager<ApplicationUser> userManager)
     {
         _dbContext = dbContext;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
+        _notificationService = notificationService;
         _userManager = userManager;
     }
 
@@ -46,7 +49,6 @@ public class OperationalFinanceMonitorService
             return;
 
         var adminUsers = await _userManager.GetUsersInRoleAsync("Admin");
-        var notifications = new List<Notification>();
 
         foreach (var reserva in reservas)
         {
@@ -65,21 +67,16 @@ public class OperationalFinanceMonitorService
                 if (alreadyExists)
                     continue;
 
-                notifications.Add(new Notification
+                await _notificationService.CreateAndSendAsync(new Notification
                 {
                     UserId = userId,
                     Type = "Warning",
+                    Priority = "Urgent",
                     RelatedEntityId = reserva.Id,
                     RelatedEntityType = "ReservaUnpaidDeparture",
                     Message = $"La reserva {reserva.NumeroReserva} sale el {reserva.StartDate:dd/MM/yyyy} y mantiene un saldo pendiente de {reserva.Balance:C2}."
                 });
             }
         }
-
-        if (notifications.Count == 0)
-            return;
-
-        _dbContext.Notifications.AddRange(notifications);
-        await _dbContext.SaveChangesAsync();
     }
 }
