@@ -219,6 +219,14 @@ export default function SettingsPage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAdvancedBot, setShowAdvancedBot] = useState(false);
 
+  const isTabVisible = (tabId) => {
+    if (["users", "roles", "logs", "programming"].includes(tabId)) {
+      return adminUser;
+    }
+
+    return true;
+  };
+
   const loadBotStatus = async () => {
     try {
       const data = await api.get("/webhooks/status");
@@ -255,6 +263,12 @@ export default function SettingsPage() {
   useEffect(() => {
     return undefined;
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!isTabVisible(activeTab)) {
+      setActiveTab("agency");
+    }
+  }, [activeTab, adminUser]);
 
   const loadBotConfig = async () => {
     try {
@@ -547,7 +561,7 @@ export default function SettingsPage() {
       <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-1 shadow-sm overflow-x-auto">
         <nav className="flex space-x-1 min-w-max" aria-label="Tabs">
           {tabs.map((tab) => {
-            if ((tab.id === 'programming' || tab.id === 'logs') && !isAdmin()) return null;
+            if (!isTabVisible(tab.id)) return null;
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
@@ -770,6 +784,9 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        {/* --- ROLES TAB --- */}
+        {activeTab === "roles" && <RolesPermissionsTab />}
 
         {/* --- COMMISSIONS TAB --- */}
         {activeTab === "commissions" && (
