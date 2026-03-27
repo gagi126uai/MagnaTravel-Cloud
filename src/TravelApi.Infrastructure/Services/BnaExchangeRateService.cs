@@ -86,29 +86,29 @@ public class BnaExchangeRateService : IBnaExchangeRateService
     private static BnaUsdSellerRateDto ParseSnapshot(string html)
     {
         var normalizedText = NormalizeHtmlToSearchableText(html);
-
-        var quoteSectionMatch = Regex.Match(
-            normalizedText,
-            @"COTIZACION BILLETES\s+(?<date>\d{1,2}/\d{1,2}/\d{4})\s+COMPRA\s+VENTA\s+(?<table>.*?)\s+HORA ACTUALIZACION:\s*(?<time>\d{1,2}:\d{2})",
-            RegexOptions.Singleline);
-
-        if (!quoteSectionMatch.Success)
+        var billetesScope = normalizedText;
+        var divisasIndex = billetesScope.IndexOf("COTIZACION DIVISAS", StringComparison.Ordinal);
+        if (divisasIndex > 0)
         {
-            quoteSectionMatch = Regex.Match(
-                normalizedText,
-                @"(?<date>\d{1,2}/\d{1,2}/\d{4})\s+COMPRA\s+VENTA\s+(?<table>.*?)\s+HORA ACTUALIZACION:\s*(?<time>\d{1,2}:\d{2})",
-                RegexOptions.Singleline);
+            billetesScope = billetesScope[..divisasIndex];
         }
 
-        if (!quoteSectionMatch.Success)
-        {
-            throw new InvalidOperationException("No se pudo parsear la cotizacion de Banco Nacion.");
-        }
-
+        var dateMatch = Regex.Match(billetesScope, @"\b(?<date>\d{1,2}/\d{1,2}/\d{4})\b");
+        var timeMatch = Regex.Match(billetesScope, @"HORA ACTUALIZACION:\s*(?<time>\d{1,2}:\d{2})");
         var usdMatch = Regex.Match(
-            quoteSectionMatch.Groups["table"].Value,
+            billetesScope,
             @"DOLAR\s+U\.?S\.?A\.?\s+(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
             RegexOptions.Singleline);
+
+        if (!dateMatch.Success)
+        {
+            dateMatch = Regex.Match(normalizedText, @"\b(?<date>\d{1,2}/\d{1,2}/\d{4})\b");
+        }
+
+        if (!timeMatch.Success)
+        {
+            timeMatch = Regex.Match(normalizedText, @"HORA ACTUALIZACION:\s*(?<time>\d{1,2}:\d{2})");
+        }
 
         if (!usdMatch.Success)
         {
@@ -118,15 +118,16 @@ public class BnaExchangeRateService : IBnaExchangeRateService
                 RegexOptions.Singleline);
         }
 
-        if (!usdMatch.Success)
+        if (!dateMatch.Success || !timeMatch.Success || !usdMatch.Success)
         {
-            throw new InvalidOperationException("No se encontro la fila oficial del dolar vendedor BNA.");
+            var preview = normalizedText.Length > 320 ? normalizedText[..320] : normalizedText;
+            throw new InvalidOperationException($"No se pudo parsear la cotizacion de Banco Nacion. Preview: {preview}");
         }
 
         return new BnaUsdSellerRateDto(
             Value: ParsePesoAmount(usdMatch.Groups["sell"].Value),
-            PublishedDate: quoteSectionMatch.Groups["date"].Value,
-            PublishedTime: quoteSectionMatch.Groups["time"].Value,
+            PublishedDate: dateMatch.Groups["date"].Value,
+            PublishedTime: timeMatch.Groups["time"].Value,
             Source: SourceUri.AbsoluteUri,
             IsStale: false,
             FetchedAt: DateTime.UtcNow);
