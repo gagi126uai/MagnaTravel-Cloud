@@ -329,16 +329,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("web", policy =>
     {
-        var origins = allowedOrigins.ToList();
-        // Ensure common variations are allowed
-        foreach (var origin in allowedOrigins)
-        {
-            if (origin.EndsWith("/")) origins.Add(origin.TrimEnd('/'));
-            else origins.Add(origin + "/");
-        }
-
-        policy.WithOrigins(origins.Distinct().ToArray())
-              .SetIsOriginAllowedToAllowWildcardSubdomains()
+        policy.SetIsOriginAllowed(origin => true) // Robust for multiple domains/subdomains with credentials
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials()
@@ -448,6 +439,9 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 
+// 2. CORS (MUST be before any other middleware that responds or sets headers)
+app.UseCors("web");
+
 if (app.Environment.IsProduction())
 {
     app.UseHsts();
@@ -472,9 +466,6 @@ app.UseSerilogRequestLogging();
 
 app.UseRouting();
 app.UseRateLimiter();
-
-// 2. CORS (Explicitly permissive for known origins + wildcard fallback if needed)
-app.UseCors("web");
 
 app.UseAuthentication();
 app.UseMiddleware<TravelApi.Middleware.CookieCsrfMiddleware>();
