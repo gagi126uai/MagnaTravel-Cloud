@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Bell, CheckCircle2 } from "lucide-react";
 import * as signalR from "@microsoft/signalr";
-import { api } from "../api";
+import { api, buildAppUrl } from "../api";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
@@ -30,9 +30,7 @@ export default function NotificationBell() {
 
     // SignalR Setup
     useEffect(() => {
-        const url = import.meta.env.VITE_API_URL 
-            ? `${import.meta.env.VITE_API_URL}/hubs/notifications` 
-            : "/hubs/notifications";
+        const url = buildAppUrl("/hubs/notifications");
 
         const newConnection = new signalR.HubConnectionBuilder()
             .withUrl(url, { withCredentials: true })

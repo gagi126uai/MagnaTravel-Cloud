@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { AlertCircle, X, AlertTriangle } from "lucide-react";
 import * as signalR from "@microsoft/signalr";
-import { api } from "../api";
+import { api, buildAppUrl } from "../api";
 
 export default function UrgentBannerStack() {
   const [banners, setBanners] = useState([]);
@@ -23,9 +23,7 @@ export default function UrgentBannerStack() {
 
   // SignalR: listen for new urgent banners
   useEffect(() => {
-    const url = import.meta.env.VITE_API_URL
-      ? `${import.meta.env.VITE_API_URL}/hubs/notifications`
-      : "/hubs/notifications";
+    const url = buildAppUrl("/hubs/notifications");
 
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(url, { withCredentials: true })
