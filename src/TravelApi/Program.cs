@@ -329,11 +329,20 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("web", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
+        var origins = allowedOrigins.ToList();
+        // Ensure common variations are allowed
+        foreach (var origin in allowedOrigins)
+        {
+            if (origin.EndsWith("/")) origins.Add(origin.TrimEnd('/'));
+            else origins.Add(origin + "/");
+        }
+
+        policy.WithOrigins(origins.Distinct().ToArray())
               .SetIsOriginAllowedToAllowWildcardSubdomains()
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials();
+              .AllowCredentials()
+              .WithExposedHeaders("Content-Disposition");
     });
 });
 
@@ -532,6 +541,7 @@ using (var scope = app.Services.CreateScope())
         }
     }
 
+    // Ensure at least one Admin exists
     var admins = await userManager.GetUsersInRoleAsync("Admin");
     if (admins.Count == 0)
     {
@@ -539,6 +549,7 @@ using (var scope = app.Services.CreateScope())
         if (firstUser is not null)
         {
             await userManager.AddToRoleAsync(firstUser, "Admin");
+            app.Logger.LogInformation("Seeded 'Admin' role to user {Email}", firstUser.Email);
         }
     }
 }

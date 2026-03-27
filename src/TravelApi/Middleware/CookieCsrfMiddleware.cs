@@ -25,6 +25,12 @@ public class CookieCsrfMiddleware
             return;
         }
 
+        if (context.Request.Path.StartsWithSegments("/hubs", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(context);
+            return;
+        }
+
         if (context.Request.Path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
             context.Request.Path.Equals("/api/auth/register", StringComparison.OrdinalIgnoreCase))
         {
