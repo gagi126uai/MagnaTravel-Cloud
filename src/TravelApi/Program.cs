@@ -408,6 +408,17 @@ using (var scope = app.Services.CreateScope())
         app.Logger.LogWarning("Refresh token bootstrap skipped or failed: {Message}", ex.Message);
     }
 
+    try
+    {
+        app.Logger.LogInformation("Bootstrapping BNA exchange rate snapshot schema via raw SQL...");
+        await BnaExchangeRateSchemaBootstrapper.EnsureAsync(db);
+        app.Logger.LogInformation("BNA exchange rate snapshot bootstrap finished.");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning("BNA exchange rate snapshot bootstrap skipped or failed: {Message}", ex.Message);
+    }
+
     int retries = 5;
     while (retries > 0)
     {

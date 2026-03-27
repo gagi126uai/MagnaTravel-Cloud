@@ -282,6 +282,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<BusinessSequence> BusinessSequences => Set<BusinessSequence>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<BnaExchangeRateSnapshot> BnaExchangeRateSnapshots => Set<BnaExchangeRateSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -631,6 +632,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(rp => rp.RoleName).HasMaxLength(100).IsRequired();
             entity.Property(rp => rp.Permission).HasMaxLength(100).IsRequired();
             entity.HasIndex(rp => new { rp.RoleName, rp.Permission }).IsUnique();
+        });
+
+        modelBuilder.Entity<BnaExchangeRateSnapshot>(entity =>
+        {
+            entity.ToTable("BnaExchangeRateSnapshots");
+            entity.Property(snapshot => snapshot.UsdSeller).HasPrecision(18, 2);
+            entity.Property(snapshot => snapshot.EuroSeller).HasPrecision(18, 2);
+            entity.Property(snapshot => snapshot.RealSeller).HasPrecision(18, 2);
+            entity.Property(snapshot => snapshot.PublishedDate).HasMaxLength(20).IsRequired();
+            entity.Property(snapshot => snapshot.PublishedTime).HasMaxLength(10).IsRequired();
+            entity.Property(snapshot => snapshot.Source).HasMaxLength(500).IsRequired();
         });
     }
 

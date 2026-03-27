@@ -2,9 +2,12 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -15,15 +18,18 @@ public class BnaExchangeRateService : IBnaExchangeRateService
     private static readonly Uri SourceUri = new("https://www.bna.com.ar/personas");
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AppDbContext _dbContext;
     private readonly IMemoryCache _cache;
     private readonly ILogger<BnaExchangeRateService> _logger;
 
     public BnaExchangeRateService(
         IHttpClientFactory httpClientFactory,
+        AppDbContext dbContext,
         IMemoryCache cache,
         ILogger<BnaExchangeRateService> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _dbContext = dbContext;
         _cache = cache;
         _logger = logger;
     }
@@ -40,18 +46,35 @@ public class BnaExchangeRateService : IBnaExchangeRateService
         try
         {
             var freshSnapshot = await FetchSnapshotAsync(cancellationToken);
+            await SavePersistedSnapshotAsync(freshSnapshot, cancellationToken);
             _cache.Set(CacheKey, freshSnapshot, TimeSpan.FromHours(12));
             return freshSnapshot;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "No se pudo obtener la cotizacion oficial del dolar vendedor BNA.");
-
             if (_cache.TryGetValue(CacheKey, out BnaUsdSellerRateDto? fallbackSnapshot) && fallbackSnapshot != null)
             {
+                _logger.LogWarning(
+                    "Banco Nacion no devolvio una cotizacion valida. Se usa la ultima cotizacion en memoria de {FetchedAt:u}. Motivo: {Message}",
+                    fallbackSnapshot.FetchedAt,
+                    ex.Message);
+
                 return fallbackSnapshot with { IsStale = true };
             }
 
+            var persistedSnapshot = await LoadPersistedSnapshotAsync(cancellationToken);
+            if (persistedSnapshot != null)
+            {
+                _cache.Set(CacheKey, persistedSnapshot, TimeSpan.FromHours(12));
+                _logger.LogWarning(
+                    "Banco Nacion no devolvio una cotizacion valida. Se usa la ultima cotizacion persistida de {FetchedAt:u}. Motivo: {Message}",
+                    persistedSnapshot.FetchedAt,
+                    ex.Message);
+
+                return persistedSnapshot with { IsStale = true };
+            }
+
+            _logger.LogWarning(ex, "No se pudo obtener la cotizacion oficial del dolar vendedor BNA y no existe respaldo persistido.");
             return null;
         }
     }
@@ -75,6 +98,12 @@ public class BnaExchangeRateService : IBnaExchangeRateService
         }
 
         var html = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (IsOfficialTemporaryOutagePage(html))
+        {
+            throw new InvalidOperationException("Banco Nacion respondio con una pagina de indisponibilidad temporal.");
+        }
+
         return ParseSnapshot(html) with
         {
             Source = SourceUri.AbsoluteUri,
@@ -83,9 +112,56 @@ public class BnaExchangeRateService : IBnaExchangeRateService
         };
     }
 
+    private async Task<BnaUsdSellerRateDto?> LoadPersistedSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await _dbContext.BnaExchangeRateSnapshots
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == BnaExchangeRateSnapshot.SingletonId, cancellationToken);
+
+        if (snapshot == null)
+        {
+            return null;
+        }
+
+        return new BnaUsdSellerRateDto(
+            Value: snapshot.UsdSeller,
+            EuroValue: snapshot.EuroSeller,
+            RealValue: snapshot.RealSeller,
+            PublishedDate: snapshot.PublishedDate,
+            PublishedTime: snapshot.PublishedTime,
+            Source: snapshot.Source,
+            IsStale: true,
+            FetchedAt: snapshot.FetchedAt);
+    }
+
+    private async Task SavePersistedSnapshotAsync(BnaUsdSellerRateDto snapshot, CancellationToken cancellationToken)
+    {
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "BnaExchangeRateSnapshots"
+                ("Id", "UsdSeller", "EuroSeller", "RealSeller", "PublishedDate", "PublishedTime", "Source", "FetchedAt")
+            VALUES
+                ({BnaExchangeRateSnapshot.SingletonId}, {snapshot.Value}, {snapshot.EuroValue}, {snapshot.RealValue}, {snapshot.PublishedDate}, {snapshot.PublishedTime}, {snapshot.Source}, {snapshot.FetchedAt})
+            ON CONFLICT ("Id") DO UPDATE SET
+                "UsdSeller" = EXCLUDED."UsdSeller",
+                "EuroSeller" = EXCLUDED."EuroSeller",
+                "RealSeller" = EXCLUDED."RealSeller",
+                "PublishedDate" = EXCLUDED."PublishedDate",
+                "PublishedTime" = EXCLUDED."PublishedTime",
+                "Source" = EXCLUDED."Source",
+                "FetchedAt" = EXCLUDED."FetchedAt";
+            """, cancellationToken);
+    }
+
     private static BnaUsdSellerRateDto ParseSnapshot(string html)
     {
         var normalizedText = NormalizeHtmlToSearchableText(html);
+
+        if (normalizedText.Contains("PAGINA NO DISPONIBLE", StringComparison.Ordinal) ||
+            normalizedText.Contains("NO SE PUEDE ACCEDER AL SITIO DEL BANCO DE LA NACION ARGENTINA", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Banco Nacion respondio con una pagina de indisponibilidad temporal.");
+        }
+
         var billetesScope = normalizedText;
         var divisasIndex = billetesScope.IndexOf("COTIZACION DIVISAS", StringComparison.Ordinal);
         if (divisasIndex > 0)
@@ -205,5 +281,12 @@ public class BnaExchangeRateService : IBnaExchangeRateService
         }
 
         throw new InvalidOperationException("No se pudo interpretar el valor de la cotizacion BNA.");
+    }
+
+    private static bool IsOfficialTemporaryOutagePage(string html)
+    {
+        var normalizedText = NormalizeHtmlToSearchableText(html);
+        return normalizedText.Contains("PAGINA NO DISPONIBLE", StringComparison.Ordinal) ||
+               normalizedText.Contains("NO SE PUEDE ACCEDER AL SITIO DEL BANCO DE LA NACION ARGENTINA", StringComparison.Ordinal);
     }
 }
