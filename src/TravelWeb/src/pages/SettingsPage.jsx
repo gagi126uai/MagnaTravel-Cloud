@@ -10,7 +10,7 @@ import {
   Search,
   X,
   Shield,
-  User,
+  User, Shield,
   MoreHorizontal,
   Building2,
   MapPin,
@@ -35,6 +35,9 @@ import AfipSettingsTab from "../components/AfipSettingsTab";
 import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
+import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
+import WhatsAppBotTab from "../components/WhatsAppBotTab";
+import RolesPermissionsTab from "../components/RolesPermissionsTab";
 import { getPublicId } from "../lib/publicIds";
 
 const serviceTypes = [
@@ -143,7 +146,7 @@ const Avatar = ({ name, size = "md" }) => {
 
 const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
-  { id: "users", label: "Usuarios", icon: User },
+  { id: "users", label: "Usuarios", icon: User },`n  { id: "roles", label: "Roles y Permisos", icon: Shield },
   { id: "commissions", label: "Comisiones", icon: Briefcase },
   { id: "operations", label: "Operativa y Caja", icon: Settings2 },
   { id: "afip", label: "Facturación", icon: FileText },
@@ -160,7 +163,7 @@ export default function SettingsPage() {
 
   // Modal State
   const [modalType, setModalType] = useState(null); // 'create', 'edit', 'password', 'roles'
-  const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedUser, Shield, setSelectedUser] = useState(null);
 
   // Forms
   const [createForm, setCreateForm] = useState({ fullName: "", email: "", password: "", role: "Colaborador" });

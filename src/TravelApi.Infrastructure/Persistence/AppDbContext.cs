@@ -281,6 +281,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<WhatsAppDelivery> WhatsAppDeliveries => Set<WhatsAppDelivery>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<BusinessSequence> BusinessSequences => Set<BusinessSequence>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -622,6 +623,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(sequence => sequence.DocumentType).HasMaxLength(100).IsRequired();
             entity.Property(sequence => sequence.LastValue).IsRequired();
             entity.HasIndex(sequence => new { sequence.DocumentType, sequence.Year }).IsUnique();
+        });
+
+        modelBuilder.Entity<RolePermission>(entity =>
+        {
+            entity.ToTable("RolePermissions");
+            entity.Property(rp => rp.RoleName).HasMaxLength(100).IsRequired();
+            entity.Property(rp => rp.Permission).HasMaxLength(100).IsRequired();
+            entity.HasIndex(rp => new { rp.RoleName, rp.Permission }).IsUnique();
         });
     }
 

@@ -15,18 +15,19 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
+import { hasPermission } from "../auth";
 
 const mainLinks = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/crm", label: "Ventas y Oportunidades", icon: UserPlus, adminOnly: true },
-  { to: "/reservas", label: "Reservas", icon: FolderOpen },
-  { to: "/customers", label: "Clientes", icon: Users },
-  { to: "/suppliers", label: "Proveedores", icon: Building2 },
-  { to: "/payments", label: "Cobranzas y Facturacion", icon: CreditCard },
-  { to: "/cash", label: "Caja", icon: ArrowLeftRight },
-  { to: "/rates", label: "Tarifario", icon: DollarSign },
-  { to: "/reports", label: "Reportes e Inteligencia", icon: BarChart3, adminOnly: true },
-  { to: "/settings", label: "Configuracion", icon: Settings, adminOnly: true },
+  { to: "/crm", label: "Ventas y Oportunidades", icon: UserPlus, requiredPermission: "crm.view" },
+  { to: "/reservas", label: "Reservas", icon: FolderOpen, requiredPermission: "reservas.view" },
+  { to: "/customers", label: "Clientes", icon: Users, requiredPermission: "clientes.view" },
+  { to: "/suppliers", label: "Proveedores", icon: Building2, requiredPermission: "proveedores.view" },
+  { to: "/payments", label: "Cobranzas y Facturacion", icon: CreditCard, requiredPermission: "cobranzas.view" },
+  { to: "/cash", label: "Caja", icon: ArrowLeftRight, requiredPermission: "caja.view" },
+  { to: "/rates", label: "Tarifario", icon: DollarSign, requiredPermission: "tarifario.view" },
+  { to: "/reports", label: "Reportes e Inteligencia", icon: BarChart3, requiredPermission: "reportes.view" },
+  { to: "/settings", label: "Configuracion", icon: Settings, requiredPermission: "configuracion.view" },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onCloseMobile }) {
@@ -40,7 +41,11 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onClo
     return link;
   });
 
-  const finalLinks = isAdmin ? linksWithBadges : linksWithBadges.filter((link) => !link.adminOnly);
+  // Filter links based on permissions (Dashboard is always visible)
+  const finalLinks = linksWithBadges.filter((link) => {
+    if (!link.requiredPermission) return true;
+    return hasPermission(link.requiredPermission);
+  });
 
   return (
     <aside className={cn("flex flex-col border-r bg-card text-card-foreground", className)}>

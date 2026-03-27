@@ -1,0 +1,86 @@
+namespace TravelApi.Domain.Entities;
+
+/// <summary>
+/// Catálogo de permisos del sistema. Agregar nuevos strings aquí para escalar.
+/// </summary>
+public static class Permissions
+{
+    // Reservas
+    public const string ReservasView = "reservas.view";
+    public const string ReservasEdit = "reservas.edit";
+    public const string ReservasDelete = "reservas.delete";
+
+    // Clientes
+    public const string ClientesView = "clientes.view";
+    public const string ClientesEdit = "clientes.edit";
+
+    // Proveedores
+    public const string ProveedoresView = "proveedores.view";
+    public const string ProveedoresEdit = "proveedores.edit";
+
+    // Cobranzas y Facturación
+    public const string CobranzasView = "cobranzas.view";
+    public const string CobranzasEdit = "cobranzas.edit";
+
+    // Caja
+    public const string CajaView = "caja.view";
+    public const string CajaEdit = "caja.edit";
+
+    // Reportes
+    public const string ReportesView = "reportes.view";
+
+    // Configuración
+    public const string ConfiguracionView = "configuracion.view";
+    public const string ConfiguracionUsers = "configuracion.users";
+    public const string ConfiguracionAfip = "configuracion.afip";
+
+    // CRM
+    public const string CrmView = "crm.view";
+    public const string CrmEdit = "crm.edit";
+
+    // Tarifario
+    public const string TarifarioView = "tarifario.view";
+    public const string TarifarioEdit = "tarifario.edit";
+
+    /// <summary>
+    /// Todos los permisos disponibles agrupados por módulo para la UI.
+    /// </summary>
+    public static readonly Dictionary<string, string[]> AllByModule = new()
+    {
+        ["Reservas"] = new[] { ReservasView, ReservasEdit, ReservasDelete },
+        ["Clientes"] = new[] { ClientesView, ClientesEdit },
+        ["Proveedores"] = new[] { ProveedoresView, ProveedoresEdit },
+        ["Cobranzas"] = new[] { CobranzasView, CobranzasEdit },
+        ["Caja"] = new[] { CajaView, CajaEdit },
+        ["Reportes"] = new[] { ReportesView },
+        ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip },
+        ["CRM"] = new[] { CrmView, CrmEdit },
+        ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
+    };
+
+    public static readonly string[] All = AllByModule.Values.SelectMany(v => v).ToArray();
+
+    /// <summary>Permisos default para Admin (todos).</summary>
+    public static string[] DefaultAdmin => All;
+
+    /// <summary>Permisos default para Colaborador (ver casi todo, editar lo operativo).</summary>
+    public static readonly string[] DefaultColaborador = new[]
+    {
+        ReservasView, ReservasEdit,
+        ClientesView, ClientesEdit,
+        ProveedoresView,
+        CobranzasView,
+        CajaView,
+        TarifarioView,
+    };
+
+    /// <summary>Permisos default para Vendedor (CRM + reservas + clientes).</summary>
+    public static readonly string[] DefaultVendedor = new[]
+    {
+        ReservasView, ReservasEdit,
+        ClientesView, ClientesEdit,
+        CrmView, CrmEdit,
+        CobranzasView,
+        TarifarioView,
+    };
+}

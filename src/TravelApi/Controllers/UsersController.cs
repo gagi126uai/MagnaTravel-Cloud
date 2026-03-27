@@ -110,4 +110,43 @@ public class UsersController : ControllerBase
 
         return NoContent();
     }
+
+    // --- Permission Endpoints ---
+
+    [HttpGet("permissions/catalog")]
+    public async Task<ActionResult<Dictionary<string, string[]>>> GetPermissionCatalog()
+    {
+        var catalog = await _userService.GetAllPermissionCatalogAsync();
+        return Ok(catalog);
+    }
+
+    [HttpGet("roles/{roleName}/permissions")]
+    public async Task<ActionResult<IEnumerable<string>>> GetRolePermissions(string roleName)
+    {
+        var permissions = await _userService.GetPermissionsForRoleAsync(roleName);
+        return Ok(permissions);
+    }
+
+    [HttpPut("roles/{roleName}/permissions")]
+    public async Task<IActionResult> UpdateRolePermissions(string roleName, [FromBody] string[] permissions)
+    {
+        var result = await _userService.UpdatePermissionsForRoleAsync(roleName, permissions);
+        if (!result.Succeeded)
+        {
+            return BadRequest(result.Errors);
+        }
+
+        return NoContent();
+    }
+
+    [HttpGet("me/permissions")]
+    [AllowAnonymous]
+    public async Task<ActionResult<IEnumerable<string>>> GetMyPermissions()
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userId == null) return Unauthorized();
+
+        var permissions = await _userService.GetUserPermissionsAsync(userId);
+        return Ok(permissions);
+    }
 }

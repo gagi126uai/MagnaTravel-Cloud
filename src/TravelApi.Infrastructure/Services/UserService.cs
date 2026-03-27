@@ -230,4 +230,64 @@ public class UserService : IUserService
 
         await _dbContext.SaveChangesAsync();
     }
+
+    // --- Permissions ---
+
+    public async Task<IEnumerable<string>> GetPermissionsForRoleAsync(string roleName)
+    {
+        return await _dbContext.RolePermissions
+            .Where(rp => rp.RoleName == roleName)
+            .Select(rp => rp.Permission)
+            .OrderBy(p => p)
+            .ToListAsync();
+    }
+
+    public async Task<UserServiceResult> UpdatePermissionsForRoleAsync(string roleName, string[] permissions)
+    {
+        if (!await _roleManager.RoleExistsAsync(roleName))
+        {
+            return new UserServiceResult(false, new[] { "Rol no encontrado." });
+        }
+
+        var existing = await _dbContext.RolePermissions
+            .Where(rp => rp.RoleName == roleName)
+            .ToListAsync();
+
+        _dbContext.RolePermissions.RemoveRange(existing);
+
+        var validPermissions = Permissions.All.ToHashSet();
+        foreach (var perm in permissions.Where(p => validPermissions.Contains(p)))
+        {
+            _dbContext.RolePermissions.Add(new RolePermission
+            {
+                RoleName = roleName,
+                Permission = perm
+            });
+        }
+
+        await _dbContext.SaveChangesAsync();
+        return new UserServiceResult(true);
+    }
+
+    public async Task<IEnumerable<string>> GetUserPermissionsAsync(string userId)
+    {
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user is null) return Enumerable.Empty<string>();
+
+        var roles = await _userManager.GetRolesAsync(user);
+
+        var permissions = await _dbContext.RolePermissions
+            .Where(rp => roles.Contains(rp.RoleName))
+            .Select(rp => rp.Permission)
+            .Distinct()
+            .OrderBy(p => p)
+            .ToListAsync();
+
+        return permissions;
+    }
+
+    public Task<Dictionary<string, string[]>> GetAllPermissionCatalogAsync()
+    {
+        return Task.FromResult(Permissions.AllByModule);
+    }
 }

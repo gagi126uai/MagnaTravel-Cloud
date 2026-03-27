@@ -523,7 +523,7 @@ using (var scope = app.Services.CreateScope())
     // Seed roles
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-    var roles = new[] { "Admin", "Colaborador" };
+    var roles = new[] { "Admin", "Colaborador", "Vendedor" };
     foreach (var role in roles)
     {
         if (!await roleManager.RoleExistsAsync(role))

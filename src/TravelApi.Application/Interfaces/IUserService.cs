@@ -12,6 +12,12 @@ public interface IUserService
     Task<UserSummaryResponse> UpdateUserAsync(string id, UpdateUserRequest request);
     Task<UserServiceResult> ChangePasswordAsync(string id, ChangePasswordRequest request);
     Task<UserServiceResult> DeleteUserAsync(string id);
+
+    // Permissions
+    Task<IEnumerable<string>> GetPermissionsForRoleAsync(string roleName);
+    Task<UserServiceResult> UpdatePermissionsForRoleAsync(string roleName, string[] permissions);
+    Task<IEnumerable<string>> GetUserPermissionsAsync(string userId);
+    Task<Dictionary<string, string[]>> GetAllPermissionCatalogAsync();
 }
 
 // IdentityResult needs Microsoft.AspNetCore.Identity

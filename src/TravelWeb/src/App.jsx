@@ -2,7 +2,8 @@ import { useCallback, useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import { api } from "./api";
-import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState } from "./auth";
+import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState, hasPermission } from "./auth";
+import { usePermissions } from "./hooks/usePermissions";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
@@ -56,6 +57,7 @@ export default function App() {
   const navigate = useNavigate();
   const { user, loading } = useAuthState();
   const adminUser = Boolean(user?.isAdmin);
+  usePermissions();
 
   const handleLogout = useCallback(
     async ({ callServer = true } = {}) => {
@@ -168,22 +170,22 @@ export default function App() {
                   <Route path="/cash" element={<CashPage />} />
                   <Route path="/rates" element={<RatesPage />} />
                   <Route path="/quotes" element={<QuotesPage />} />
-                  <Route path="/crm" element={adminUser ? <CRMPage /> : <Navigate to="/dashboard" replace />} />
+                  <Route path="/crm" element={hasPermission("crm.view") ? <CRMPage /> : <Navigate to="/dashboard" replace />} />
                   <Route
                     path="/reports"
-                    element={adminUser ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
+                    element={hasPermission("reportes.view") ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
                   />
                   <Route
                     path="/settings"
-                    element={adminUser ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
+                    element={hasPermission("configuracion.view") ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
                   />
                   <Route
                     path="/analytics"
-                    element={adminUser ? <AnalyticsPage /> : <Navigate to="/dashboard" replace />}
+                    element={hasPermission("reportes.view") ? <AnalyticsPage /> : <Navigate to="/dashboard" replace />}
                   />
                   <Route
                     path="/payments/trash"
-                    element={adminUser ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
+                    element={hasPermission("cobranzas.edit") ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
                   />
                   <Route path="/notifications" element={<NotificationsPage />} />
                 </Routes>

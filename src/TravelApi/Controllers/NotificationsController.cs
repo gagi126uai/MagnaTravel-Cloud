@@ -28,6 +28,16 @@ public class NotificationsController : ControllerBase
         return Ok(notifications);
     }
 
+    [HttpGet("urgent")]
+    public async Task<ActionResult<IEnumerable<Notification>>> GetUrgent(CancellationToken ct)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (userId == null) return Unauthorized();
+
+        var notifications = await _notificationService.GetUrgentNotificationsAsync(userId, ct);
+        return Ok(notifications);
+    }
+
     [HttpPost("{id}/read")]
     public async Task<IActionResult> MarkAsRead(int id, CancellationToken ct)
     {
@@ -35,6 +45,18 @@ public class NotificationsController : ControllerBase
         if (userId == null) return Unauthorized();
 
         var success = await _notificationService.MarkAsReadAsync(id, userId, ct);
+        if (!success) return NotFound();
+
+        return NoContent();
+    }
+
+    [HttpPost("{id}/dismiss")]
+    public async Task<IActionResult> Dismiss(int id, CancellationToken ct)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (userId == null) return Unauthorized();
+
+        var success = await _notificationService.DismissAsync(id, userId, ct);
         if (!success) return NotFound();
 
         return NoContent();

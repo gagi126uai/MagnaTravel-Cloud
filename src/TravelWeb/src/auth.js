@@ -5,6 +5,7 @@ const listeners = new Set();
 let authState = {
   user: null,
   loading: true,
+  permissions: [],
 };
 
 function emitChange() {
@@ -33,9 +34,15 @@ export function setAuthLoading(loading) {
 
 export function setCurrentUser(user) {
   authState = {
+    ...authState,
     user,
     loading: false,
   };
+  emitChange();
+}
+
+export function setUserPermissions(permissions) {
+  authState = { ...authState, permissions: permissions || [] };
   emitChange();
 }
 
@@ -43,6 +50,7 @@ export function clearAuthState() {
   authState = {
     user: null,
     loading: false,
+    permissions: [],
   };
   emitChange();
 }
@@ -61,4 +69,14 @@ export function getUserRoles() {
 
 export function isAdmin() {
   return Boolean(authState.user?.isAdmin || getUserRoles().includes("Admin"));
+}
+
+export function getUserPermissions() {
+  return authState.permissions;
+}
+
+export function hasPermission(permission) {
+  // Admin always has all permissions
+  if (isAdmin()) return true;
+  return authState.permissions.includes(permission);
 }

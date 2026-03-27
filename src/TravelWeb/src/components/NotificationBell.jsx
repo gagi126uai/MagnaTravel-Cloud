@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Bell, Checkbox, CheckCircle2 } from "lucide-react";
+import { Bell, CheckCircle2 } from "lucide-react";
 import * as signalR from "@microsoft/signalr";
 import { api } from "../api";
 import { Link } from "react-router-dom";
@@ -17,7 +17,6 @@ export default function NotificationBell() {
     useEffect(() => {
         const fetchNotifications = async () => {
             try {
-                // API exposes usually GET /api/notifications
                 const data = await api.get("/notifications?unreadOnly=true");
                 setNotifications(data || []);
                 setUnreadCount(data?.length || 0);
@@ -82,8 +81,6 @@ export default function NotificationBell() {
 
     const markAllAsRead = async () => {
         try {
-            // Assuming an endpoint exists or we do it locally iterating
-            // Let's iterate locally for now if batch endpoint is missing
             await Promise.all(notifications.map(n => api.post(`/notifications/${n.id}/read`)));
             setNotifications([]);
             setUnreadCount(0);
@@ -91,6 +88,21 @@ export default function NotificationBell() {
         } catch (error) {
             console.error("Error marking all as read:", error);
         }
+    };
+
+    const getDotColor = (notification) => {
+        if (notification.priority === "Urgent") return "bg-red-500 animate-pulse";
+        if (notification.type === "Error") return "bg-red-500";
+        if (notification.type === "Success") return "bg-emerald-500";
+        if (notification.type === "Warning") return "bg-amber-500";
+        return "bg-indigo-500";
+    };
+
+    const getRowHighlight = (notification) => {
+        if (notification.priority === "Urgent") {
+            return "bg-red-50/50 dark:bg-red-900/10 border-l-2 border-l-red-500";
+        }
+        return "";
     };
 
     return (
@@ -133,12 +145,17 @@ export default function NotificationBell() {
                                 {notifications.map((notification) => (
                                     <div 
                                         key={notification.id} 
-                                        className="relative flex items-start gap-3 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group cursor-default"
+                                        className={`relative flex items-start gap-3 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group cursor-default ${getRowHighlight(notification)}`}
                                     >
                                         <div className="mt-1">
-                                            <div className={`h-2 w-2 rounded-full ${notification.type === 'Error' ? 'bg-red-500' : notification.type === 'Success' ? 'bg-emerald-500' : 'bg-indigo-500'}`}></div>
+                                            <div className={`h-2 w-2 rounded-full ${getDotColor(notification)}`}></div>
                                         </div>
                                         <div className="flex-1 space-y-1">
+                                            {notification.priority === "Urgent" && (
+                                                <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
+                                                    ⚡ Urgente
+                                                </span>
+                                            )}
                                             <p className="text-sm text-slate-700 dark:text-slate-300">
                                                 {notification.message}
                                             </p>

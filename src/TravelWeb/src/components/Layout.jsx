@@ -7,6 +7,7 @@ import ChangePasswordModal from "./ChangePasswordModal";
 import SearchPalette from "./SearchPalette";
 import NotificationBell from "./NotificationBell";
 import { api } from "../api";
+import UrgentBannerStack from "./UrgentBannerStack";
 
 export default function Layout({ children, onLogout, isAdmin }) {
     const { theme, setTheme } = useTheme();
@@ -71,6 +72,8 @@ export default function Layout({ children, onLogout, isAdmin }) {
                     <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
                 </div>
             )}
+
+            <UrgentBannerStack />
 
             <div className="flex flex-1 relative overflow-hidden">
                 {/* Mobile Overlay */}

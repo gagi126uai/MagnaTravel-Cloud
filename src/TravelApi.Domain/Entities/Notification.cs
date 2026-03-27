@@ -14,7 +14,11 @@ public class Notification
     
     public string Type { get; set; } = "Info"; // Success, Error, Info, Warning
     
+    public string Priority { get; set; } = "Normal"; // Normal, Urgent
+    
     public bool IsRead { get; set; } = false;
+    
+    public bool IsDismissed { get; set; } = false;
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
