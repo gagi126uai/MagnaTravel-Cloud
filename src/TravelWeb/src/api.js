@@ -65,6 +65,10 @@ function getCookieValue(name) {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+export function hasSessionCookieHint() {
+  return Boolean(getCookieValue("mt_csrf"));
+}
+
 function isMutationMethod(method) {
   return ["POST", "PUT", "PATCH", "DELETE"].includes((method || "GET").toUpperCase());
 }
@@ -171,6 +175,12 @@ function isRefreshEligiblePath(path) {
 let refreshPromise = null;
 
 async function refreshSession() {
+  if (!hasSessionCookieHint()) {
+    const error = new Error("No active session");
+    error.status = 401;
+    throw error;
+  }
+
   if (!refreshPromise) {
     refreshPromise = fetch(buildApiUrl("/auth/refresh"), {
       method: "POST",
@@ -208,7 +218,7 @@ export async function apiRequest(path, options = {}) {
       headers: mergeHeaders(options),
     });
 
-    if (response.status === 401 && !retried && isRefreshEligiblePath(finalPath)) {
+    if (response.status === 401 && !retried && isRefreshEligiblePath(finalPath) && hasSessionCookieHint()) {
       try {
         await refreshSession();
         return executeRequest(true);

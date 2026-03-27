@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
-import { api } from "./api";
+import { api, hasSessionCookieHint } from "./api";
 import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState, hasPermission } from "./auth";
 import { usePermissions } from "./hooks/usePermissions";
 import Layout from "./components/Layout";
@@ -80,6 +80,13 @@ export default function App() {
 
     const bootstrapSession = async () => {
       setAuthLoading(true);
+
+      if (!hasSessionCookieHint()) {
+        if (!cancelled) {
+          clearAuthState();
+        }
+        return;
+      }
 
       try {
         const currentUser = await api.get("/auth/me", { skipAuthRedirect: true });
