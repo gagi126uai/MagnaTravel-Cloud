@@ -10,10 +10,12 @@ namespace TravelApi.Infrastructure.Services;
 public class ReportService : IReportService
 {
     private readonly AppDbContext _dbContext;
+    private readonly IBnaExchangeRateService _bnaExchangeRateService;
 
-    public ReportService(AppDbContext dbContext)
+    public ReportService(AppDbContext dbContext, IBnaExchangeRateService bnaExchangeRateService)
     {
         _dbContext = dbContext;
+        _bnaExchangeRateService = bnaExchangeRateService;
     }
 
     public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
@@ -105,6 +107,11 @@ public class ReportService : IReportService
             cancelados
         );
 
+        var activePotentialCustomers = await _dbContext.Leads
+            .CountAsync(lead => lead.Status != LeadStatus.Won && lead.Status != LeadStatus.Lost, cancellationToken);
+
+        var bnaUsdSellerRate = await _bnaExchangeRateService.GetUsdSellerRateAsync(cancellationToken);
+
         return new DashboardResponse(
             Presupuestos: presupuestos,
             Reservados: reservados,
@@ -118,7 +125,9 @@ public class ReportService : IReportService
             ReservasPendientes: pendingReservas,
             ProximosViajes: upcomingTrips,
             TendenciaHistorica: historicalTrend,
-            DistribucionEstados: statusDistribution
+            DistribucionEstados: statusDistribution,
+            BnaUsdSellerRate: bnaUsdSellerRate,
+            ActivePotentialCustomers: activePotentialCustomers
         );
     }
 

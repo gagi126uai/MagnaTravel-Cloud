@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
-import Swal from "sweetalert2";
+import { showConfirm, showError, showSuccess } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { isDatabaseUnavailableError } from "../../../lib/errors";
@@ -80,20 +79,16 @@ export function useCustomers() {
 
   const handleToggleStatus = async (customer) => {
     const action = customer.isActive ? "desactivar" : "activar";
-    const result = await Swal.fire({
-      title: `${action.charAt(0).toUpperCase() + action.slice(1)} cliente?`,
-      text: customer.isActive
-        ? "El cliente no aparecera en las busquedas de nuevos expedientes."
-        : "El cliente volvera a estar disponible.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: customer.isActive ? "#ef4444" : "#10b981",
-      cancelButtonColor: "#3085d6",
-      confirmButtonText: `Si, ${action}`,
-      cancelButtonText: "Cancelar",
-    });
+    const confirmed = await showConfirm(
+      `${action.charAt(0).toUpperCase() + action.slice(1)} cliente`,
+      customer.isActive
+        ? "El cliente dejara de aparecer en las busquedas operativas."
+        : "El cliente volvera a estar disponible para nuevas gestiones.",
+      `Si, ${action}`,
+      customer.isActive ? "red" : "indigo"
+    );
 
-    if (result.isConfirmed) {
+    if (confirmed) {
       try {
         const customerPublicId = getPublicId(customer);
         await api.put(`/customers/${customerPublicId}`, {

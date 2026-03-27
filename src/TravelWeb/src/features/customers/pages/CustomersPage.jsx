@@ -56,6 +56,14 @@ export default function CustomersPage() {
         </div>
         <div className="flex gap-2">
           <button
+            type="button"
+            onClick={() => navigate("/quotes?create=1")}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white px-4 py-2.5 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:border-indigo-300 hover:bg-indigo-50 sm:w-auto dark:border-indigo-900/60 dark:bg-slate-900 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+          >
+            <Plus className="h-4 w-4" />
+            Nueva cotizacion
+          </button>
+          <button
             onClick={() => setShowInactive(!showInactive)}
             className={`rounded-md border px-3 py-2 text-xs transition-colors ${showInactive ? "border-slate-300 bg-slate-100 dark:border-slate-700 dark:bg-slate-800" : "border-transparent bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900"}`}
           >

@@ -15,12 +15,43 @@ public class LeadService : ILeadService
         _db = db;
     }
 
-    public async Task<List<Lead>> GetAllAsync(CancellationToken cancellationToken)
+    public async Task<PagedResponse<LeadSummaryDto>> GetAllAsync(LeadListQuery query, CancellationToken cancellationToken)
     {
-        return await _db.Leads
-            .Include(l => l.Activities.OrderByDescending(a => a.CreatedAt))
-            .OrderByDescending(l => l.CreatedAt)
-            .ToListAsync(cancellationToken);
+        var leads = _db.Leads.AsNoTracking();
+        leads = ApplyLeadView(leads, query.View);
+        leads = ApplyLeadStatus(leads, query.Status);
+        leads = ApplyLeadSource(leads, query.Source);
+        leads = ApplyLeadSearch(leads, query.Search);
+        leads = ApplyLeadOrdering(leads, query);
+
+        return await leads
+            .Select(lead => new LeadSummaryDto
+            {
+                PublicId = lead.PublicId,
+                FullName = lead.FullName,
+                Email = lead.Email,
+                Phone = lead.Phone,
+                Status = lead.Status,
+                Source = lead.Source,
+                InterestedIn = lead.InterestedIn,
+                TravelDates = lead.TravelDates,
+                Travelers = lead.Travelers,
+                EstimatedBudget = lead.EstimatedBudget,
+                Notes = lead.Notes,
+                AssignedToUserId = lead.AssignedToUserId,
+                AssignedToName = lead.AssignedToName,
+                NextFollowUp = lead.NextFollowUp,
+                CreatedAt = lead.CreatedAt,
+                ClosedAt = lead.ClosedAt,
+                ConvertedCustomerPublicId = lead.ConvertedCustomer != null ? lead.ConvertedCustomer.PublicId : null,
+                ConvertedCustomerName = lead.ConvertedCustomer != null ? lead.ConvertedCustomer.FullName : null,
+                ActivitiesCount = lead.Activities.Count,
+                LastActivity = lead.Activities
+                    .OrderByDescending(activity => activity.CreatedAt)
+                    .Select(activity => activity.Description)
+                    .FirstOrDefault()
+            })
+            .ToPagedResponseAsync(query, cancellationToken);
     }
 
     public async Task<Lead?> GetByIdAsync(int id, CancellationToken cancellationToken)
@@ -80,7 +111,13 @@ public class LeadService : ILeadService
 
         lead.Status = status;
         if (status == LeadStatus.Won || status == LeadStatus.Lost)
+        {
             lead.ClosedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            lead.ClosedAt = null;
+        }
 
         await _db.SaveChangesAsync(cancellationToken);
         return lead;
@@ -120,8 +157,6 @@ public class LeadService : ILeadService
         await _db.SaveChangesAsync(cancellationToken);
 
         lead.ConvertedCustomerId = customer.Id;
-        lead.Status = LeadStatus.Won;
-        lead.ClosedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
 
         return customer.Id;
@@ -133,8 +168,21 @@ public class LeadService : ILeadService
             .FirstOrDefaultAsync(l => l.Id == leadId, cancellationToken)
             ?? throw new KeyNotFoundException($"Lead {leadId} no encontrado.");
 
-        if (!lead.ConvertedCustomerId.HasValue)
-            throw new InvalidOperationException("El lead debe estar convertido a cliente antes de crear una cotizacion.");
+        var existingDraft = await _db.Quotes
+            .Where(q => q.LeadId == leadId && q.ConvertedReservaId == null && q.Status == QuoteStatus.Draft)
+            .OrderByDescending(q => q.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (existingDraft != null)
+        {
+            if (!existingDraft.CustomerId.HasValue && lead.ConvertedCustomerId.HasValue)
+            {
+                existingDraft.CustomerId = lead.ConvertedCustomerId;
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+
+            return existingDraft;
+        }
 
         var count = await _db.Quotes.CountAsync(cancellationToken);
         var quote = new Quote
@@ -148,7 +196,7 @@ public class LeadService : ILeadService
             CustomerId = lead.ConvertedCustomerId,
             LeadId = lead.Id,
             Destination = lead.InterestedIn,
-            Notes = $"Cotizacion creada desde lead {lead.FullName}",
+            Notes = $"Cotizacion creada desde posible cliente {lead.FullName}",
             CreatedAt = DateTime.UtcNow,
             ValidUntil = DateTime.UtcNow.AddDays(15)
         };
@@ -231,6 +279,73 @@ public class LeadService : ILeadService
             ConversionRate = leads.Count > 0
                 ? Math.Round((decimal)leads.Count(l => l.Status == LeadStatus.Won) / leads.Count * 100, 1)
                 : 0
+        };
+    }
+
+    private static IQueryable<Lead> ApplyLeadView(IQueryable<Lead> query, string? view)
+    {
+        var normalizedView = (view ?? "active").Trim().ToLowerInvariant();
+
+        return normalizedView switch
+        {
+            "active" => query.Where(lead => lead.Status != LeadStatus.Won && lead.Status != LeadStatus.Lost),
+            "closed" => query.Where(lead => lead.Status == LeadStatus.Won || lead.Status == LeadStatus.Lost),
+            _ => query
+        };
+    }
+
+    private static IQueryable<Lead> ApplyLeadStatus(IQueryable<Lead> query, string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status) || string.Equals(status, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return query;
+        }
+
+        return query.Where(lead => lead.Status == status.Trim());
+    }
+
+    private static IQueryable<Lead> ApplyLeadSource(IQueryable<Lead> query, string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source) || string.Equals(source, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return query;
+        }
+
+        var normalizedSource = source.Trim().ToLowerInvariant();
+        return query.Where(lead => lead.Source != null && lead.Source.ToLower() == normalizedSource);
+    }
+
+    private static IQueryable<Lead> ApplyLeadSearch(IQueryable<Lead> query, string? search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            return query;
+        }
+
+        var normalizedSearch = search.Trim().ToLowerInvariant();
+        return query.Where(lead =>
+            lead.FullName.ToLower().Contains(normalizedSearch) ||
+            (lead.Phone != null && lead.Phone.ToLower().Contains(normalizedSearch)) ||
+            (lead.Email != null && lead.Email.ToLower().Contains(normalizedSearch)) ||
+            (lead.InterestedIn != null && lead.InterestedIn.ToLower().Contains(normalizedSearch)));
+    }
+
+    private static IQueryable<Lead> ApplyLeadOrdering(IQueryable<Lead> query, LeadListQuery request)
+    {
+        var sortBy = (request.SortBy ?? "createdAt").Trim().ToLowerInvariant();
+        var isDescending = !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return sortBy switch
+        {
+            "fullname" => isDescending
+                ? query.OrderByDescending(lead => lead.FullName).ThenByDescending(lead => lead.CreatedAt)
+                : query.OrderBy(lead => lead.FullName).ThenByDescending(lead => lead.CreatedAt),
+            "nextfollowup" => isDescending
+                ? query.OrderByDescending(lead => lead.NextFollowUp).ThenByDescending(lead => lead.CreatedAt)
+                : query.OrderBy(lead => lead.NextFollowUp).ThenByDescending(lead => lead.CreatedAt),
+            _ => isDescending
+                ? query.OrderByDescending(lead => lead.CreatedAt).ThenByDescending(lead => lead.Id)
+                : query.OrderBy(lead => lead.CreatedAt).ThenBy(lead => lead.Id)
         };
     }
 }

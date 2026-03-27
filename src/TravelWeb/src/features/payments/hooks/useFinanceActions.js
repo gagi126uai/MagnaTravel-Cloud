@@ -1,6 +1,5 @@
-import Swal from "sweetalert2";
 import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
+import { showConfirm, showError, showSuccess } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 
 export function useFinanceActions(loadData) {
@@ -60,17 +59,13 @@ export function useFinanceActions(loadData) {
   };
 
   const handleAnnulInvoice = async (invoice) => {
-    const result = await Swal.fire({
-      title: "Anular factura",
-      text: "Se generara una Nota de Credito. Continuar?",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Si, anular",
-      cancelButtonText: "Cancelar",
-      confirmButtonColor: "#0f172a",
-    });
+    const confirmed = await showConfirm(
+      "Anular factura",
+      "Se generara una nota de credito para dejar trazabilidad fiscal.",
+      "Si, anular"
+    );
 
-    if (!result.isConfirmed) {
+    if (!confirmed) {
       return;
     }
 
@@ -106,17 +101,13 @@ export function useFinanceActions(loadData) {
   };
 
   const handleDeleteManualMovement = async (movement) => {
-    const result = await Swal.fire({
-      title: "Anular movimiento manual",
-      text: "El movimiento dejara de impactar en caja.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Si, anular",
-      cancelButtonText: "Cancelar",
-      confirmButtonColor: "#0f172a",
-    });
+    const confirmed = await showConfirm(
+      "Anular movimiento manual",
+      "El movimiento dejara de impactar en caja.",
+      "Si, anular"
+    );
 
-    if (!result.isConfirmed) {
+    if (!confirmed) {
       return;
     }
 

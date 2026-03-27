@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, Search } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
@@ -14,10 +14,14 @@ export default function PaymentsInvoicingPage() {
     summary,
     workItems,
     invoices,
-    searchTerm,
-    setSearchTerm,
     worklistStatus,
     setWorklistStatus,
+    worklistSearchTerm,
+    setWorklistSearchTerm,
+    worklistCustomerFilter,
+    setWorklistCustomerFilter,
+    worklistReservationFilter,
+    setWorklistReservationFilter,
     worklistPage,
     worklistPageSize,
     worklistTotalCount,
@@ -28,6 +32,18 @@ export default function PaymentsInvoicingPage() {
     setWorklistPageSize,
     invoiceKind,
     setInvoiceKind,
+    invoiceSearchTerm,
+    setInvoiceSearchTerm,
+    invoicePeriod,
+    setInvoicePeriod,
+    invoiceCustomerFilter,
+    setInvoiceCustomerFilter,
+    invoiceReservationFilter,
+    setInvoiceReservationFilter,
+    invoiceVoucherNumberFilter,
+    setInvoiceVoucherNumberFilter,
+    invoiceResultFilter,
+    setInvoiceResultFilter,
     invoicePage,
     invoicePageSize,
     invoiceTotalCount,
@@ -54,28 +70,16 @@ export default function PaymentsInvoicingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
-        <div className="relative min-w-[260px]">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar reserva, cliente o comprobante..."
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-          />
-        </div>
-      </div>
-
       <FinanceMetricsGrid
         items={[
-          { label: "Listo para facturar", value: summary?.readyAmount || 0 },
-          { label: "Reservas listas", value: summary?.readyCount || 0, isCount: true },
-          { label: "Bloqueadas por deuda", value: summary?.blockedCount || 0, isCount: true },
-          { label: "Facturado en AFIP este mes", value: summary?.invoicedThisMonth || 0 },
+          { label: "Importe listo para emitir", value: summary?.readyAmount || 0 },
+          { label: "Listas para emitir", value: summary?.readyCount || 0, isCount: true },
+          { label: "Requieren autorizacion", value: summary?.overrideCount || 0, isCount: true },
+          { label: "Bloqueadas", value: summary?.blockedCount || 0, isCount: true },
+          { label: "Facturado este mes", value: summary?.invoicedThisMonth || 0 },
           { label: "Emitidas por excepcion", value: summary?.forcedCount || 0, isCount: true },
         ]}
-        columns="md:grid-cols-2 xl:grid-cols-5"
+        columns="md:grid-cols-2 xl:grid-cols-6"
       />
 
       {databaseUnavailable ? (
@@ -87,8 +91,26 @@ export default function PaymentsInvoicingPage() {
             invoices={invoices}
             worklistStatus={worklistStatus}
             onWorklistStatusChange={setWorklistStatus}
+            worklistSearchTerm={worklistSearchTerm}
+            onWorklistSearchTermChange={setWorklistSearchTerm}
+            worklistCustomerFilter={worklistCustomerFilter}
+            onWorklistCustomerFilterChange={setWorklistCustomerFilter}
+            worklistReservationFilter={worklistReservationFilter}
+            onWorklistReservationFilterChange={setWorklistReservationFilter}
             invoiceKind={invoiceKind}
             onInvoiceKindChange={setInvoiceKind}
+            invoiceSearchTerm={invoiceSearchTerm}
+            onInvoiceSearchTermChange={setInvoiceSearchTerm}
+            invoicePeriod={invoicePeriod}
+            onInvoicePeriodChange={setInvoicePeriod}
+            invoiceCustomerFilter={invoiceCustomerFilter}
+            onInvoiceCustomerFilterChange={setInvoiceCustomerFilter}
+            invoiceReservationFilter={invoiceReservationFilter}
+            onInvoiceReservationFilterChange={setInvoiceReservationFilter}
+            invoiceVoucherNumberFilter={invoiceVoucherNumberFilter}
+            onInvoiceVoucherNumberFilterChange={setInvoiceVoucherNumberFilter}
+            invoiceResultFilter={invoiceResultFilter}
+            onInvoiceResultFilterChange={setInvoiceResultFilter}
             onInvoice={setSelectedItem}
             onDownloadPdf={handleDownloadPdf}
             onViewPdf={handleViewPdf}
@@ -97,9 +119,7 @@ export default function PaymentsInvoicingPage() {
           />
 
           <div className="space-y-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-              Worklist AFIP
-            </div>
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Pendientes de emitir</div>
             <PaginationFooter
               page={worklistPage}
               pageSize={worklistPageSize}
@@ -113,9 +133,7 @@ export default function PaymentsInvoicingPage() {
           </div>
 
           <div className="space-y-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-              Comprobantes AFIP
-            </div>
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Facturas emitidas</div>
             <PaginationFooter
               page={invoicePage}
               pageSize={invoicePageSize}
@@ -139,8 +157,7 @@ export default function PaymentsInvoicingPage() {
           numeroReserva: selectedItem?.numeroReserva,
           customerName: selectedItem?.customerName,
           afipStatus: selectedItem?.fiscalStatus,
-          canEmitAfipInvoice:
-            selectedItem?.fiscalStatus === "ready" || selectedItem?.fiscalStatus === "override",
+          canEmitAfipInvoice: selectedItem?.fiscalStatus === "ready" || selectedItem?.fiscalStatus === "override",
           isEconomicallySettled: selectedItem?.fiscalStatus === "ready",
           economicBlockReason: selectedItem?.economicBlockReason,
         }}

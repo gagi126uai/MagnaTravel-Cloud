@@ -35,7 +35,7 @@ function formatPhoneSource(source) {
         case 'payer':
             return 'Titular de la reserva';
         case 'lead':
-            return 'Lead origen';
+            return 'Posible cliente asociado';
         default:
             return 'Sin numero';
     }

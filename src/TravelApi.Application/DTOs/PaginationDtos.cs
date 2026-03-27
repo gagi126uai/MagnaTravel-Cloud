@@ -79,6 +79,11 @@ public class PaymentsListQuery : PagedQuery
 public class InvoicesListQuery : PagedQuery
 {
     public string Kind { get; set; } = "all";
+    public string? Period { get; set; }
+    public string? Customer { get; set; }
+    public string? Reservation { get; set; }
+    public string? VoucherNumber { get; set; }
+    public string? Result { get; set; }
 
     public InvoicesListQuery()
     {
@@ -152,11 +157,26 @@ public class CollectionWorklistQuery : PagedQuery
 public class InvoicingWorklistQuery : PagedQuery
 {
     public string Status { get; set; } = "ready";
+    public string? Customer { get; set; }
+    public string? Reservation { get; set; }
 
     public InvoicingWorklistQuery()
     {
         SortBy = "startDate";
         SortDir = "asc";
+    }
+}
+
+public class LeadListQuery : PagedQuery
+{
+    public string View { get; set; } = "active";
+    public string? Status { get; set; }
+    public string? Source { get; set; }
+
+    public LeadListQuery()
+    {
+        SortBy = "createdAt";
+        SortDir = "desc";
     }
 }
 

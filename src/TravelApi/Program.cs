@@ -76,6 +76,7 @@ builder.Services.AddExceptionHandler<TravelApi.Middleware.GlobalExceptionHandler
 builder.Services.AddProblemDetails();
 
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddMemoryCache();
 builder.Services.AddAutoMapper(typeof(Program), typeof(TravelApi.Application.Mappings.MappingProfile));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -283,6 +284,7 @@ builder.Services.AddScoped<IReservaService, ReservaService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IReportService, ReportService>();
+builder.Services.AddScoped<IBnaExchangeRateService, BnaExchangeRateService>();
 builder.Services.AddScoped<IServicioReservaService, ServicioReservaService>();
 builder.Services.AddScoped<ICommissionService, CommissionService>();
 builder.Services.AddScoped<IAlertService, AlertService>();

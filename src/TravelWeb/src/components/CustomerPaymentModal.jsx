@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { formatCurrency } from "../lib/utils";
 import { api } from "../api";
-import Swal from "sweetalert2";
+import { showError, showSuccess } from "../alerts";
 import { X, CreditCard, Calendar, FileText, DollarSign, AlignLeft, CheckCircle2 } from "lucide-react";
 import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 
@@ -42,7 +42,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!formData.reservaPublicId) {
-            Swal.fire("Error", "Debe seleccionar una reserva", "error");
+            showError("Debe seleccionar una reserva");
             return;
         }
 
@@ -65,15 +65,10 @@ export default function CustomerPaymentModal({ isOpen, onClose, customerId, paym
 
             onSave();
             onClose();
-            Swal.fire({
-                title: paymentToEdit ? "Pago Actualizado" : "Pago Registrado",
-                icon: "success",
-                timer: 1500,
-                showConfirmButton: false
-            });
+            showSuccess(paymentToEdit ? "El pago se actualizo correctamente." : "La cobranza se registro correctamente.");
         } catch (error) {
             console.error(error);
-            Swal.fire("Error", error.response?.data || "No se pudo guardar el pago", "error");
+            showError(error.response?.data || "No se pudo guardar el pago");
         } finally {
             setLoading(false);
         }

@@ -57,9 +57,11 @@ public class WebhooksController : ControllerBase
 
     private static string NormalizePhone(string phone) => phone.Replace("+", "").Trim();
 
+    private const string WhatsAppPlaceholderPrefix = "Consulta por WhatsApp";
+
     private static bool IsPlaceholderLeadName(string? name) =>
         string.IsNullOrWhiteSpace(name) ||
-        name.StartsWith("Nuevo contacto WhatsApp", StringComparison.OrdinalIgnoreCase);
+        name.StartsWith(WhatsAppPlaceholderPrefix, StringComparison.OrdinalIgnoreCase);
 
     private static bool LeadNeedsQualification(Lead lead) =>
         IsPlaceholderLeadName(lead.FullName) ||
@@ -225,7 +227,7 @@ public class WebhooksController : ControllerBase
             _logger.LogInformation("Auto-creando lead para mensaje entrante de: {Phone}", dto.Phone);
             lead = new Lead
             {
-                FullName = $"Nuevo contacto WhatsApp ({dto.Phone})",
+                FullName = $"{WhatsAppPlaceholderPrefix} ({dto.Phone})",
                 Phone = dto.Phone,
                 Source = "WhatsApp",
                 Status = LeadStatus.New,
@@ -245,7 +247,7 @@ public class WebhooksController : ControllerBase
         {
             handledBy = "lead",
             leadPublicId = lead.PublicId,
-            autoCreated = lead.FullName.StartsWith("Nuevo contacto"),
+            autoCreated = lead.FullName.StartsWith(WhatsAppPlaceholderPrefix, StringComparison.OrdinalIgnoreCase),
             allowBotCapture = LeadNeedsQualification(lead)
         });
     }

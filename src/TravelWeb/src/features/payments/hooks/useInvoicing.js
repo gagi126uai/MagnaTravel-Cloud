@@ -20,15 +20,30 @@ export function useInvoicing() {
   const [summary, setSummary] = useState(null);
   const [workItemsPage, setWorkItemsPage] = useState(emptyPage);
   const [invoicesPage, setInvoicesPage] = useState(emptyPage);
-  const [searchTerm, setSearchTerm] = useState("");
   const [worklistStatus, setWorklistStatus] = useState("ready");
+  const [worklistSearchTerm, setWorklistSearchTerm] = useState("");
+  const [worklistCustomerFilter, setWorklistCustomerFilter] = useState("");
+  const [worklistReservationFilter, setWorklistReservationFilter] = useState("");
   const [worklistPage, setWorklistPage] = useState(1);
   const [worklistPageSize, setWorklistPageSize] = useState(25);
   const [invoiceKind, setInvoiceKind] = useState("issued");
+  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState("");
+  const [invoicePeriod, setInvoicePeriod] = useState("");
+  const [invoiceCustomerFilter, setInvoiceCustomerFilter] = useState("");
+  const [invoiceReservationFilter, setInvoiceReservationFilter] = useState("");
+  const [invoiceVoucherNumberFilter, setInvoiceVoucherNumberFilter] = useState("");
+  const [invoiceResultFilter, setInvoiceResultFilter] = useState("all");
   const [invoicePage, setInvoicePage] = useState(1);
   const [invoicePageSize, setInvoicePageSize] = useState(25);
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
-  const debouncedSearch = useDebounce(searchTerm, 300);
+
+  const debouncedWorklistSearch = useDebounce(worklistSearchTerm, 300);
+  const debouncedWorklistCustomer = useDebounce(worklistCustomerFilter, 300);
+  const debouncedWorklistReservation = useDebounce(worklistReservationFilter, 300);
+  const debouncedInvoiceSearch = useDebounce(invoiceSearchTerm, 300);
+  const debouncedInvoiceCustomer = useDebounce(invoiceCustomerFilter, 300);
+  const debouncedInvoiceReservation = useDebounce(invoiceReservationFilter, 300);
+  const debouncedInvoiceVoucherNumber = useDebounce(invoiceVoucherNumberFilter, 300);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -49,10 +64,16 @@ export function useInvoicing() {
         sortDir: "desc",
       });
 
-      if (debouncedSearch.trim()) {
-        worklistParams.set("search", debouncedSearch.trim());
-        invoicesParams.set("search", debouncedSearch.trim());
-      }
+      if (debouncedWorklistSearch.trim()) worklistParams.set("search", debouncedWorklistSearch.trim());
+      if (debouncedWorklistCustomer.trim()) worklistParams.set("customer", debouncedWorklistCustomer.trim());
+      if (debouncedWorklistReservation.trim()) worklistParams.set("reservation", debouncedWorklistReservation.trim());
+
+      if (debouncedInvoiceSearch.trim()) invoicesParams.set("search", debouncedInvoiceSearch.trim());
+      if (invoicePeriod) invoicesParams.set("period", invoicePeriod);
+      if (debouncedInvoiceCustomer.trim()) invoicesParams.set("customer", debouncedInvoiceCustomer.trim());
+      if (debouncedInvoiceReservation.trim()) invoicesParams.set("reservation", debouncedInvoiceReservation.trim());
+      if (debouncedInvoiceVoucherNumber.trim()) invoicesParams.set("voucherNumber", debouncedInvoiceVoucherNumber.trim());
+      if (invoiceResultFilter !== "all") invoicesParams.set("result", invoiceResultFilter);
 
       const [summaryRes, worklistRes, invoicesRes] = await Promise.all([
         api.get("/invoices/summary"),
@@ -73,19 +94,28 @@ export function useInvoicing() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, invoiceKind, invoicePage, invoicePageSize, worklistPage, worklistPageSize, worklistStatus]);
+  }, [
+    debouncedInvoiceCustomer,
+    debouncedInvoiceReservation,
+    debouncedInvoiceSearch,
+    debouncedInvoiceVoucherNumber,
+    debouncedWorklistCustomer,
+    debouncedWorklistReservation,
+    debouncedWorklistSearch,
+    invoiceKind,
+    invoicePage,
+    invoicePageSize,
+    invoicePeriod,
+    invoiceResultFilter,
+    worklistPage,
+    worklistPageSize,
+    worklistStatus,
+  ]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  useEffect(() => {
-    setWorklistPage(1);
-  }, [debouncedSearch, worklistStatus, worklistPageSize]);
-
-  useEffect(() => {
-    setInvoicePage(1);
-  }, [debouncedSearch, invoiceKind, invoicePageSize]);
+  useEffect(() => { setWorklistPage(1); }, [debouncedWorklistSearch, debouncedWorklistCustomer, debouncedWorklistReservation, worklistStatus, worklistPageSize]);
+  useEffect(() => { setInvoicePage(1); }, [debouncedInvoiceSearch, debouncedInvoiceCustomer, debouncedInvoiceReservation, debouncedInvoiceVoucherNumber, invoiceKind, invoicePageSize, invoicePeriod, invoiceResultFilter]);
 
   const actions = useFinanceActions(loadData);
 
@@ -94,10 +124,14 @@ export function useInvoicing() {
     summary,
     workItems: workItemsPage.items || [],
     invoices: invoicesPage.items || [],
-    searchTerm,
-    setSearchTerm,
     worklistStatus,
     setWorklistStatus,
+    worklistSearchTerm,
+    setWorklistSearchTerm,
+    worklistCustomerFilter,
+    setWorklistCustomerFilter,
+    worklistReservationFilter,
+    setWorklistReservationFilter,
     worklistPage: workItemsPage.page || worklistPage,
     worklistPageSize: workItemsPage.pageSize || worklistPageSize,
     worklistTotalCount: workItemsPage.totalCount || 0,
@@ -108,6 +142,18 @@ export function useInvoicing() {
     setWorklistPageSize,
     invoiceKind,
     setInvoiceKind,
+    invoiceSearchTerm,
+    setInvoiceSearchTerm,
+    invoicePeriod,
+    setInvoicePeriod,
+    invoiceCustomerFilter,
+    setInvoiceCustomerFilter,
+    invoiceReservationFilter,
+    setInvoiceReservationFilter,
+    invoiceVoucherNumberFilter,
+    setInvoiceVoucherNumberFilter,
+    invoiceResultFilter,
+    setInvoiceResultFilter,
     invoicePage: invoicesPage.page || invoicePage,
     invoicePageSize: invoicesPage.pageSize || invoicePageSize,
     invoiceTotalCount: invoicesPage.totalCount || 0,

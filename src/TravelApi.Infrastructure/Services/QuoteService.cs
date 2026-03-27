@@ -36,6 +36,8 @@ public class QuoteService : IQuoteService
 
     public async Task<Quote> CreateAsync(Quote quote, CancellationToken cancellationToken)
     {
+        quote.CustomerId = await ResolveCustomerFromLeadAsync(quote.CustomerId, quote.LeadId, cancellationToken);
+
         // Auto-generate quote number
         var count = await _db.Quotes.CountAsync(cancellationToken);
         quote.QuoteNumber = $"COT-{(count + 1).ToString().PadLeft(5, '0')}";
@@ -66,7 +68,7 @@ public class QuoteService : IQuoteService
 
         quote.Title = updated.Title;
         quote.Description = updated.Description;
-        quote.CustomerId = updated.CustomerId;
+        quote.CustomerId = await ResolveCustomerFromLeadAsync(updated.CustomerId, quote.LeadId, cancellationToken);
         quote.ValidUntil = ToUtc(updated.ValidUntil);
         quote.TravelStartDate = ToUtc(updated.TravelStartDate);
         quote.TravelEndDate = ToUtc(updated.TravelEndDate);
@@ -156,6 +158,8 @@ public class QuoteService : IQuoteService
             throw new InvalidOperationException("Esta cotización ya fue convertida a reserva.");
 
         // Create Reserva from quote
+        quote.CustomerId = await ResolveCustomerFromLeadAsync(quote.CustomerId, quote.LeadId, cancellationToken);
+
         var fileCount = await _db.Reservas.CountAsync(cancellationToken);
         var file = new Reserva
         {
@@ -230,5 +234,20 @@ public class QuoteService : IQuoteService
         quote.GrossMargin = quote.TotalSale - quote.TotalCost;
 
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<int?> ResolveCustomerFromLeadAsync(int? customerId, int? leadId, CancellationToken cancellationToken)
+    {
+        if (customerId.HasValue || !leadId.HasValue)
+        {
+            return customerId;
+        }
+
+        var convertedCustomerId = await _db.Leads
+            .Where(lead => lead.Id == leadId.Value)
+            .Select(lead => lead.ConvertedCustomerId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return convertedCustomerId ?? customerId;
     }
 }

@@ -66,7 +66,7 @@ function ConversationListItem({ item, selected, onSelect }) {
                   : "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-300"
               }`}
             >
-              {item.conversationType === "lead" ? "Lead" : "Operativa"}
+              {item.conversationType === "lead" ? "Posible cliente" : "Operativa"}
             </span>
             {item.needsAttention && (
               <span className="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" title="Requiere atencion" />
@@ -272,7 +272,7 @@ export default function WhatsAppBotTab() {
               <div>
                 <div className="font-semibold text-emerald-700 dark:text-emerald-300">Bot conectado</div>
                 <div className="text-sm text-emerald-700/80 dark:text-emerald-300/80">
-                  Operando con respuestas naturales y seguimiento desde CRM.
+                  Operando con respuestas naturales y seguimiento comercial.
                 </div>
               </div>
             </div>
@@ -300,7 +300,7 @@ export default function WhatsAppBotTab() {
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-3">
           <div className="text-sm font-semibold text-slate-900 dark:text-white">Bandeja de conversaciones</div>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Todas las conversaciones que el bot deja registradas en CRM y en la operativa.
+            Todas las conversaciones que el bot deja registradas en la gestion comercial y en la operativa.
           </p>
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3">
@@ -308,7 +308,7 @@ export default function WhatsAppBotTab() {
               <div className="text-2xl font-semibold text-slate-900 dark:text-white">{conversations.length}</div>
             </div>
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3">
-              <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-400">Leads</div>
+              <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-400">Posibles clientes</div>
               <div className="text-2xl font-semibold text-slate-900 dark:text-white">
                 {conversations.filter((item) => item.conversationType === "lead").length}
               </div>
@@ -391,7 +391,7 @@ export default function WhatsAppBotTab() {
                             : "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-300"
                         }`}
                       >
-                        {conversationDetail.conversationType === "lead" ? "Lead" : "Operativa"}
+                        {conversationDetail.conversationType === "lead" ? "Posible cliente" : "Operativa"}
                       </span>
                     </div>
                     <div className="text-sm text-slate-500 dark:text-slate-400">{conversationDetail.subtitle || conversationDetail.phone}</div>

@@ -119,7 +119,7 @@ export default function ReservaDetailPage() {
                         <div>
                             <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Origen comercial</div>
                             <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                                Esta reserva conserva la trazabilidad del pipeline comercial que la genero.
+                                Esta reserva conserva la trazabilidad de la gestion comercial que la genero.
                             </div>
                         </div>
                         <div className="flex flex-wrap gap-3">
@@ -128,7 +128,7 @@ export default function ReservaDetailPage() {
                                     onClick={() => navigate('/crm', { state: { openLeadId: getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") } })}
                                     className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                                 >
-                                    Abrir lead origen
+                                    Abrir posible cliente asociado
                                 </button>
                             )}
                             {getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId") && (

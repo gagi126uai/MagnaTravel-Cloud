@@ -33,12 +33,21 @@ public record DashboardResponse(
     List<PendingReservaDto> ReservasPendientes,
     List<UpcomingTripDto> ProximosViajes,
     List<MonthlyMetricDto> TendenciaHistorica,
-    StatusDistributionDto DistribucionEstados);
+    StatusDistributionDto DistribucionEstados,
+    BnaUsdSellerRateDto? BnaUsdSellerRate,
+    int ActivePotentialCustomers);
 
 public record PendingReservaDto(Guid PublicId, string NumeroReserva, string Name, decimal Balance, string Status);
 public record UpcomingTripDto(Guid PublicId, string NumeroReserva, string Name, DateTime StartDate, string Status);
 public record MonthlyMetricDto(string Month, decimal Sales, decimal Costs, decimal Profit);
 public record StatusDistributionDto(int Budgets, int Reserved, int Operational, int Closed, int Cancelled);
+public record BnaUsdSellerRateDto(
+    decimal Value,
+    string PublishedDate,
+    string PublishedTime,
+    string Source,
+    bool IsStale,
+    DateTime FetchedAt);
 
 public record ReportsSummaryResponse(
     int TotalCustomers,

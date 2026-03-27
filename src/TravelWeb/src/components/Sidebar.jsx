@@ -19,11 +19,11 @@ import { hasPermission } from "../auth";
 
 const mainLinks = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/crm", label: "Ventas y Oportunidades", icon: UserPlus, requiredPermission: "crm.view" },
+  { to: "/crm", label: "Posibles clientes", icon: UserPlus, requiredPermission: "crm.view" },
   { to: "/reservas", label: "Reservas", icon: FolderOpen, requiredPermission: "reservas.view" },
   { to: "/customers", label: "Clientes", icon: Users, requiredPermission: "clientes.view" },
   { to: "/suppliers", label: "Proveedores", icon: Building2, requiredPermission: "proveedores.view" },
-  { to: "/payments", label: "Cobranzas y Facturacion", icon: CreditCard, requiredPermission: "cobranzas.view" },
+  { to: "/payments", label: "Cobranza y Facturacion", icon: CreditCard, requiredPermission: "cobranzas.view" },
   { to: "/cash", label: "Caja", icon: ArrowLeftRight, requiredPermission: "caja.view" },
   { to: "/rates", label: "Tarifario", icon: DollarSign, requiredPermission: "tarifario.view" },
   { to: "/reports", label: "Reportes e Inteligencia", icon: BarChart3, requiredPermission: "reportes.view" },

@@ -11,9 +11,8 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import Swal from "sweetalert2";
 import { api } from "../../../api";
-import { showError } from "../../../alerts";
+import { showConfirm, showError, showSuccess } from "../../../alerts";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import { Button } from "../../../components/ui/button";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
@@ -249,23 +248,21 @@ export default function CustomerAccountPage() {
   };
 
   const handleDeletePayment = async (payment) => {
-    const result = await Swal.fire({
-      title: "Eliminar pago?",
-      text: `Se anulara el pago de ${formatCurrency(payment.amount)} y la deuda volvera a la reserva.`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Si, eliminar",
-      cancelButtonText: "Cancelar",
-      confirmButtonColor: "#ef4444",
-    });
+    const confirmed = await showConfirm(
+      "Eliminar pago",
+      `Se anulara el pago de ${formatCurrency(payment.amount)} y la deuda volvera a la reserva.`,
+      "Si, eliminar",
+      "red"
+    );
 
-    if (!result.isConfirmed || !payment.reservaPublicId) {
+    if (!confirmed || !payment.reservaPublicId) {
       return;
     }
 
     try {
       await api.delete(`/reservas/${payment.reservaPublicId}/payments/${getPublicId(payment)}`);
       await refreshAll();
+      showSuccess("El pago fue eliminado.");
     } catch (error) {
       console.error(error);
       showError("No se pudo eliminar el pago.");
@@ -414,14 +411,26 @@ export default function CustomerAccountPage() {
           </div>
         </div>
 
-        <Button
-          onClick={() => handleOpenModal(null)}
-          className="gap-2 bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-700"
-          disabled={databaseUnavailable}
-        >
-          <Plus className="h-4 w-4" />
-          Nueva Cobranza
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate(`/quotes?create=1&customerPublicId=${publicId}`)}
+            className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+            disabled={databaseUnavailable}
+          >
+            <Receipt className="h-4 w-4" />
+            Nueva cotizacion
+          </Button>
+          <Button
+            onClick={() => handleOpenModal(null)}
+            className="gap-2 bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-700"
+            disabled={databaseUnavailable}
+          >
+            <Plus className="h-4 w-4" />
+            Nueva cobranza
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">

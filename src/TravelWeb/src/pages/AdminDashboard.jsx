@@ -38,6 +38,7 @@ import {
     Legend
 } from "recharts";
 
+import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
 
@@ -59,8 +60,7 @@ export default function DashboardPage() {
 
     useEffect(() => {
         loadDashboard();
-        // Polling cada 60s
-        const interval = setInterval(loadDashboard, 60000);
+        const interval = setInterval(loadDashboard, 300000);
         return () => clearInterval(interval);
     }, []);
 
@@ -88,12 +88,34 @@ export default function DashboardPage() {
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
             {/* Header */}
-            <div>
-                <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Dashboard</h2>
-                <p className="text-muted-foreground mt-1">
-                    Vista general del rendimiento de tu agencia.
-                </p>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Dashboard</h2>
+                    <p className="text-muted-foreground mt-1">
+                        Vista general del rendimiento de tu agencia.
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={() => navigate("/quotes?create=1")}
+                        className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition-colors hover:bg-indigo-700"
+                    >
+                        <FileText className="h-4 w-4" />
+                        Nueva cotizacion
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => navigate("/crm")}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                        <Briefcase className="h-4 w-4" />
+                        Posibles clientes
+                    </button>
+                </div>
             </div>
+
+            <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
 
             {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

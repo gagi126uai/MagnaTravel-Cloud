@@ -313,7 +313,7 @@ public class WhatsAppConversationsController : ControllerBase
     private static string BuildLeadTitle(Lead lead)
     {
         if (!string.IsNullOrWhiteSpace(lead.FullName) &&
-            !lead.FullName.StartsWith("Nuevo contacto WhatsApp", StringComparison.OrdinalIgnoreCase))
+            !lead.FullName.StartsWith("Consulta por WhatsApp", StringComparison.OrdinalIgnoreCase))
         {
             return lead.FullName;
         }
@@ -321,7 +321,7 @@ public class WhatsAppConversationsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(lead.Phone))
             return lead.Phone;
 
-        return "Lead sin identificar";
+        return "Consulta sin identificar";
     }
 
     private static string BuildLeadSubtitle(Lead lead)
@@ -334,7 +334,7 @@ public class WhatsAppConversationsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(lead.Phone))
             parts.Add(lead.Phone);
 
-        parts.Add($"Pipeline: {lead.Status}");
+        parts.Add($"Estado: {lead.Status}");
         return string.Join(" | ", parts);
     }
 

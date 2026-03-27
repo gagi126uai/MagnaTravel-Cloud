@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
+using System.Globalization;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -54,6 +55,7 @@ public class InvoiceService : IInvoiceService
     {
         var invoicesQuery = ApplyInvoiceSearch(_context.Invoices.AsNoTracking(), query.Search);
         invoicesQuery = ApplyInvoiceKind(invoicesQuery, query.Kind);
+        invoicesQuery = ApplyInvoiceStructuredFilters(invoicesQuery, query);
         invoicesQuery = ApplyInvoiceOrdering(invoicesQuery, query);
 
         return await invoicesQuery
@@ -90,6 +92,8 @@ public class InvoiceService : IInvoiceService
     public async Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct)
     {
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        var allowsOverride = settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason;
 
         var approvedInvoices = _context.Invoices
             .AsNoTracking()
@@ -145,7 +149,12 @@ public class InvoiceService : IInvoiceService
         {
             ReadyAmount = Math.Round(readyAmount, 2),
             ReadyCount = await pendingFiscalQuery.CountAsync(item => item.Balance <= 0m, ct),
-            BlockedCount = await pendingFiscalQuery.CountAsync(item => item.Balance > 0m, ct),
+            OverrideCount = allowsOverride
+                ? await pendingFiscalQuery.CountAsync(item => item.Balance > 0m, ct)
+                : 0,
+            BlockedCount = allowsOverride
+                ? 0
+                : await pendingFiscalQuery.CountAsync(item => item.Balance > 0m, ct),
             InvoicedThisMonth = Math.Round(invoicedThisMonth, 2),
             ForcedCount = await approvedInvoices.CountAsync(invoice => invoice.WasForced, ct)
         };
@@ -156,6 +165,7 @@ public class InvoiceService : IInvoiceService
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
         var workItemsQuery = BuildInvoicingWorkItemsQuery(settings);
         workItemsQuery = ApplyInvoicingWorkItemSearch(workItemsQuery, query.Search);
+        workItemsQuery = ApplyInvoicingWorkItemStructuredFilters(workItemsQuery, query);
         workItemsQuery = ApplyInvoicingWorkItemStatus(workItemsQuery, query.Status);
         workItemsQuery = ApplyInvoicingWorkItemOrdering(workItemsQuery, query);
 
@@ -567,7 +577,11 @@ public class InvoiceService : IInvoiceService
                     : allowsOverride
                         ? "override"
                         : "blocked",
-                FiscalStatusLabel = item.Balance <= 0m ? "Lista para facturar" : "Bloqueada por deuda",
+                FiscalStatusLabel = item.Balance <= 0m
+                    ? "Lista para emitir"
+                    : allowsOverride
+                        ? "Requiere autorizacion"
+                        : "Bloqueada por deuda",
                 RequiresOverride = item.Balance > 0m && allowsOverride,
                 EconomicBlockReason = item.Balance <= 0m
                     ? null
@@ -620,6 +634,56 @@ public class InvoiceService : IInvoiceService
             invoice.Reserva != null && invoice.Reserva.Payer != null && invoice.Reserva.Payer.FullName.ToLower().Contains(normalized));
     }
 
+    private static IQueryable<Invoice> ApplyInvoiceStructuredFilters(IQueryable<Invoice> query, InvoicesListQuery request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.Period) &&
+            DateTime.TryParseExact($"{request.Period}-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var monthStart))
+        {
+            var periodStart = DateTime.SpecifyKind(monthStart, DateTimeKind.Utc);
+            var periodEnd = periodStart.AddMonths(1);
+            query = query.Where(invoice => invoice.CreatedAt >= periodStart && invoice.CreatedAt < periodEnd);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Customer))
+        {
+            var normalizedCustomer = request.Customer.Trim().ToLowerInvariant();
+            query = query.Where(invoice =>
+                invoice.Reserva != null &&
+                invoice.Reserva.Payer != null &&
+                invoice.Reserva.Payer.FullName.ToLower().Contains(normalizedCustomer));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Reservation))
+        {
+            var normalizedReservation = request.Reservation.Trim().ToLowerInvariant();
+            query = query.Where(invoice =>
+                invoice.Reserva != null &&
+                invoice.Reserva.NumeroReserva.ToLower().Contains(normalizedReservation));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.VoucherNumber))
+        {
+            var normalizedVoucher = request.VoucherNumber.Trim().ToLowerInvariant();
+            query = query.Where(invoice =>
+                invoice.NumeroComprobante.ToString().Contains(normalizedVoucher) ||
+                invoice.PuntoDeVenta.ToString().Contains(normalizedVoucher));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Result))
+        {
+            var normalizedResult = request.Result.Trim().ToLowerInvariant();
+            query = normalizedResult switch
+            {
+                "approved" or "aprobado" or "a" => query.Where(invoice => invoice.Resultado == "A"),
+                "rejected" or "rechazado" or "r" => query.Where(invoice => invoice.Resultado == "R"),
+                "pending" or "pendiente" or "pendingapproval" => query.Where(invoice => invoice.Resultado != "A" && invoice.Resultado != "R"),
+                _ => query
+            };
+        }
+
+        return query;
+    }
+
     private static IQueryable<Invoice> ApplyInvoiceOrdering(IQueryable<Invoice> query, InvoicesListQuery request)
     {
         var sortBy = (request.SortBy ?? "createdAt").Trim().ToLowerInvariant();
@@ -656,6 +720,25 @@ public class InvoiceService : IInvoiceService
             item.FiscalStatusLabel.ToLower().Contains(normalized));
     }
 
+    private static IQueryable<InvoicingWorkItemDto> ApplyInvoicingWorkItemStructuredFilters(
+        IQueryable<InvoicingWorkItemDto> query,
+        InvoicingWorklistQuery request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.Customer))
+        {
+            var normalizedCustomer = request.Customer.Trim().ToLowerInvariant();
+            query = query.Where(item => item.CustomerName.ToLower().Contains(normalizedCustomer));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Reservation))
+        {
+            var normalizedReservation = request.Reservation.Trim().ToLowerInvariant();
+            query = query.Where(item => item.NumeroReserva.ToLower().Contains(normalizedReservation));
+        }
+
+        return query;
+    }
+
     private static IQueryable<InvoicingWorkItemDto> ApplyInvoicingWorkItemStatus(
         IQueryable<InvoicingWorkItemDto> query,
         string? status)
@@ -665,7 +748,7 @@ public class InvoiceService : IInvoiceService
         return normalizedStatus switch
         {
             "ready" => query.Where(item => item.FiscalStatus == "ready"),
-            "blocked" => query.Where(item => item.FiscalStatus == "blocked" || item.FiscalStatus == "override"),
+            "blocked" => query.Where(item => item.FiscalStatus == "blocked"),
             "override" => query.Where(item => item.FiscalStatus == "override"),
             _ => query
         };

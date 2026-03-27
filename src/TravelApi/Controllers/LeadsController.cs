@@ -22,10 +22,10 @@ public class LeadsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<LeadSummaryDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResponse<LeadSummaryDto>>> GetAll([FromQuery] LeadListQuery query, CancellationToken cancellationToken)
     {
-        var leads = await _leadService.GetAllAsync(cancellationToken);
-        return Ok(leads.Select(MapLeadSummary));
+        var leads = await _leadService.GetAllAsync(query, cancellationToken);
+        return Ok(leads);
     }
 
     [HttpGet("pipeline")]

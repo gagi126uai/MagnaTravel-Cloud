@@ -5,7 +5,7 @@ namespace TravelApi.Application.Interfaces;
 
 public interface ILeadService
 {
-    Task<List<Lead>> GetAllAsync(CancellationToken cancellationToken);
+    Task<PagedResponse<LeadSummaryDto>> GetAllAsync(LeadListQuery query, CancellationToken cancellationToken);
     Task<Lead?> GetByIdAsync(int id, CancellationToken cancellationToken);
     Task<Lead> CreateAsync(Lead lead, CancellationToken cancellationToken);
     Task<Lead> UpdateAsync(int id, Lead updated, CancellationToken cancellationToken);

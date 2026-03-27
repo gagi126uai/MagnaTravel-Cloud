@@ -37,6 +37,7 @@ public class InvoicingSummaryDto
 {
     public decimal ReadyAmount { get; set; }
     public int ReadyCount { get; set; }
+    public int OverrideCount { get; set; }
     public int BlockedCount { get; set; }
     public decimal InvoicedThisMonth { get; set; }
     public int ForcedCount { get; set; }
