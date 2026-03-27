@@ -463,8 +463,8 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
     context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
-    context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
-    context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
+    context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups";
+    context.Response.Headers["Cross-Origin-Resource-Policy"] = "cross-origin";
     await next();
 });
 

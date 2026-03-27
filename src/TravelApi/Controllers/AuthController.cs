@@ -198,8 +198,8 @@ public class AuthController : ControllerBase
         var options = new CookieOptions
         {
             HttpOnly = httpOnly,
-            Secure = Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
+            Secure = true, // Force secure for SameSite=None
+            SameSite = SameSiteMode.None, // Required for cross-site auth (api.magna... vs backoffice.magna...)
             Path = "/"
         };
 
