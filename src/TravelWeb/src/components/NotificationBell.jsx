@@ -35,7 +35,7 @@ export default function NotificationBell() {
             : "/hubs/notifications";
 
         const newConnection = new signalR.HubConnectionBuilder()
-            .withUrl(url)
+            .withUrl(url, { withCredentials: true })
             .withAutomaticReconnect()
             .build();
 

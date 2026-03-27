@@ -28,7 +28,7 @@ export default function UrgentBannerStack() {
       : "/hubs/notifications";
 
     const connection = new signalR.HubConnectionBuilder()
-      .withUrl(url)
+      .withUrl(url, { withCredentials: true })
       .withAutomaticReconnect()
       .build();
 
