@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { apiRequest, api } from "../api";
-import { showError, showInfo, showSuccess } from "../alerts";
+import { showError, showInfo, showSuccess, showConfirm } from "../alerts";
 import { isAdmin } from "../auth";
 import {
   Pencil,
@@ -10,7 +10,7 @@ import {
   Search,
   X,
   Shield,
-  User, Shield,
+  User,
   MoreHorizontal,
   Building2,
   MapPin,
@@ -33,8 +33,6 @@ import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 import AfipSettingsTab from "../components/AfipSettingsTab";
 import LogsDashboard from "../components/LogsDashboard";
-import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
-import WhatsAppBotTab from "../components/WhatsAppBotTab";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
 import RolesPermissionsTab from "../components/RolesPermissionsTab";
@@ -146,7 +144,8 @@ const Avatar = ({ name, size = "md" }) => {
 
 const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
-  { id: "users", label: "Usuarios", icon: User },`n  { id: "roles", label: "Roles y Permisos", icon: Shield },
+  { id: "users", label: "Usuarios", icon: User },
+  { id: "roles", label: "Roles y Permisos", icon: Shield },
   { id: "commissions", label: "Comisiones", icon: Briefcase },
   { id: "operations", label: "Operativa y Caja", icon: Settings2 },
   { id: "afip", label: "Facturación", icon: FileText },
@@ -163,7 +162,7 @@ export default function SettingsPage() {
 
   // Modal State
   const [modalType, setModalType] = useState(null); // 'create', 'edit', 'password', 'roles'
-  const [selectedUser, Shield, setSelectedUser] = useState(null);
+  const [selectedUser, setSelectedUser] = useState(null);
 
   // Forms
   const [createForm, setCreateForm] = useState({ fullName: "", email: "", password: "", role: "Colaborador" });
@@ -235,16 +234,14 @@ export default function SettingsPage() {
   };
 
   const handleLogoutBot = async () => {
-    const result = await Swal.fire({
-      title: "¿Cerrar sesión de WhatsApp?",
-      text: "El bot dejará de funcionar hasta que vuelvas a escanear el QR.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Sí, cerrar sesión",
-      cancelButtonText: "Cancelar"
-    });
+    const confirmed = await showConfirm(
+      "¿Cerrar sesión de WhatsApp?",
+      "El bot dejará de funcionar hasta que vuelvas a escanear el QR.",
+      "Sí, cerrar sesión",
+      "red"
+    );
 
-    if (result.isConfirmed) {
+    if (confirmed) {
       try {
         await api.post("/webhooks/logout");
         showSuccess("Sesión cerrada");
@@ -348,16 +345,10 @@ export default function SettingsPage() {
     setSavingAgency(true);
     try {
       await api.put("/reports/settings", agencyForm);
-      Swal.fire({
-        title: "Guardado",
-        text: "Configuración de agencia actualizada",
-        icon: "success",
-        timer: 1500,
-        showConfirmButton: false
-      });
+      showSuccess("Configuración de agencia actualizada");
       loadAgencySettings();
     } catch (error) {
-      Swal.fire("Error", "No se pudo guardar la configuración", "error");
+      showError("No se pudo guardar la configuración");
     } finally {
       setSavingAgency(false);
     }
@@ -410,7 +401,7 @@ export default function SettingsPage() {
       loadCommissionRules();
     } catch (error) {
       console.error("Error saving commission rule:", error);
-      Swal.fire("Error", error.message || "No se pudo guardar la regla", "error");
+      showError(error.message || "No se pudo guardar la regla");
     }
   };
 
@@ -432,21 +423,20 @@ export default function SettingsPage() {
   };
 
   const deleteCommissionRule = async (id) => {
-    const result = await Swal.fire({
-      title: "¿Eliminar regla?",
-      text: "Esta acción no se puede deshacer",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#d33",
-      confirmButtonText: "Sí, eliminar"
-    });
-    if (result.isConfirmed) {
+    const confirmed = await showConfirm(
+      "¿Eliminar regla?",
+      "Esta acción no se puede deshacer y afectará el cálculo de comisiones futuro.",
+      "Sí, eliminar",
+      "red"
+    );
+
+    if (confirmed) {
       try {
         await api.delete(`/commissions/${id}`);
         showSuccess("Regla eliminada");
         loadCommissionRules();
       } catch (error) {
-        Swal.fire("Error", error.message || "No se pudo eliminar", "error");
+        showError(error.message || "No se pudo eliminar la regla");
       }
     }
   };
@@ -501,7 +491,15 @@ export default function SettingsPage() {
   };
 
   const handleDeleteUser = async (user) => {
-    if (!window.confirm(`¿Estás seguro de eliminar a ${user.fullName}?`)) return;
+    const confirmed = await showConfirm(
+      "Eliminar Usuario",
+      `¿Estás seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acción no se puede deshacer.`,
+      "Sí, eliminar",
+      "red"
+    );
+
+    if (!confirmed) return;
+
     try {
       await apiRequest(`/api/users/${user.id}`, { method: "DELETE" });
       showInfo("Usuario eliminado.");
@@ -1010,6 +1008,7 @@ export default function SettingsPage() {
           </div>
         </form>
       </Modal>
+
 
     </div>
   );

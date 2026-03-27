@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
 import { Shield, Plus, Trash2, Check, ChevronDown, ChevronRight } from "lucide-react";
 import { apiRequest } from "../api";
-import { showSuccess, showError } from "../alerts";
+import { showSuccess, showError, showConfirm } from "../alerts";
 import { Button } from "./ui/button";
-import Swal from "sweetalert2";
 
 export default function RolesPermissionsTab() {
   const [roles, setRoles] = useState([]);
@@ -106,16 +105,13 @@ export default function RolesPermissionsTab() {
   };
 
   const deleteRole = async (roleName) => {
-    const result = await Swal.fire({
-      title: "¿Eliminar rol?",
-      text: `Se eliminará el rol "${roleName}". Los usuarios con este rol perderán los permisos asociados.`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#d33",
-      confirmButtonText: "Sí, eliminar",
-      cancelButtonText: "Cancelar",
-    });
-    if (!result.isConfirmed) return;
+    const confirmed = await showConfirm(
+      "Eliminar rol",
+      `Se eliminará el rol "${roleName}". Los usuarios con este rol perderán los permisos asociados.`,
+      "Sí, eliminar",
+      "red"
+    );
+    if (!confirmed) return;
 
     try {
       await apiRequest(`/api/users/roles/${encodeURIComponent(roleName)}`, { method: "DELETE" });
