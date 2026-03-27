@@ -124,8 +124,42 @@ public class BnaExchangeRateService : IBnaExchangeRateService
             throw new InvalidOperationException($"No se pudo parsear la cotizacion de Banco Nacion. Preview: {preview}");
         }
 
+        var euroMatch = Regex.Match(
+            billetesScope,
+            @"EURO\s+(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
+            RegexOptions.Singleline);
+
+        if (!euroMatch.Success)
+        {
+            euroMatch = Regex.Match(
+                normalizedText,
+                @"EURO\s+(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
+                RegexOptions.Singleline);
+        }
+
+        var realMatch = Regex.Match(
+            billetesScope,
+            @"REAL\s+\*?\s*(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
+            RegexOptions.Singleline);
+
+        if (!realMatch.Success)
+        {
+            realMatch = Regex.Match(
+                normalizedText,
+                @"REAL\s+\*?\s*(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
+                RegexOptions.Singleline);
+        }
+
+        if (!euroMatch.Success || !realMatch.Success)
+        {
+            var preview = normalizedText.Length > 320 ? normalizedText[..320] : normalizedText;
+            throw new InvalidOperationException($"No se pudieron parsear euro y real de Banco Nacion. Preview: {preview}");
+        }
+
         return new BnaUsdSellerRateDto(
             Value: ParsePesoAmount(usdMatch.Groups["sell"].Value),
+            EuroValue: ParsePesoAmount(euroMatch.Groups["sell"].Value),
+            RealValue: ParsePesoAmount(realMatch.Groups["sell"].Value),
             PublishedDate: dateMatch.Groups["date"].Value,
             PublishedTime: timeMatch.Groups["time"].Value,
             Source: SourceUri.AbsoluteUri,

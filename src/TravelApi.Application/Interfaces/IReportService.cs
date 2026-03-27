@@ -43,6 +43,8 @@ public record MonthlyMetricDto(string Month, decimal Sales, decimal Costs, decim
 public record StatusDistributionDto(int Budgets, int Reserved, int Operational, int Closed, int Cancelled);
 public record BnaUsdSellerRateDto(
     decimal Value,
+    decimal EuroValue,
+    decimal RealValue,
     string PublishedDate,
     string PublishedTime,
     string Source,
