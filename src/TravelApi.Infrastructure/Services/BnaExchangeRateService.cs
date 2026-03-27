@@ -94,6 +94,14 @@ public class BnaExchangeRateService : IBnaExchangeRateService
 
         if (!quoteSectionMatch.Success)
         {
+            quoteSectionMatch = Regex.Match(
+                normalizedText,
+                @"(?<date>\d{1,2}/\d{1,2}/\d{4})\s+COMPRA\s+VENTA\s+(?<table>.*?)\s+HORA ACTUALIZACION:\s*(?<time>\d{1,2}:\d{2})",
+                RegexOptions.Singleline);
+        }
+
+        if (!quoteSectionMatch.Success)
+        {
             throw new InvalidOperationException("No se pudo parsear la cotizacion de Banco Nacion.");
         }
 
@@ -101,6 +109,14 @@ public class BnaExchangeRateService : IBnaExchangeRateService
             quoteSectionMatch.Groups["table"].Value,
             @"DOLAR\s+U\.?S\.?A\.?\s+(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
             RegexOptions.Singleline);
+
+        if (!usdMatch.Success)
+        {
+            usdMatch = Regex.Match(
+                normalizedText,
+                @"DOLAR\s+U\.?S\.?A\.?\s+(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
+                RegexOptions.Singleline);
+        }
 
         if (!usdMatch.Success)
         {
