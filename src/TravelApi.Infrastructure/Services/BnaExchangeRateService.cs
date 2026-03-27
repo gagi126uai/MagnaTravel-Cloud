@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -11,7 +12,7 @@ public class BnaExchangeRateService : IBnaExchangeRateService
 {
     private const string CacheKey = "dashboard:bna-usd-seller";
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
-    private static readonly Uri SourceUri = new("https://www.bna.com.ar/Personas");
+    private static readonly Uri SourceUri = new("https://www.bna.com.ar/personas");
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IMemoryCache _cache;
@@ -84,26 +85,60 @@ public class BnaExchangeRateService : IBnaExchangeRateService
 
     private static BnaUsdSellerRateDto ParseSnapshot(string html)
     {
-        var normalized = WebUtility.HtmlDecode(html);
-        normalized = Regex.Replace(normalized, @"\s+", " ");
+        var normalizedText = NormalizeHtmlToSearchableText(html);
 
-        var match = Regex.Match(
-            normalized,
-            @"Cotizaci[oó]n Billetes.*?(\d{1,2}/\d{1,2}/\d{4}).*?D[oó]lar U\.S\.A\s+([0-9.,]+)\s+([0-9.,]+).*?Hora Actualizaci[oó]n:\s*([0-9]{1,2}:[0-9]{2})",
-            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var quoteSectionMatch = Regex.Match(
+            normalizedText,
+            @"COTIZACION BILLETES\s+(?<date>\d{1,2}/\d{1,2}/\d{4})\s+COMPRA\s+VENTA\s+(?<table>.*?)\s+HORA ACTUALIZACION:\s*(?<time>\d{1,2}:\d{2})",
+            RegexOptions.Singleline);
 
-        if (!match.Success)
+        if (!quoteSectionMatch.Success)
         {
             throw new InvalidOperationException("No se pudo parsear la cotizacion de Banco Nacion.");
         }
 
+        var usdMatch = Regex.Match(
+            quoteSectionMatch.Groups["table"].Value,
+            @"DOLAR\s+U\.?S\.?A\.?\s+(?<buy>[0-9.,]+)\s+(?<sell>[0-9.,]+)",
+            RegexOptions.Singleline);
+
+        if (!usdMatch.Success)
+        {
+            throw new InvalidOperationException("No se encontro la fila oficial del dolar vendedor BNA.");
+        }
+
         return new BnaUsdSellerRateDto(
-            Value: ParsePesoAmount(match.Groups[3].Value),
-            PublishedDate: match.Groups[1].Value,
-            PublishedTime: match.Groups[4].Value,
+            Value: ParsePesoAmount(usdMatch.Groups["sell"].Value),
+            PublishedDate: quoteSectionMatch.Groups["date"].Value,
+            PublishedTime: quoteSectionMatch.Groups["time"].Value,
             Source: SourceUri.AbsoluteUri,
             IsStale: false,
             FetchedAt: DateTime.UtcNow);
+    }
+
+    private static string NormalizeHtmlToSearchableText(string html)
+    {
+        var decoded = WebUtility.HtmlDecode(html ?? string.Empty)
+            .Replace("&nbsp;", " ", StringComparison.OrdinalIgnoreCase);
+
+        decoded = Regex.Replace(decoded, @"<script\b[^>]*>.*?</script>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        decoded = Regex.Replace(decoded, @"<style\b[^>]*>.*?</style>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        decoded = Regex.Replace(decoded, @"<[^>]+>", " ");
+
+        var decomposed = decoded.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(decomposed.Length);
+
+        foreach (var character in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            builder.Append(char.ToUpperInvariant(character));
+        }
+
+        return Regex.Replace(builder.ToString(), @"\s+", " ").Trim();
     }
 
     private static decimal ParsePesoAmount(string rawValue)
