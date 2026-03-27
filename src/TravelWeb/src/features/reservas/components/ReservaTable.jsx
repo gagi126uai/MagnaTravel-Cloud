@@ -105,7 +105,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20"
-                      onClick={() => onArchive(getPublicId(reserva))}
+                      onClick={() => onArchive(reserva)}
                       title="Archivar"
                     >
                       <Archive className="h-4 w-4" />

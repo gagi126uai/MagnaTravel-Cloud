@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
+import { showConfirm, showError, showSuccess } from "../../../alerts";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { isDatabaseUnavailableError } from "../../../lib/errors";
+import { getPublicId } from "../../../lib/publicIds";
 
 const emptyPage = {
   items: [],
@@ -80,8 +81,25 @@ export function useReservas() {
     setPage(1);
   }, [debouncedSearch, viewFilter, pageSize]);
 
-  const handleArchive = async (publicId) => {
-    if (!confirm("Archivar esta reserva? Desaparecera de la lista principal.")) return;
+  const handleArchive = async (reservaOrPublicId) => {
+    const publicId =
+      typeof reservaOrPublicId === "string" ? reservaOrPublicId : getPublicId(reservaOrPublicId);
+    const numeroReserva =
+      typeof reservaOrPublicId === "object" && reservaOrPublicId?.numeroReserva
+        ? `#${reservaOrPublicId.numeroReserva}`
+        : "esta reserva";
+
+    const confirmed = await showConfirm({
+      title: "Archivar reserva",
+      eyebrow: "Organizacion operativa",
+      text: `La reserva ${numeroReserva} dejara de aparecer en la lista principal.`,
+      details: "El historial, las cobranzas y los documentos quedan guardados para consulta.",
+      confirmText: "Si, archivar",
+      cancelText: "Seguir viendo",
+      confirmColor: "amber",
+    });
+
+    if (!confirmed) return false;
 
     try {
       await api.put(`/reservas/${publicId}/archive`);

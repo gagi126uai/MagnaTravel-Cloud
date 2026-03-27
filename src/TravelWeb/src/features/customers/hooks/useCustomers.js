@@ -78,15 +78,20 @@ export function useCustomers() {
   };
 
   const handleToggleStatus = async (customer) => {
-    const action = customer.isActive ? "desactivar" : "activar";
-    const confirmed = await showConfirm(
-      `${action.charAt(0).toUpperCase() + action.slice(1)} cliente`,
-      customer.isActive
-        ? "El cliente dejara de aparecer en las busquedas operativas."
-        : "El cliente volvera a estar disponible para nuevas gestiones.",
-      `Si, ${action}`,
-      customer.isActive ? "red" : "indigo"
-    );
+    const action = customer.isActive ? "desactivar" : "reactivar";
+    const confirmed = await showConfirm({
+      title: customer.isActive ? "Desactivar cliente" : "Reactivar cliente",
+      eyebrow: "Estado del cliente",
+      text: customer.isActive
+        ? `${customer.fullName} dejara de aparecer en las busquedas operativas y en nuevas gestiones.`
+        : `${customer.fullName} volvera a estar disponible para ventas, reservas y cobranzas.`,
+      details: customer.isActive
+        ? "Su historial comercial, cuenta corriente y comprobantes se conservan."
+        : "Se mantiene todo el historial anterior y vuelve a quedar operativo.",
+      confirmText: customer.isActive ? "Si, desactivar" : "Si, reactivar",
+      cancelText: customer.isActive ? "Mantener activo" : "Dejar inactivo",
+      confirmColor: customer.isActive ? "red" : "emerald",
+    });
 
     if (confirmed) {
       try {
@@ -96,7 +101,7 @@ export function useCustomers() {
           isActive: !customer.isActive,
         });
         await fetchCustomers();
-        showSuccess(`Cliente ${action === "activar" ? "activado" : "desactivado"}.`);
+        showSuccess(`Cliente ${action === "reactivar" ? "reactivado" : "desactivado"}.`);
         return true;
       } catch (error) {
         showError("No se pudo cambiar el estado");
