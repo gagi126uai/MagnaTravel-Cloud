@@ -1,10 +1,12 @@
 import React from 'react';
 import { ArrowLeft, Trash2, Archive, AlertTriangle } from "lucide-react";
+import { getReservaArchiveBlockReason } from "../archiveRules";
 
 export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive }) {
     const isArchived = reserva.status === 'Archived';
     const canDelete = (reserva.status === 'Presupuesto' || reserva.status === 'Reservado');
-    const canArchive = (reserva.status === 'Operativo' || reserva.status === 'Cerrado') && reserva.balance <= 0;
+    const archiveBlockReason = getReservaArchiveBlockReason(reserva);
+    const canArchive = !archiveBlockReason;
 
     return (
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -79,7 +81,7 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                             onClick={canArchive ? onArchive : undefined}
                             disabled={!canArchive}
                             className={`p-2.5 rounded-xl transition-colors ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
-                            title={canArchive ? "Archivar" : "Solo se pueden archivar reservas operativas/cerradas sin deuda"}
+                            title={archiveBlockReason || "Archivar"}
                         >
                             <Archive className="w-5 h-5" />
                         </button>

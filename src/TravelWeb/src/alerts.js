@@ -31,28 +31,20 @@ export function showWarning(message, title = "Advertencia") {
 
 const confirmPalettes = {
   indigo: {
-    iconTone: "border-indigo-100 bg-indigo-50 text-indigo-600",
+    badgeTone: "bg-indigo-50 text-indigo-600",
     buttonTone: "bg-indigo-600 hover:bg-indigo-700 focus-visible:ring-indigo-500/30",
-    eyebrowTone: "text-indigo-600",
-    glyph: "?",
   },
   red: {
-    iconTone: "border-rose-100 bg-rose-50 text-rose-600",
+    badgeTone: "bg-rose-50 text-rose-600",
     buttonTone: "bg-rose-600 hover:bg-rose-700 focus-visible:ring-rose-500/30",
-    eyebrowTone: "text-rose-600",
-    glyph: "!",
   },
   emerald: {
-    iconTone: "border-emerald-100 bg-emerald-50 text-emerald-600",
+    badgeTone: "bg-emerald-50 text-emerald-600",
     buttonTone: "bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500/30",
-    eyebrowTone: "text-emerald-600",
-    glyph: "OK",
   },
   amber: {
-    iconTone: "border-amber-100 bg-amber-50 text-amber-600",
+    badgeTone: "bg-amber-50 text-amber-600",
     buttonTone: "bg-amber-500 hover:bg-amber-600 focus-visible:ring-amber-500/30",
-    eyebrowTone: "text-amber-600",
-    glyph: "!",
   },
 };
 
@@ -69,18 +61,19 @@ function formatConfirmCopy(value = "") {
   return escapeHtml(value).replace(/\n/g, "<br />");
 }
 
-function buildConfirmHtml({ eyebrow, text, details, eyebrowTone }) {
+function buildConfirmHtml({ eyebrow, text, details, badgeTone }) {
+  const eyebrowLabel = eyebrow || "Confirmacion";
   const textBlock = text
     ? `<p class="text-sm leading-6 text-slate-600">${formatConfirmCopy(text)}</p>`
     : "";
   const detailsBlock = details
-    ? `<div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-xs leading-5 text-slate-500">${formatConfirmCopy(details)}</div>`
+    ? `<div class="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-xs leading-5 text-slate-500">${formatConfirmCopy(details)}</div>`
     : "";
 
   return `
     <div class="space-y-4 text-left">
-      <div class="text-[11px] font-black uppercase tracking-[0.24em] ${eyebrowTone}">
-        ${escapeHtml(eyebrow || "Confirmacion")}
+      <div class="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${badgeTone}">
+        ${escapeHtml(eyebrowLabel)}
       </div>
       ${textBlock}
       ${detailsBlock}
@@ -107,26 +100,20 @@ export async function showConfirm(input, text, confirmText = "Si, confirmar", co
       eyebrow: options.eyebrow,
       text: options.text,
       details: options.details,
-      eyebrowTone: palette.eyebrowTone,
+      badgeTone: palette.badgeTone,
     }),
-    iconHtml: `
-      <div class="flex h-14 w-14 items-center justify-center rounded-2xl border text-sm font-black uppercase tracking-[0.24em] ${palette.iconTone}">
-        ${palette.glyph}
-      </div>
-    `,
     showCancelButton: true,
     showCloseButton: true,
     focusCancel: true,
     confirmButtonText: options.confirmText || confirmText,
     cancelButtonText: options.cancelText || "Cancelar",
     customClass: {
-      popup: "w-full max-w-[30rem] rounded-[28px] border border-slate-200 bg-white p-0 shadow-[0_30px_90px_-32px_rgba(15,23,42,0.35)]",
-      icon: "mt-7 mb-0",
-      title: "px-7 pt-4 text-left text-[1.45rem] font-black tracking-tight text-slate-950",
-      htmlContainer: "mx-0 mt-0 px-7 pb-1 text-left",
-      actions: "mt-0 grid grid-cols-1 gap-3 px-7 pb-7 pt-2 sm:grid-cols-2",
-      confirmButton: `order-1 inline-flex min-h-11 items-center justify-center rounded-2xl px-5 py-3 text-sm font-bold text-white shadow-sm transition focus-visible:outline-none focus-visible:ring-4 ${palette.buttonTone}`,
-      cancelButton: "order-2 inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50",
+      popup: "w-full max-w-[26rem] rounded-2xl border border-slate-200 bg-white p-0 shadow-[0_24px_64px_-28px_rgba(15,23,42,0.45)]",
+      title: "px-6 pt-6 text-left text-xl font-bold tracking-tight text-slate-950",
+      htmlContainer: "mx-0 mt-0 px-6 pb-0 text-left",
+      actions: "mt-0 flex flex-col-reverse gap-2 px-6 pb-6 pt-4 sm:flex-row sm:justify-end",
+      confirmButton: `inline-flex min-h-10 items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition focus-visible:outline-none focus-visible:ring-4 ${palette.buttonTone}`,
+      cancelButton: "inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50",
       closeButton: "text-slate-300 transition hover:!text-slate-500 focus:!shadow-none focus:!outline-none",
     },
     buttonsStyling: false,

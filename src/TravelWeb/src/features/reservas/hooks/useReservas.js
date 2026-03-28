@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../../../api";
-import { showConfirm, showError, showSuccess } from "../../../alerts";
+import { showConfirm, showError, showSuccess, showWarning } from "../../../alerts";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { isDatabaseUnavailableError } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
+import { getReservaArchiveBlockReason } from "../archiveRules";
 
 const emptyPage = {
   items: [],
@@ -82,6 +83,13 @@ export function useReservas() {
   }, [debouncedSearch, viewFilter, pageSize]);
 
   const handleArchive = async (reservaOrPublicId) => {
+    const reserva = typeof reservaOrPublicId === "object" ? reservaOrPublicId : null;
+    const blockReason = getReservaArchiveBlockReason(reserva);
+    if (blockReason) {
+      showWarning(blockReason, "No se puede archivar");
+      return false;
+    }
+
     const publicId =
       typeof reservaOrPublicId === "string" ? reservaOrPublicId : getPublicId(reservaOrPublicId);
     const numeroReserva =
@@ -91,9 +99,9 @@ export function useReservas() {
 
     const confirmed = await showConfirm({
       title: "Archivar reserva",
-      eyebrow: "Organizacion operativa",
-      text: `La reserva ${numeroReserva} dejara de aparecer en la lista principal.`,
-      details: "El historial, las cobranzas y los documentos quedan guardados para consulta.",
+      eyebrow: "Archivo",
+      text: `La reserva ${numeroReserva} pasara a archivo y quedara solo para consulta.`,
+      details: "No se elimina informacion. El historial, las cobranzas y los documentos se conservan.",
       confirmText: "Si, archivar",
       cancelText: "Seguir viendo",
       confirmColor: "amber",
