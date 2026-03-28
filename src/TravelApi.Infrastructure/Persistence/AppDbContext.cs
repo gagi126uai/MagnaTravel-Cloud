@@ -263,6 +263,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<TransferBooking> TransferBookings => Set<TransferBooking>();
     public DbSet<PackageBooking> PackageBookings => Set<PackageBooking>();
     public DbSet<Rate> Rates => Set<Rate>();
+    public DbSet<CatalogPackage> CatalogPackages => Set<CatalogPackage>();
+    public DbSet<CatalogPackageDeparture> CatalogPackageDepartures => Set<CatalogPackageDeparture>();
 
     // Sprint 5: AFIP / Facturación
     public DbSet<AfipSettings> AfipSettings => Set<AfipSettings>();
@@ -304,6 +306,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<HotelBooking>(modelBuilder);
         ConfigurePublicEntity<PackageBooking>(modelBuilder);
         ConfigurePublicEntity<Rate>(modelBuilder);
+        ConfigurePublicEntity<CatalogPackage>(modelBuilder);
+        ConfigurePublicEntity<CatalogPackageDeparture>(modelBuilder);
         ConfigurePublicEntity<TransferBooking>(modelBuilder);
         ConfigurePublicEntity<ReservaAttachment>(modelBuilder);
         ConfigurePublicEntity<SupplierPayment>(modelBuilder);
@@ -510,6 +514,38 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<PackageBooking>(entity =>
         {
             entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
+        });
+
+        modelBuilder.Entity<CatalogPackage>(entity =>
+        {
+            entity.ToTable("CatalogPackages");
+            entity.Property(package => package.Title).HasMaxLength(200).IsRequired();
+            entity.Property(package => package.Slug).HasMaxLength(200).IsRequired();
+            entity.Property(package => package.Tagline).HasMaxLength(120);
+            entity.Property(package => package.Destination).HasMaxLength(120);
+            entity.Property(package => package.HeroImageFileName).HasMaxLength(260);
+            entity.Property(package => package.HeroImageStoredFileName).HasMaxLength(260);
+            entity.Property(package => package.HeroImageContentType).HasMaxLength(120);
+            entity.Property(package => package.GeneralInfo).HasMaxLength(8000);
+            entity.HasIndex(package => package.Slug).IsUnique();
+            entity.HasIndex(package => new { package.IsPublished, package.Slug });
+
+            entity.HasMany(package => package.Departures)
+                .WithOne(departure => departure.CatalogPackage)
+                .HasForeignKey(departure => departure.CatalogPackageId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CatalogPackageDeparture>(entity =>
+        {
+            entity.ToTable("CatalogPackageDepartures");
+            entity.Property(departure => departure.TransportLabel).HasMaxLength(100).IsRequired();
+            entity.Property(departure => departure.HotelName).HasMaxLength(200).IsRequired();
+            entity.Property(departure => departure.MealPlan).HasMaxLength(100);
+            entity.Property(departure => departure.RoomBase).HasMaxLength(50);
+            entity.Property(departure => departure.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(departure => departure.SalePrice).HasPrecision(18, 2);
+            entity.HasIndex(departure => new { departure.CatalogPackageId, departure.StartDate });
         });
 
         // Quotes

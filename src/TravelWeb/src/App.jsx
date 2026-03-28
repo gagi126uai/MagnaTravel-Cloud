@@ -26,8 +26,10 @@ import QuotesPage from "./pages/QuotesPage";
 import CRMPage from "./pages/CRMPage";
 import PaymentsTrashPage from "./features/payments/pages/PaymentsTrashPage";
 import NotificationsPage from "./pages/NotificationsPage";
+import PublicPackageEmbedPage from "./pages/PublicPackageEmbedPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
+import PackagesPage from "./features/packages/pages/PackagesPage";
 
 function FullScreenLoader() {
   return (
@@ -146,61 +148,68 @@ export default function App() {
   }, [handleLogout, navigate, user]);
 
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={loading ? <FullScreenLoader /> : user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-      />
-      <Route
-        path="/*"
-        element={
-          <PrivateRoute>
-            <Toaster richColors position="top-right" />
-            <AlertsProvider>
-              <Layout onLogout={handleLogout} isAdmin={adminUser}>
-                <Routes>
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                  <Route path="/dashboard" element={<DashboardPage />} />
-                  <Route path="/reservas" element={<ReservasPage />} />
-                  <Route path="/reservas/:publicId" element={<ReservaDetailPage />} />
-                  <Route path="/customers" element={<CustomersPage />} />
-                  <Route path="/customers/:publicId/account" element={<CustomerAccountPage />} />
-                  <Route path="/suppliers" element={<SuppliersPage />} />
-                  <Route path="/suppliers/:publicId/account" element={<SupplierAccountPage />} />
-                  <Route path="/payments" element={<PaymentsPage />}>
-                    <Route index element={<Navigate to="/payments/collections" replace />} />
-                    <Route path="collections" element={<PaymentsCollectionsPage />} />
-                    <Route path="cash" element={<Navigate to="/cash" replace />} />
-                    <Route path="invoicing" element={<PaymentsInvoicingPage />} />
-                    <Route path="history" element={<PaymentsHistoryPage />} />
-                  </Route>
-                  <Route path="/cash" element={<CashPage />} />
-                  <Route path="/rates" element={<RatesPage />} />
-                  <Route path="/quotes" element={<QuotesPage />} />
-                  <Route path="/crm" element={hasPermission("crm.view") ? <CRMPage /> : <Navigate to="/dashboard" replace />} />
-                  <Route
-                    path="/reports"
-                    element={hasPermission("reportes.view") ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
-                  />
-                  <Route
-                    path="/settings"
-                    element={hasPermission("configuracion.view") ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
-                  />
-                  <Route
-                    path="/analytics"
-                    element={hasPermission("reportes.view") ? <AnalyticsPage /> : <Navigate to="/dashboard" replace />}
-                  />
-                  <Route
-                    path="/payments/trash"
-                    element={hasPermission("cobranzas.edit") ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
-                  />
-                  <Route path="/notifications" element={<NotificationsPage />} />
-                </Routes>
-              </Layout>
-            </AlertsProvider>
-          </PrivateRoute>
-        }
-      />
-    </Routes>
+    <>
+      <Toaster richColors position="top-right" />
+      <Routes>
+        <Route
+          path="/login"
+          element={loading ? <FullScreenLoader /> : user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+        />
+        <Route path="/embed/packages/:slug" element={<PublicPackageEmbedPage />} />
+        <Route
+          path="/*"
+          element={
+            <PrivateRoute>
+              <AlertsProvider>
+                <Layout onLogout={handleLogout} isAdmin={adminUser}>
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="/reservas" element={<ReservasPage />} />
+                    <Route path="/reservas/:publicId" element={<ReservaDetailPage />} />
+                    <Route path="/customers" element={<CustomersPage />} />
+                    <Route path="/customers/:publicId/account" element={<CustomerAccountPage />} />
+                    <Route path="/suppliers" element={<SuppliersPage />} />
+                    <Route path="/suppliers/:publicId/account" element={<SupplierAccountPage />} />
+                    <Route path="/payments" element={<PaymentsPage />}>
+                      <Route index element={<Navigate to="/payments/collections" replace />} />
+                      <Route path="collections" element={<PaymentsCollectionsPage />} />
+                      <Route path="cash" element={<Navigate to="/cash" replace />} />
+                      <Route path="invoicing" element={<PaymentsInvoicingPage />} />
+                      <Route path="history" element={<PaymentsHistoryPage />} />
+                    </Route>
+                    <Route path="/cash" element={<CashPage />} />
+                    <Route path="/rates" element={<RatesPage />} />
+                    <Route path="/quotes" element={<QuotesPage />} />
+                    <Route
+                      path="/packages"
+                      element={hasPermission("paquetes.view") ? <PackagesPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route path="/crm" element={hasPermission("crm.view") ? <CRMPage /> : <Navigate to="/dashboard" replace />} />
+                    <Route
+                      path="/reports"
+                      element={hasPermission("reportes.view") ? <ReportsPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
+                      path="/settings"
+                      element={hasPermission("configuracion.view") ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
+                      path="/analytics"
+                      element={hasPermission("reportes.view") ? <AnalyticsPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
+                      path="/payments/trash"
+                      element={hasPermission("cobranzas.edit") ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route path="/notifications" element={<NotificationsPage />} />
+                  </Routes>
+                </Layout>
+              </AlertsProvider>
+            </PrivateRoute>
+          }
+        />
+      </Routes>
+    </>
   );
 }

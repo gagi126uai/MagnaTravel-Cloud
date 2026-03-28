@@ -42,6 +42,11 @@ public static class Permissions
     public const string TarifarioView = "tarifario.view";
     public const string TarifarioEdit = "tarifario.edit";
 
+    // Paquetes
+    public const string PaquetesView = "paquetes.view";
+    public const string PaquetesEdit = "paquetes.edit";
+    public const string PaquetesPublish = "paquetes.publish";
+
     /// <summary>
     /// Todos los permisos disponibles agrupados por módulo para la UI.
     /// </summary>
@@ -56,6 +61,7 @@ public static class Permissions
         ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip },
         ["CRM"] = new[] { CrmView, CrmEdit },
         ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
+        ["Paquetes"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },
     };
 
     public static readonly string[] All = AllByModule.Values.SelectMany(v => v).ToArray();
@@ -72,6 +78,7 @@ public static class Permissions
         CobranzasView,
         CajaView,
         TarifarioView,
+        PaquetesView,
     };
 
     /// <summary>Permisos default para Vendedor (CRM + reservas + clientes).</summary>
@@ -82,5 +89,6 @@ public static class Permissions
         CrmView, CrmEdit,
         CobranzasView,
         TarifarioView,
+        PaquetesView,
     };
 }

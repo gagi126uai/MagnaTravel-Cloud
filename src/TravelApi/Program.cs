@@ -263,6 +263,18 @@ builder.Services.AddRateLimiter(options =>
         });
     });
 
+    options.AddPolicy("public-leads", context =>
+    {
+        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 8,
+            Window = TimeSpan.FromMinutes(10),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+
     options.AddPolicy("afip", context =>
     {
         var partitionKey = $"{context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous"}:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
@@ -293,6 +305,7 @@ builder.Services.AddScoped<ITreasuryService, TreasuryService>();
 builder.Services.AddScoped<OperationalFinanceMonitorService>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
+builder.Services.AddScoped<ICatalogPackageService, CatalogPackageService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBookingService, BookingService>();

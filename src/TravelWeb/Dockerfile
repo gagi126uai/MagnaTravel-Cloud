@@ -12,6 +12,7 @@ RUN npm run build
 
 FROM nginx:alpine AS final
 WORKDIR /usr/share/nginx/html
+ENV EMBED_ALLOWED_FRAME_ANCESTORS="'self'"
 COPY --from=build /app/dist .
-COPY src/TravelWeb/nginx.conf /etc/nginx/conf.d/default.conf
+COPY src/TravelWeb/nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80

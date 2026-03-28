@@ -12,6 +12,7 @@ import {
   X,
   DollarSign,
   UserPlus,
+  Package,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -26,6 +27,7 @@ const mainLinks = [
   { to: "/payments", label: "Cobranza y Facturacion", icon: CreditCard, requiredPermission: "cobranzas.view" },
   { to: "/cash", label: "Caja", icon: ArrowLeftRight, requiredPermission: "caja.view" },
   { to: "/rates", label: "Tarifario", icon: DollarSign, requiredPermission: "tarifario.view" },
+  { to: "/packages", label: "Paquetes", icon: Package, requiredPermission: "paquetes.view" },
   { to: "/reports", label: "Reportes e Inteligencia", icon: BarChart3, requiredPermission: "reportes.view" },
   { to: "/settings", label: "Configuracion", icon: Settings, requiredPermission: "configuracion.view" },
 ];
