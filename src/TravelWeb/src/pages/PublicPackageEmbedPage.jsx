@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   ChevronRight,
@@ -47,21 +47,35 @@ function formatMoney(value, currency = "USD") {
   })}`;
 }
 
-function getEmbedDocumentHeight() {
+function getElementHeight(element) {
+  if (!element) {
+    return 0;
+  }
+
+  return Math.max(
+    element.scrollHeight ?? 0,
+    element.offsetHeight ?? 0,
+    Math.ceil(element.getBoundingClientRect?.().height ?? 0)
+  );
+}
+
+function getEmbedDocumentHeight(contentElement) {
   if (typeof document === "undefined") {
     return 0;
   }
 
-  const body = document.body;
-  const documentElement = document.documentElement;
-  const baseHeight = Math.max(body?.scrollHeight ?? 0, body?.offsetHeight ?? 0, documentElement?.scrollHeight ?? 0, documentElement?.offsetHeight ?? 0);
+  const baseHeight = Math.max(
+    getElementHeight(contentElement),
+    getElementHeight(document.body?.firstElementChild),
+    getElementHeight(document.body)
+  );
 
   const modalPanel = document.querySelector("[data-embed-modal-panel]");
   if (!modalPanel) {
     return baseHeight;
   }
 
-  return Math.max(baseHeight, modalPanel.scrollHeight + 96);
+  return Math.max(baseHeight, getElementHeight(modalPanel) + 96);
 }
 
 export default function PublicPackageEmbedPage() {
@@ -74,6 +88,7 @@ export default function PublicPackageEmbedPage() {
   const [packageData, setPackageData] = useState(null);
   const [selectedDeparture, setSelectedDeparture] = useState(null);
   const [leadForm, setLeadForm] = useState(leadFormInitialState);
+  const contentRef = useRef(null);
   const embedId = useMemo(() => {
     if (typeof window === "undefined") {
       return "";
@@ -170,7 +185,7 @@ export default function PublicPackageEmbedPage() {
           type: "magnatravel:embed:resize",
           slug,
           embedId,
-          height: getEmbedDocumentHeight(),
+          height: getEmbedDocumentHeight(contentRef.current),
         },
         "*"
       );
@@ -301,6 +316,7 @@ export default function PublicPackageEmbedPage() {
   return (
     <>
       <div
+        ref={contentRef}
         className={`bg-[radial-gradient(circle_at_top_left,rgba(111,210,214,0.18),transparent_28%),linear-gradient(180deg,#f6fbfa_0%,#eef6f3_100%)] px-3 py-4 sm:px-5 sm:py-6 ${
           isEmbedded ? "min-h-0" : "min-h-screen"
         }`}

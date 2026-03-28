@@ -114,7 +114,7 @@ function buildSnippet(item) {
   const srcUrl = new URL(baseSrc);
   srcUrl.searchParams.set("embedId", embedId);
 
-  return `<iframe id="${embedId}" src="${srcUrl.toString()}" loading="lazy" scrolling="no" style="width:100%;min-height:640px;height:640px;border:0;display:block;overflow:hidden;" title="${safeTitle}"></iframe>
+  return `<iframe id="${embedId}" src="${srcUrl.toString()}" loading="lazy" scrolling="no" style="width:100%;min-height:320px;height:320px;border:0;display:block;overflow:hidden;" title="${safeTitle}"></iframe>
 <script>
 (function () {
   var iframe = document.getElementById(${JSON.stringify(embedId)});
@@ -122,7 +122,7 @@ function buildSnippet(item) {
 
   var allowedOrigin = ${JSON.stringify(srcUrl.origin)};
   var expectedEmbedId = ${JSON.stringify(embedId)};
-  var minHeight = 640;
+  var minHeight = 320;
 
   function applyHeight(height) {
     var parsed = Number(height || 0);
