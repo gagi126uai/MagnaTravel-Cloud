@@ -98,10 +98,53 @@ function formatMoney(value, currency = "USD") {
   })}`;
 }
 
+function sanitizeEmbedToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
 function buildSnippet(item) {
   const safeTitle = String(item.title || "Paquete").replace(/"/g, "&quot;");
-  const src = buildAppUrl(item.publicPagePath || `/embed/packages/${item.slug}`);
-  return `<iframe src="${src}" loading="lazy" style="width:100%;height:1500px;border:0;" title="${safeTitle}"></iframe>`;
+  const safeSlug = sanitizeEmbedToken(item.slug || "paquete");
+  const embedId = `mt-package-${safeSlug || "embed"}`;
+  const baseSrc = buildAppUrl(item.publicPagePath || `/embed/packages/${item.slug}`);
+  const srcUrl = new URL(baseSrc);
+  srcUrl.searchParams.set("embedId", embedId);
+
+  return `<iframe id="${embedId}" src="${srcUrl.toString()}" loading="lazy" scrolling="no" style="width:100%;min-height:640px;height:640px;border:0;display:block;overflow:hidden;" title="${safeTitle}"></iframe>
+<script>
+(function () {
+  var iframe = document.getElementById(${JSON.stringify(embedId)});
+  if (!iframe) return;
+
+  var allowedOrigin = ${JSON.stringify(srcUrl.origin)};
+  var expectedEmbedId = ${JSON.stringify(embedId)};
+  var minHeight = 640;
+
+  function applyHeight(height) {
+    var parsed = Number(height || 0);
+    if (!parsed || !isFinite(parsed)) return;
+
+    var nextHeight = Math.max(minHeight, Math.min(5200, Math.round(parsed)));
+    iframe.style.height = nextHeight + "px";
+  }
+
+  function handleMessage(event) {
+    if (event.origin !== allowedOrigin) return;
+
+    var data = event.data || {};
+    if (data.type !== "magnatravel:embed:resize") return;
+    if (data.embedId && data.embedId !== expectedEmbedId) return;
+
+    applyHeight(data.height);
+  }
+
+  window.addEventListener("message", handleMessage, false);
+})();
+</script>`;
 }
 
 function mapDetailToForm(detail) {

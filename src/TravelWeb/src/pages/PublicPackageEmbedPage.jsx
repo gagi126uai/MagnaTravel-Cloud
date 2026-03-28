@@ -47,6 +47,29 @@ function formatMoney(value, currency = "USD") {
   })}`;
 }
 
+function getEmbedDocumentHeight() {
+  if (typeof document === "undefined") {
+    return 0;
+  }
+
+  const body = document.body;
+  const documentElement = document.documentElement;
+  const baseHeight = Math.max(
+    body?.scrollHeight ?? 0,
+    body?.offsetHeight ?? 0,
+    documentElement?.scrollHeight ?? 0,
+    documentElement?.offsetHeight ?? 0,
+    documentElement?.clientHeight ?? 0
+  );
+
+  const modalPanel = document.querySelector("[data-embed-modal-panel]");
+  if (!modalPanel) {
+    return baseHeight;
+  }
+
+  return Math.max(baseHeight, window.innerHeight || 0, modalPanel.scrollHeight + 96);
+}
+
 export default function PublicPackageEmbedPage() {
   const { slug = "" } = useParams();
   const [loading, setLoading] = useState(true);
@@ -56,6 +79,13 @@ export default function PublicPackageEmbedPage() {
   const [packageData, setPackageData] = useState(null);
   const [selectedDeparture, setSelectedDeparture] = useState(null);
   const [leadForm, setLeadForm] = useState(leadFormInitialState);
+  const embedId = useMemo(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+
+    return new URLSearchParams(window.location.search).get("embedId") || "";
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +135,73 @@ export default function PublicPackageEmbedPage() {
 
     return formatMoney(packageData.fromPrice, packageData.currency);
   }, [packageData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || window.parent === window) {
+      return undefined;
+    }
+
+    let animationFrameId = 0;
+    const postHeight = () => {
+      animationFrameId = 0;
+      window.parent.postMessage(
+        {
+          type: "magnatravel:embed:resize",
+          slug,
+          embedId,
+          height: getEmbedDocumentHeight(),
+        },
+        "*"
+      );
+    };
+
+    const scheduleHeightSync = () => {
+      if (animationFrameId) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      animationFrameId = window.requestAnimationFrame(postHeight);
+    };
+
+    scheduleHeightSync();
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            scheduleHeightSync();
+          });
+
+    if (resizeObserver) {
+      resizeObserver.observe(document.body);
+      resizeObserver.observe(document.documentElement);
+    }
+
+    const mutationObserver = new MutationObserver(() => {
+      scheduleHeightSync();
+    });
+
+    mutationObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+    });
+
+    window.addEventListener("load", scheduleHeightSync);
+    window.addEventListener("resize", scheduleHeightSync);
+
+    return () => {
+      if (animationFrameId) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      resizeObserver?.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener("load", scheduleHeightSync);
+      window.removeEventListener("resize", scheduleHeightSync);
+    };
+  }, [activeTab, embedId, leadOpen, loading, packageData, selectedDeparture, slug, submitting]);
 
   function openLeadModal(departure = null) {
     setSelectedDeparture(departure || primaryDeparture || null);
@@ -390,9 +487,12 @@ function LeadModal({ open, packageTitle, departure, leadForm, submitting, onClos
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
+    <div data-embed-modal-root className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
       <div className="mx-auto flex min-h-full max-w-2xl items-center justify-center">
-        <div className="w-full overflow-hidden rounded-[2rem] bg-white shadow-[0_30px_80px_-30px_rgba(15,23,42,0.55)]">
+        <div
+          data-embed-modal-panel
+          className="w-full overflow-hidden rounded-[2rem] bg-white shadow-[0_30px_80px_-30px_rgba(15,23,42,0.55)]"
+        >
           <div className="border-b border-slate-200 px-6 py-5">
             <p className="text-xs font-bold uppercase tracking-[0.26em] text-teal-700">Consulta web</p>
             <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">Solicitar informacion</h2>
