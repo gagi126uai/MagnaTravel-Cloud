@@ -18,8 +18,22 @@ import {
 import { api } from "../../../api";
 import SupplierPaymentModal from "../../../components/SupplierPaymentModal";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
-import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
+import {
+    DataGrid,
+    DataGridActionCell,
+    DataGridBody,
+    DataGridCell,
+    DataGridEmptyState,
+    DataGridHeader,
+    DataGridHeaderCell,
+    DataGridHeaderRow,
+    DataGridRow,
+} from "../../../components/ui/DataGrid";
+import { ListEmptyState } from "../../../components/ui/ListEmptyState";
+import { ListToolbar } from "../../../components/ui/ListToolbar";
+import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
+import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import Swal from "sweetalert2";
 import { getPublicId } from "../../../lib/publicIds";
@@ -298,133 +312,135 @@ export default function SupplierAccountPage() {
                 </div>
             </div>
 
-            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
                 <div className="border-b p-4 space-y-4">
                     <div className="flex items-center justify-between gap-3">
-                        <h2 className="font-semibold flex items-center gap-2">
+                        <h2 className="flex items-center gap-2 font-semibold">
                             <Building2 className="h-5 w-5" />
                             Servicios Comprados
                         </h2>
                         <span className="text-sm text-muted-foreground">{servicesPage.totalCount || 0} resultados</span>
                     </div>
 
-                    <div className="flex flex-col gap-3 lg:flex-row">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                            <input
-                                type="text"
-                                placeholder="Buscar descripcion, expediente o archivo..."
-                                value={serviceSearch}
-                                onChange={(event) => setServiceSearch(event.target.value)}
-                                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                            />
-                        </div>
-                        <div className="relative lg:w-56">
-                            <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                            <select
-                                value={serviceType}
-                                onChange={(event) => setServiceType(event.target.value)}
-                                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                            >
-                                <option value="all">Todos los tipos</option>
-                                <option value="Aereo">Aereo</option>
-                                <option value="Hotel">Hotel</option>
-                                <option value="Traslado">Traslado</option>
-                                <option value="Paquete">Paquete</option>
-                                <option value="Otro">Otros</option>
-                            </select>
-                        </div>
-                    </div>
+                    <ListToolbar
+                        className="border-slate-200/80 shadow-none dark:border-slate-800"
+                        searchSlot={
+                            <div className="relative flex-1">
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar descripcion, expediente o archivo..."
+                                    value={serviceSearch}
+                                    onChange={(event) => setServiceSearch(event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                />
+                            </div>
+                        }
+                        filterSlot={
+                            <div className="relative lg:w-56">
+                                <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                <select
+                                    value={serviceType}
+                                    onChange={(event) => setServiceType(event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                >
+                                    <option value="all">Todos los tipos</option>
+                                    <option value="Aereo">Aereo</option>
+                                    <option value="Hotel">Hotel</option>
+                                    <option value="Traslado">Traslado</option>
+                                    <option value="Paquete">Paquete</option>
+                                    <option value="Otro">Otros</option>
+                                </select>
+                            </div>
+                        }
+                    />
                 </div>
 
-                <div className="hidden md:block overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="border-b bg-muted/50">
-                                <th className="p-3 text-left font-medium">Tipo</th>
-                                <th className="p-3 text-left font-medium">Descripcion</th>
-                                <th className="p-3 text-left font-medium">Reserva</th>
-                                <th className="p-3 text-left font-medium">Fecha</th>
-                                <th className="p-3 text-left font-medium">Estado</th>
-                                <th className="p-3 text-right font-medium">Costo</th>
-                                <th className="p-3 text-right font-medium">Venta</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {servicesLoading ? (
-                                <tr>
-                                    <td colSpan={7} className="p-4 text-center text-muted-foreground">Cargando servicios...</td>
-                                </tr>
-                            ) : services.length === 0 ? (
-                                <tr>
-                                    <td colSpan={7} className="p-4 text-center text-muted-foreground">No hay servicios para este filtro.</td>
-                                </tr>
-                            ) : (
-                                services.map((service) => (
-                                    <tr key={getPublicId(service)} className="border-b hover:bg-muted/30">
-                                        <td className="p-3">
-                                            <span className="px-2 py-1 bg-primary/10 text-primary rounded text-xs font-medium">
-                                                {service.type}
-                                            </span>
-                                        </td>
-                                        <td className="p-3">
-                                            <div className="font-medium">{service.description || "-"}</div>
-                                            {service.fileName && <div className="text-xs text-muted-foreground">{service.fileName}</div>}
-                                        </td>
-                                        <td className="p-3">
+                <DataGrid density="compact" minWidth="920px">
+                    <DataGridHeader>
+                        <DataGridHeaderRow>
+                            <DataGridHeaderCell>Tipo</DataGridHeaderCell>
+                            <DataGridHeaderCell>Descripcion</DataGridHeaderCell>
+                            <DataGridHeaderCell>Reserva</DataGridHeaderCell>
+                            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                            <DataGridHeaderCell>Estado</DataGridHeaderCell>
+                            <DataGridHeaderCell align="right">Costo</DataGridHeaderCell>
+                            <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
+                        </DataGridHeaderRow>
+                    </DataGridHeader>
+                    <DataGridBody>
+                        {servicesLoading ? (
+                            <DataGridEmptyState colSpan={7} title="Cargando servicios..." />
+                        ) : services.length === 0 ? (
+                            <DataGridEmptyState colSpan={7} title="No hay servicios para este filtro." />
+                        ) : (
+                            services.map((service) => (
+                                <DataGridRow key={getPublicId(service)}>
+                                    <DataGridCell>
+                                        <span className="rounded bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                                            {service.type}
+                                        </span>
+                                    </DataGridCell>
+                                    <DataGridCell>
+                                        <div className="font-medium">{service.description || "-"}</div>
+                                        {service.fileName ? <div className="text-xs text-muted-foreground">{service.fileName}</div> : null}
+                                    </DataGridCell>
+                                    <DataGridCell>
+                                        {service.reservaPublicId ? (
+                                            <Link to={`/reservas/${service.reservaPublicId}`} className="font-medium text-primary hover:underline">
+                                                {service.numeroReserva || "Ver reserva"}
+                                            </Link>
+                                        ) : (
+                                            service.numeroReserva || "-"
+                                        )}
+                                    </DataGridCell>
+                                    <DataGridCell>{formatDate(service.date)}</DataGridCell>
+                                    <DataGridCell>{service.status}</DataGridCell>
+                                    <DataGridCell align="right" className="font-mono">{formatCurrency(service.netCost)}</DataGridCell>
+                                    <DataGridCell align="right" className="font-mono">{formatCurrency(service.salePrice)}</DataGridCell>
+                                </DataGridRow>
+                            ))
+                        )}
+                    </DataGridBody>
+                </DataGrid>
+
+                {servicesLoading ? (
+                    <div className="p-4 text-center text-sm text-muted-foreground md:hidden">Cargando servicios...</div>
+                ) : services.length === 0 ? (
+                    <ListEmptyState
+                        title="No hay servicios para este filtro."
+                        className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
+                    />
+                ) : (
+                    <MobileRecordList className="p-4 md:hidden">
+                        {services.map((service) => (
+                            <MobileRecordCard
+                                key={getPublicId(service)}
+                                title={service.description || "Sin descripcion"}
+                                subtitle={service.type}
+                                meta={
+                                    <>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400">Fecha {formatDate(service.date)}</div>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400">
                                             {service.reservaPublicId ? (
-                                                <Link to={`/reservas/${service.reservaPublicId}`} className="text-primary font-medium hover:underline">
+                                                <Link to={`/reservas/${service.reservaPublicId}`} className="text-primary hover:underline">
                                                     {service.numeroReserva || "Ver reserva"}
                                                 </Link>
                                             ) : (
-                                                service.numeroReserva || "-"
+                                                service.numeroReserva || "Sin expediente"
                                             )}
-                                        </td>
-                                        <td className="p-3">{formatDate(service.date)}</td>
-                                        <td className="p-3">{service.status}</td>
-                                        <td className="p-3 text-right font-mono">{formatCurrency(service.netCost)}</td>
-                                        <td className="p-3 text-right font-mono">{formatCurrency(service.salePrice)}</td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                                        </div>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400">{service.status}</div>
+                                    </>
+                                }
+                                footer={<span className="text-xs text-slate-500">Costo {formatCurrency(service.netCost)}</span>}
+                                footerActions={<span className="text-xs font-semibold text-slate-700 dark:text-slate-200">Venta {formatCurrency(service.salePrice)}</span>}
+                            />
+                        ))}
+                    </MobileRecordList>
+                )}
 
-                <div className="md:hidden divide-y">
-                    {servicesLoading ? (
-                        <div className="p-4 text-center text-muted-foreground text-sm">Cargando servicios...</div>
-                    ) : services.length === 0 ? (
-                        <div className="p-4 text-center text-muted-foreground text-sm">No hay servicios para este filtro.</div>
-                    ) : (
-                        services.map((service) => (
-                            <div key={getPublicId(service)} className="p-4 space-y-2">
-                                <div className="flex justify-between items-start gap-3">
-                                    <div>
-                                        <div className="text-xs font-semibold uppercase tracking-wide text-primary">{service.type}</div>
-                                        <div className="text-sm font-medium">{service.description || "Sin descripcion"}</div>
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">{formatDate(service.date)}</div>
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                    {service.reservaPublicId ? (
-                                        <Link to={`/reservas/${service.reservaPublicId}`} className="text-primary hover:underline">
-                                            {service.numeroReserva || "Ver reserva"}
-                                        </Link>
-                                    ) : (
-                                        service.numeroReserva || "Sin expediente"
-                                    )}
-                                </div>
-                                <div className="flex justify-between text-sm pt-2 border-t border-dashed">
-                                    <span>Costo {formatCurrency(service.netCost)}</span>
-                                    <span>Venta {formatCurrency(service.salePrice)}</span>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
-
-                <div className="p-4 border-t">
+                <div className="border-t p-4">
                     <PaginationFooter
                         page={servicesPage.page || servicesPaging.page}
                         pageSize={servicesPage.pageSize || servicesPaging.pageSize}
@@ -438,139 +454,142 @@ export default function SupplierAccountPage() {
                 </div>
             </div>
 
-            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
                 <div className="border-b p-4 space-y-4">
                     <div className="flex items-center justify-between gap-3">
-                        <h2 className="font-semibold flex items-center gap-2">
+                        <h2 className="flex items-center gap-2 font-semibold">
                             <CreditCard className="h-5 w-5" />
                             Historial de Pagos
                         </h2>
                         <span className="text-sm text-muted-foreground">{paymentsPage.totalCount || 0} resultados</span>
                     </div>
 
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                        <input
-                            type="text"
-                            placeholder="Buscar referencia, notas o expediente..."
-                            value={paymentSearch}
-                            onChange={(event) => setPaymentSearch(event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                        />
-                    </div>
+                    <ListToolbar
+                        className="border-slate-200/80 shadow-none dark:border-slate-800"
+                        searchSlot={
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar referencia, notas o expediente..."
+                                    value={paymentSearch}
+                                    onChange={(event) => setPaymentSearch(event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                />
+                            </div>
+                        }
+                    />
                 </div>
 
-                <div className="hidden md:block overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="border-b bg-muted/50">
-                                <th className="p-3 text-left font-medium">Fecha</th>
-                                <th className="p-3 text-left font-medium">Metodo</th>
-                                <th className="p-3 text-left font-medium">Referencia</th>
-                                <th className="p-3 text-left font-medium">Reserva</th>
-                                <th className="p-3 text-left font-medium">Notas</th>
-                                <th className="p-3 text-right font-medium">Monto</th>
-                                <th className="p-3 text-center font-medium">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {paymentsLoading ? (
-                                <tr>
-                                    <td colSpan={7} className="p-4 text-center text-muted-foreground">Cargando pagos...</td>
-                                </tr>
-                            ) : payments.length === 0 ? (
-                                <tr>
-                                    <td colSpan={7} className="p-4 text-center text-muted-foreground">No hay pagos para este filtro.</td>
-                                </tr>
-                            ) : (
-                                payments.map((payment) => (
-                                    <tr key={getPublicId(payment)} className="border-b hover:bg-muted/30">
-                                        <td className="p-3">{formatDate(payment.paidAt)}</td>
-                                        <td className="p-3">{payment.method}</td>
-                                        <td className="p-3 font-mono text-xs">{payment.reference || "-"}</td>
-                                        <td className="p-3">
+                <DataGrid density="compact" minWidth="920px">
+                    <DataGridHeader>
+                        <DataGridHeaderRow>
+                            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                            <DataGridHeaderCell>Metodo</DataGridHeaderCell>
+                            <DataGridHeaderCell>Referencia</DataGridHeaderCell>
+                            <DataGridHeaderCell>Reserva</DataGridHeaderCell>
+                            <DataGridHeaderCell>Notas</DataGridHeaderCell>
+                            <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
+                            <DataGridHeaderCell align="center">Acciones</DataGridHeaderCell>
+                        </DataGridHeaderRow>
+                    </DataGridHeader>
+                    <DataGridBody>
+                        {paymentsLoading ? (
+                            <DataGridEmptyState colSpan={7} title="Cargando pagos..." />
+                        ) : payments.length === 0 ? (
+                            <DataGridEmptyState colSpan={7} title="No hay pagos para este filtro." />
+                        ) : (
+                            payments.map((payment) => (
+                                <DataGridRow key={getPublicId(payment)}>
+                                    <DataGridCell>{formatDate(payment.paidAt)}</DataGridCell>
+                                    <DataGridCell>{payment.method}</DataGridCell>
+                                    <DataGridCell className="font-mono text-xs">{payment.reference || "-"}</DataGridCell>
+                                    <DataGridCell>
+                                        {payment.reservaPublicId ? (
+                                            <Link to={`/reservas/${payment.reservaPublicId}`} className="text-primary hover:underline">
+                                                {payment.numeroReserva || "Ver reserva"}
+                                            </Link>
+                                        ) : (
+                                            payment.numeroReserva || "-"
+                                        )}
+                                    </DataGridCell>
+                                    <DataGridCell className="max-w-xs truncate text-muted-foreground">{payment.notes || "-"}</DataGridCell>
+                                    <DataGridCell align="right" className="font-mono font-medium text-green-600">
+                                        {formatCurrency(payment.amount)}
+                                    </DataGridCell>
+                                    <DataGridActionCell align="center">
+                                        <button
+                                            onClick={() => handleOpenPaymentModal(payment)}
+                                            className="rounded-lg p-2 text-blue-600 hover:bg-blue-50"
+                                            title="Editar"
+                                        >
+                                            <Pencil className="h-4 w-4" />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeletePayment(payment)}
+                                            className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                                            title="Eliminar"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </button>
+                                    </DataGridActionCell>
+                                </DataGridRow>
+                            ))
+                        )}
+                    </DataGridBody>
+                </DataGrid>
+
+                {paymentsLoading ? (
+                    <div className="p-4 text-center text-sm text-muted-foreground md:hidden">Cargando pagos...</div>
+                ) : payments.length === 0 ? (
+                    <ListEmptyState
+                        title="No hay pagos para este filtro."
+                        className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
+                    />
+                ) : (
+                    <MobileRecordList className="p-4 md:hidden">
+                        {payments.map((payment) => (
+                            <MobileRecordCard
+                                key={getPublicId(payment)}
+                                title={payment.method}
+                                subtitle={formatDate(payment.paidAt)}
+                                meta={
+                                    <>
+                                        <div className="text-sm text-muted-foreground">
                                             {payment.reservaPublicId ? (
                                                 <Link to={`/reservas/${payment.reservaPublicId}`} className="text-primary hover:underline">
                                                     {payment.numeroReserva || "Ver reserva"}
                                                 </Link>
                                             ) : (
-                                                payment.numeroReserva || "-"
+                                                payment.numeroReserva || "Sin expediente"
                                             )}
-                                        </td>
-                                        <td className="p-3 text-muted-foreground max-w-xs truncate">{payment.notes || "-"}</td>
-                                        <td className="p-3 text-right font-mono text-green-600 font-medium">
-                                            {formatCurrency(payment.amount)}
-                                        </td>
-                                        <td className="p-3 text-center">
-                                            <div className="flex justify-center gap-2">
-                                                <button
-                                                    onClick={() => handleOpenPaymentModal(payment)}
-                                                    className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                                                    title="Editar"
-                                                >
-                                                    <Pencil className="h-4 w-4" />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeletePayment(payment)}
-                                                    className="p-1 text-red-600 hover:bg-red-50 rounded"
-                                                    title="Eliminar"
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                                        </div>
+                                        {payment.notes ? <div className="text-xs italic text-muted-foreground">{payment.notes}</div> : null}
+                                    </>
+                                }
+                                footer={<span className="font-mono font-bold text-green-600">{formatCurrency(payment.amount)}</span>}
+                                footerActions={
+                                    <>
+                                        <button
+                                            onClick={() => handleOpenPaymentModal(payment)}
+                                            className="flex items-center gap-1 rounded-lg bg-slate-100 px-3 py-1.5 text-xs text-slate-600"
+                                        >
+                                            <Pencil className="h-3 w-3" /> Editar
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeletePayment(payment)}
+                                            className="flex items-center gap-1 rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-600"
+                                        >
+                                            <Trash2 className="h-3 w-3" /> Eliminar
+                                        </button>
+                                    </>
+                                }
+                            />
+                        ))}
+                    </MobileRecordList>
+                )}
 
-                <div className="md:hidden divide-y">
-                    {paymentsLoading ? (
-                        <div className="p-4 text-center text-muted-foreground text-sm">Cargando pagos...</div>
-                    ) : payments.length === 0 ? (
-                        <div className="p-4 text-center text-muted-foreground text-sm">No hay pagos para este filtro.</div>
-                    ) : (
-                        payments.map((payment) => (
-                            <div key={getPublicId(payment)} className="p-4 space-y-2">
-                                <div className="flex justify-between items-center">
-                                    <div>
-                                        <div className="font-medium">{payment.method}</div>
-                                        <div className="text-xs text-muted-foreground">{formatDate(payment.paidAt)}</div>
-                                    </div>
-                                    <span className="text-green-600 font-mono font-bold">{formatCurrency(payment.amount)}</span>
-                                </div>
-                                <div className="text-sm text-muted-foreground">
-                                    {payment.reservaPublicId ? (
-                                        <Link to={`/reservas/${payment.reservaPublicId}`} className="text-primary hover:underline">
-                                            {payment.numeroReserva || "Ver reserva"}
-                                        </Link>
-                                    ) : (
-                                        payment.numeroReserva || "Sin expediente"
-                                    )}
-                                </div>
-                                {payment.notes && <div className="text-xs text-muted-foreground italic">{payment.notes}</div>}
-                                <div className="flex justify-end gap-3 pt-2">
-                                    <button
-                                        onClick={() => handleOpenPaymentModal(payment)}
-                                        className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg flex items-center gap-1"
-                                    >
-                                        <Pencil className="h-3 w-3" /> Editar
-                                    </button>
-                                    <button
-                                        onClick={() => handleDeletePayment(payment)}
-                                        className="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded-lg flex items-center gap-1"
-                                    >
-                                        <Trash2 className="h-3 w-3" /> Eliminar
-                                    </button>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
-
-                <div className="p-4 border-t">
+                <div className="border-t p-4">
                     <PaginationFooter
                         page={paymentsPage.page || paymentsPaging.page}
                         pageSize={paymentsPage.pageSize || paymentsPaging.pageSize}

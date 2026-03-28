@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Filter, Loader2, Search } from "lucide-react";
 import PaymentModal from "../../../components/PaymentModal";
-import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
+import { ListToolbar } from "../../../components/ui/ListToolbar";
+import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { FinanceMetricsGrid } from "../components/FinanceMetricsGrid";
 import { CollectionsTab } from "../components/CollectionsTab";
 import { useCollections } from "../hooks/useCollections";
@@ -39,8 +40,8 @@ export default function PaymentsCollectionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-end gap-3">
-        <div className="flex flex-col sm:flex-row gap-3">
+      <ListToolbar
+        searchSlot={
           <div className="relative min-w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
@@ -48,23 +49,25 @@ export default function PaymentsCollectionsPage() {
               placeholder="Buscar reserva, cliente o responsable..."
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              className="pl-9 pr-4 py-2 w-full text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-slate-200 transition-shadow dark:text-white"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
             />
           </div>
+        }
+        filterSlot={
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <select
               value={urgencyFilter}
               onChange={(event) => setUrgencyFilter(event.target.value)}
-              className="pl-9 pr-8 py-2 text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl dark:text-white"
+              className="rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-8 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
             >
               <option value="all">Todas</option>
               <option value="urgent">Solo urgentes</option>
               <option value="blocked">Solo bloqueadas</option>
             </select>
           </div>
-        </div>
-      </div>
+        }
+      />
 
       <FinanceMetricsGrid
         items={[

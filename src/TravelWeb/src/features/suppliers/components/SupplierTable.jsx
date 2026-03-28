@@ -1,118 +1,126 @@
 import React from "react";
-import { Wallet, Pencil, Power, Info } from "lucide-react";
-import { formatCurrency } from "../../../lib/utils";
+import { Info, Pencil, Power, Wallet } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
+import {
+  DataGrid,
+  DataGridActionCell,
+  DataGridBody,
+  DataGridCell,
+  DataGridEmptyState,
+  DataGridHeader,
+  DataGridHeaderCell,
+  DataGridHeaderRow,
+  DataGridRow,
+} from "../../../components/ui/DataGrid";
 import { getPublicId } from "../../../lib/publicIds";
+import { formatCurrency } from "../../../lib/utils";
 
 export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClick }) {
-    const getInitials = (name) => {
-        return name?.split(" ").map((part) => part[0]).join("").toUpperCase().slice(0, 2) || "PV";
-    };
+  const getInitials = (name) => {
+    return name?.split(" ").map((part) => part[0]).join("").toUpperCase().slice(0, 2) || "PV";
+  };
 
-    const getRandomColor = (name) => {
-        const colors = ["bg-blue-500", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-indigo-500"];
-        let hash = 0;
-        for (let index = 0; index < name.length; index += 1) {
-            hash = name.charCodeAt(index) + ((hash << 5) - hash);
-        }
-        return colors[Math.abs(hash) % colors.length];
-    };
+  const getRandomColor = (name) => {
+    const colors = ["bg-blue-500", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-indigo-500"];
+    let hash = 0;
+    for (let index = 0; index < name.length; index += 1) {
+      hash = name.charCodeAt(index) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
 
-    return (
-        <div className="hidden md:block rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="relative w-full overflow-auto">
-                <table className="w-full table-fixed caption-bottom text-sm text-left">
-                    <thead className="[&_tr]:border-b">
-                        <tr className="border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
-                            <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 w-[30%]">Proveedor</th>
-                            <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 w-[25%]">Contacto</th>
-                            <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right w-[18%]">
-                                <div className="flex items-center justify-end gap-1 cursor-help group relative">
-                                    Saldo (Deuda)
-                                    <Info className="h-3 w-3 text-slate-400" />
-                                    <div className="absolute bottom-full mb-2 right-0 w-64 p-2 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                                        Solo incluye expedientes reservados, operativos o cerrados.
-                                    </div>
-                                </div>
-                            </th>
-                            <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-center w-[12%]">Estado</th>
-                            <th className="h-12 px-4 align-middle font-medium text-slate-500 dark:text-slate-400 text-right w-[15%]">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody className="[&_tr:last-child]:border-0">
-                        {suppliers.length === 0 ? (
-                            <tr>
-                                <td colSpan={5} className="p-8 text-center text-muted-foreground font-light">
-                                    No se encontraron proveedores
-                                </td>
-                            </tr>
-                        ) : (
-                            suppliers.map((supplier) => (
-                                <tr
-                                    key={getPublicId(supplier)}
-                                    className={`border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
-                                        !supplier.isActive ? "opacity-60 bg-slate-50/50 dark:bg-slate-900/50" : ""
-                                    }`}
-                                >
-                                    <td className="p-4 align-middle font-medium">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ${getRandomColor(supplier.name || "PV")}`}>
-                                                {getInitials(supplier.name)}
-                                            </div>
-                                            <div className="flex flex-col">
-                                                <span className="text-slate-900 dark:text-white font-semibold">{supplier.name}</span>
-                                                <span className="text-[11px] text-slate-500 mt-0.5">{supplier.taxId || "Sin CUIT"}</span>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="p-4 align-middle">
-                                        <div className="flex flex-col text-xs gap-1">
-                                            <span className="text-slate-600 dark:text-slate-300 font-medium">{supplier.contactName || "-"}</span>
-                                            {supplier.email && <span className="text-slate-400 truncate">{supplier.email}</span>}
-                                        </div>
-                                    </td>
-                                    <td className="p-4 align-middle text-right">
-                                        <div className={`font-mono font-medium ${supplier.currentBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                                            {formatCurrency(supplier.currentBalance)}
-                                        </div>
-                                    </td>
-                                    <td className="p-4 align-middle text-center">
-                                        <Badge variant={supplier.isActive ? "success" : "secondary"} className="text-[10px] px-1.5 py-0.5">
-                                            {supplier.isActive ? "Activo" : "Inactivo"}
-                                        </Badge>
-                                    </td>
-                                    <td className="p-4 align-middle text-right pr-4">
-                                        <div className="flex items-center justify-end gap-1">
-                                            <button
-                                                onClick={() => onAccountClick(supplier)}
-                                                className="h-8 w-8 flex items-center justify-center rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
-                                            >
-                                                <Wallet className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                                onClick={() => onEdit(supplier)}
-                                                className="h-8 w-8 flex items-center justify-center rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
-                                            >
-                                                <Pencil className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                                onClick={() => onToggleStatus(supplier)}
-                                                className={`h-8 w-8 flex items-center justify-center rounded-md transition-colors ${
-                                                    supplier.isActive
-                                                        ? "text-slate-500 hover:text-rose-600 hover:bg-rose-50"
-                                                        : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
-                                                }`}
-                                            >
-                                                <Power className="h-4 w-4" />
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
+  return (
+    <DataGrid minWidth="860px" tableClassName="table-fixed">
+      <DataGridHeader>
+        <DataGridHeaderRow>
+          <DataGridHeaderCell className="w-[30%]">Proveedor</DataGridHeaderCell>
+          <DataGridHeaderCell className="w-[25%]">Contacto</DataGridHeaderCell>
+          <DataGridHeaderCell align="right" className="w-[18%]">
+            <div className="group relative flex items-center justify-end gap-1 cursor-help">
+              Saldo (deuda)
+              <Info className="h-3 w-3 text-slate-400" />
+              <div className="pointer-events-none absolute bottom-full right-0 z-10 mb-2 w-64 rounded-lg bg-slate-800 p-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                Solo incluye expedientes reservados, operativos o cerrados.
+              </div>
             </div>
-        </div>
-    );
+          </DataGridHeaderCell>
+          <DataGridHeaderCell align="center" className="w-[12%]">Estado</DataGridHeaderCell>
+          <DataGridHeaderCell align="right" className="w-[15%]">Acciones</DataGridHeaderCell>
+        </DataGridHeaderRow>
+      </DataGridHeader>
+      <DataGridBody>
+        {suppliers.length === 0 ? (
+          <DataGridEmptyState
+            colSpan={5}
+            title="No se encontraron proveedores"
+            description="Ajusta los filtros o crea un proveedor nuevo para empezar."
+          />
+        ) : (
+          suppliers.map((supplier) => (
+            <DataGridRow key={getPublicId(supplier)} inactive={!supplier.isActive}>
+              <DataGridCell className="font-medium text-slate-900 dark:text-white">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ${getRandomColor(
+                      supplier.name || "PV"
+                    )}`}
+                  >
+                    {getInitials(supplier.name)}
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-slate-900 dark:text-white">{supplier.name}</span>
+                    <span className="mt-0.5 text-[11px] text-slate-500">{supplier.taxId || "Sin CUIT"}</span>
+                  </div>
+                </div>
+              </DataGridCell>
+              <DataGridCell>
+                <div className="flex flex-col gap-1 text-xs">
+                  <span className="font-medium text-slate-600 dark:text-slate-300">{supplier.contactName || "-"}</span>
+                  {supplier.email ? <span className="truncate text-slate-400">{supplier.email}</span> : null}
+                </div>
+              </DataGridCell>
+              <DataGridCell align="right">
+                <div
+                  className={`font-mono font-medium ${
+                    supplier.currentBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
+                  }`}
+                >
+                  {formatCurrency(supplier.currentBalance)}
+                </div>
+              </DataGridCell>
+              <DataGridCell align="center">
+                <Badge variant={supplier.isActive ? "success" : "secondary"} className="text-[10px] px-1.5 py-0.5">
+                  {supplier.isActive ? "Activo" : "Inactivo"}
+                </Badge>
+              </DataGridCell>
+              <DataGridActionCell>
+                <button
+                  onClick={() => onAccountClick(supplier)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30"
+                >
+                  <Wallet className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => onEdit(supplier)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => onToggleStatus(supplier)}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                    supplier.isActive
+                      ? "text-slate-500 hover:bg-rose-50 hover:text-rose-600"
+                      : "text-slate-400 hover:bg-emerald-50 hover:text-emerald-600"
+                  }`}
+                >
+                  <Power className="h-4 w-4" />
+                </button>
+              </DataGridActionCell>
+            </DataGridRow>
+          ))
+        )}
+      </DataGridBody>
+    </DataGrid>
+  );
 }

@@ -8,6 +8,8 @@ import CreateReservaModal from "../../../components/CreateReservaModal";
 import { FilesPageSkeleton } from "../../../components/ui/skeleton";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
+import { ListPageHeader } from "../../../components/ui/ListPageHeader";
+import { ListToolbar } from "../../../components/ui/ListToolbar";
 
 import { ReservaKPIs } from "../components/ReservaKPIs";
 import { ReservaTable } from "../components/ReservaTable";
@@ -67,72 +69,75 @@ export default function ReservasPage() {
 
   return (
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
-      <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white md:text-2xl">Reservas</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Administra tus reservas, presupuestos y ventas.</p>
-        </div>
-        <Button onClick={() => setIsModalOpen(true)} className="w-full shadow-sm sm:w-auto">
-          <Plus className="mr-2 h-4 w-4" /> Nueva Reserva
-        </Button>
-      </div>
+      <ListPageHeader
+        title="Reservas"
+        subtitle="Administra tus reservas, presupuestos y ventas."
+        actions={
+          <Button onClick={() => setIsModalOpen(true)} className="w-full shadow-sm sm:w-auto">
+            <Plus className="mr-2 h-4 w-4" /> Nueva Reserva
+          </Button>
+        }
+      />
 
       <ReservaKPIs stats={stats} />
 
-      <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900/50 sm:flex-row">
-        <div className="flex self-start overflow-x-auto rounded-lg bg-slate-100 p-1 dark:bg-slate-800 sm:self-auto">
-          {tabs.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setViewFilter(tab.value)}
-              className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
-                viewFilter === tab.value
-                  ? "bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white"
-                  : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
-              }`}
-            >
-              {tab.label}
-              <span
-                className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+      <ListToolbar
+        className="p-2"
+        searchSlot={
+          <div className="flex self-start overflow-x-auto rounded-lg bg-slate-100 p-1 dark:bg-slate-800 sm:self-auto">
+            {tabs.map((tab) => (
+              <button
+                key={tab.value}
+                onClick={() => setViewFilter(tab.value)}
+                className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
                   viewFilter === tab.value
-                    ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
-                    : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                    ? "bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white"
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
                 }`}
               >
-                {tabCounts[tab.value] || 0}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-3">
-          {/* Month Picker */}
-          <div className="flex items-center justify-between sm:justify-center gap-1 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-1 border border-slate-200 dark:border-slate-700 w-full sm:w-auto">
-            <button onClick={handlePrevMonth} className="p-1.5 hover:bg-white dark:hover:bg-slate-700 rounded text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white transition-colors" title="Mes anterior">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <div className="flex items-center gap-1.5 px-1 sm:px-2">
-              <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200 capitalize w-[110px] text-center">
-                {monthName}
-              </span>
+                {tab.label}
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                    viewFilter === tab.value
+                      ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+                      : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                  }`}
+                >
+                  {tabCounts[tab.value] || 0}
+                </span>
+              </button>
+            ))}
+          </div>
+        }
+        actionSlot={
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+            <div className="flex w-full items-center justify-between gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto sm:justify-center">
+              <button onClick={handlePrevMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-white hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes anterior">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-1.5 px-1 sm:px-2">
+                <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                <span className="w-[110px] text-center text-sm font-medium capitalize text-slate-700 dark:text-slate-200">
+                  {monthName}
+                </span>
+              </div>
+              <button onClick={handleNextMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-white hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes siguiente">
+                <ChevronRight className="w-4 h-4" />
+              </button>
             </div>
-            <button onClick={handleNextMonth} className="p-1.5 hover:bg-white dark:hover:bg-slate-700 rounded text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white transition-colors" title="Mes siguiente">
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
 
-          <div className="relative w-full sm:max-w-[200px] md:max-w-[240px]">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              className="w-full border-none bg-slate-50 dark:bg-slate-800/50 rounded-lg py-2 pl-9 pr-4 text-sm placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-shadow"
-              placeholder="Buscar reserva..."
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-            />
+            <div className="relative w-full sm:max-w-[200px] md:max-w-[240px]">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white"
+                placeholder="Buscar reserva..."
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+              />
+            </div>
           </div>
-        </div>
-      </div>
+        }
+      />
 
       {databaseUnavailable ? (
         <DatabaseUnavailableState />

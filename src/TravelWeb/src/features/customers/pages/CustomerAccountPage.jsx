@@ -15,8 +15,22 @@ import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import { Button } from "../../../components/ui/button";
+import {
+  DataGrid,
+  DataGridActionCell,
+  DataGridBody,
+  DataGridCell,
+  DataGridEmptyState,
+  DataGridHeader,
+  DataGridHeaderCell,
+  DataGridHeaderRow,
+  DataGridRow,
+} from "../../../components/ui/DataGrid";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
+import { ListEmptyState } from "../../../components/ui/ListEmptyState";
+import { ListToolbar } from "../../../components/ui/ListToolbar";
+import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { isDatabaseUnavailableError } from "../../../lib/errors";
@@ -540,18 +554,21 @@ export default function CustomerAccountPage() {
           ))}
         </div>
 
-        <div className="flex justify-end">
-          <div className="relative min-w-[260px]">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`Buscar en ${tabLabels[activeTab].toLowerCase()}...`}
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-            />
-          </div>
-        </div>
+        <ListToolbar
+          className="p-3"
+          searchSlot={
+            <div className="relative min-w-[260px]">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder={`Buscar en ${tabLabels[activeTab].toLowerCase()}...`}
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+              />
+            </div>
+          }
+        />
       </div>
 
       {databaseUnavailable ? (
@@ -563,82 +580,116 @@ export default function CustomerAccountPage() {
       ) : (
         <>
           {activeTab === "reservas" && (
-            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-                    <tr>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Fecha</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Reserva</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Estado</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Venta</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Cobrado</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Saldo</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Accion</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {reservas.map((reserva) => (
-                      <tr key={getPublicId(reserva)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                          {formatDate(reserva.startDate || reserva.createdAt)}
-                        </td>
-                        <td className="px-6 py-4">
+            <>
+              <DataGrid density="compact" minWidth="900px">
+                <DataGridHeader>
+                  <DataGridHeaderRow>
+                    <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                    <DataGridHeaderCell>Reserva</DataGridHeaderCell>
+                    <DataGridHeaderCell>Estado</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Cobrado</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
+                  </DataGridHeaderRow>
+                </DataGridHeader>
+                <DataGridBody>
+                  {reservas.length === 0 ? (
+                    <DataGridEmptyState colSpan={7} title="No hay reservas para mostrar." />
+                  ) : (
+                    reservas.map((reserva) => (
+                      <DataGridRow key={getPublicId(reserva)}>
+                        <DataGridCell>{formatDate(reserva.startDate || reserva.createdAt)}</DataGridCell>
+                        <DataGridCell>
                           <div className="font-semibold text-slate-900 dark:text-white">{reserva.numeroReserva}</div>
                           <div className="text-xs text-slate-500 dark:text-slate-400">{reserva.name}</div>
-                        </td>
-                        <td className="px-6 py-4">
+                        </DataGridCell>
+                        <DataGridCell>
                           <StatusBadge status={reserva.status} />
-                        </td>
-                        <td className="px-6 py-4 text-right font-semibold text-slate-900 dark:text-white">
+                        </DataGridCell>
+                        <DataGridCell align="right" className="font-semibold text-slate-900 dark:text-white">
                           {formatCurrency(reserva.totalSale)}
-                        </td>
-                        <td className="px-6 py-4 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                        </DataGridCell>
+                        <DataGridCell align="right" className="font-semibold text-emerald-600 dark:text-emerald-400">
                           {formatCurrency(reserva.paid)}
-                        </td>
-                        <td className="px-6 py-4 text-right font-semibold text-rose-600 dark:text-rose-400">
+                        </DataGridCell>
+                        <DataGridCell align="right" className="font-semibold text-rose-600 dark:text-rose-400">
                           {formatCurrency(reserva.balance)}
-                        </td>
-                        <td className="px-6 py-4 text-right">
+                        </DataGridCell>
+                        <DataGridActionCell>
                           <Link
                             to={`/reservas/${getPublicId(reserva)}`}
                             className="inline-flex rounded-lg p-2 text-indigo-500 hover:bg-indigo-50 dark:hover:bg-slate-800"
                           >
                             <Eye className="h-4 w-4" />
                           </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {reservas.length === 0 && (
-                <div className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">
-                  No hay reservas para mostrar.
-                </div>
+                        </DataGridActionCell>
+                      </DataGridRow>
+                    ))
+                  )}
+                </DataGridBody>
+              </DataGrid>
+
+              {reservas.length === 0 ? (
+                <ListEmptyState
+                  title="No hay reservas para mostrar."
+                  className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
+                />
+              ) : (
+                <MobileRecordList>
+                  {reservas.map((reserva) => (
+                    <MobileRecordCard
+                      key={getPublicId(reserva)}
+                      statusSlot={<StatusBadge status={reserva.status} />}
+                      title={reserva.numeroReserva}
+                      subtitle={reserva.name}
+                      meta={
+                        <>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            Fecha: {formatDate(reserva.startDate || reserva.createdAt)}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            Venta {formatCurrency(reserva.totalSale)} · Cobrado {formatCurrency(reserva.paid)}
+                          </div>
+                        </>
+                      }
+                      footer={<span className="text-sm font-semibold text-rose-600 dark:text-rose-400">Saldo {formatCurrency(reserva.balance)}</span>}
+                      footerActions={
+                        <Link
+                          to={`/reservas/${getPublicId(reserva)}`}
+                          className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                        >
+                          Ver
+                        </Link>
+                      }
+                    />
+                  ))}
+                </MobileRecordList>
               )}
-            </div>
+            </>
           )}
 
           {activeTab === "payments" && (
-            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-                    <tr>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Fecha</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Reserva</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Metodo</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Monto</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Notas</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Accion</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {payments.map((payment) => (
-                      <tr key={getPublicId(payment)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{formatDate(payment.paidAt)}</td>
-                        <td className="px-6 py-4">
+            <>
+              <DataGrid density="compact" minWidth="900px">
+                <DataGridHeader>
+                  <DataGridHeaderRow>
+                    <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                    <DataGridHeaderCell>Reserva</DataGridHeaderCell>
+                    <DataGridHeaderCell>Metodo</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
+                    <DataGridHeaderCell>Notas</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
+                  </DataGridHeaderRow>
+                </DataGridHeader>
+                <DataGridBody>
+                  {payments.length === 0 ? (
+                    <DataGridEmptyState colSpan={6} title="No hay pagos para mostrar." />
+                  ) : (
+                    payments.map((payment) => (
+                      <DataGridRow key={getPublicId(payment)}>
+                        <DataGridCell>{formatDate(payment.paidAt)}</DataGridCell>
+                        <DataGridCell>
                           {payment.reservaPublicId ? (
                             <Link to={`/reservas/${payment.reservaPublicId}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
                               {payment.numeroReserva || "Reserva"}
@@ -647,13 +698,13 @@ export default function CustomerAccountPage() {
                             <span className="text-slate-500 dark:text-slate-400">{payment.numeroReserva || "Sin reserva"}</span>
                           )}
                           <div className="text-xs text-slate-500 dark:text-slate-400">{payment.fileName}</div>
-                        </td>
-                        <td className="px-6 py-4 text-slate-700 dark:text-slate-300">{payment.method}</td>
-                        <td className="px-6 py-4 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                        </DataGridCell>
+                        <DataGridCell>{payment.method}</DataGridCell>
+                        <DataGridCell align="right" className="font-semibold text-emerald-600 dark:text-emerald-400">
                           {formatCurrency(payment.amount)}
-                        </td>
-                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{payment.notes || "-"}</td>
-                        <td className="px-6 py-4 text-right">
+                        </DataGridCell>
+                        <DataGridCell>{payment.notes || "-"}</DataGridCell>
+                        <DataGridActionCell>
                           <button
                             type="button"
                             onClick={() => handleDeletePayment(payment)}
@@ -662,49 +713,81 @@ export default function CustomerAccountPage() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {payments.length === 0 && (
-                <div className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">
-                  No hay pagos para mostrar.
-                </div>
+                        </DataGridActionCell>
+                      </DataGridRow>
+                    ))
+                  )}
+                </DataGridBody>
+              </DataGrid>
+
+              {payments.length === 0 ? (
+                <ListEmptyState
+                  title="No hay pagos para mostrar."
+                  className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
+                />
+              ) : (
+                <MobileRecordList>
+                  {payments.map((payment) => (
+                    <MobileRecordCard
+                      key={getPublicId(payment)}
+                      title={payment.method}
+                      subtitle={formatDate(payment.paidAt)}
+                      meta={
+                        <>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            {payment.reservaPublicId ? payment.numeroReserva || "Reserva" : payment.numeroReserva || "Sin reserva"}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>
+                        </>
+                      }
+                      footer={<span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(payment.amount)}</span>}
+                      footerActions={
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePayment(payment)}
+                          className="inline-flex rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
+                        >
+                          Eliminar
+                        </button>
+                      }
+                    />
+                  ))}
+                </MobileRecordList>
               )}
-            </div>
+            </>
           )}
 
           {activeTab === "invoices" && (
-            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-                    <tr>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Fecha</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Comprobante</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase">Tipo</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Importe</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-center">Estado</th>
-                      <th className="px-6 py-3 text-[10px] font-bold uppercase text-right">Accion</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {invoices.map((invoice) => (
-                      <tr key={getPublicId(invoice)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{formatDate(invoice.createdAt)}</td>
-                        <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">{formatInvoiceNumber(invoice)}</td>
-                        <td className="px-6 py-4">
+            <>
+              <DataGrid density="compact" minWidth="900px">
+                <DataGridHeader>
+                  <DataGridHeaderRow>
+                    <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                    <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
+                    <DataGridHeaderCell>Tipo</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
+                    <DataGridHeaderCell align="center">Estado</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
+                  </DataGridHeaderRow>
+                </DataGridHeader>
+                <DataGridBody>
+                  {invoices.length === 0 ? (
+                    <DataGridEmptyState colSpan={6} title="No hay facturas para mostrar." />
+                  ) : (
+                    invoices.map((invoice) => (
+                      <DataGridRow key={getPublicId(invoice)}>
+                        <DataGridCell>{formatDate(invoice.createdAt)}</DataGridCell>
+                        <DataGridCell className="font-semibold text-slate-900 dark:text-white">{formatInvoiceNumber(invoice)}</DataGridCell>
+                        <DataGridCell>
                           <div className="flex items-center gap-2">
                             <Receipt className="h-4 w-4 text-indigo-400" />
                             <span>{formatInvoiceType(invoice)}</span>
                           </div>
-                        </td>
-                        <td className="px-6 py-4 text-right font-semibold text-slate-900 dark:text-white">
+                        </DataGridCell>
+                        <DataGridCell align="right" className="font-semibold text-slate-900 dark:text-white">
                           {formatCurrency(invoice.importeTotal)}
-                        </td>
-                        <td className="px-6 py-4 text-center">
+                        </DataGridCell>
+                        <DataGridCell align="center">
                           <span
                             className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
                               invoice.resultado === "A"
@@ -714,8 +797,8 @@ export default function CustomerAccountPage() {
                           >
                             {invoice.resultado === "A" ? "Autorizado" : invoice.resultado || "Pendiente"}
                           </span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
+                        </DataGridCell>
+                        <DataGridActionCell>
                           <button
                             type="button"
                             onClick={() => handleOpenInvoicePreview(invoice)}
@@ -724,18 +807,56 @@ export default function CustomerAccountPage() {
                             <Eye className="h-4 w-4" />
                             Ver
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {invoices.length === 0 && (
-                <div className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">
-                  No hay facturas para mostrar.
-                </div>
+                        </DataGridActionCell>
+                      </DataGridRow>
+                    ))
+                  )}
+                </DataGridBody>
+              </DataGrid>
+
+              {invoices.length === 0 ? (
+                <ListEmptyState
+                  title="No hay facturas para mostrar."
+                  className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
+                />
+              ) : (
+                <MobileRecordList>
+                  {invoices.map((invoice) => (
+                    <MobileRecordCard
+                      key={getPublicId(invoice)}
+                      statusSlot={
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                            invoice.resultado === "A"
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                              : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                          }`}
+                        >
+                          {invoice.resultado === "A" ? "Autorizado" : invoice.resultado || "Pendiente"}
+                        </span>
+                      }
+                      title={formatInvoiceNumber(invoice)}
+                      subtitle={formatInvoiceType(invoice)}
+                      meta={
+                        <>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">Fecha {formatDate(invoice.createdAt)}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">Importe {formatCurrency(invoice.importeTotal)}</div>
+                        </>
+                      }
+                      footerActions={
+                        <button
+                          type="button"
+                          onClick={() => handleOpenInvoicePreview(invoice)}
+                          className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+                        >
+                          Ver
+                        </button>
+                      }
+                    />
+                  ))}
+                </MobileRecordList>
               )}
-            </div>
+            </>
           )}
 
           <PaginationFooter

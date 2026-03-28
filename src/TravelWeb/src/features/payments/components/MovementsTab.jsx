@@ -8,6 +8,19 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import {
+  DataGrid,
+  DataGridActionCell,
+  DataGridBody,
+  DataGridCell,
+  DataGridEmptyState,
+  DataGridHeader,
+  DataGridHeaderCell,
+  DataGridHeaderRow,
+  DataGridRow,
+} from "../../../components/ui/DataGrid";
+import { ListEmptyState } from "../../../components/ui/ListEmptyState";
+import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 
 const currency = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -253,7 +266,7 @@ export function MovementsTab({
 
   return (
     <div className="space-y-6">
-      {showHeader && (
+      {showHeader ? (
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Caja</h2>
@@ -261,7 +274,7 @@ export function MovementsTab({
               Libro de caja con ingresos por cobranzas, egresos a proveedores y ajustes manuales.
             </p>
           </div>
-          {isAdmin && (
+          {isAdmin ? (
             <button
               type="button"
               onClick={openCreate}
@@ -270,11 +283,11 @@ export function MovementsTab({
               <Plus className="h-4 w-4" />
               Nuevo ajuste manual
             </button>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
 
-      {!showHeader && isAdmin && (
+      {!showHeader && isAdmin ? (
         <div className="flex justify-end">
           <button
             type="button"
@@ -285,31 +298,36 @@ export function MovementsTab({
             Nuevo ajuste manual
           </button>
         </div>
-      )}
+      ) : null}
 
-      <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 md:block">
-        <table className="w-full border-collapse text-left">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50">
-              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Fecha</th>
-              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Origen</th>
-              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Detalle</th>
-              <th className="px-6 py-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Metodo</th>
-              <th className="px-6 py-4 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Monto</th>
-              <th className="px-6 py-4 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Accion</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {movements.map((movement) => {
+      <DataGrid minWidth="980px">
+        <DataGridHeader>
+          <DataGridHeaderRow>
+            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+            <DataGridHeaderCell>Origen</DataGridHeaderCell>
+            <DataGridHeaderCell>Detalle</DataGridHeaderCell>
+            <DataGridHeaderCell>Metodo</DataGridHeaderCell>
+            <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
+            <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
+          </DataGridHeaderRow>
+        </DataGridHeader>
+        <DataGridBody>
+          {movements.length === 0 ? (
+            <DataGridEmptyState
+              colSpan={6}
+              icon={Landmark}
+              title="Caja sin movimientos"
+              description="Todavia no hay ingresos o egresos registrados en caja."
+            />
+          ) : (
+            movements.map((movement) => {
               const isIncome = movement.direction === "Income";
               const isManual = movement.isManual;
 
               return (
-                <tr key={`${movement.sourceType}-${movement.sourcePublicId}`} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                  <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
-                    {new Date(movement.occurredAt).toLocaleString("es-AR")}
-                  </td>
-                  <td className="px-6 py-4">
+                <DataGridRow key={`${movement.sourceType}-${movement.sourcePublicId}`}>
+                  <DataGridCell>{new Date(movement.occurredAt).toLocaleString("es-AR")}</DataGridCell>
+                  <DataGridCell>
                     <div className="flex items-center gap-3">
                       <div className={`rounded-lg p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
                         {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
@@ -323,23 +341,23 @@ export function MovementsTab({
                         </div>
                       </div>
                     </div>
-                  </td>
-                  <td className="px-6 py-4">
+                  </DataGridCell>
+                  <DataGridCell>
                     <div className="text-sm font-medium text-slate-900 dark:text-white">{movement.description}</div>
-                    {movement.reference && (
+                    {movement.reference ? (
                       <div className="text-xs text-slate-500 dark:text-slate-400">Ref. {movement.reference}</div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{movement.method}</td>
-                  <td className="px-6 py-4 text-right">
+                    ) : null}
+                  </DataGridCell>
+                  <DataGridCell>{movement.method}</DataGridCell>
+                  <DataGridCell align="right">
                     <span className={`text-sm font-bold ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                       {isIncome ? "+" : "-"}
                       {currency.format(movement.amount)}
                     </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
+                  </DataGridCell>
+                  <DataGridActionCell>
                     {isManual && isAdmin ? (
-                      <div className="flex items-center justify-end gap-2">
+                      <>
                         <button
                           type="button"
                           onClick={() => openEdit(movement)}
@@ -354,63 +372,86 @@ export function MovementsTab({
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
-                      </div>
+                      </>
                     ) : (
                       <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
                     )}
-                  </td>
-                </tr>
+                  </DataGridActionCell>
+                </DataGridRow>
               );
-            })}
-          </tbody>
-        </table>
-      </div>
+            })
+          )}
+        </DataGridBody>
+      </DataGrid>
 
-      <div className="space-y-3 md:hidden">
-        {movements.map((movement) => {
-          const isIncome = movement.direction === "Income";
-          return (
-            <div key={`${movement.sourceType}-${movement.sourcePublicId}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
+      {movements.length === 0 ? (
+        <ListEmptyState
+          icon={Landmark}
+          title="Caja sin movimientos"
+          description="Todavia no hay ingresos o egresos registrados en caja."
+          className="md:hidden rounded-xl border border-dashed border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20"
+        />
+      ) : (
+        <MobileRecordList>
+          {movements.map((movement) => {
+            const isIncome = movement.direction === "Income";
+            const isManual = movement.isManual;
+
+            return (
+              <MobileRecordCard
+                key={`${movement.sourceType}-${movement.sourcePublicId}`}
+                accentSlot={
                   <div className={`rounded-xl p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
                     {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                   </div>
-                  <div>
-                    <div className="text-sm font-bold text-slate-900 dark:text-white">
-                      {sourceLabels[movement.sourceType] || movement.sourceType}
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      {new Date(movement.occurredAt).toLocaleDateString("es-AR")} · {movement.method}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{movement.description}</div>
+                }
+                title={sourceLabels[movement.sourceType] || movement.sourceType}
+                subtitle={`${new Date(movement.occurredAt).toLocaleDateString("es-AR")} · ${movement.method}`}
+                meta={
+                  <>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">{movement.description}</div>
+                    {movement.numeroReserva || movement.supplierName ? (
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {movement.numeroReserva ? `Reserva ${movement.numeroReserva}` : movement.supplierName}
+                      </div>
+                    ) : null}
+                    {movement.reference ? (
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Ref. {movement.reference}</div>
+                    ) : null}
+                  </>
+                }
+                footer={
+                  <div className={`text-sm font-black ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                    {isIncome ? "+" : "-"}
+                    {currency.format(movement.amount)}
                   </div>
-                </div>
-                <div className={`text-sm font-black ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                  {isIncome ? "+" : "-"}
-                  {currency.format(movement.amount)}
-                </div>
-              </div>
-              {(movement.numeroReserva || movement.supplierName) && (
-                <div className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                  {movement.numeroReserva ? `Reserva ${movement.numeroReserva}` : movement.supplierName}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {movements.length === 0 && (
-        <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50/50 py-20 text-center dark:border-slate-800 dark:bg-slate-800/20">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-slate-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <Landmark className="h-8 w-8 text-slate-300" />
-          </div>
-          <h3 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Caja sin movimientos</h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Todavia no hay ingresos o egresos registrados en caja.
-          </p>
-        </div>
+                }
+                footerActions={
+                  isManual && isAdmin ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openEdit(movement)}
+                        className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteManualMovement(movement)}
+                        className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
+                  )
+                }
+              />
+            );
+          })}
+        </MobileRecordList>
       )}
 
       <ManualMovementModal

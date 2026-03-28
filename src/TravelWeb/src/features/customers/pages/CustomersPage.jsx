@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
-
-import { useCustomers } from "../hooks/useCustomers";
-import { CustomerTable } from "../components/CustomerTable";
-import { CustomerMobileList } from "../components/CustomerMobileList";
 import { CustomerFormModal } from "../components/CustomerFormModal";
-import { getPublicId } from "../../../lib/publicIds";
-import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { CustomerMobileList } from "../components/CustomerMobileList";
+import { CustomerTable } from "../components/CustomerTable";
+import { useCustomers } from "../hooks/useCustomers";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
+import { Button } from "../../../components/ui/button";
+import { ListPageHeader } from "../../../components/ui/ListPageHeader";
+import { ListToolbar } from "../../../components/ui/ListToolbar";
+import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { getPublicId } from "../../../lib/publicIds";
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -49,46 +51,55 @@ export default function CustomersPage() {
 
   return (
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white md:text-2xl">Gestion de Clientes</h2>
-          <p className="text-sm text-muted-foreground">Administra pasajeros y cuentas corporativas.</p>
-        </div>
-        <div className="flex gap-2">
-          <button
+      <ListPageHeader
+        title="Gestion de Clientes"
+        subtitle="Administra pasajeros y cuentas corporativas."
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate("/quotes?create=1")}
+              className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-900/60 dark:bg-slate-900 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+            >
+              <Plus className="h-4 w-4" />
+              Nueva cotizacion
+            </Button>
+            <Button
+              onClick={() => handleOpenModal()}
+              className="gap-2 bg-indigo-600 text-white shadow-md hover:bg-indigo-700 hover:shadow-lg"
+            >
+              <Plus className="h-4 w-4" />
+              Nuevo Cliente
+            </Button>
+          </>
+        }
+      />
+
+      <ListToolbar
+        searchSlot={
+          <div className="flex items-center gap-2 rounded-lg border bg-card/50 px-3 py-2 shadow-sm transition-all focus-within:ring-2 focus-within:ring-indigo-500/20 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/50">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Buscar por nombre, documento o CUIT..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-muted-foreground dark:text-white"
+            />
+          </div>
+        }
+        filterSlot={
+          <Button
             type="button"
-            onClick={() => navigate("/quotes?create=1")}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white px-4 py-2.5 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:border-indigo-300 hover:bg-indigo-50 sm:w-auto dark:border-indigo-900/60 dark:bg-slate-900 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
-          >
-            <Plus className="h-4 w-4" />
-            Nueva cotizacion
-          </button>
-          <button
+            variant={showInactive ? "secondary" : "ghost"}
             onClick={() => setShowInactive(!showInactive)}
-            className={`rounded-md border px-3 py-2 text-xs transition-colors ${showInactive ? "border-slate-300 bg-slate-100 dark:border-slate-700 dark:bg-slate-800" : "border-transparent bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900"}`}
+            className={`text-xs ${showInactive ? "border border-slate-300 bg-slate-100 dark:border-slate-700 dark:bg-slate-800" : ""}`}
           >
             {showInactive ? "Ocultar inactivos" : "Mostrar inactivos"}
-          </button>
-          <button
-            onClick={() => handleOpenModal()}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-md transition-all hover:bg-indigo-700 hover:shadow-lg sm:w-auto"
-          >
-            <Plus className="h-4 w-4" />
-            Nuevo Cliente
-          </button>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 rounded-lg border bg-card/50 px-3 py-2 shadow-sm transition-all focus-within:ring-2 focus-within:ring-indigo-500/20 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/50">
-        <Search className="h-4 w-4 text-muted-foreground" />
-        <input
-          type="text"
-          placeholder="Buscar por nombre, documento o CUIT..."
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-muted-foreground dark:text-white"
-        />
-      </div>
+          </Button>
+        }
+      />
 
       {loading && customers.length === 0 ? (
         <div className="p-12 text-center text-slate-500">Cargando clientes...</div>
