@@ -54,24 +54,19 @@ function getEmbedDocumentHeight() {
 
   const body = document.body;
   const documentElement = document.documentElement;
-  const baseHeight = Math.max(
-    body?.scrollHeight ?? 0,
-    body?.offsetHeight ?? 0,
-    documentElement?.scrollHeight ?? 0,
-    documentElement?.offsetHeight ?? 0,
-    documentElement?.clientHeight ?? 0
-  );
+  const baseHeight = Math.max(body?.scrollHeight ?? 0, body?.offsetHeight ?? 0, documentElement?.scrollHeight ?? 0, documentElement?.offsetHeight ?? 0);
 
   const modalPanel = document.querySelector("[data-embed-modal-panel]");
   if (!modalPanel) {
     return baseHeight;
   }
 
-  return Math.max(baseHeight, window.innerHeight || 0, modalPanel.scrollHeight + 96);
+  return Math.max(baseHeight, modalPanel.scrollHeight + 96);
 }
 
 export default function PublicPackageEmbedPage() {
   const { slug = "" } = useParams();
+  const isEmbedded = typeof window !== "undefined" && window.parent !== window;
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState("departures");
@@ -254,7 +249,7 @@ export default function PublicPackageEmbedPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#f6fbfa_0%,#eff7f5_100%)] px-4">
+      <div className={`flex items-center justify-center bg-[linear-gradient(180deg,#f6fbfa_0%,#eff7f5_100%)] px-4 ${isEmbedded ? "min-h-0 py-6" : "min-h-screen"}`}>
         <div className="flex items-center gap-3 rounded-3xl bg-white px-6 py-5 text-slate-700 shadow-xl shadow-slate-200/70">
           <Loader2 className="h-5 w-5 animate-spin text-teal-700" />
           Cargando paquete...
@@ -265,7 +260,7 @@ export default function PublicPackageEmbedPage() {
 
   if (!packageData || !primaryDeparture) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#f6fbfa_0%,#eff7f5_100%)] px-4">
+      <div className={`flex items-center justify-center bg-[linear-gradient(180deg,#f6fbfa_0%,#eff7f5_100%)] px-4 ${isEmbedded ? "min-h-0 py-6" : "min-h-screen"}`}>
         <div className="max-w-lg rounded-[2rem] border border-white/80 bg-white px-8 py-10 text-center shadow-[0_24px_60px_-28px_rgba(15,23,42,0.35)]">
           <p className="text-xs font-bold uppercase tracking-[0.26em] text-teal-700">Embed</p>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-950">Paquete no disponible</h1>
@@ -279,7 +274,11 @@ export default function PublicPackageEmbedPage() {
 
   return (
     <>
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(111,210,214,0.18),transparent_28%),linear-gradient(180deg,#f6fbfa_0%,#eef6f3_100%)] px-3 py-4 sm:px-5 sm:py-6">
+      <div
+        className={`bg-[radial-gradient(circle_at_top_left,rgba(111,210,214,0.18),transparent_28%),linear-gradient(180deg,#f6fbfa_0%,#eef6f3_100%)] px-3 py-4 sm:px-5 sm:py-6 ${
+          isEmbedded ? "min-h-0" : "min-h-screen"
+        }`}
+      >
         <div className="mx-auto max-w-[1180px]">
           <div className="overflow-hidden rounded-[2rem] border border-white/80 bg-white shadow-[0_28px_70px_-34px_rgba(15,23,42,0.4)]">
             <div className="grid gap-6 px-4 py-4 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1.55fr)_390px]">
