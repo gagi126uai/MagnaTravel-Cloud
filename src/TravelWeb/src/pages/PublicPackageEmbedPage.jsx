@@ -83,6 +83,32 @@ export default function PublicPackageEmbedPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+
+    const root = document.documentElement;
+    const body = document.body;
+    const previousRootClassName = root.className;
+    const previousRootBackground = root.style.background;
+    const previousBodyBackground = body.style.background;
+    const previousBodyColor = body.style.color;
+
+    root.classList.remove("dark");
+    root.classList.add("light");
+    root.style.background = "#eef6f3";
+    body.style.background = "#eef6f3";
+    body.style.color = "#0f172a";
+
+    return () => {
+      root.className = previousRootClassName;
+      root.style.background = previousRootBackground;
+      body.style.background = previousBodyBackground;
+      body.style.color = previousBodyColor;
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadPackage() {
