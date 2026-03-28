@@ -163,6 +163,15 @@ export default function PublicPackageEmbedPage() {
 
   const primaryDeparture = packageData?.primaryDeparture || null;
   const departures = packageData?.departures || [];
+  const departuresSorted = useMemo(
+    () =>
+      [...departures].sort((left, right) => {
+        const leftDate = new Date(left.startDate);
+        const rightDate = new Date(right.startDate);
+        return leftDate - rightDate;
+      }),
+    [departures]
+  );
 
   const priceLabel = useMemo(() => {
     if (!packageData) {
@@ -171,6 +180,24 @@ export default function PublicPackageEmbedPage() {
 
     return formatMoney(packageData.fromPrice, packageData.currency);
   }, [packageData]);
+  const dateFact = useMemo(() => {
+    const firstAvailableDeparture = departuresSorted[0] || primaryDeparture;
+    if (!firstAvailableDeparture) {
+      return { label: "Fecha", value: "-" };
+    }
+
+    if (departuresSorted.length > 1) {
+      return {
+        label: "Fechas disponibles",
+        value: `Desde el ${formatDate(firstAvailableDeparture.startDate)}`,
+      };
+    }
+
+    return {
+      label: "Fecha",
+      value: formatDate(firstAvailableDeparture.startDate),
+    };
+  }, [departuresSorted, primaryDeparture]);
 
   useEffect(() => {
     if (typeof window === "undefined" || window.parent === window) {
@@ -362,7 +389,7 @@ export default function PublicPackageEmbedPage() {
                   <QuickFact label="Transporte" value={primaryDeparture.transportLabel} icon={Plane} />
                   <QuickFact label="Noches" value={`${primaryDeparture.nights} noches`} icon={CalendarDays} />
                   <QuickFact label="Regimen" value={primaryDeparture.mealPlan} icon={ChevronRight} />
-                  <QuickFact label="Fecha" value={formatDate(primaryDeparture.startDate)} icon={CalendarDays} />
+                  <QuickFact label={dateFact.label} value={dateFact.value} icon={CalendarDays} />
                 </div>
 
                 <div className="mt-6 rounded-[1.2rem] border border-[#d8e8e5] bg-[#f5fbf8] px-4 py-4 text-sm text-slate-600">
