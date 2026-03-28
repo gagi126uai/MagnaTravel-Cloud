@@ -136,7 +136,7 @@ export default function PublicPackageEmbedPage() {
         }
 
         setPackageData(response);
-        setSelectedDeparture(response?.primaryDeparture || null);
+        setSelectedDeparture(null);
       } catch (error) {
         if (!cancelled) {
           setPackageData(null);
@@ -257,6 +257,11 @@ export default function PublicPackageEmbedPage() {
   async function submitLead(event) {
     event.preventDefault();
 
+    if (!selectedDeparture?.publicId) {
+      showError("Selecciona una fecha desde la tabla antes de enviar la consulta.");
+      return;
+    }
+
     if (!leadForm.fullName.trim()) {
       showError("El nombre es obligatorio.");
       return;
@@ -360,13 +365,9 @@ export default function PublicPackageEmbedPage() {
                   <QuickFact label="Fecha" value={formatDate(primaryDeparture.startDate)} icon={CalendarDays} />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => openLeadModal(primaryDeparture)}
-                  className="mt-auto inline-flex items-center justify-center rounded-full bg-[#0f4d5b] px-6 py-4 text-sm font-bold text-white transition hover:bg-[#0d4350]"
-                >
-                  Contactar con un asesor
-                </button>
+                <div className="mt-6 rounded-[1.2rem] border border-[#d8e8e5] bg-[#f5fbf8] px-4 py-4 text-sm text-slate-600">
+                  Selecciona una fecha en la tabla de abajo para enviar la consulta con la salida elegida.
+                </div>
               </aside>
             </div>
 
