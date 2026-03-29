@@ -317,7 +317,8 @@ export function PackageEmbedExperience({
           isEmbedded ? "min-h-0 py-6" : "min-h-screen"
         }`}
       >
-        <div className="max-w-lg rounded-[2rem] border border-white/80 bg-white px-8 py-10 text-center shadow-[0_24px_60px_-28px_rgba(15,23,42,0.35)]">
+        <div className="w-full max-w-2xl rounded-[2rem] border border-white/80 bg-white px-8 py-10 text-center shadow-[0_24px_60px_-28px_rgba(15,23,42,0.35)]">
+          {selector ? <div className="mx-auto mb-6 max-w-lg text-left">{selector}</div> : null}
           <p className="text-xs font-bold uppercase tracking-[0.26em] text-teal-700">Embed</p>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-950">{emptyTitle}</h1>
           <p className="mt-3 text-sm leading-6 text-slate-500">{emptyDescription}</p>

@@ -1,24 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { MapPinned } from "lucide-react";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { showError } from "../alerts";
 import { PackageEmbedExperience } from "../features/packages/components/PackageEmbedExperience";
 
-function buildSelectedPackage(countryData, selectedPackageSlug) {
-  if (!countryData?.packages?.length) {
-    return null;
-  }
-
-  return (
-    countryData.packages.find((item) => item.slug === selectedPackageSlug) ||
-    countryData.packages.find((item) => item.slug === countryData.selectedPackageSlug) ||
-    countryData.packages[0]
-  );
-}
-
 export default function PublicCountryEmbedPage() {
   const { countrySlug = "" } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [countryData, setCountryData] = useState(null);
   const [selectedPackageSlug, setSelectedPackageSlug] = useState("");
@@ -33,7 +23,7 @@ export default function PublicCountryEmbedPage() {
         const response = await api.get(`/public/countries/${countrySlug}`);
         if (!cancelled) {
           setCountryData(response);
-          setSelectedPackageSlug(response?.selectedPackageSlug || "");
+          setSelectedPackageSlug("");
         }
       } catch (error) {
         if (!cancelled) {
@@ -61,52 +51,66 @@ export default function PublicCountryEmbedPage() {
     };
   }, [countrySlug]);
 
-  const selectedPackage = useMemo(
-    () => buildSelectedPackage(countryData, selectedPackageSlug),
-    [countryData, selectedPackageSlug]
-  );
+  function navigateToPackage(nextPackageSlug) {
+    if (!nextPackageSlug) {
+      return;
+    }
 
-  async function submitLead(payload) {
-    await api.post(`/public/packages/${payload.packageSlug}/leads`, {
-      fullName: payload.fullName,
-      phone: payload.phone,
-      email: payload.email,
-      message: payload.message,
-      website: payload.website,
-      departurePublicId: payload.departurePublicId,
+    const params = new URLSearchParams(location.search);
+    params.set("countrySlug", countrySlug);
+
+    navigate({
+      pathname: `/embed/packages/${nextPackageSlug}`,
+      search: params.toString() ? `?${params.toString()}` : "",
     });
   }
 
-  const selector = countryData?.destinations?.length ? (
-    <label className="block space-y-2">
-      <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.24em] text-teal-700">
-        <MapPinned className="h-4 w-4" />
-        Destinos en {countryData.countryName || countrySlug}
-      </span>
-      <select
-        value={selectedPackage?.slug || selectedPackageSlug}
-        onChange={(event) => setSelectedPackageSlug(event.target.value)}
-        className="w-full rounded-[1.2rem] border border-[#d7e5e2] bg-[#f8fcfb] px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-600 focus:bg-white"
-      >
-        {countryData.destinations.map((destination) => (
-          <option key={destination.packageSlug} value={destination.packageSlug}>
-            {destination.destination}
-          </option>
-        ))}
-      </select>
-    </label>
-  ) : null;
+  const selector = useMemo(() => {
+    const destinations = countryData?.destinations || [];
+    if (destinations.length === 0) {
+      return null;
+    }
+
+    return (
+      <label className="block space-y-2">
+        <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.24em] text-teal-700">
+          <MapPinned className="h-4 w-4" />
+          Destinos en {countryData.countryName || countrySlug}
+        </span>
+        <select
+          value={selectedPackageSlug}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            setSelectedPackageSlug(nextValue);
+            navigateToPackage(nextValue);
+          }}
+          className="w-full rounded-[1.2rem] border border-[#d7e5e2] bg-[#f8fcfb] px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-teal-600 focus:bg-white"
+        >
+          <option value="">Selecciona un destino</option>
+          {destinations.map((destination) => (
+            <option key={destination.packageSlug} value={destination.packageSlug}>
+              {destination.destination}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }, [countryData, countrySlug, location.search, navigate, selectedPackageSlug]);
 
   return (
     <PackageEmbedExperience
-      packageData={selectedPackage}
+      packageData={null}
       loading={loading}
-      embedKey={`country:${countrySlug}:${selectedPackage?.slug || selectedPackageSlug}`}
+      embedKey={`country:${countrySlug}`}
       selector={selector}
-      onSubmitLead={submitLead}
+      onSubmitLead={async () => {}}
       loadingLabel="Cargando destinos..."
-      emptyTitle="Pais no disponible"
-      emptyDescription="Todavia no hay destinos publicados para este pais o las salidas activas no estan listas para el embed."
+      emptyTitle={countryData ? "Elegi un destino" : "Pais no disponible"}
+      emptyDescription={
+        countryData
+          ? "Selecciona un destino del listado para abrir la ficha real del paquete en este mismo iframe."
+          : "Todavia no hay destinos publicados para este pais o las salidas activas no estan listas para el embed."
+      }
     />
   );
 }

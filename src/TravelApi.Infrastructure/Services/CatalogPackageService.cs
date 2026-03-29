@@ -322,7 +322,6 @@ public class CatalogPackageService : ICatalogPackageService
         {
             CountryName = countryName,
             CountrySlug = normalizedCountrySlug,
-            SelectedPackageSlug = packageDetails[0].Slug,
             Destinations = packageDetails
                 .Select(item => new PublicCountryDestinationDto
                 {
@@ -332,8 +331,7 @@ public class CatalogPackageService : ICatalogPackageService
                     FromPrice = item.FromPrice,
                     Currency = item.Currency
                 })
-                .ToList(),
-            Packages = packageDetails
+                .ToList()
         };
     }
 

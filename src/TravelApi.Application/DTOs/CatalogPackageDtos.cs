@@ -149,9 +149,7 @@ public class PublicCountryEmbedDto
 {
     public string CountryName { get; set; } = string.Empty;
     public string CountrySlug { get; set; } = string.Empty;
-    public string SelectedPackageSlug { get; set; } = string.Empty;
     public IReadOnlyList<PublicCountryDestinationDto> Destinations { get; set; } = Array.Empty<PublicCountryDestinationDto>();
-    public IReadOnlyList<PublicPackageDetailDto> Packages { get; set; } = Array.Empty<PublicPackageDetailDto>();
 }
 
 public record PublicPackageLeadRequest(

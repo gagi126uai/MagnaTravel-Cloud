@@ -152,9 +152,8 @@ public class CatalogPackageServiceTests : IDisposable
 
         Assert.NotNull(result);
         Assert.Equal("republica-dominicana", result!.CountrySlug);
-        Assert.Equal("bayahibe", result.SelectedPackageSlug);
         Assert.Equal(new[] { "bayahibe", "punta-cana" }, result.Destinations.Select(item => item.PackageSlug).ToArray());
-        Assert.Equal(new[] { "Bayahibe", "Punta Cana" }, result.Packages.Select(item => item.Title).ToArray());
+        Assert.Equal(new[] { "Bayahibe", "Punta Cana" }, result.Destinations.Select(item => item.Destination).ToArray());
     }
 
     [Fact]
