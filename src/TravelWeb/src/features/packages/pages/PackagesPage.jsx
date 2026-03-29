@@ -33,6 +33,9 @@ const emptyForm = {
   slug: "",
   tagline: "",
   destination: "",
+  countryName: "",
+  countrySlug: "",
+  destinationOrder: 0,
   generalInfo: "",
   departures: [],
   isPublished: false,
@@ -42,6 +45,7 @@ const emptyForm = {
   heroImageUrl: null,
   heroImageFileName: null,
   publicPagePath: "",
+  countryPagePath: "",
 };
 
 function createClientId() {
@@ -106,11 +110,13 @@ function sanitizeEmbedToken(value) {
     .slice(0, 48);
 }
 
-function buildSnippet(item) {
+function buildSnippet(item, { embedKind = "package" } = {}) {
   const safeTitle = String(item.title || "Paquete").replace(/"/g, "&quot;");
-  const safeSlug = sanitizeEmbedToken(item.slug || "paquete");
-  const embedId = `mt-package-${safeSlug || "embed"}`;
-  const baseSrc = buildAppUrl(item.publicPagePath || `/embed/packages/${item.slug}`);
+  const safeSlug = sanitizeEmbedToken(item.slug || "embed");
+  const embedId = `mt-${embedKind}-${safeSlug || "embed"}`;
+  const fallbackPath =
+    embedKind === "country" ? `/embed/countries/${item.slug || "pais"}` : `/embed/packages/${item.slug || "paquete"}`;
+  const baseSrc = buildAppUrl(item.publicPagePath || fallbackPath);
   const srcUrl = new URL(baseSrc);
   srcUrl.searchParams.set("embedId", embedId);
 
@@ -147,6 +153,28 @@ function buildSnippet(item) {
 </script>`;
 }
 
+function buildPackageSnippet(item) {
+  return buildSnippet(
+    {
+      title: item.title || "Paquete",
+      slug: item.slug || "paquete",
+      publicPagePath: item.publicPagePath || `/embed/packages/${item.slug}`,
+    },
+    { embedKind: "package" }
+  );
+}
+
+function buildCountrySnippet(item) {
+  return buildSnippet(
+    {
+      title: item.title || (item.countryName ? `Destinos en ${item.countryName}` : "Destinos"),
+      slug: item.countrySlug || item.slug || "pais",
+      publicPagePath: item.countryPagePath || `/embed/countries/${item.countrySlug}`,
+    },
+    { embedKind: "country" }
+  );
+}
+
 function mapDetailToForm(detail) {
   const departures = (detail.departures || []).map((departure) => ({
     clientId: departure.publicId || createClientId(),
@@ -169,6 +197,9 @@ function mapDetailToForm(detail) {
     slug: detail.slug || "",
     tagline: detail.tagline || "",
     destination: detail.destination || "",
+    countryName: detail.countryName || "",
+    countrySlug: detail.countrySlug || "",
+    destinationOrder: detail.destinationOrder ?? 0,
     generalInfo: detail.generalInfo || "",
     departures,
     isPublished: Boolean(detail.isPublished),
@@ -178,6 +209,7 @@ function mapDetailToForm(detail) {
     heroImageUrl: detail.heroImageUrl || null,
     heroImageFileName: detail.heroImageFileName || null,
     publicPagePath: detail.publicPagePath || `/embed/packages/${detail.slug}`,
+    countryPagePath: detail.countryPagePath || (detail.countrySlug ? `/embed/countries/${detail.countrySlug}` : ""),
   };
 }
 
@@ -198,10 +230,12 @@ export default function PackagesPage() {
   });
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [countryFilter, setCountryFilter] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [slugTouched, setSlugTouched] = useState(false);
+  const [countrySlugTouched, setCountrySlugTouched] = useState(false);
   const [departureDraft, setDepartureDraft] = useState(createDepartureDraft(true));
   const [editingDepartureClientId, setEditingDepartureClientId] = useState(null);
   const [selectedImageFile, setSelectedImageFile] = useState(null);
@@ -227,6 +261,10 @@ export default function PackagesPage() {
         params.set("status", statusFilter);
       }
 
+      if (countryFilter.trim()) {
+        params.set("country", countryFilter.trim());
+      }
+
       const response = await api.get(`/packages?${params.toString()}`);
       setItems(response?.items || []);
       setPageState({
@@ -244,7 +282,7 @@ export default function PackagesPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, pageSize, statusFilter]);
+  }, [countryFilter, debouncedSearch, page, pageSize, statusFilter]);
 
   useEffect(() => {
     loadPackages();
@@ -252,7 +290,7 @@ export default function PackagesPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, pageSize, statusFilter]);
+  }, [countryFilter, debouncedSearch, pageSize, statusFilter]);
 
   useEffect(() => {
     if (!imagePreviewUrl || !imagePreviewUrl.startsWith("blob:")) {
@@ -295,7 +333,8 @@ export default function PackagesPage() {
   );
 
   const effectiveSlug = slugify(form.slug || form.title);
-  const currentSnippetItem = useMemo(
+  const effectiveCountrySlug = slugify(form.countrySlug || form.countryName);
+  const currentPackageSnippetItem = useMemo(
     () => ({
       title: form.title || "Paquete",
       slug: effectiveSlug,
@@ -303,7 +342,18 @@ export default function PackagesPage() {
     }),
     [effectiveSlug, form.title]
   );
-  const embedSnippet = effectiveSlug ? buildSnippet(currentSnippetItem) : "";
+  const currentCountrySnippetItem = useMemo(
+    () => ({
+      title: form.countryName ? `Destinos en ${form.countryName}` : form.title || "Destinos",
+      slug: effectiveCountrySlug,
+      countrySlug: effectiveCountrySlug,
+      countryName: form.countryName || null,
+      countryPagePath: effectiveCountrySlug ? `/embed/countries/${effectiveCountrySlug}` : "",
+    }),
+    [effectiveCountrySlug, form.countryName, form.title]
+  );
+  const packageEmbedSnippet = effectiveSlug ? buildPackageSnippet(currentPackageSnippetItem) : "";
+  const countryEmbedSnippet = effectiveCountrySlug ? buildCountrySnippet(currentCountrySnippetItem) : "";
 
   function resetEditor(nextForm = emptyForm) {
     const safeForm = {
@@ -315,6 +365,7 @@ export default function PackagesPage() {
 
     setForm(safeForm);
     setSlugTouched(Boolean(safeForm.slug));
+    setCountrySlugTouched(Boolean(safeForm.countrySlug));
     setEditingDepartureClientId(null);
     setDepartureDraft(createDepartureDraft((safeForm.departures || []).length === 0));
     setSelectedImageFile(null);
@@ -346,10 +397,20 @@ export default function PackagesPage() {
       const next = { ...previous, [key]: value };
       if (key === "title" && !slugTouched) {
         next.slug = slugify(value);
+        next.publicPagePath = next.slug ? `/embed/packages/${next.slug}` : "";
+      }
+
+      if (key === "countryName" && !countrySlugTouched) {
+        next.countrySlug = slugify(value);
+        next.countryPagePath = next.countrySlug ? `/embed/countries/${next.countrySlug}` : "";
       }
 
       if (key === "slug") {
         next.publicPagePath = value ? `/embed/packages/${slugify(value)}` : "";
+      }
+
+      if (key === "countrySlug") {
+        next.countryPagePath = value ? `/embed/countries/${slugify(value)}` : "";
       }
 
       return next;
@@ -483,6 +544,9 @@ export default function PackagesPage() {
         slug: effectiveSlug,
         tagline: form.tagline.trim() || null,
         destination: form.destination.trim() || null,
+        countryName: form.countryName.trim() || null,
+        countrySlug: effectiveCountrySlug || null,
+        destinationOrder: Number(form.destinationOrder || 0),
         generalInfo: form.generalInfo.trim() || null,
         departures: form.departures.map((departure) => ({
           publicId: departure.publicId || null,
@@ -560,10 +624,24 @@ export default function PackagesPage() {
     }
   }
 
-  async function copySnippet(item) {
+  async function copyPackageSnippet(item) {
     try {
-      await navigator.clipboard.writeText(buildSnippet(item));
-      showSuccess("Codigo embebido copiado.");
+      await navigator.clipboard.writeText(buildPackageSnippet(item));
+      showSuccess("Iframe por paquete copiado.");
+    } catch {
+      showError("No se pudo copiar el codigo embebido.");
+    }
+  }
+
+  async function copyCountrySnippet(item) {
+    if (!item?.countrySlug) {
+      showError("Completa el slug de pais para generar ese iframe.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(buildCountrySnippet(item));
+      showSuccess("Iframe por pais copiado.");
     } catch {
       showError("No se pudo copiar el codigo embebido.");
     }
@@ -576,6 +654,19 @@ export default function PackagesPage() {
     }
 
     window.open(buildAppUrl(item.publicPagePath || `/embed/packages/${item.slug}`), "_blank", "noopener,noreferrer");
+  }
+
+  function previewCountry(item) {
+    if (!item?.countrySlug) {
+      showError("Completa el slug de pais antes de abrir el iframe por pais.");
+      return;
+    }
+
+    window.open(
+      buildAppUrl(item.countryPagePath || `/embed/countries/${item.countrySlug}`),
+      "_blank",
+      "noopener,noreferrer"
+    );
   }
 
   return (
@@ -605,17 +696,25 @@ export default function PackagesPage() {
           <SummaryCard icon={CalendarDays} label="En esta vista" value={summary.total} tone="indigo" />
         </div>
 
-        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:flex-row md:items-center md:justify-between">
-          <div className="relative flex-1">
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_220px]">
+          <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar por titulo, slug o destino..."
+              placeholder="Buscar por titulo, slug, destino o pais..."
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
             />
           </div>
+
+          <input
+            type="text"
+            value={countryFilter}
+            onChange={(event) => setCountryFilter(event.target.value)}
+            placeholder="Filtrar por pais o slug de pais"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+          />
 
           <select
             value={statusFilter}
@@ -651,10 +750,11 @@ export default function PackagesPage() {
                 <thead className="bg-slate-50/80 dark:bg-slate-950/40">
                   <tr className="text-left text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     <th className="px-6 py-4">Paquete</th>
+                    <th className="px-4 py-4">Pais</th>
                     <th className="px-4 py-4">Estado</th>
                     <th className="px-4 py-4">Desde</th>
                     <th className="px-4 py-4">Salidas</th>
-                    <th className="px-4 py-4">Slug</th>
+                    <th className="px-4 py-4">Slugs</th>
                     <th className="px-6 py-4 text-right">Acciones</th>
                   </tr>
                 </thead>
@@ -680,9 +780,14 @@ export default function PackagesPage() {
                               </p>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                              {item.destination ? (
+                             {item.destination ? (
                                 <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                   {item.destination}
+                                </span>
+                              ) : null}
+                              {item.countryName ? (
+                                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                  {item.countryName}
                                 </span>
                               ) : null}
                               {!item.hasHeroImage ? (
@@ -699,10 +804,16 @@ export default function PackagesPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-4">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            item.isPublished
+                       <td className="px-4 py-4">
+                         <div className="space-y-1 text-sm text-slate-600 dark:text-slate-300">
+                           <p className="font-semibold text-slate-900 dark:text-white">{item.countryName || "Sin pais"}</p>
+                           <p>Orden: {item.destinationOrder ?? 0}</p>
+                         </div>
+                       </td>
+                       <td className="px-4 py-4">
+                         <span
+                           className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                             item.isPublished
                               ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
                               : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
                           }`}
@@ -715,19 +826,42 @@ export default function PackagesPage() {
                       </td>
                       <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-300">
                         {item.activeDepartureCount}/{item.departureCount} activas
-                      </td>
-                      <td className="px-4 py-4">
-                        <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                          {item.slug}
-                        </code>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <ActionButton icon={Eye} label="Preview" onClick={() => previewPackage(item)} />
-                          <ActionButton icon={Copy} label="Iframe" onClick={() => copySnippet(item)} />
-                          {canEdit ? (
-                            <ActionButton icon={Pencil} label="Editar" onClick={() => openEditModal(item.publicId)} />
-                          ) : null}
+                       </td>
+                       <td className="px-4 py-4">
+                         <div className="space-y-2 text-xs">
+                           <div>
+                             <p className="mb-1 font-semibold uppercase tracking-[0.18em] text-slate-400">Paquete</p>
+                             <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                               {item.slug}
+                             </code>
+                           </div>
+                           <div>
+                             <p className="mb-1 font-semibold uppercase tracking-[0.18em] text-slate-400">Pais</p>
+                             <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                               {item.countrySlug || "Pendiente"}
+                             </code>
+                           </div>
+                         </div>
+                       </td>
+                       <td className="px-6 py-4">
+                         <div className="flex flex-wrap justify-end gap-2">
+                           <ActionButton icon={Eye} label="Preview paquete" onClick={() => previewPackage(item)} />
+                           <ActionButton icon={Copy} label="Iframe paquete" onClick={() => copyPackageSnippet(item)} />
+                           <ActionButton
+                             icon={Eye}
+                             label="Preview pais"
+                             onClick={() => previewCountry(item)}
+                             disabled={!item.countrySlug}
+                           />
+                           <ActionButton
+                             icon={Copy}
+                             label="Iframe pais"
+                             onClick={() => copyCountrySnippet(item)}
+                             disabled={!item.countrySlug}
+                           />
+                           {canEdit ? (
+                             <ActionButton icon={Pencil} label="Editar" onClick={() => openEditModal(item.publicId)} />
+                           ) : null}
                           {canPublish ? (
                             item.isPublished ? (
                               <ActionButton
@@ -804,7 +938,7 @@ export default function PackagesPage() {
               <SectionTitle
                 eyebrow="Ficha general"
                 title="Lo primero que va a ver el sitio"
-                description="Completa el titulo comercial, la bajada y el destino para armar la portada del paquete."
+                description="Cada paquete representa un destino. Completa tambien el pais para habilitar el iframe agrupado con dropdown."
               />
 
               <div className="grid gap-4 md:grid-cols-2">
@@ -824,7 +958,45 @@ export default function PackagesPage() {
                     type="text"
                     value={form.destination}
                     onChange={(event) => updateFormField("destination", event.target.value)}
-                    placeholder="Caribe"
+                    placeholder="Punta Cana"
+                    className={inputClass}
+                    disabled={!canEdit}
+                  />
+                </Field>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
+                <Field label="Pais">
+                  <input
+                    type="text"
+                    value={form.countryName}
+                    onChange={(event) => updateFormField("countryName", event.target.value)}
+                    placeholder="Republica Dominicana"
+                    className={inputClass}
+                    disabled={!canEdit}
+                  />
+                </Field>
+
+                <Field label="Slug de pais" hint="Se usa para /embed/countries/...">
+                  <input
+                    type="text"
+                    value={form.countrySlug}
+                    onChange={(event) => {
+                      setCountrySlugTouched(true);
+                      updateFormField("countrySlug", event.target.value);
+                    }}
+                    placeholder="republica-dominicana"
+                    className={inputClass}
+                    disabled={!canEdit}
+                  />
+                </Field>
+
+                <Field label="Orden destino" hint="Menor numero, mas arriba.">
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.destinationOrder}
+                    onChange={(event) => updateFormField("destinationOrder", event.target.value)}
                     className={inputClass}
                     disabled={!canEdit}
                   />
@@ -859,31 +1031,32 @@ export default function PackagesPage() {
               <div className="rounded-2xl border border-dashed border-indigo-200 bg-white p-4 dark:border-indigo-900/60 dark:bg-slate-900">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Preview tecnico</p>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Previews tecnicos</p>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      Copia el iframe listo para Hostinger o abre la ficha publica en una pestana nueva.
+                      Mantienes compatibilidad con iframe por paquete y sumas el nuevo iframe por pais con dropdown.
                     </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <ActionButton
-                      icon={Eye}
-                      label="Abrir ficha"
-                      onClick={() => previewPackage(currentSnippetItem)}
-                      disabled={!effectiveSlug}
-                    />
-                    <ActionButton
-                      icon={Copy}
-                      label="Copiar iframe"
-                      onClick={() => copySnippet(currentSnippetItem)}
-                      disabled={!effectiveSlug}
-                    />
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-200">
-                  <code className="whitespace-pre-wrap break-all">
-                    {embedSnippet || "Completa al menos el titulo para generar el iframe."}
-                  </code>
+                <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <SnippetPreview
+                    title="Iframe por paquete"
+                    subtitle="Compatibilidad para embeds existentes."
+                    snippet={packageEmbedSnippet}
+                    emptyMessage="Completa al menos el titulo para generar el iframe del paquete."
+                    onPreview={() => previewPackage(currentPackageSnippetItem)}
+                    onCopy={() => copyPackageSnippet(currentPackageSnippetItem)}
+                    disabled={!effectiveSlug}
+                  />
+                  <SnippetPreview
+                    title="Iframe por pais"
+                    subtitle="Carga destinos del pais dentro del mismo iframe."
+                    snippet={countryEmbedSnippet}
+                    emptyMessage="Completa el pais para generar el iframe agrupado."
+                    onPreview={() => previewCountry(currentCountrySnippetItem)}
+                    onCopy={() => copyCountrySnippet(currentCountrySnippetItem)}
+                    disabled={!effectiveCountrySlug}
+                  />
                 </div>
               </div>
             </div>
@@ -910,6 +1083,11 @@ export default function PackagesPage() {
                   label="Slug publico"
                   tone="indigo"
                   value={effectiveSlug || "Pendiente"}
+                />
+                <InfoPill
+                  label="Slug de pais"
+                  tone={effectiveCountrySlug ? "indigo" : "amber"}
+                  value={effectiveCountrySlug || "Pendiente"}
                 />
               </div>
 
@@ -1279,6 +1457,27 @@ function Field({ label, hint, children }) {
       {children}
       {hint ? <span className="block text-xs text-slate-500 dark:text-slate-400">{hint}</span> : null}
     </label>
+  );
+}
+
+function SnippetPreview({ title, subtitle, snippet, emptyMessage, onPreview, onCopy, disabled }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/60">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-slate-900 dark:text-white">{title}</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <ActionButton icon={Eye} label="Abrir" onClick={onPreview} disabled={disabled} />
+          <ActionButton icon={Copy} label="Copiar" onClick={onCopy} disabled={disabled} />
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-200">
+        <code className="whitespace-pre-wrap break-all">{snippet || emptyMessage}</code>
+      </div>
+    </div>
   );
 }
 

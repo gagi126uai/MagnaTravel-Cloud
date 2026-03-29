@@ -128,6 +128,56 @@ public class CatalogPackageServiceTests : IDisposable
         Assert.Contains("Referer: https://www.hostinger-site.test/landing", lead.Notes);
     }
 
+    [Fact]
+    public async Task GetPublicCountryBySlugAsync_ShouldReturnPublishedDestinationsOrderedByDestinationOrder()
+    {
+        await using var context = CreateContext();
+        var firstPackage = BuildPublishedReadyPackage();
+        firstPackage.Title = "Punta Cana";
+        firstPackage.Slug = "punta-cana";
+        firstPackage.Destination = "Punta Cana";
+        firstPackage.DestinationOrder = 2;
+
+        var secondPackage = BuildPublishedReadyPackage();
+        secondPackage.Title = "Bayahibe";
+        secondPackage.Slug = "bayahibe";
+        secondPackage.Destination = "Bayahibe";
+        secondPackage.DestinationOrder = 1;
+
+        context.CatalogPackages.AddRange(firstPackage, secondPackage);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+        var result = await service.GetPublicCountryBySlugAsync("republica-dominicana", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("republica-dominicana", result!.CountrySlug);
+        Assert.Equal("bayahibe", result.SelectedPackageSlug);
+        Assert.Equal(new[] { "bayahibe", "punta-cana" }, result.Destinations.Select(item => item.PackageSlug).ToArray());
+        Assert.Equal(new[] { "Bayahibe", "Punta Cana" }, result.Packages.Select(item => item.Title).ToArray());
+    }
+
+    [Fact]
+    public async Task PublishAsync_ShouldRejectDuplicatePublishedDestinationInSameCountry()
+    {
+        await using var context = CreateContext();
+        var publishedPackage = BuildPublishedReadyPackage();
+
+        var conflictingPackage = BuildPublishedReadyPackage();
+        conflictingPackage.Title = "Punta Cana Mayo";
+        conflictingPackage.Slug = "punta-cana-mayo";
+        conflictingPackage.IsPublished = false;
+        conflictingPackage.PublishedAt = null;
+
+        context.CatalogPackages.AddRange(publishedPackage, conflictingPackage);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.PublishAsync(conflictingPackage.Id, CancellationToken.None));
+
+        Assert.Contains("mismo pais y destino", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_contentRootPath))
@@ -157,7 +207,10 @@ public class CatalogPackageServiceTests : IDisposable
             Title = "Punta Cana",
             Slug = "punta-cana",
             Tagline = "Vivi el Caribe",
-            Destination = "Caribe",
+            Destination = "Punta Cana",
+            CountryName = "Republica Dominicana",
+            CountrySlug = "republica-dominicana",
+            DestinationOrder = 0,
             GeneralInfo = "Incluye alojamiento, asistencia y coordinacion comercial.",
             HeroImageFileName = "hero.jpg",
             HeroImageStoredFileName = Path.Combine("2026", "hero.jpg"),

@@ -523,12 +523,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(package => package.Slug).HasMaxLength(200).IsRequired();
             entity.Property(package => package.Tagline).HasMaxLength(120);
             entity.Property(package => package.Destination).HasMaxLength(120);
+            entity.Property(package => package.CountryName).HasMaxLength(120);
+            entity.Property(package => package.CountrySlug).HasMaxLength(120);
             entity.Property(package => package.HeroImageFileName).HasMaxLength(260);
             entity.Property(package => package.HeroImageStoredFileName).HasMaxLength(260);
             entity.Property(package => package.HeroImageContentType).HasMaxLength(120);
             entity.Property(package => package.GeneralInfo).HasMaxLength(8000);
             entity.HasIndex(package => package.Slug).IsUnique();
             entity.HasIndex(package => new { package.IsPublished, package.Slug });
+            entity.HasIndex(package => new { package.IsPublished, package.CountrySlug, package.DestinationOrder });
+            entity.HasIndex(package => new { package.CountrySlug, package.Destination });
 
             entity.HasMany(package => package.Departures)
                 .WithOne(departure => departure.CatalogPackage)

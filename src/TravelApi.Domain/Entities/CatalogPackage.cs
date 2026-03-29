@@ -22,6 +22,14 @@ public class CatalogPackage : IHasPublicId
     [MaxLength(120)]
     public string? Destination { get; set; }
 
+    [MaxLength(120)]
+    public string? CountryName { get; set; }
+
+    [MaxLength(120)]
+    public string? CountrySlug { get; set; }
+
+    public int DestinationOrder { get; set; }
+
     [MaxLength(260)]
     public string? HeroImageFileName { get; set; }
 

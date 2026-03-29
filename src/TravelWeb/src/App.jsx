@@ -26,6 +26,7 @@ import QuotesPage from "./pages/QuotesPage";
 import CRMPage from "./pages/CRMPage";
 import PaymentsTrashPage from "./features/payments/pages/PaymentsTrashPage";
 import NotificationsPage from "./pages/NotificationsPage";
+import PublicCountryEmbedPage from "./pages/PublicCountryEmbedPage";
 import PublicPackageEmbedPage from "./pages/PublicPackageEmbedPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
@@ -155,6 +156,7 @@ export default function App() {
           path="/login"
           element={loading ? <FullScreenLoader /> : user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
         />
+        <Route path="/embed/countries/:countrySlug" element={<PublicCountryEmbedPage />} />
         <Route path="/embed/packages/:slug" element={<PublicPackageEmbedPage />} />
         <Route
           path="/*"

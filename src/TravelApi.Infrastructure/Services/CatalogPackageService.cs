@@ -52,7 +52,17 @@ public class CatalogPackageService : ICatalogPackageService
                 package.Title.ToLower().Contains(normalized) ||
                 package.Slug.ToLower().Contains(normalized) ||
                 (package.Tagline != null && package.Tagline.ToLower().Contains(normalized)) ||
-                (package.Destination != null && package.Destination.ToLower().Contains(normalized)));
+                (package.Destination != null && package.Destination.ToLower().Contains(normalized)) ||
+                (package.CountryName != null && package.CountryName.ToLower().Contains(normalized)) ||
+                (package.CountrySlug != null && package.CountrySlug.ToLower().Contains(normalized)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Country))
+        {
+            var normalizedCountry = query.Country.Trim().ToLowerInvariant();
+            packagesQuery = packagesQuery.Where(package =>
+                (package.CountryName != null && package.CountryName.ToLower().Contains(normalizedCountry)) ||
+                (package.CountrySlug != null && package.CountrySlug.ToLower().Contains(normalizedCountry)));
         }
 
         var status = (query.Status ?? "all").Trim().ToLowerInvariant();
@@ -74,9 +84,11 @@ public class CatalogPackageService : ICatalogPackageService
             .Take(safePageSize)
             .ToListAsync(ct);
 
-        var items = packages
-            .Select(MapAdminListItem)
-            .ToList();
+        var items = new List<CatalogPackageListItemDto>(packages.Count);
+        foreach (var package in packages)
+        {
+            items.Add(await MapAdminListItemAsync(package, ct));
+        }
 
         return PagedResponse<CatalogPackageListItemDto>.Create(items, safePage, safePageSize, totalCount);
     }
@@ -87,7 +99,7 @@ public class CatalogPackageService : ICatalogPackageService
             .Include(item => item.Departures)
             .FirstOrDefaultAsync(item => item.Id == id, ct);
 
-        return package is null ? null : MapAdminDetail(package);
+        return package is null ? null : await MapAdminDetailAsync(package, ct);
     }
 
     public async Task<CatalogPackageDetailDto> CreateAsync(PackageUpsertRequest request, CancellationToken ct)
@@ -102,7 +114,7 @@ public class CatalogPackageService : ICatalogPackageService
         _db.CatalogPackages.Add(package);
         await _db.SaveChangesAsync(ct);
 
-        return MapAdminDetail(package);
+        return await MapAdminDetailAsync(package, ct);
     }
 
     public async Task<CatalogPackageDetailDto?> UpdateAsync(int id, PackageUpsertRequest request, CancellationToken ct)
@@ -118,14 +130,18 @@ public class CatalogPackageService : ICatalogPackageService
 
         await ApplyRequestAsync(package, request, ct);
 
-        if (package.IsPublished && GetPublishIssues(package).Count > 0)
+        if (package.IsPublished)
         {
-            package.IsPublished = false;
-            package.PublishedAt = null;
+            var issues = await GetPublishIssuesAsync(package, ct);
+            if (issues.Count > 0)
+            {
+                package.IsPublished = false;
+                package.PublishedAt = null;
+            }
         }
 
         await _db.SaveChangesAsync(ct);
-        return MapAdminDetail(package);
+        return await MapAdminDetailAsync(package, ct);
     }
 
     public async Task<CatalogPackageDetailDto> PublishAsync(int id, CancellationToken ct)
@@ -135,7 +151,7 @@ public class CatalogPackageService : ICatalogPackageService
             .FirstOrDefaultAsync(item => item.Id == id, ct)
             ?? throw new KeyNotFoundException("Paquete no encontrado.");
 
-        var issues = GetPublishIssues(package);
+        var issues = await GetPublishIssuesAsync(package, ct);
         if (issues.Count > 0)
         {
             throw new InvalidOperationException(string.Join(" ", issues));
@@ -146,7 +162,7 @@ public class CatalogPackageService : ICatalogPackageService
         package.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
-        return MapAdminDetail(package);
+        return await MapAdminDetailAsync(package, ct);
     }
 
     public async Task<CatalogPackageDetailDto> UnpublishAsync(int id, CancellationToken ct)
@@ -161,7 +177,7 @@ public class CatalogPackageService : ICatalogPackageService
         package.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
-        return MapAdminDetail(package);
+        return await MapAdminDetailAsync(package, ct);
     }
 
     public async Task<CatalogPackageDetailDto> UploadHeroImageAsync(
@@ -229,7 +245,7 @@ public class CatalogPackageService : ICatalogPackageService
         package.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
-        return MapAdminDetail(package);
+        return await MapAdminDetailAsync(package, ct);
     }
 
     public async Task<(byte[] Bytes, string ContentType)?> GetHeroImageAsync(int id, CancellationToken ct)
@@ -264,34 +280,60 @@ public class CatalogPackageService : ICatalogPackageService
             return null;
         }
 
-        var primaryDeparture = package.Departures
-            .Where(departure => departure.IsActive && departure.IsPrimary)
-            .OrderBy(departure => departure.StartDate)
-            .FirstOrDefault();
+        return MapPublicDetail(package);
+    }
 
-        if (primaryDeparture is null)
+    public async Task<PublicCountryEmbedDto?> GetPublicCountryBySlugAsync(string countrySlug, CancellationToken ct)
+    {
+        var normalizedCountrySlug = NormalizeSlug(countrySlug);
+        if (string.IsNullOrWhiteSpace(normalizedCountrySlug))
         {
             return null;
         }
 
-        var departures = package.Departures
-            .Where(departure => departure.IsActive)
-            .OrderBy(departure => departure.StartDate)
-            .Select(MapPublicDeparture)
+        var packages = await _db.CatalogPackages
+            .AsNoTracking()
+            .Include(item => item.Departures)
+            .Where(item => item.IsPublished && item.CountrySlug == normalizedCountrySlug)
+            .ToListAsync(ct);
+
+        var packageDetails = packages
+            .Select(MapPublicDetail)
+            .Where(item => item is not null)
+            .Cast<PublicPackageDetailDto>()
+            .OrderBy(item => item.DestinationOrder)
+            .ThenBy(item => item.Destination ?? item.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return new PublicPackageDetailDto
+        if (packageDetails.Count == 0)
         {
-            Title = package.Title,
-            Slug = package.Slug,
-            Tagline = package.Tagline,
-            Destination = package.Destination,
-            GeneralInfo = package.GeneralInfo,
-            HeroImageUrl = package.HeroImageStoredFileName is null ? null : $"/api/public/packages/{package.Slug}/hero-image",
-            FromPrice = primaryDeparture.SalePrice,
-            Currency = primaryDeparture.Currency,
-            PrimaryDeparture = MapPublicDeparture(primaryDeparture),
-            Departures = departures
+            return null;
+        }
+
+        var countryName = packageDetails
+            .Select(item => item.CountryName)
+            .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name))
+            ?? packages
+                .Select(item => item.CountryName)
+                .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name))
+            ?? normalizedCountrySlug;
+
+        return new PublicCountryEmbedDto
+        {
+            CountryName = countryName,
+            CountrySlug = normalizedCountrySlug,
+            SelectedPackageSlug = packageDetails[0].Slug,
+            Destinations = packageDetails
+                .Select(item => new PublicCountryDestinationDto
+                {
+                    PackageSlug = item.Slug,
+                    Destination = item.Destination ?? item.Title,
+                    Order = item.DestinationOrder,
+                    FromPrice = item.FromPrice,
+                    Currency = item.Currency
+                })
+                .ToList(),
+            Packages = packageDetails
         };
     }
 
@@ -381,6 +423,9 @@ public class CatalogPackageService : ICatalogPackageService
 
         package.Tagline = TrimToNull(request.Tagline);
         package.Destination = TrimToNull(request.Destination);
+        package.CountryName = TrimToNull(request.CountryName);
+        package.CountrySlug = NormalizeOptionalSlug(request.CountrySlug) ?? NormalizeOptionalSlug(request.CountryName);
+        package.DestinationOrder = Math.Max(0, request.DestinationOrder);
         package.GeneralInfo = TrimToNull(request.GeneralInfo);
         package.UpdatedAt = DateTime.UtcNow;
 
@@ -453,9 +498,9 @@ public class CatalogPackageService : ICatalogPackageService
         }
     }
 
-    private CatalogPackageListItemDto MapAdminListItem(CatalogPackage package)
+    private async Task<CatalogPackageListItemDto> MapAdminListItemAsync(CatalogPackage package, CancellationToken ct)
     {
-        var issues = GetPublishIssues(package);
+        var issues = await GetPublishIssuesAsync(package, ct);
         var pricedDeparture = package.Departures
             .Where(departure => departure.IsActive)
             .OrderBy(departure => departure.SalePrice)
@@ -473,6 +518,9 @@ public class CatalogPackageService : ICatalogPackageService
             Slug = package.Slug,
             Tagline = package.Tagline,
             Destination = package.Destination,
+            CountryName = package.CountryName,
+            CountrySlug = package.CountrySlug,
+            DestinationOrder = package.DestinationOrder,
             IsPublished = package.IsPublished,
             HasHeroImage = !string.IsNullOrWhiteSpace(package.HeroImageStoredFileName),
             HeroImageUrl = package.HeroImageStoredFileName is null ? null : $"/api/packages/{package.PublicId}/hero-image",
@@ -483,15 +531,16 @@ public class CatalogPackageService : ICatalogPackageService
             CanPublish = issues.Count == 0,
             PublishIssues = issues,
             PublicPagePath = $"/embed/packages/{package.Slug}",
+            CountryPagePath = string.IsNullOrWhiteSpace(package.CountrySlug) ? null : $"/embed/countries/{package.CountrySlug}",
             CreatedAt = package.CreatedAt,
             UpdatedAt = package.UpdatedAt,
             PublishedAt = package.PublishedAt
         };
     }
 
-    private CatalogPackageDetailDto MapAdminDetail(CatalogPackage package)
+    private async Task<CatalogPackageDetailDto> MapAdminDetailAsync(CatalogPackage package, CancellationToken ct)
     {
-        var issues = GetPublishIssues(package);
+        var issues = await GetPublishIssuesAsync(package, ct);
         var pricedDeparture = package.Departures
             .Where(departure => departure.IsActive)
             .OrderBy(departure => departure.SalePrice)
@@ -511,6 +560,9 @@ public class CatalogPackageService : ICatalogPackageService
             Slug = package.Slug,
             Tagline = package.Tagline,
             Destination = package.Destination,
+            CountryName = package.CountryName,
+            CountrySlug = package.CountrySlug,
+            DestinationOrder = package.DestinationOrder,
             GeneralInfo = package.GeneralInfo,
             IsPublished = package.IsPublished,
             HasHeroImage = !string.IsNullOrWhiteSpace(package.HeroImageStoredFileName),
@@ -522,6 +574,7 @@ public class CatalogPackageService : ICatalogPackageService
             CanPublish = issues.Count == 0,
             PublishIssues = issues,
             PublicPagePath = $"/embed/packages/{package.Slug}",
+            CountryPagePath = string.IsNullOrWhiteSpace(package.CountrySlug) ? null : $"/embed/countries/{package.CountrySlug}",
             Departures = package.Departures
                 .OrderBy(departure => departure.StartDate)
                 .Select(departure => new CatalogPackageDepartureDto
@@ -562,7 +615,55 @@ public class CatalogPackageService : ICatalogPackageService
         };
     }
 
-    private static IReadOnlyList<string> GetPublishIssues(CatalogPackage package)
+    private static PublicPackageDetailDto? MapPublicDetail(CatalogPackage package)
+    {
+        var primaryDeparture = package.Departures
+            .Where(departure => departure.IsActive && departure.IsPrimary)
+            .OrderBy(departure => departure.StartDate)
+            .FirstOrDefault();
+
+        if (primaryDeparture is null)
+        {
+            return null;
+        }
+
+        var departures = package.Departures
+            .Where(departure => departure.IsActive)
+            .OrderBy(departure => departure.StartDate)
+            .Select(MapPublicDeparture)
+            .ToList();
+
+        return new PublicPackageDetailDto
+        {
+            Title = package.Title,
+            Slug = package.Slug,
+            Tagline = package.Tagline,
+            Destination = package.Destination,
+            CountryName = package.CountryName,
+            CountrySlug = package.CountrySlug,
+            DestinationOrder = package.DestinationOrder,
+            GeneralInfo = package.GeneralInfo,
+            HeroImageUrl = package.HeroImageStoredFileName is null ? null : $"/api/public/packages/{package.Slug}/hero-image",
+            FromPrice = primaryDeparture.SalePrice,
+            Currency = primaryDeparture.Currency,
+            PrimaryDeparture = MapPublicDeparture(primaryDeparture),
+            Departures = departures
+        };
+    }
+
+    private async Task<IReadOnlyList<string>> GetPublishIssuesAsync(CatalogPackage package, CancellationToken ct)
+    {
+        var issues = GetBasicPublishIssues(package);
+
+        if (await HasPublishedDestinationConflictAsync(package, ct))
+        {
+            issues.Add("Ya existe otro paquete publicado con el mismo pais y destino.");
+        }
+
+        return issues;
+    }
+
+    private static List<string> GetBasicPublishIssues(CatalogPackage package)
     {
         var issues = new List<string>();
         var activeDepartures = package.Departures.Where(departure => departure.IsActive).ToList();
@@ -599,6 +700,22 @@ public class CatalogPackageService : ICatalogPackageService
         }
 
         return issues;
+    }
+
+    private async Task<bool> HasPublishedDestinationConflictAsync(CatalogPackage package, CancellationToken ct)
+    {
+        var normalizedCountrySlug = NormalizeOptionalSlug(package.CountrySlug);
+        var normalizedDestination = TrimToNull(package.Destination)?.ToLowerInvariant();
+
+        if (string.IsNullOrWhiteSpace(normalizedCountrySlug) || string.IsNullOrWhiteSpace(normalizedDestination))
+        {
+            return false;
+        }
+
+        return await _db.CatalogPackages
+            .AsNoTracking()
+            .Where(item => item.Id != package.Id && item.IsPublished && item.CountrySlug == normalizedCountrySlug && item.Destination != null)
+            .AnyAsync(item => item.Destination!.ToLower() == normalizedDestination, ct);
     }
 
     private async Task<(byte[] Bytes, string ContentType)?> ReadHeroImageAsync(CatalogPackage package, CancellationToken ct)
@@ -702,6 +819,12 @@ public class CatalogPackageService : ICatalogPackageService
         }
 
         return normalized;
+    }
+
+    private static string? NormalizeOptionalSlug(string? value)
+    {
+        var normalized = NormalizeSlug(value);
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
     }
 
     private static string NormalizeCurrency(string? value)

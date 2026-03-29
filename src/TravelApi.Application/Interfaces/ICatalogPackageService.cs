@@ -13,6 +13,7 @@ public interface ICatalogPackageService
     Task<CatalogPackageDetailDto> UploadHeroImageAsync(int id, Stream fileStream, string fileName, string contentType, CancellationToken ct);
     Task<(byte[] Bytes, string ContentType)?> GetHeroImageAsync(int id, CancellationToken ct);
     Task<PublicPackageDetailDto?> GetPublicPackageBySlugAsync(string slug, CancellationToken ct);
+    Task<PublicCountryEmbedDto?> GetPublicCountryBySlugAsync(string countrySlug, CancellationToken ct);
     Task<(byte[] Bytes, string ContentType)?> GetPublicHeroImageBySlugAsync(string slug, CancellationToken ct);
     Task CreatePublicLeadAsync(string slug, PublicPackageLeadRequest request, string? referer, CancellationToken ct);
 }
