@@ -137,21 +137,7 @@ public class CountryService : ICountryService
 
     private async Task ApplyRequestAsync(Country country, CountryUpsertRequest request, CancellationToken ct)
     {
-        country.Name = RequireTrimmed(request.Name, "El nombre del país es obligatorio.");
-        country.Slug = NormalizeSlug(request.Slug);
-        if (string.IsNullOrWhiteSpace(country.Slug))
-        {
-            throw new InvalidOperationException("El slug del país es obligatorio.");
-        }
-
-        var slugExists = await _db.Countries
-            .AsNoTracking()
-            .AnyAsync(item => item.Slug == country.Slug && item.Id != country.Id, ct);
-
-        if (slugExists)
-        {
-            throw new InvalidOperationException("Ya existe un país con ese slug.");
-        }
+        country.Name = RequireTrimmed(request.Name, "El nombre del pais es obligatorio.");
 
         var normalizedName = country.Name.ToLowerInvariant();
         var nameExists = await _db.Countries
@@ -161,10 +147,36 @@ public class CountryService : ICountryService
 
         if (nameExists)
         {
-            throw new InvalidOperationException("Ya existe un país con ese nombre.");
+            throw new InvalidOperationException("Ya existe un pais con ese nombre.");
+        }
+
+        if (country.Id == 0 || string.IsNullOrWhiteSpace(country.Slug))
+        {
+            country.Slug = await GenerateUniqueSlugAsync(request.Slug, country.Name, country.Id, ct);
         }
 
         country.UpdatedAt = DateTime.UtcNow;
+    }
+
+    private async Task<string> GenerateUniqueSlugAsync(string? requestedSlug, string fallbackName, int currentId, CancellationToken ct)
+    {
+        var baseSlug = NormalizeSlug(string.IsNullOrWhiteSpace(requestedSlug) ? fallbackName : requestedSlug);
+        if (string.IsNullOrWhiteSpace(baseSlug))
+        {
+            throw new InvalidOperationException("No se pudo preparar la publicacion web de este pais.");
+        }
+
+        var candidate = baseSlug;
+        var suffix = 2;
+        while (await _db.Countries
+                   .AsNoTracking()
+                   .AnyAsync(item => item.Slug == candidate && item.Id != currentId, ct))
+        {
+            candidate = $"{baseSlug}-{suffix}";
+            suffix++;
+        }
+
+        return candidate;
     }
 
     private static CountryListItemDto MapCountryListItem(Country country)

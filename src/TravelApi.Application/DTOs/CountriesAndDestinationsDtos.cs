@@ -2,7 +2,7 @@ namespace TravelApi.Application.DTOs;
 
 public record CountryUpsertRequest(
     string Name,
-    string Slug);
+    string? Slug = null);
 
 public class CountryListItemDto
 {
@@ -47,11 +47,11 @@ public record DestinationUpsertRequest(
     Guid CountryPublicId,
     string Name,
     string Title,
-    string Slug,
     string? Tagline,
     int DisplayOrder,
     string? GeneralInfo,
-    IReadOnlyList<DestinationDepartureUpsertRequest> Departures);
+    IReadOnlyList<DestinationDepartureUpsertRequest> Departures,
+    string? Slug = null);
 
 public class DestinationListItemDto
 {
@@ -69,6 +69,7 @@ public class DestinationListItemDto
     public string? HeroImageUrl { get; set; }
     public decimal? FromPrice { get; set; }
     public string? Currency { get; set; }
+    public DateTime? NextDepartureDate { get; set; }
     public int DepartureCount { get; set; }
     public int ActiveDepartureCount { get; set; }
     public bool CanPublish { get; set; }

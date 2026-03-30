@@ -31,6 +31,7 @@ import PublicPackageEmbedPage from "./pages/PublicPackageEmbedPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
 import PackagesPage from "./features/packages/pages/PackagesPage";
+import DestinationEditorPage from "./features/packages/pages/DestinationEditorPage";
 
 function FullScreenLoader() {
   return (
@@ -186,6 +187,10 @@ export default function App() {
                     <Route
                       path="/packages"
                       element={hasPermission("paquetes.view") ? <PackagesPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
+                      path="/packages/destinations/:publicId"
+                      element={hasPermission("paquetes.view") ? <DestinationEditorPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route path="/crm" element={hasPermission("crm.view") ? <CRMPage /> : <Navigate to="/dashboard" replace />} />
                     <Route

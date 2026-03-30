@@ -166,19 +166,19 @@ public class DestinationService : IDestinationService
         var extension = Path.GetExtension(safeFileName);
         if (!AllowedHeroImageTypes.ContainsKey(extension))
         {
-            throw new InvalidOperationException("El formato de imagen no está permitido.");
+            throw new InvalidOperationException("El formato de imagen no esta permitido.");
         }
 
         await using var buffer = new MemoryStream();
         await fileStream.CopyToAsync(buffer, ct);
         if (buffer.Length == 0)
         {
-            throw new InvalidOperationException("La imagen está vacía.");
+            throw new InvalidOperationException("La imagen esta vacia.");
         }
 
         if (buffer.Length > MaxHeroImageSizeBytes)
         {
-            throw new InvalidOperationException("La imagen supera el máximo permitido de 10 MB.");
+            throw new InvalidOperationException("La imagen supera el maximo permitido de 10 MB.");
         }
 
         var normalizedContentType = (contentType ?? string.Empty).Trim();
@@ -283,7 +283,7 @@ public class DestinationService : IDestinationService
         }
 
         var fullName = RequireTrimmed(request.FullName, "El nombre es obligatorio.");
-        var phone = RequireTrimmed(request.Phone, "El teléfono es obligatorio.");
+        var phone = RequireTrimmed(request.Phone, "El telefono es obligatorio.");
 
         var destination = await _db.Destinations
             .Include(item => item.Country)
@@ -301,7 +301,7 @@ public class DestinationService : IDestinationService
 
         if (selectedDeparture is null)
         {
-            throw new InvalidOperationException("La salida seleccionada no está disponible.");
+            throw new InvalidOperationException("La salida seleccionada no esta disponible.");
         }
 
         var lead = new Lead
@@ -312,7 +312,7 @@ public class DestinationService : IDestinationService
             Source = "Web",
             Status = LeadStatus.New,
             InterestedIn = destination.Title,
-            TravelDates = $"{selectedDeparture.StartDate:dd/MM/yyyy} · {selectedDeparture.Nights} noches",
+            TravelDates = $"{selectedDeparture.StartDate:dd/MM/yyyy} - {selectedDeparture.Nights} noches",
             Notes = BuildLeadNotes(destination, selectedDeparture, TrimToNull(request.Message), referer),
             CreatedAt = DateTime.UtcNow
         };
@@ -326,27 +326,13 @@ public class DestinationService : IDestinationService
         var country = await _db.Countries.FirstOrDefaultAsync(item => item.PublicId == request.CountryPublicId, ct);
         if (country is null)
         {
-            throw new InvalidOperationException("El país seleccionado no existe.");
+            throw new InvalidOperationException("El pais seleccionado no existe.");
         }
 
         destination.CountryId = country.Id;
         destination.Country = country;
         destination.Name = RequireTrimmed(request.Name, "El nombre del destino es obligatorio.");
-        destination.Title = RequireTrimmed(request.Title, "El título del destino es obligatorio.");
-        destination.Slug = NormalizeSlug(request.Slug);
-        if (string.IsNullOrWhiteSpace(destination.Slug))
-        {
-            throw new InvalidOperationException("El slug es obligatorio.");
-        }
-
-        var slugExists = await _db.Destinations
-            .AsNoTracking()
-            .AnyAsync(item => item.Slug == destination.Slug && item.Id != destination.Id, ct);
-
-        if (slugExists)
-        {
-            throw new InvalidOperationException("Ya existe un destino con ese slug.");
-        }
+        destination.Title = RequireTrimmed(request.Title, "El titulo comercial es obligatorio.");
 
         var normalizedName = destination.Name.ToLowerInvariant();
         var duplicateNameExists = await _db.Destinations
@@ -356,7 +342,12 @@ public class DestinationService : IDestinationService
 
         if (duplicateNameExists)
         {
-            throw new InvalidOperationException("Ya existe un destino con ese nombre dentro de este país.");
+            throw new InvalidOperationException("Ya existe un destino con ese nombre dentro de este pais.");
+        }
+
+        if (destination.Id == 0 || string.IsNullOrWhiteSpace(destination.Slug))
+        {
+            destination.Slug = await GenerateUniqueSlugAsync(request.Slug, destination.Name, destination.Title, destination.Id, ct);
         }
 
         destination.Tagline = TrimToNull(request.Tagline);
@@ -365,6 +356,32 @@ public class DestinationService : IDestinationService
         destination.UpdatedAt = DateTime.UtcNow;
 
         SyncDepartures(destination, request.Departures ?? Array.Empty<DestinationDepartureUpsertRequest>());
+    }
+
+    private async Task<string> GenerateUniqueSlugAsync(string? requestedSlug, string name, string title, int currentId, CancellationToken ct)
+    {
+        var baseSlug = NormalizeSlug(string.IsNullOrWhiteSpace(requestedSlug) ? name : requestedSlug);
+        if (string.IsNullOrWhiteSpace(baseSlug))
+        {
+            baseSlug = NormalizeSlug(title);
+        }
+
+        if (string.IsNullOrWhiteSpace(baseSlug))
+        {
+            throw new InvalidOperationException("No se pudo preparar la publicacion web de este destino.");
+        }
+
+        var candidate = baseSlug;
+        var suffix = 2;
+        while (await _db.Destinations
+                   .AsNoTracking()
+                   .AnyAsync(item => item.Slug == candidate && item.Id != currentId, ct))
+        {
+            candidate = $"{baseSlug}-{suffix}";
+            suffix++;
+        }
+
+        return candidate;
     }
 
     private void SyncDepartures(Destination destination, IReadOnlyList<DestinationDepartureUpsertRequest> requests)
@@ -405,7 +422,7 @@ public class DestinationService : IDestinationService
             departure.Nights = request.Nights;
             departure.TransportLabel = RequireTrimmed(request.TransportLabel, "El transporte es obligatorio.");
             departure.HotelName = RequireTrimmed(request.HotelName, "El hotel es obligatorio.");
-            departure.MealPlan = RequireTrimmed(request.MealPlan, "El régimen es obligatorio.");
+            departure.MealPlan = RequireTrimmed(request.MealPlan, "El regimen es obligatorio.");
             departure.RoomBase = RequireTrimmed(request.RoomBase, "La base es obligatoria.");
             departure.Currency = NormalizeCurrency(request.Currency);
             departure.SalePrice = request.SalePrice;
@@ -446,6 +463,14 @@ public class DestinationService : IDestinationService
                 .ThenBy(departure => departure.StartDate)
                 .FirstOrDefault();
 
+        var nextDeparture = destination.Departures
+            .Where(departure => departure.IsActive)
+            .OrderBy(departure => departure.StartDate)
+            .FirstOrDefault()
+            ?? destination.Departures
+                .OrderBy(departure => departure.StartDate)
+                .FirstOrDefault();
+
         return new DestinationListItemDto
         {
             PublicId = destination.PublicId,
@@ -462,6 +487,7 @@ public class DestinationService : IDestinationService
             HeroImageUrl = destination.HeroImageStoredFileName is null ? null : $"/api/destinations/{destination.PublicId}/hero-image",
             FromPrice = pricedDeparture?.SalePrice,
             Currency = pricedDeparture?.Currency,
+            NextDepartureDate = nextDeparture?.StartDate,
             DepartureCount = destination.Departures.Count,
             ActiveDepartureCount = destination.Departures.Count(departure => departure.IsActive),
             CanPublish = issues.Count == 0,
@@ -594,7 +620,7 @@ public class DestinationService : IDestinationService
 
         if (await HasDestinationNameConflictAsync(destination, ct))
         {
-            issues.Add("Ya existe otro destino con el mismo nombre dentro de este país.");
+            issues.Add("Ya existe otro destino con el mismo nombre dentro de este pais.");
         }
 
         return issues;
@@ -609,12 +635,12 @@ public class DestinationService : IDestinationService
 
         if (string.IsNullOrWhiteSpace(destination.Slug))
         {
-            issues.Add("Define un slug válido.");
+            issues.Add("No se pudo preparar la publicacion web de este destino.");
         }
 
         if (string.IsNullOrWhiteSpace(destination.GeneralInfo))
         {
-            issues.Add("Completa la información general.");
+            issues.Add("Completa la descripcion para la web.");
         }
 
         if (string.IsNullOrWhiteSpace(destination.HeroImageStoredFileName))
@@ -624,16 +650,16 @@ public class DestinationService : IDestinationService
 
         if (activeDepartures.Count == 0)
         {
-            issues.Add("Debe existir al menos una salida activa.");
+            issues.Add("Agrega al menos una salida visible.");
         }
 
         if (primaryDepartures.Count != 1)
         {
-            issues.Add("Debe existir exactamente una salida principal.");
+            issues.Add("Marca una sola salida destacada.");
         }
         else if (activePrimaryDepartures.Count != 1)
         {
-            issues.Add("La salida principal debe estar activa.");
+            issues.Add("La salida destacada debe estar visible.");
         }
 
         return issues;
@@ -699,14 +725,13 @@ public class DestinationService : IDestinationService
         string? referer)
     {
         var builder = new StringBuilder();
-        builder.AppendLine($"Consulta desde destino embebido: {destination.Title}");
+        builder.AppendLine($"Consulta desde destino web: {destination.Title}");
         builder.AppendLine($"Destino: {destination.Name}");
-        builder.AppendLine($"Slug: {destination.Slug}");
         builder.AppendLine($"Salida elegida: {departure.StartDate:dd/MM/yyyy}");
         builder.AppendLine($"Noches: {departure.Nights}");
         builder.AppendLine($"Transporte: {departure.TransportLabel}");
         builder.AppendLine($"Hotel: {departure.HotelName}");
-        builder.AppendLine($"Régimen: {departure.MealPlan}");
+        builder.AppendLine($"Regimen: {departure.MealPlan}");
         builder.AppendLine($"Base: {departure.RoomBase}");
         builder.AppendLine($"Tarifa: {departure.Currency} {departure.SalePrice:0.##}");
 
