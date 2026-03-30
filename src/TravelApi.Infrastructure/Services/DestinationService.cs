@@ -254,6 +254,28 @@ public class DestinationService : IDestinationService
         return MapPublicDetail(destination);
     }
 
+    public async Task<PublicPackageDetailDto?> GetPreviewPackageBySlugAsync(string slug, CancellationToken ct)
+    {
+        var normalizedSlug = NormalizeSlug(slug);
+        if (string.IsNullOrWhiteSpace(normalizedSlug))
+        {
+            return null;
+        }
+
+        var destination = await _db.Destinations
+            .AsNoTracking()
+            .Include(item => item.Country)
+            .Include(item => item.Departures)
+            .FirstOrDefaultAsync(item => item.Slug == normalizedSlug, ct);
+
+        if (destination is null)
+        {
+            return null;
+        }
+
+        return MapPublicDetail(destination, usePreviewHeroImage: true);
+    }
+
     public async Task<(byte[] Bytes, string ContentType)?> GetPublicHeroImageBySlugAsync(string slug, CancellationToken ct)
     {
         var normalizedSlug = NormalizeSlug(slug);
@@ -578,7 +600,7 @@ public class DestinationService : IDestinationService
         };
     }
 
-    private static PublicPackageDetailDto? MapPublicDetail(Destination destination)
+    private static PublicPackageDetailDto? MapPublicDetail(Destination destination, bool usePreviewHeroImage = false)
     {
         var primaryDeparture = destination.Departures
             .Where(departure => departure.IsActive && departure.IsPrimary)
@@ -606,7 +628,11 @@ public class DestinationService : IDestinationService
             CountrySlug = destination.Country?.Slug,
             DestinationOrder = destination.DisplayOrder,
             GeneralInfo = destination.GeneralInfo,
-            HeroImageUrl = destination.HeroImageStoredFileName is null ? null : $"/api/public/packages/{destination.Slug}/hero-image",
+            HeroImageUrl = destination.HeroImageStoredFileName is null
+                ? null
+                : usePreviewHeroImage
+                    ? $"/api/destinations/{destination.PublicId}/hero-image"
+                    : $"/api/public/packages/{destination.Slug}/hero-image",
             FromPrice = primaryDeparture.SalePrice,
             Currency = primaryDeparture.Currency,
             PrimaryDeparture = MapPublicDeparture(primaryDeparture),

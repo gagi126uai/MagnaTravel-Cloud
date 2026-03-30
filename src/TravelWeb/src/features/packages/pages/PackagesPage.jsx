@@ -235,7 +235,8 @@ export default function PackagesPage() {
       return;
     }
 
-    window.open(buildAppUrl(country.countryPagePath), "_blank", "noopener,noreferrer");
+    const previewPath = country.countryPagePath.replace("/embed/", "/preview/");
+    window.open(buildAppUrl(previewPath), "_blank", "noopener,noreferrer");
   }
 
   function openDestinationOnWeb(destination) {
@@ -244,7 +245,13 @@ export default function PackagesPage() {
       return;
     }
 
-    window.open(buildAppUrl(destination.publicPagePath), "_blank", "noopener,noreferrer");
+    const previewPath = destination.publicPagePath.replace("/embed/", "/preview/");
+    const previewUrl = new URL(buildAppUrl(previewPath));
+    if (destination.countrySlug) {
+      previewUrl.searchParams.set("countrySlug", destination.countrySlug);
+    }
+
+    window.open(previewUrl.toString(), "_blank", "noopener,noreferrer");
   }
 
   async function copyCountryPublication(country) {

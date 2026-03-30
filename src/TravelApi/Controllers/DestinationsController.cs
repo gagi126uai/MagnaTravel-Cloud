@@ -41,6 +41,15 @@ public class DestinationsController : ControllerBase
         }
     }
 
+    [HttpGet("preview/by-slug/{slug}")]
+    public async Task<ActionResult<PublicPackageDetailDto>> GetPreviewBySlug(
+        string slug,
+        CancellationToken cancellationToken)
+    {
+        var preview = await _destinationService.GetPreviewPackageBySlugAsync(slug, cancellationToken);
+        return preview is null ? NotFound() : Ok(preview);
+    }
+
     [HttpPost]
     public async Task<ActionResult<DestinationDetailDto>> Create(
         [FromBody] DestinationUpsertRequest request,

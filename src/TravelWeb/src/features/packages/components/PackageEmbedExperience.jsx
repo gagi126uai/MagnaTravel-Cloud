@@ -9,7 +9,7 @@ import {
   Send,
   User,
 } from "lucide-react";
-import { showError, showSuccess } from "../../../alerts";
+import { showError, showInfo, showSuccess } from "../../../alerts";
 
 const leadFormInitialState = {
   fullName: "",
@@ -82,6 +82,8 @@ export function PackageEmbedExperience({
   embedKey,
   selector = null,
   onSubmitLead,
+  leadPreviewMode = false,
+  previewNotice = "",
   loadingLabel = "Cargando paquete...",
   emptyTitle = "Paquete no disponible",
   emptyDescription = "Esta ficha todavia no esta publicada o ya no tiene una salida principal activa.",
@@ -276,6 +278,12 @@ export function PackageEmbedExperience({
     setSubmitting(true);
 
     try {
+      if (leadPreviewMode) {
+        showInfo("Esta vista previa no envia consultas reales. La captura se activara cuando el destino este visible en el sitio.", "Vista previa");
+        closeLeadModal();
+        return;
+      }
+
       await onSubmitLead({
         packageSlug: packageData?.slug || "",
         fullName: leadForm.fullName.trim(),
@@ -376,7 +384,7 @@ export function PackageEmbedExperience({
                 </div>
 
                 <div className="mt-6 rounded-[1.2rem] border border-[#d8e8e5] bg-[#f5fbf8] px-4 py-4 text-sm text-slate-600">
-                  Selecciona una fecha en la tabla de abajo para enviar la consulta con la salida elegida.
+                  {previewNotice || "Selecciona una fecha en la tabla de abajo para enviar la consulta con la salida elegida."}
                 </div>
               </aside>
             </div>

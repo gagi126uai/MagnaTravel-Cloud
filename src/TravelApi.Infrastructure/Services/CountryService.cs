@@ -82,6 +82,20 @@ public class CountryService : ICountryService
 
     public async Task<PublicCountryEmbedDto?> GetPublicCountryBySlugAsync(string countrySlug, CancellationToken ct)
     {
+        return await GetCountryEmbedBySlugAsync(countrySlug, includeOnlyPublished: true, returnEmptyCountry: false, ct);
+    }
+
+    public async Task<PublicCountryEmbedDto?> GetPreviewCountryBySlugAsync(string countrySlug, CancellationToken ct)
+    {
+        return await GetCountryEmbedBySlugAsync(countrySlug, includeOnlyPublished: false, returnEmptyCountry: true, ct);
+    }
+
+    private async Task<PublicCountryEmbedDto?> GetCountryEmbedBySlugAsync(
+        string countrySlug,
+        bool includeOnlyPublished,
+        bool returnEmptyCountry,
+        CancellationToken ct)
+    {
         var normalizedCountrySlug = NormalizeSlug(countrySlug);
         if (string.IsNullOrWhiteSpace(normalizedCountrySlug))
         {
@@ -100,7 +114,7 @@ public class CountryService : ICountryService
         }
 
         var destinations = country.Destinations
-            .Where(item => item.IsPublished)
+            .Where(item => !includeOnlyPublished || item.IsPublished)
             .Select(item => new
             {
                 Destination = item,
@@ -122,7 +136,7 @@ public class CountryService : ICountryService
             })
             .ToList();
 
-        if (destinations.Count == 0)
+        if (!returnEmptyCountry && destinations.Count == 0)
         {
             return null;
         }

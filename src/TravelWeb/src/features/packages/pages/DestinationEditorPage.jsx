@@ -353,7 +353,13 @@ export default function DestinationEditorPage() {
       return;
     }
 
-    window.open(buildAppUrl(form.publicPagePath), "_blank", "noopener,noreferrer");
+    const previewPath = form.publicPagePath.replace("/embed/", "/preview/");
+    const previewUrl = new URL(buildAppUrl(previewPath));
+    if (form.countrySlug) {
+      previewUrl.searchParams.set("countrySlug", form.countrySlug);
+    }
+
+    window.open(previewUrl.toString(), "_blank", "noopener,noreferrer");
   }
 
   async function publishDestination() {

@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { PackageEmbedExperience } from "../features/packages/components/PackageEmbedExperience";
 
-export default function PublicPackageEmbedPage() {
+export default function PublicPackageEmbedPage({ preview = false }) {
   const { slug = "" } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -20,7 +20,9 @@ export default function PublicPackageEmbedPage() {
       setLoading(true);
 
       try {
-        const response = await api.get(`/public/packages/${slug}`);
+        const response = await api.get(
+          preview ? `/destinations/preview/by-slug/${slug}` : `/public/packages/${slug}`
+        );
         if (!cancelled) {
           setPackageData(response);
         }
@@ -52,7 +54,9 @@ export default function PublicPackageEmbedPage() {
 
     async function loadCountry() {
       try {
-        const response = await api.get(`/public/countries/${countrySlug}`);
+        const response = await api.get(
+          preview ? `/countries/preview/by-slug/${countrySlug}` : `/public/countries/${countrySlug}`
+        );
         if (!cancelled) {
           setCountryData(response);
         }
@@ -87,7 +91,7 @@ export default function PublicPackageEmbedPage() {
     }
 
     navigate({
-      pathname: `/embed/packages/${nextPackageSlug}`,
+      pathname: `${preview ? "/preview" : "/embed"}/packages/${nextPackageSlug}`,
       search: params.toString() ? `?${params.toString()}` : "",
     });
   }
@@ -139,11 +143,21 @@ export default function PublicPackageEmbedPage() {
     <PackageEmbedExperience
       packageData={packageData}
       loading={loading}
-      embedKey={`package:${slug}:${countrySlug || "direct"}`}
+      embedKey={`${preview ? "preview-package" : "package"}:${slug}:${countrySlug || "direct"}`}
       selector={selector}
       onSubmitLead={submitLead}
-      emptyTitle="Paquete no disponible"
-      emptyDescription="Esta propuesta no esta publicada en este momento o el enlace ya no esta disponible."
+      leadPreviewMode={preview}
+      previewNotice={
+        preview
+          ? "Esta es una vista previa interna. Cuando el destino este visible en el sitio, las consultas entraran desde aqui."
+          : ""
+      }
+      emptyTitle={preview ? "Vista previa no disponible" : "Paquete no disponible"}
+      emptyDescription={
+        preview
+          ? "Esta propuesta todavia no tiene una salida visible lista para la vista previa o el enlace ya no esta disponible."
+          : "Esta propuesta no esta publicada en este momento o el enlace ya no esta disponible."
+      }
     />
   );
 }

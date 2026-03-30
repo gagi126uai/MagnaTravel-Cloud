@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { PackageEmbedExperience } from "../features/packages/components/PackageEmbedExperience";
 
-export default function PublicCountryEmbedPage() {
+export default function PublicCountryEmbedPage({ preview = false }) {
   const { countrySlug = "" } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -19,7 +19,9 @@ export default function PublicCountryEmbedPage() {
       setLoading(true);
 
       try {
-        const response = await api.get(`/public/countries/${countrySlug}`);
+        const response = await api.get(
+          preview ? `/countries/preview/by-slug/${countrySlug}` : `/public/countries/${countrySlug}`
+        );
         if (!cancelled) {
           setCountryData(response);
           setSelectedPackageSlug("");
@@ -58,7 +60,7 @@ export default function PublicCountryEmbedPage() {
     params.set("countrySlug", countrySlug);
 
     navigate({
-      pathname: `/embed/packages/${nextPackageSlug}`,
+      pathname: `${preview ? "/preview" : "/embed"}/packages/${nextPackageSlug}`,
       search: params.toString() ? `?${params.toString()}` : "",
     });
   }
@@ -95,19 +97,36 @@ export default function PublicCountryEmbedPage() {
     );
   }, [countryData, countrySlug, location.search, navigate, selectedPackageSlug]);
 
+  const hasDestinations = (countryData?.destinations || []).length > 0;
+
   return (
     <PackageEmbedExperience
       packageData={null}
       loading={loading}
-      embedKey={`country:${countrySlug}`}
+      embedKey={`${preview ? "preview-country" : "country"}:${countrySlug}`}
       selector={selector}
       onSubmitLead={async () => {}}
       loadingLabel="Cargando destinos..."
-      emptyTitle={countryData ? "Elegi un destino" : "Destinos no disponibles"}
+      leadPreviewMode={preview}
+      emptyTitle={
+        countryData
+          ? hasDestinations
+            ? "Elegi un destino"
+            : "No hay destinos listos"
+          : preview
+            ? "Vista previa no disponible"
+            : "Destinos no disponibles"
+      }
       emptyDescription={
         countryData
-          ? "Selecciona un destino del listado para abrir la ficha real del paquete en este mismo iframe."
-          : "Todavia no hay destinos publicados para este pais o las salidas activas no estan listas."
+          ? hasDestinations
+            ? "Selecciona un destino del listado para abrir la ficha real del paquete en esta misma vista."
+            : preview
+              ? "Todavia no hay destinos con una salida visible listos para la vista previa."
+              : "Todavia no hay destinos publicados para este pais o las salidas activas no estan listas."
+          : preview
+            ? "Todavia no hay destinos con una salida visible listos para la vista previa."
+            : "Todavia no hay destinos publicados para este pais o las salidas activas no estan listas."
       }
     />
   );

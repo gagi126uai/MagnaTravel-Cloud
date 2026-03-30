@@ -160,6 +160,22 @@ export default function App() {
         <Route path="/embed/countries/:countrySlug" element={<PublicCountryEmbedPage />} />
         <Route path="/embed/packages/:slug" element={<PublicPackageEmbedPage />} />
         <Route
+          path="/preview/countries/:countrySlug"
+          element={
+            <PrivateRoute>
+              <PublicCountryEmbedPage preview />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/preview/packages/:slug"
+          element={
+            <PrivateRoute>
+              <PublicPackageEmbedPage preview />
+            </PrivateRoute>
+          }
+        />
+        <Route
           path="/*"
           element={
             <PrivateRoute>

@@ -51,6 +51,15 @@ public class CountriesController : ControllerBase
         }
     }
 
+    [HttpGet("preview/by-slug/{countrySlug}")]
+    public async Task<ActionResult<PublicCountryEmbedDto>> GetPreviewBySlug(
+        string countrySlug,
+        CancellationToken cancellationToken)
+    {
+        var preview = await _countryService.GetPreviewCountryBySlugAsync(countrySlug, cancellationToken);
+        return preview is null ? NotFound() : Ok(preview);
+    }
+
     [HttpPost]
     public async Task<ActionResult<CountryDetailDto>> Create(
         [FromBody] CountryUpsertRequest request,
