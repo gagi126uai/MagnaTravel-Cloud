@@ -254,7 +254,7 @@ public class DestinationService : IDestinationService
         return MapPublicDetail(destination);
     }
 
-    public async Task<PublicPackageDetailDto?> GetPreviewPackageBySlugAsync(string slug, CancellationToken ct)
+    public async Task<PreviewPackageDetailDto?> GetPreviewPackageBySlugAsync(string slug, CancellationToken ct)
     {
         var normalizedSlug = NormalizeSlug(slug);
         if (string.IsNullOrWhiteSpace(normalizedSlug))
@@ -273,7 +273,8 @@ public class DestinationService : IDestinationService
             return null;
         }
 
-        return MapPublicDetail(destination, usePreviewHeroImage: true);
+        var issues = await GetPublishIssuesAsync(destination, ct);
+        return MapPreviewDetail(destination, issues);
     }
 
     public async Task<(byte[] Bytes, string ContentType)?> GetPublicHeroImageBySlugAsync(string slug, CancellationToken ct)
@@ -600,7 +601,25 @@ public class DestinationService : IDestinationService
         };
     }
 
-    private static PublicPackageDetailDto? MapPublicDetail(Destination destination, bool usePreviewHeroImage = false)
+    private static PreviewPackageDepartureDto MapPreviewDeparture(DestinationDeparture departure)
+    {
+        return new PreviewPackageDepartureDto
+        {
+            PublicId = departure.PublicId,
+            StartDate = departure.StartDate,
+            Nights = departure.Nights,
+            TransportLabel = departure.TransportLabel,
+            HotelName = departure.HotelName,
+            MealPlan = departure.MealPlan,
+            RoomBase = departure.RoomBase,
+            Currency = departure.Currency,
+            SalePrice = departure.SalePrice,
+            IsPrimary = departure.IsPrimary,
+            IsActive = departure.IsActive
+        };
+    }
+
+    private static PublicPackageDetailDto? MapPublicDetail(Destination destination)
     {
         var primaryDeparture = destination.Departures
             .Where(departure => departure.IsActive && departure.IsPrimary)
@@ -628,14 +647,53 @@ public class DestinationService : IDestinationService
             CountrySlug = destination.Country?.Slug,
             DestinationOrder = destination.DisplayOrder,
             GeneralInfo = destination.GeneralInfo,
-            HeroImageUrl = destination.HeroImageStoredFileName is null
-                ? null
-                : usePreviewHeroImage
-                    ? $"/api/destinations/{destination.PublicId}/hero-image"
-                    : $"/api/public/packages/{destination.Slug}/hero-image",
+            HeroImageUrl = destination.HeroImageStoredFileName is null ? null : $"/api/public/packages/{destination.Slug}/hero-image",
             FromPrice = primaryDeparture.SalePrice,
             Currency = primaryDeparture.Currency,
             PrimaryDeparture = MapPublicDeparture(primaryDeparture),
+            Departures = departures
+        };
+    }
+
+    private static PreviewPackageDetailDto MapPreviewDetail(Destination destination, IReadOnlyList<string> issues)
+    {
+        var previewPrimaryDeparture = destination.Departures
+            .OrderByDescending(departure => departure.IsActive && departure.IsPrimary)
+            .ThenByDescending(departure => departure.IsPrimary)
+            .ThenByDescending(departure => departure.IsActive)
+            .ThenBy(departure => departure.StartDate)
+            .FirstOrDefault();
+
+        var departures = destination.Departures
+            .OrderByDescending(departure => departure.IsActive)
+            .ThenByDescending(departure => departure.IsPrimary)
+            .ThenBy(departure => departure.StartDate)
+            .Select(MapPreviewDeparture)
+            .ToList();
+
+        var priceReference = destination.Departures
+            .Where(departure => departure.IsActive)
+            .OrderBy(departure => departure.SalePrice)
+            .ThenBy(departure => departure.StartDate)
+            .FirstOrDefault()
+            ?? previewPrimaryDeparture;
+
+        return new PreviewPackageDetailDto
+        {
+            Title = destination.Title,
+            Slug = destination.Slug,
+            Tagline = destination.Tagline,
+            Destination = destination.Name,
+            CountryName = destination.Country?.Name,
+            CountrySlug = destination.Country?.Slug,
+            DestinationOrder = destination.DisplayOrder,
+            GeneralInfo = destination.GeneralInfo,
+            HeroImageUrl = destination.HeroImageStoredFileName is null ? null : $"/api/destinations/{destination.PublicId}/hero-image",
+            FromPrice = priceReference?.SalePrice,
+            Currency = priceReference?.Currency,
+            IsPublished = destination.IsPublished,
+            PublishIssues = issues,
+            PrimaryDeparture = previewPrimaryDeparture is null ? null : MapPreviewDeparture(previewPrimaryDeparture),
             Departures = departures
         };
     }

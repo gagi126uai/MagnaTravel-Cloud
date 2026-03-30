@@ -52,7 +52,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpGet("preview/by-slug/{countrySlug}")]
-    public async Task<ActionResult<PublicCountryEmbedDto>> GetPreviewBySlug(
+    public async Task<ActionResult<PreviewCountryEmbedDto>> GetPreviewBySlug(
         string countrySlug,
         CancellationToken cancellationToken)
     {

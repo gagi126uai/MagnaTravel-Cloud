@@ -133,10 +133,10 @@ export function PackageEmbedExperience({
     setLeadOpen(false);
     setSelectedDeparture(null);
     setLeadForm(leadFormInitialState);
+    setActiveTab("departures");
   }, [packageData?.slug]);
 
-  const primaryDeparture = packageData?.primaryDeparture || null;
-  const departures = packageData?.departures || [];
+  const departures = useMemo(() => packageData?.departures || [], [packageData?.departures]);
   const departuresSorted = useMemo(
     () =>
       [...departures].sort((left, right) => {
@@ -145,6 +145,13 @@ export function PackageEmbedExperience({
         return leftDate - rightDate;
       }),
     [departures]
+  );
+
+  const primaryDeparture = packageData?.primaryDeparture || null;
+  const displayDeparture = useMemo(() => primaryDeparture || departuresSorted[0] || null, [departuresSorted, primaryDeparture]);
+  const hasDepartureVisibility = useMemo(
+    () => departuresSorted.some((departure) => typeof departure?.isActive === "boolean"),
+    [departuresSorted]
   );
 
   const priceLabel = useMemo(() => {
@@ -156,7 +163,7 @@ export function PackageEmbedExperience({
   }, [packageData]);
 
   const dateFact = useMemo(() => {
-    const firstAvailableDeparture = departuresSorted[0] || primaryDeparture;
+    const firstAvailableDeparture = departuresSorted[0] || displayDeparture;
     if (!firstAvailableDeparture) {
       return { label: "Fecha", value: "-" };
     }
@@ -172,7 +179,7 @@ export function PackageEmbedExperience({
       label: "Fecha",
       value: formatDate(firstAvailableDeparture.startDate),
     };
-  }, [departuresSorted, primaryDeparture]);
+  }, [departuresSorted, displayDeparture]);
 
   useEffect(() => {
     if (typeof window === "undefined" || window.parent === window) {
@@ -243,7 +250,7 @@ export function PackageEmbedExperience({
   }, [activeTab, embedId, embedKey, leadOpen, loading, packageData, selectedDeparture, submitting]);
 
   function openLeadModal(departure = null) {
-    setSelectedDeparture(departure || primaryDeparture || null);
+    setSelectedDeparture(departure || displayDeparture || null);
     setLeadForm(leadFormInitialState);
     setLeadOpen(true);
   }
@@ -279,7 +286,10 @@ export function PackageEmbedExperience({
 
     try {
       if (leadPreviewMode) {
-        showInfo("Esta vista previa no envia consultas reales. La captura se activara cuando el destino este visible en el sitio.", "Vista previa");
+        showInfo(
+          "Esta vista previa no envia consultas reales. La captura se activara cuando el destino este visible en el sitio.",
+          "Vista previa"
+        );
         closeLeadModal();
         return;
       }
@@ -318,7 +328,7 @@ export function PackageEmbedExperience({
     );
   }
 
-  if (!packageData || !primaryDeparture) {
+  if (!packageData) {
     return (
       <div
         className={`flex items-center justify-center bg-[linear-gradient(180deg,#f6fbfa_0%,#eff7f5_100%)] px-4 ${
@@ -377,9 +387,9 @@ export function PackageEmbedExperience({
                 </div>
 
                 <div className="mt-6 space-y-3">
-                  <QuickFact label="Transporte" value={primaryDeparture.transportLabel} icon={Plane} />
-                  <QuickFact label="Noches" value={`${primaryDeparture.nights} noches`} icon={CalendarDays} />
-                  <QuickFact label="Regimen" value={primaryDeparture.mealPlan} icon={ChevronRight} />
+                  <QuickFact label="Transporte" value={displayDeparture?.transportLabel} icon={Plane} />
+                  <QuickFact label="Noches" value={displayDeparture ? `${displayDeparture.nights} noches` : "-"} icon={CalendarDays} />
+                  <QuickFact label="Regimen" value={displayDeparture?.mealPlan} icon={ChevronRight} />
                   <QuickFact label={dateFact.label} value={dateFact.value} icon={CalendarDays} />
                 </div>
 
@@ -391,16 +401,8 @@ export function PackageEmbedExperience({
 
             <div className="border-t border-slate-200 px-4 sm:px-6">
               <div className="flex flex-wrap gap-2 pt-4">
-                <TabButton
-                  active={activeTab === "departures"}
-                  onClick={() => setActiveTab("departures")}
-                  label="Fechas y tarifas"
-                />
-                <TabButton
-                  active={activeTab === "info"}
-                  onClick={() => setActiveTab("info")}
-                  label="Informacion general"
-                />
+                <TabButton active={activeTab === "departures"} onClick={() => setActiveTab("departures")} label="Fechas y tarifas" />
+                <TabButton active={activeTab === "info"} onClick={() => setActiveTab("info")} label="Informacion general" />
               </div>
             </div>
 
@@ -414,79 +416,99 @@ export function PackageEmbedExperience({
                     </p>
                   </div>
 
-                  <div className="hidden overflow-hidden rounded-[1.4rem] border border-slate-200 md:block">
-                    <table className="min-w-full divide-y divide-slate-200">
-                      <thead className="bg-slate-50">
-                        <tr className="text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                          <th className="px-4 py-3">Fecha</th>
-                          <th className="px-4 py-3">Noches</th>
-                          <th className="px-4 py-3">Hotel</th>
-                          <th className="px-4 py-3">Regimen</th>
-                          <th className="px-4 py-3">Base</th>
-                          <th className="px-4 py-3">Tarifa</th>
-                          <th className="px-4 py-3 text-right">Accion</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 bg-white">
-                        {departures.map((departure) => (
-                          <tr key={departure.publicId}>
-                            <td className="px-4 py-4 text-sm font-medium text-slate-900">{formatDate(departure.startDate)}</td>
-                            <td className="px-4 py-4 text-sm text-slate-600">{departure.nights}</td>
-                            <td className="px-4 py-4 text-sm text-slate-600">{departure.hotelName}</td>
-                            <td className="px-4 py-4 text-sm text-slate-600">{departure.mealPlan}</td>
-                            <td className="px-4 py-4 text-sm text-slate-600">{departure.roomBase}</td>
-                            <td className="px-4 py-4 text-sm font-bold text-slate-900">
-                              {formatMoney(departure.salePrice, departure.currency)}
-                            </td>
-                            <td className="px-4 py-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() => openLeadModal(departure)}
-                                className="inline-flex items-center rounded-full bg-[#0f4d5b] px-3.5 py-2 text-xs font-bold text-white transition hover:bg-[#0d4350]"
-                              >
-                                Solicitar reserva
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="grid gap-3 md:hidden">
-                    {departures.map((departure) => (
-                      <div key={departure.publicId} className="rounded-[1.4rem] border border-slate-200 bg-white p-4 shadow-sm">
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <p className="text-xs font-bold uppercase tracking-[0.24em] text-teal-700">
-                              {formatDate(departure.startDate)}
-                            </p>
-                            <p className="mt-2 text-lg font-bold text-slate-950">{departure.hotelName}</p>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {departure.nights} noches · {departure.mealPlan} · {departure.roomBase}
-                            </p>
-                          </div>
-                          <p className="text-base font-black text-slate-950">
-                            {formatMoney(departure.salePrice, departure.currency)}
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => openLeadModal(departure)}
-                          className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-[#0f4d5b] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#0d4350]"
-                        >
-                          Solicitar reserva
-                        </button>
+                  {departuresSorted.length === 0 ? (
+                    <div className="rounded-[1.4rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-500">
+                      Aun no hay salidas cargadas para esta propuesta.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="hidden overflow-hidden rounded-[1.4rem] border border-slate-200 md:block">
+                        <table className="min-w-full divide-y divide-slate-200">
+                          <thead className="bg-slate-50">
+                            <tr className="text-left text-xs font-bold uppercase tracking-wider text-slate-500">
+                              <th className="px-4 py-3">Fecha</th>
+                              <th className="px-4 py-3">Noches</th>
+                              <th className="px-4 py-3">Hotel</th>
+                              <th className="px-4 py-3">Regimen</th>
+                              <th className="px-4 py-3">Base</th>
+                              <th className="px-4 py-3">Tarifa</th>
+                              {hasDepartureVisibility ? <th className="px-4 py-3">Estado</th> : null}
+                              <th className="px-4 py-3 text-right">Accion</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {departuresSorted.map((departure) => (
+                              <tr key={departure.publicId}>
+                                <td className="px-4 py-4 text-sm font-medium text-slate-900">{formatDate(departure.startDate)}</td>
+                                <td className="px-4 py-4 text-sm text-slate-600">{departure.nights}</td>
+                                <td className="px-4 py-4 text-sm text-slate-600">{departure.hotelName}</td>
+                                <td className="px-4 py-4 text-sm text-slate-600">{departure.mealPlan}</td>
+                                <td className="px-4 py-4 text-sm text-slate-600">{departure.roomBase}</td>
+                                <td className="px-4 py-4 text-sm font-bold text-slate-900">
+                                  {formatMoney(departure.salePrice, departure.currency)}
+                                </td>
+                                {hasDepartureVisibility ? (
+                                  <td className="px-4 py-4">
+                                    <VisibilityBadge isActive={departure.isActive !== false} />
+                                  </td>
+                                ) : null}
+                                <td className="px-4 py-4 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => openLeadModal(departure)}
+                                    className="inline-flex items-center rounded-full bg-[#0f4d5b] px-3.5 py-2 text-xs font-bold text-white transition hover:bg-[#0d4350]"
+                                  >
+                                    Solicitar reserva
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-                    ))}
-                  </div>
+
+                      <div className="grid gap-3 md:hidden">
+                        {departuresSorted.map((departure) => (
+                          <div key={departure.publicId} className="rounded-[1.4rem] border border-slate-200 bg-white p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-4">
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-[0.24em] text-teal-700">
+                                  {formatDate(departure.startDate)}
+                                </p>
+                                <p className="mt-2 text-lg font-bold text-slate-950">{departure.hotelName}</p>
+                                <p className="mt-1 text-sm text-slate-500">
+                                  {departure.nights} noches | {departure.mealPlan} | {departure.roomBase}
+                                </p>
+                              </div>
+                              <p className="text-base font-black text-slate-950">
+                                {formatMoney(departure.salePrice, departure.currency)}
+                              </p>
+                            </div>
+
+                            {hasDepartureVisibility ? (
+                              <div className="mt-3">
+                                <VisibilityBadge isActive={departure.isActive !== false} />
+                              </div>
+                            ) : null}
+
+                            <button
+                              type="button"
+                              onClick={() => openLeadModal(departure)}
+                              className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-[#0f4d5b] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#0d4350]"
+                            >
+                              Solicitar reserva
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-[1.6rem] border border-slate-200 bg-[linear-gradient(180deg,#fcfffe_0%,#f5fbf8_100%)] p-5 sm:p-6">
                   <h2 className="text-2xl font-bold tracking-tight text-slate-950">Informacion general</h2>
                   <p className="mt-4 whitespace-pre-line text-sm leading-7 text-slate-600">
-                    {packageData.generalInfo || "Sin informacion adicional por el momento."}
+                    {packageData.generalInfo || "Estamos preparando el contenido comercial de esta propuesta."}
                   </p>
                 </div>
               )}
@@ -525,6 +547,18 @@ function QuickFact({ label, value, icon: Icon }) {
   );
 }
 
+function VisibilityBadge({ isActive }) {
+  return (
+    <span
+      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+        isActive ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+      }`}
+    >
+      {isActive ? "Visible" : "En preparacion"}
+    </span>
+  );
+}
+
 function TabButton({ active, onClick, label }) {
   return (
     <button
@@ -558,7 +592,7 @@ function LeadModal({ open, packageTitle, departure, leadForm, submitting, onClos
             <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">Solicitar informacion</h2>
             <p className="mt-2 text-sm text-slate-500">
               {packageTitle}
-              {departure ? ` · ${formatDate(departure.startDate)} · ${formatMoney(departure.salePrice, departure.currency)}` : ""}
+              {departure ? ` | ${formatDate(departure.startDate)} | ${formatMoney(departure.salePrice, departure.currency)}` : ""}
             </p>
           </div>
 
@@ -649,3 +683,4 @@ function Field({ label, icon: Icon, children }) {
     </label>
   );
 }
+

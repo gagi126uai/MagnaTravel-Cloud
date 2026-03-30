@@ -9,12 +9,12 @@ import {
   Eye,
   ImagePlus,
   Loader2,
+  MapPinned,
   Plus,
   Rocket,
   Save,
   Trash2,
   UploadCloud,
-  X,
 } from "lucide-react";
 import { api, buildAppUrl } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
@@ -32,7 +32,7 @@ import {
 
 const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
-const textareaClass = `${inputClass} min-h-[180px] resize-y`;
+const textareaClass = `${inputClass} min-h-[200px] resize-y`;
 
 export default function DestinationEditorPage() {
   const { publicId = "new" } = useParams();
@@ -45,12 +45,26 @@ export default function DestinationEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
-  const [imageFile, setImageFile] = useState(null);
   const [imageInputKey, setImageInputKey] = useState(0);
   const [form, setForm] = useState(createEmptyDestinationForm(null));
+  const [currentStep, setCurrentStep] = useState(0);
   const [departureModalOpen, setDepartureModalOpen] = useState(false);
   const [departureDraft, setDepartureDraft] = useState(createDepartureDraft(true));
   const [editingDepartureId, setEditingDepartureId] = useState(null);
+
+  const steps = useMemo(() => {
+    const baseSteps = [
+      { key: "details", label: "Datos del destino" },
+      { key: "content", label: "Imagen y contenido" },
+      { key: "departures", label: "Salidas" },
+    ];
+
+    if (canPublish) {
+      baseSteps.push({ key: "publication", label: "Publicacion web" });
+    }
+
+    return baseSteps;
+  }, [canPublish]);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +128,7 @@ export default function DestinationEditorPage() {
     const source = form.departures.some((departure) => departure.isActive)
       ? form.departures.filter((departure) => departure.isActive)
       : form.departures;
+
     const ordered = [...source]
       .filter((departure) => departure?.startDate)
       .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime());
@@ -128,90 +143,104 @@ export default function DestinationEditorPage() {
     return sorted[0] || null;
   }, [form.departures]);
 
+  const publicationState = useMemo(() => {
+    if (form.isPublished) {
+      return { label: "Visible en el sitio", tone: "emerald" };
+    }
+
+    if (form.canPublish) {
+      return { label: "Lista para mostrar", tone: "blue" };
+    }
+
+    return { label: "En preparacion", tone: "amber" };
+  }, [form.canPublish, form.isPublished]);
+
   const backPath = form.countryPublicId ? `/packages?country=${form.countryPublicId}` : "/packages";
+  const currentStepKey = steps[currentStep]?.key || steps[0]?.key;
 
   function updateField(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  async function saveDestination(event) {
-    event.preventDefault();
+  function buildPayload() {
+    return {
+      countryPublicId: form.countryPublicId,
+      name: form.name.trim(),
+      title: form.title.trim(),
+      tagline: form.tagline?.trim() || null,
+      displayOrder: Number(form.displayOrder || 0),
+      generalInfo: form.generalInfo?.trim() || null,
+      departures: form.departures.map((departure) => ({
+        publicId: departure.publicId || null,
+        startDate: departure.startDate,
+        nights: Number(departure.nights || 0),
+        transportLabel: departure.transportLabel?.trim() || "",
+        hotelName: departure.hotelName?.trim() || "",
+        mealPlan: departure.mealPlan?.trim() || "",
+        roomBase: departure.roomBase?.trim() || "",
+        currency: departure.currency || "USD",
+        salePrice: Number(departure.salePrice || 0),
+        isPrimary: Boolean(departure.isPrimary),
+        isActive: Boolean(departure.isActive),
+      })),
+    };
+  }
 
+  async function persistDestination(successMessage = "Destino actualizado.") {
     if (!form.countryPublicId) {
       showError("Selecciona un pais antes de guardar.");
-      return;
+      return null;
     }
 
     if (!form.name.trim()) {
       showError("Ingresa el nombre del destino.");
-      return;
+      return null;
     }
 
     if (!form.title.trim()) {
       showError("Ingresa el titulo comercial.");
-      return;
+      return null;
     }
 
     setSaving(true);
     try {
-      const payload = {
-        countryPublicId: form.countryPublicId,
-        name: form.name.trim(),
-        title: form.title.trim(),
-        tagline: form.tagline?.trim() || null,
-        displayOrder: Number(form.displayOrder || 0),
-        generalInfo: form.generalInfo?.trim() || null,
-        departures: form.departures.map((departure) => ({
-          publicId: departure.publicId || null,
-          startDate: departure.startDate,
-          nights: Number(departure.nights || 0),
-          transportLabel: departure.transportLabel?.trim() || "",
-          hotelName: departure.hotelName?.trim() || "",
-          mealPlan: departure.mealPlan?.trim() || "",
-          roomBase: departure.roomBase?.trim() || "",
-          currency: departure.currency || "USD",
-          salePrice: Number(departure.salePrice || 0),
-          isPrimary: Boolean(departure.isPrimary),
-          isActive: Boolean(departure.isActive),
-        })),
-      };
-
       const saved = isNew
-        ? await api.post("/destinations", payload)
-        : await api.put(`/destinations/${form.publicId}`, payload);
+        ? await api.post("/destinations", buildPayload())
+        : await api.put(`/destinations/${form.publicId}`, buildPayload());
 
       setForm(mapDestinationForm(saved));
-      showSuccess(isNew ? "Destino creado." : "Destino actualizado.");
+      showSuccess(isNew ? "Destino creado." : successMessage);
 
       if (isNew) {
         navigate(`/packages/destinations/${saved.publicId}?country=${saved.countryPublicId}`, { replace: true });
       }
+
+      return saved;
     } catch (error) {
       showError(error.message || "No pudimos guardar el destino.");
+      return null;
     } finally {
       setSaving(false);
     }
   }
 
-  async function uploadImage() {
-    if (!form.publicId) {
-      showError("Guarda el destino antes de cargar la imagen.");
+  async function handleImageSelected(file) {
+    if (!file) {
       return;
     }
 
-    if (!imageFile) {
-      showError("Selecciona una imagen para continuar.");
+    if (!form.publicId) {
+      showError("Completa primero los datos del destino para poder cargar la imagen.");
       return;
     }
 
     const payload = new FormData();
-    payload.append("file", imageFile);
+    payload.append("file", file);
 
     setImageUploading(true);
     try {
       const updated = await api.post(`/destinations/${form.publicId}/hero-image`, payload);
       setForm(mapDestinationForm(updated));
-      setImageFile(null);
       setImageInputKey((current) => current + 1);
       showSuccess("Imagen principal actualizada.");
     } catch (error) {
@@ -280,7 +309,7 @@ export default function DestinationEditorPage() {
     setForm((current) => {
       const normalized = {
         ...departureDraft,
-        clientId: editingDepartureId || departureDraft.clientId || `${Date.now()}`,
+        clientId: editingDepartureId || departureDraft.clientId,
         nights: Number(departureDraft.nights || 0),
         salePrice: Number(departureDraft.salePrice || 0),
       };
@@ -313,7 +342,7 @@ export default function DestinationEditorPage() {
     const confirmed = await showConfirm({
       title: "Quitar salida",
       eyebrow: "Salidas",
-      text: "La salida se quitara del destino actual.",
+      text: "La salida se quitara de este destino.",
       confirmText: "Quitar salida",
       confirmColor: "red",
     });
@@ -335,7 +364,7 @@ export default function DestinationEditorPage() {
 
   async function copyPublicationCode() {
     if (!form.publicPagePath) {
-      showError("Guarda el destino antes de copiar el codigo para la web.");
+      showError("Guarda el destino antes de copiarlo para la web.");
       return;
     }
 
@@ -347,14 +376,13 @@ export default function DestinationEditorPage() {
     }
   }
 
-  function openClientView() {
-    if (!form.publicPagePath) {
+  function openClientPreview() {
+    if (!form.slug) {
       showError("Guarda el destino antes de verlo como cliente.");
       return;
     }
 
-    const previewPath = form.publicPagePath.replace("/embed/", "/preview/");
-    const previewUrl = new URL(buildAppUrl(previewPath));
+    const previewUrl = new URL(buildAppUrl(`/preview/packages/${form.slug}`));
     if (form.countrySlug) {
       previewUrl.searchParams.set("countrySlug", form.countrySlug);
     }
@@ -364,15 +392,15 @@ export default function DestinationEditorPage() {
 
   async function publishDestination() {
     if (!form.publicId) {
-      showError("Guarda el destino antes de mostrarlo en la web.");
+      showError("Guarda el destino antes de mostrarlo en el sitio.");
       return;
     }
 
     const confirmed = await showConfirm({
-      title: "Mostrar destino en la web",
+      title: "Mostrar destino en el sitio",
       eyebrow: "Publicacion web",
       text: "El destino quedara visible para los clientes dentro del sitio.",
-      confirmText: "Mostrar en la web",
+      confirmText: "Mostrar en el sitio",
       confirmColor: "emerald",
     });
 
@@ -383,9 +411,9 @@ export default function DestinationEditorPage() {
     try {
       const updated = await api.patch(`/destinations/${form.publicId}/publish`);
       setForm(mapDestinationForm(updated));
-      showSuccess("El destino ya esta visible en la web.");
+      showSuccess("El destino ya esta visible en el sitio.");
     } catch (error) {
-      showError(error.message || "No pudimos mostrar el destino en la web.");
+      showError(error.message || "No pudimos mostrar el destino en el sitio.");
     }
   }
 
@@ -395,10 +423,10 @@ export default function DestinationEditorPage() {
     }
 
     const confirmed = await showConfirm({
-      title: "Retirar destino de la web",
+      title: "Retirar destino del sitio",
       eyebrow: "Publicacion web",
       text: "El destino dejara de mostrarse para los clientes, pero seguira disponible dentro del ERP.",
-      confirmText: "Retirar de la web",
+      confirmText: "Retirar del sitio",
       confirmColor: "amber",
     });
 
@@ -409,10 +437,33 @@ export default function DestinationEditorPage() {
     try {
       const updated = await api.patch(`/destinations/${form.publicId}/unpublish`);
       setForm(mapDestinationForm(updated));
-      showSuccess("El destino dejo de mostrarse en la web.");
+      showSuccess("El destino dejo de mostrarse en el sitio.");
     } catch (error) {
-      showError(error.message || "No pudimos retirar el destino de la web.");
+      showError(error.message || "No pudimos retirar el destino del sitio.");
     }
+  }
+
+  async function handleContinue() {
+    const saved = await persistDestination(currentStep === steps.length - 1 ? "Destino actualizado." : "Cambios guardados.");
+    if (!saved) {
+      return;
+    }
+
+    if (currentStep < steps.length - 1) {
+      setCurrentStep((step) => Math.min(step + 1, steps.length - 1));
+    }
+  }
+
+  function goToStep(index) {
+    if (index === currentStep) {
+      return;
+    }
+
+    if (!form.publicId && index > 0) {
+      return;
+    }
+
+    setCurrentStep(index);
   }
 
   if (loading) {
@@ -427,247 +478,233 @@ export default function DestinationEditorPage() {
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
       <ListPageHeader
         title={isNew ? "Nuevo destino" : form.title || form.name || "Destino"}
-        subtitle="Completa la propuesta comercial, organiza las salidas y revisa la version que vera el cliente."
+        subtitle="Completa la propuesta paso a paso para dejarla lista para el sitio."
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => navigate(backPath)} className="gap-2">
-              <ArrowLeft className="h-4 w-4" />
-              Volver
-            </Button>
-            {canEdit ? (
-              <Button onClick={saveDestination} disabled={saving} className="gap-2">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Guardar
-              </Button>
-            ) : null}
-          </div>
+          <Button variant="outline" onClick={() => navigate(backPath)} className="gap-2">
+            <ArrowLeft className="h-4 w-4" />
+            Volver a destinos
+          </Button>
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-6">
-          <SectionCard
-            title="Datos del destino"
-            description="Aqui defines el nombre comercial, el nombre visible dentro del pais y el orden de aparicion."
-          >
-            <form onSubmit={saveDestination} className="grid gap-4 md:grid-cols-2">
-              <Field label="Nombre del destino">
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(event) => updateField("name", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
-              </Field>
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+        <div className="grid gap-3 md:grid-cols-4">
+          <SummaryCard icon={Building2} label="Pais" value={form.countryName || "-"} />
+          <SummaryCard icon={CheckCircle2} label="Estado" value={publicationState.label} tone={publicationState.tone} />
+          <SummaryCard icon={CalendarDays} label="Proxima salida" value={formatLongDate(nextDepartureDate)} />
+          <SummaryCard
+            icon={MapPinned}
+            label="Precio desde"
+            value={fromPrice ? formatMoney(fromPrice.salePrice, fromPrice.currency) : "-"}
+          />
+        </div>
+      </div>
 
-              <Field label="Titulo comercial">
-                <input
-                  type="text"
-                  value={form.title}
-                  onChange={(event) => updateField("title", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
-              </Field>
-
-              <Field label="Texto destacado">
-                <input
-                  type="text"
-                  value={form.tagline}
-                  onChange={(event) => updateField("tagline", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
-              </Field>
-
-              <Field label="Orden de aparicion">
-                <input
-                  type="number"
-                  min="0"
-                  value={form.displayOrder}
-                  onChange={(event) => updateField("displayOrder", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
-              </Field>
-            </form>
-          </SectionCard>
-
-          <SectionCard
-            title="Imagen principal"
-            description="Esta imagen se muestra en la portada del destino dentro del sitio."
-          >
-            <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40">
-                {form.heroImageUrl ? (
-                  <img src={form.heroImageUrl} alt={form.title || form.name} className="h-56 w-full object-cover" />
-                ) : (
-                  <div className="flex h-56 flex-col items-center justify-center gap-3 px-4 text-center text-slate-400">
-                    <ImagePlus className="h-8 w-8" />
-                    <p className="text-sm">Todavia no cargaste una imagen principal.</p>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-4">
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Usa una imagen horizontal y de buena calidad para que el destino se vea prolijo en el sitio.
-                </p>
-
-                <input
-                  key={imageInputKey}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={(event) => setImageFile(event.target.files?.[0] || null)}
-                  className={inputClass}
-                  disabled={!canEdit || !form.publicId}
-                />
-
-                {!form.publicId ? (
-                  <p className="text-sm text-amber-600 dark:text-amber-300">
-                    Guarda el destino primero para poder cargar la imagen.
-                  </p>
-                ) : null}
-
-                {imageFile ? (
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Archivo seleccionado: {imageFile.name}</p>
-                ) : form.heroImageFileName ? (
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Imagen actual: {form.heroImageFileName}</p>
-                ) : null}
-
-                {canEdit ? (
-                  <Button onClick={uploadImage} disabled={!imageFile || imageUploading || !form.publicId} className="gap-2">
-                    {imageUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                    Cargar imagen
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="Descripcion para la web"
-            description="Este contenido aparece en la seccion informativa que vera el cliente."
-          >
-            <textarea
-              value={form.generalInfo}
-              onChange={(event) => updateField("generalInfo", event.target.value)}
-              className={textareaClass}
-              placeholder="Describe lo incluido, el estilo del viaje y la informacion relevante para el cliente."
-              disabled={!canEdit}
-            />
-          </SectionCard>
-
-          <SectionCard
-            title="Salidas"
-            description="Carga las fechas disponibles, el hotel, la tarifa y el estado de cada salida."
-            action={
-              canEdit ? (
-                <Button onClick={openNewDeparture} className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Agregar salida
-                </Button>
-              ) : null
-            }
-          >
-            {form.departures.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                Todavia no hay salidas cargadas para este destino.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
-                  <thead className="bg-slate-50 dark:bg-slate-950/40">
-                    <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                      <th className="px-4 py-3">Fecha</th>
-                      <th className="px-4 py-3">Noches</th>
-                      <th className="px-4 py-3">Hotel</th>
-                      <th className="px-4 py-3">Regimen</th>
-                      <th className="px-4 py-3">Base</th>
-                      <th className="px-4 py-3">Tarifa</th>
-                      <th className="px-4 py-3">Estado</th>
-                      <th className="px-4 py-3 text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {form.departures.map((departure) => (
-                      <tr key={departure.clientId}>
-                        <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">
-                          {formatLongDate(departure.startDate)}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.nights}</td>
-                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.hotelName}</td>
-                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.mealPlan}</td>
-                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.roomBase}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white">
-                          {formatMoney(departure.salePrice, departure.currency)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-2">
-                            {departure.isPrimary ? <StatusPill tone="indigo">Salida destacada</StatusPill> : null}
-                            <StatusPill tone={departure.isActive ? "emerald" : "amber"}>
-                              {departure.isActive ? "Visible" : "Oculta"}
-                            </StatusPill>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap justify-end gap-2">
-                            {canEdit ? (
-                              <>
-                                <Button variant="outline" size="sm" onClick={() => openEditDeparture(departure)}>
-                                  Editar
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => removeDeparture(departure)} className="gap-2">
-                                  <Trash2 className="h-4 w-4" />
-                                  Quitar
-                                </Button>
-                              </>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </SectionCard>
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+        <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-800">
+          <div className="flex flex-wrap gap-2">
+            {steps.map((step, index) => (
+              <button
+                key={step.key}
+                type="button"
+                onClick={() => goToStep(index)}
+                disabled={!form.publicId && index > 0}
+                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  currentStep === index
+                    ? "bg-indigo-600 text-white"
+                    : index < currentStep || form.publicId
+                      ? "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                      : "bg-slate-100 text-slate-400 dark:bg-slate-900 dark:text-slate-600"
+                }`}
+              >
+                {index + 1}. {step.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="space-y-6">
-          <SectionCard title="Resumen" description="Repasa la informacion principal del destino.">
-            <div className="space-y-3">
-              <SummaryItem icon={Building2} label="Pais" value={form.countryName || "-"} />
-              <SummaryItem icon={CalendarDays} label="Proxima salida" value={formatLongDate(nextDepartureDate)} />
-              <SummaryItem
-                icon={CheckCircle2}
-                label="Precio desde"
-                value={fromPrice ? formatMoney(fromPrice.salePrice, fromPrice.currency) : "-"}
-              />
-            </div>
-          </SectionCard>
+        <div className="p-5">
+          {currentStepKey === "details" ? (
+            <WizardSection
+              title="Datos del destino"
+              description="Define como se identifica esta propuesta dentro del pais y en el sitio."
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Nombre del destino">
+                  <input
+                    type="text"
+                    value={form.name}
+                    onChange={(event) => updateField("name", event.target.value)}
+                    className={inputClass}
+                    disabled={!canEdit}
+                  />
+                </Field>
 
-          {canPublish ? (
-            <SectionCard
+                <Field label="Titulo comercial">
+                  <input
+                    type="text"
+                    value={form.title}
+                    onChange={(event) => updateField("title", event.target.value)}
+                    className={inputClass}
+                    disabled={!canEdit}
+                  />
+                </Field>
+
+                <Field label="Orden de aparicion">
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.displayOrder}
+                    onChange={(event) => updateField("displayOrder", event.target.value)}
+                    className={inputClass}
+                    disabled={!canEdit}
+                  />
+                </Field>
+              </div>
+            </WizardSection>
+          ) : null}
+
+          {currentStepKey === "content" ? (
+            <WizardSection
+              title="Imagen y contenido"
+              description="Carga la imagen principal y el texto que vera el cliente."
+            >
+              <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+                <ImageUploadCard
+                  canEdit={canEdit}
+                  disabled={!form.publicId}
+                  uploading={imageUploading}
+                  imageUrl={form.heroImageUrl}
+                  imageName={form.heroImageFileName}
+                  imageInputKey={imageInputKey}
+                  title={form.title || form.name || "Destino"}
+                  onFileChange={(event) => handleImageSelected(event.target.files?.[0] || null)}
+                />
+
+                <div className="space-y-4">
+                  <Field label="Texto destacado">
+                    <input
+                      type="text"
+                      value={form.tagline}
+                      onChange={(event) => updateField("tagline", event.target.value)}
+                      className={inputClass}
+                      disabled={!canEdit}
+                    />
+                  </Field>
+
+                  <Field label="Descripcion para el sitio">
+                    <textarea
+                      value={form.generalInfo}
+                      onChange={(event) => updateField("generalInfo", event.target.value)}
+                      className={textareaClass}
+                      placeholder="Cuenta que incluye la propuesta, el estilo del viaje y la informacion relevante para el cliente."
+                      disabled={!canEdit}
+                    />
+                  </Field>
+                </div>
+              </div>
+            </WizardSection>
+          ) : null}
+
+          {currentStepKey === "departures" ? (
+            <WizardSection
+              title="Salidas"
+              description="Carga fechas, hoteles y tarifas para cada opcion disponible."
+              action={
+                canEdit ? (
+                  <Button onClick={openNewDeparture} className="gap-2">
+                    <Plus className="h-4 w-4" />
+                    Agregar salida
+                  </Button>
+                ) : null
+              }
+            >
+              {form.departures.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 px-4 py-12 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  Todavia no hay salidas cargadas para este destino.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
+                    <thead className="bg-slate-50 dark:bg-slate-950/40">
+                      <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        <th className="px-4 py-3">Fecha</th>
+                        <th className="px-4 py-3">Noches</th>
+                        <th className="px-4 py-3">Hotel</th>
+                        <th className="px-4 py-3">Regimen</th>
+                        <th className="px-4 py-3">Base</th>
+                        <th className="px-4 py-3">Tarifa</th>
+                        <th className="px-4 py-3">Estado</th>
+                        <th className="px-4 py-3 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {form.departures.map((departure) => (
+                        <tr key={departure.clientId}>
+                          <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">
+                            {formatLongDate(departure.startDate)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.nights}</td>
+                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.hotelName}</td>
+                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.mealPlan}</td>
+                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.roomBase}</td>
+                          <td className="px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white">
+                            {formatMoney(departure.salePrice, departure.currency)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              {departure.isPrimary ? <StatusPill tone="indigo">Destacada</StatusPill> : null}
+                              <StatusPill tone={departure.isActive ? "emerald" : "amber"}>
+                                {departure.isActive ? "Visible" : "Oculta"}
+                              </StatusPill>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              {canEdit ? (
+                                <>
+                                  <Button variant="outline" size="sm" onClick={() => openEditDeparture(departure)}>
+                                    Editar
+                                  </Button>
+                                  <Button variant="outline" size="sm" onClick={() => removeDeparture(departure)} className="gap-2">
+                                    <Trash2 className="h-4 w-4" />
+                                    Quitar
+                                  </Button>
+                                </>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </WizardSection>
+          ) : null}
+
+          {currentStepKey === "publication" ? (
+            <WizardSection
               title="Publicacion web"
-              description="Desde aqui controlas la presencia del destino en el sitio."
+              description="Revisa el estado del destino, mira la vista del cliente y controla su presencia en el sitio."
             >
               <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Estado actual</p>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                      {form.isPublished ? "El destino esta visible para los clientes." : "El destino todavia no se muestra en la web."}
-                    </p>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white">Estado actual</p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                        {form.isPublished
+                          ? "Este destino ya esta visible para los clientes."
+                          : "Todavia no esta visible en el sitio. Puedes revisarlo antes de mostrarlo."}
+                      </p>
+                    </div>
+                    <StatusPill tone={publicationState.tone}>{publicationState.label}</StatusPill>
                   </div>
-                  <StatusPill tone={form.isPublished ? "emerald" : "amber"}>
-                    {form.isPublished ? "Visible" : "No visible"}
-                  </StatusPill>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={openClientView} disabled={!form.publicPagePath} className="gap-2">
+                  <Button variant="outline" onClick={openClientPreview} disabled={!form.slug} className="gap-2">
                     <Eye className="h-4 w-4" />
                     Ver como cliente
                   </Button>
@@ -680,7 +717,7 @@ export default function DestinationEditorPage() {
                 {form.publishIssues?.length > 0 ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/40 dark:bg-amber-900/10">
                     <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
-                      Para mostrar este destino en la web falta:
+                      Antes de mostrar este destino en el sitio, falta completar:
                     </p>
                     <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-700 dark:text-amber-300">
                       {form.publishIssues.map((issue) => (
@@ -694,17 +731,30 @@ export default function DestinationEditorPage() {
                   {form.isPublished ? (
                     <Button variant="outline" onClick={unpublishDestination} className="gap-2">
                       <Rocket className="h-4 w-4" />
-                      Retirar de la web
+                      Retirar del sitio
                     </Button>
                   ) : (
                     <Button onClick={publishDestination} disabled={!form.publicId || !form.canPublish} className="gap-2">
                       <Rocket className="h-4 w-4" />
-                      Mostrar en la web
+                      Mostrar en el sitio
                     </Button>
                   )}
                 </div>
               </div>
-            </SectionCard>
+            </WizardSection>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+          <Button variant="outline" onClick={() => setCurrentStep((step) => Math.max(step - 1, 0))} disabled={currentStep === 0}>
+            Anterior
+          </Button>
+
+          {canEdit ? (
+            <Button onClick={handleContinue} disabled={saving} className="gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : currentStep === steps.length - 1 ? <Save className="h-4 w-4" /> : <UploadCloud className="h-4 w-4" />}
+              {currentStep === steps.length - 1 ? "Guardar cambios" : "Guardar y continuar"}
+            </Button>
           ) : null}
         </div>
       </div>
@@ -721,18 +771,43 @@ export default function DestinationEditorPage() {
   );
 }
 
-function SectionCard({ title, description, action, children }) {
+function WizardSection({ title, description, action, children }) {
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+    <section className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold text-slate-900 dark:text-white">{title}</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
           {description ? <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p> : null}
         </div>
         {action}
       </div>
-      <div className="mt-5">{children}</div>
+      {children}
     </section>
+  );
+}
+
+function SummaryCard({ icon: Icon, label, value, tone = "slate" }) {
+  const toneClass =
+    tone === "emerald"
+      ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200"
+      : tone === "blue"
+        ? "bg-blue-50 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200"
+        : tone === "amber"
+          ? "bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200"
+          : "bg-slate-50 text-slate-900 dark:bg-slate-950/40 dark:text-white";
+
+  return (
+    <div className={`rounded-xl border border-slate-200 p-4 dark:border-slate-800 ${toneClass}`}>
+      <div className="flex items-center gap-3">
+        <div className="rounded-full bg-white/80 p-2 shadow-sm dark:bg-slate-900/80">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{label}</p>
+          <p className="mt-1 truncate text-sm font-semibold">{value}</p>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -745,16 +820,60 @@ function Field({ label, children }) {
   );
 }
 
-function SummaryItem({ icon: Icon, label, value }) {
+function ImageUploadCard({
+  canEdit,
+  disabled,
+  uploading,
+  imageUrl,
+  imageName,
+  imageInputKey,
+  title,
+  onFileChange,
+}) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-950/40">
-      <div className="rounded-full bg-white p-2 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-300">
-        <Icon className="h-4 w-4" />
+    <div className="space-y-4">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40">
+        {imageUrl ? (
+          <img src={imageUrl} alt={title} className="h-64 w-full object-cover" />
+        ) : (
+          <div className="flex h-64 flex-col items-center justify-center gap-3 px-4 text-center text-slate-400">
+            <ImagePlus className="h-8 w-8" />
+            <p className="text-sm">Todavia no cargaste una imagen principal.</p>
+          </div>
+        )}
       </div>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
-        <p className="text-sm font-medium text-slate-900 dark:text-white">{value}</p>
-      </div>
+
+      <label
+        className={`block rounded-xl border border-dashed px-4 py-5 text-center transition ${
+          disabled || !canEdit
+            ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40"
+            : "cursor-pointer border-indigo-200 bg-indigo-50/50 text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 dark:border-indigo-900/50 dark:bg-indigo-900/10 dark:text-slate-200"
+        }`}
+      >
+        <input
+          key={imageInputKey}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          onChange={onFileChange}
+          className="hidden"
+          disabled={disabled || !canEdit || uploading}
+        />
+        <div className="flex flex-col items-center gap-3">
+          {uploading ? <Loader2 className="h-6 w-6 animate-spin text-indigo-500" /> : <UploadCloud className="h-6 w-6 text-indigo-500" />}
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">
+              {disabled ? "Completa primero los datos del destino" : "Seleccionar imagen principal"}
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {disabled
+                ? "Cuando guardes el primer paso vas a poder cargar la imagen."
+                : "La imagen se carga automaticamente apenas la seleccionas."}
+            </p>
+          </div>
+        </div>
+      </label>
+
+      {imageName ? <p className="text-sm text-slate-500 dark:text-slate-400">Imagen actual: {imageName}</p> : null}
     </div>
   );
 }
@@ -764,6 +883,7 @@ function StatusPill({ children, tone = "slate" }) {
     slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
     emerald: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
     amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+    blue: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
     indigo: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300",
   };
 
@@ -778,27 +898,18 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
       <div className="w-full max-w-3xl rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-              {editing ? "Editar salida" : "Nueva salida"}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Completa la fecha, el alojamiento y la tarifa para esta salida.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          >
-            <X className="h-5 w-5" />
-          </button>
+        <div className="border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+            {editing ? "Editar salida" : "Nueva salida"}
+          </h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Completa la informacion comercial para esta fecha.
+          </p>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4 p-6">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Field label="Fecha">
+        <form onSubmit={onSubmit} className="space-y-5 p-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Field label="Fecha de salida">
               <input
                 type="date"
                 value={draft.startDate}
@@ -806,6 +917,7 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
                 className={inputClass}
               />
             </Field>
+
             <Field label="Noches">
               <input
                 type="number"
@@ -815,6 +927,7 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
                 className={inputClass}
               />
             </Field>
+
             <Field label="Moneda">
               <select value={draft.currency} onChange={(event) => onChange("currency", event.target.value)} className={inputClass}>
                 <option value="USD">USD</option>
@@ -822,10 +935,11 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
                 <option value="EUR">EUR</option>
               </select>
             </Field>
+
             <Field label="Tarifa">
               <input
                 type="number"
-                min="1"
+                min="0"
                 step="0.01"
                 value={draft.salePrice}
                 onChange={(event) => onChange("salePrice", event.target.value)}
@@ -835,14 +949,6 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Transporte">
-              <input
-                type="text"
-                value={draft.transportLabel}
-                onChange={(event) => onChange("transportLabel", event.target.value)}
-                className={inputClass}
-              />
-            </Field>
             <Field label="Hotel">
               <input
                 type="text"
@@ -851,9 +957,16 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
                 className={inputClass}
               />
             </Field>
-          </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Transporte">
+              <input
+                type="text"
+                value={draft.transportLabel}
+                onChange={(event) => onChange("transportLabel", event.target.value)}
+                className={inputClass}
+              />
+            </Field>
+
             <Field label="Regimen">
               <input
                 type="text"
@@ -862,6 +975,7 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
                 className={inputClass}
               />
             </Field>
+
             <Field label="Base">
               <input
                 type="text"
@@ -873,22 +987,30 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-3 text-sm text-slate-700 dark:border-slate-800 dark:text-slate-200">
+            <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
               <input
                 type="checkbox"
-                checked={Boolean(draft.isPrimary)}
+                checked={draft.isPrimary}
                 onChange={(event) => onChange("isPrimary", event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
               />
-              Marcar como salida destacada
+              <div>
+                <p className="text-sm font-medium text-slate-900 dark:text-white">Salida destacada</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Se usa como referencia principal del destino.</p>
+              </div>
             </label>
 
-            <label className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-3 text-sm text-slate-700 dark:border-slate-800 dark:text-slate-200">
+            <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
               <input
                 type="checkbox"
-                checked={Boolean(draft.isActive)}
+                checked={draft.isActive}
                 onChange={(event) => onChange("isActive", event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
               />
-              Mostrar esta salida en la web
+              <div>
+                <p className="text-sm font-medium text-slate-900 dark:text-white">Visible en el sitio</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Si queda apagada, la salida no se muestra al cliente.</p>
+              </div>
             </label>
           </div>
 
@@ -903,4 +1025,3 @@ function DepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) 
     </div>
   );
 }
-

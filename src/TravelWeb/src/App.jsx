@@ -28,6 +28,8 @@ import PaymentsTrashPage from "./features/payments/pages/PaymentsTrashPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import PublicCountryEmbedPage from "./pages/PublicCountryEmbedPage";
 import PublicPackageEmbedPage from "./pages/PublicPackageEmbedPage";
+import PreviewCountryPage from "./pages/PreviewCountryPage";
+import PreviewPackagePage from "./pages/PreviewPackagePage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
 import PackagesPage from "./features/packages/pages/PackagesPage";
@@ -163,7 +165,7 @@ export default function App() {
           path="/preview/countries/:countrySlug"
           element={
             <PrivateRoute>
-              <PublicCountryEmbedPage preview />
+              <PreviewCountryPage />
             </PrivateRoute>
           }
         />
@@ -171,7 +173,7 @@ export default function App() {
           path="/preview/packages/:slug"
           element={
             <PrivateRoute>
-              <PublicPackageEmbedPage preview />
+              <PreviewPackagePage />
             </PrivateRoute>
           }
         />

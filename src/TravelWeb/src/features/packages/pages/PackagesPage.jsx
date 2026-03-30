@@ -18,7 +18,20 @@ import { hasPermission } from "../../../auth";
 import { Button } from "../../../components/ui/button";
 import { ListPageHeader } from "../../../components/ui/ListPageHeader";
 import { ListToolbar } from "../../../components/ui/ListToolbar";
+import { ListEmptyState } from "../../../components/ui/ListEmptyState";
+import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { useDebounce } from "../../../hooks/useDebounce";
+import {
+  DataGrid,
+  DataGridActionCell,
+  DataGridBody,
+  DataGridCell,
+  DataGridEmptyState,
+  DataGridHeader,
+  DataGridHeaderCell,
+  DataGridHeaderRow,
+  DataGridRow,
+} from "../../../components/ui/DataGrid";
 import {
   buildCountryPublicationSnippet,
   buildDestinationPublicationSnippet,
@@ -148,7 +161,9 @@ export default function PackagesPage() {
       const searchValue = destinationSearch.trim().toLowerCase();
       const matchesSearch =
         !searchValue ||
-        `${destination.title || ""} ${destination.name || ""}`.toLowerCase().includes(searchValue);
+        `${destination.title || ""} ${destination.name || ""} ${destination.tagline || ""}`
+          .toLowerCase()
+          .includes(searchValue);
 
       if (!matchesSearch) {
         return false;
@@ -229,24 +244,22 @@ export default function PackagesPage() {
     navigate(`/packages/destinations/new?country=${selectedCountryPublicId}`);
   }
 
-  function openCountryOnWeb(country) {
-    if (!country?.countryPagePath) {
-      showError("El pais todavia no esta listo para la web.");
+  function openCountryPreview(country) {
+    if (!country?.slug) {
+      showError("Todavia no pudimos preparar la vista previa de este pais.");
       return;
     }
 
-    const previewPath = country.countryPagePath.replace("/embed/", "/preview/");
-    window.open(buildAppUrl(previewPath), "_blank", "noopener,noreferrer");
+    window.open(buildAppUrl(`/preview/countries/${country.slug}`), "_blank", "noopener,noreferrer");
   }
 
-  function openDestinationOnWeb(destination) {
-    if (!destination?.publicPagePath) {
-      showError("Guarda el destino para verlo como cliente.");
+  function openDestinationPreview(destination) {
+    if (!destination?.slug) {
+      showError("Guarda el destino antes de verlo como cliente.");
       return;
     }
 
-    const previewPath = destination.publicPagePath.replace("/embed/", "/preview/");
-    const previewUrl = new URL(buildAppUrl(previewPath));
+    const previewUrl = new URL(buildAppUrl(`/preview/packages/${destination.slug}`));
     if (destination.countrySlug) {
       previewUrl.searchParams.set("countrySlug", destination.countrySlug);
     }
@@ -256,7 +269,7 @@ export default function PackagesPage() {
 
   async function copyCountryPublication(country) {
     if (!country?.countryPagePath) {
-      showError("El pais todavia no esta listo para la web.");
+      showError("El pais todavia no esta listo para copiarlo a la web.");
       return;
     }
 
@@ -270,7 +283,7 @@ export default function PackagesPage() {
 
   async function copyDestinationPublication(destination) {
     if (!destination?.publicPagePath) {
-      showError("Guarda el destino para copiar su codigo.");
+      showError("Guarda el destino antes de copiarlo para la web.");
       return;
     }
 
@@ -284,10 +297,10 @@ export default function PackagesPage() {
 
   async function handlePublish(destination) {
     const confirmed = await showConfirm({
-      title: "Mostrar destino en la web",
+      title: "Mostrar destino en el sitio",
       eyebrow: "Publicacion web",
       text: "El destino quedara visible para los clientes dentro del sitio.",
-      confirmText: "Mostrar en la web",
+      confirmText: "Mostrar en el sitio",
       confirmColor: "emerald",
     });
 
@@ -300,18 +313,18 @@ export default function PackagesPage() {
       setDestinations((current) =>
         current.map((item) => (item.publicId === updated.publicId ? updated : item))
       );
-      showSuccess("El destino ya esta visible en la web.");
+      showSuccess("El destino ya esta visible en el sitio.");
     } catch (error) {
-      showError(error.message || "No pudimos mostrar el destino en la web.");
+      showError(error.message || "No pudimos mostrar el destino en el sitio.");
     }
   }
 
   async function handleUnpublish(destination) {
     const confirmed = await showConfirm({
-      title: "Retirar destino de la web",
+      title: "Retirar destino del sitio",
       eyebrow: "Publicacion web",
       text: "El destino dejara de mostrarse para los clientes, pero seguira disponible dentro del ERP.",
-      confirmText: "Retirar de la web",
+      confirmText: "Retirar del sitio",
       confirmColor: "amber",
     });
 
@@ -324,9 +337,9 @@ export default function PackagesPage() {
       setDestinations((current) =>
         current.map((item) => (item.publicId === updated.publicId ? updated : item))
       );
-      showSuccess("El destino dejo de mostrarse en la web.");
+      showSuccess("El destino dejo de mostrarse en el sitio.");
     } catch (error) {
-      showError(error.message || "No pudimos retirar el destino de la web.");
+      showError(error.message || "No pudimos retirar el destino del sitio.");
     }
   }
 
@@ -334,119 +347,149 @@ export default function PackagesPage() {
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
       <ListPageHeader
         title="Paises y destinos"
-        subtitle="Organiza la oferta por pais, carga destinos y deja listo el contenido comercial del sitio."
+        subtitle="Organiza la oferta del sitio por pais, administra los destinos y deja lista la informacion comercial."
         actions={
           canEdit ? (
-            <Button onClick={openCreateCountryModal} className="gap-2">
-              <Plus className="h-4 w-4" />
-              Nuevo pais
-            </Button>
+            <>
+              <Button variant="outline" onClick={openCreateCountryModal} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Nuevo pais
+              </Button>
+              {selectedCountry ? (
+                <Button onClick={openCreateDestination} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Nuevo destino
+                </Button>
+              ) : null}
+            </>
           ) : null
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Paises</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Selecciona un pais para administrar sus destinos.</p>
-            </div>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
-              {countries.length}
-            </span>
-          </div>
+      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="hidden lg:block">
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+            <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-800">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Paises</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Selecciona un pais para ver sus destinos.
+                  </p>
+                </div>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                  {countries.length}
+                </span>
+              </div>
 
-          <div className="relative mt-4">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={countrySearch}
-              onChange={(event) => setCountrySearch(event.target.value)}
-              placeholder="Buscar pais..."
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              <div className="relative mt-4">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={countrySearch}
+                  onChange={(event) => setCountrySearch(event.target.value)}
+                  placeholder="Buscar pais..."
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+              </div>
+            </div>
+
+            <div className="max-h-[calc(100vh-280px)] space-y-2 overflow-y-auto p-3">
+              {countriesLoading ? (
+                <div className="flex h-48 items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+                </div>
+              ) : countries.length === 0 ? (
+                <ListEmptyState
+                  icon={Building2}
+                  title="Todavia no hay paises"
+                  description="Crea el primero para empezar a organizar el sitio."
+                  compact
+                />
+              ) : (
+                countries.map((country) => (
+                  <CountryListItem
+                    key={country.publicId}
+                    country={country}
+                    selected={country.publicId === selectedCountryPublicId}
+                    onClick={() => syncSelectedCountry(country.publicId)}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </aside>
+        <section className="space-y-4">
+          <div className="lg:hidden">
+            <ListToolbar
+              searchSlot={
+                <select
+                  value={selectedCountryPublicId}
+                  onChange={(event) => syncSelectedCountry(event.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">Selecciona un pais</option>
+                  {countries.map((country) => (
+                    <option key={country.publicId} value={country.publicId}>
+                      {country.name}
+                    </option>
+                  ))}
+                </select>
+              }
             />
           </div>
 
-          <div className="mt-4 space-y-2">
-            {countriesLoading ? (
-              <div className="flex h-48 items-center justify-center">
-                <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
-              </div>
-            ) : countries.length === 0 ? (
-              <EmptyState
-                icon={Building2}
-                title="Todavia no hay paises cargados"
-                description="Crea el primero para empezar a organizar la oferta."
-              />
-            ) : (
-              countries.map((country) => (
-                <CountryListItem
-                  key={country.publicId}
-                  country={country}
-                  selected={country.publicId === selectedCountryPublicId}
-                  onClick={() => syncSelectedCountry(country.publicId)}
-                />
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-4">
           {!selectedCountry ? (
-            <div className="rounded-xl border border-slate-200 bg-white p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-              <EmptyState
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+              <ListEmptyState
                 icon={Globe2}
                 title="Selecciona un pais"
-                description="Desde aqui vas a ver sus destinos, las salidas y la informacion comercial."
+                description="Cuando elijas un pais, aqui vas a ver el resumen de su oferta y los destinos cargados."
               />
             </div>
           ) : (
             <>
               <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="space-y-3">
-                    <div>
-                      <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{selectedCountry.name}</h2>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        {selectedCountry.totalDestinations} destinos cargados, {selectedCountry.publishedDestinations} visibles en el sitio y {selectedCountry.draftDestinations} en preparacion.
-                      </p>
-                    </div>
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Pais seleccionado</p>
+                    <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{selectedCountry.name}</h2>
+                    <p className="mt-2 max-w-2xl text-sm text-slate-500 dark:text-slate-400">
+                      Administra los destinos de este pais, sus salidas y la informacion que se muestra en el sitio.
+                    </p>
+                  </div>
 
+                  {canEdit ? (
                     <div className="flex flex-wrap gap-2">
-                      <SummaryPill label="Destinos" value={selectedCountry.totalDestinations} />
-                      <SummaryPill label="Visibles" value={selectedCountry.publishedDestinations} tone="emerald" />
-                      <SummaryPill label="En preparacion" value={selectedCountry.draftDestinations} tone="amber" />
+                      <Button variant="outline" onClick={() => openEditCountryModal(selectedCountry)} className="gap-2">
+                        <Pencil className="h-4 w-4" />
+                        Editar pais
+                      </Button>
+                      <Button onClick={openCreateDestination} className="gap-2">
+                        <Plus className="h-4 w-4" />
+                        Nuevo destino
+                      </Button>
                     </div>
-                  </div>
+                  ) : null}
+                </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    {canEdit ? (
-                      <>
-                        <Button variant="outline" onClick={() => openEditCountryModal(selectedCountry)} className="gap-2">
-                          <Pencil className="h-4 w-4" />
-                          Editar pais
-                        </Button>
-                        <Button onClick={openCreateDestination} className="gap-2">
-                          <Plus className="h-4 w-4" />
-                          Nuevo destino
-                        </Button>
-                      </>
-                    ) : null}
-                  </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <SummaryCard label="Destinos cargados" value={selectedCountry.totalDestinations} />
+                  <SummaryCard label="Visibles en el sitio" value={selectedCountry.publishedDestinations} tone="emerald" />
+                  <SummaryCard label="En preparacion" value={selectedCountry.draftDestinations} tone="amber" />
                 </div>
 
                 {canPublish ? (
-                  <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/40">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-slate-900 dark:text-white">Publicacion web</p>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">
-                          Comparte esta seleccion de destinos en el sitio y revisa la experiencia que vera el cliente.
+                        <p className="text-sm font-semibold text-slate-900 dark:text-white">Publicacion en el sitio</p>
+                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                          Revisa la experiencia del cliente y copia el codigo necesario para mostrar este pais en la web.
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Button variant="outline" onClick={() => openCountryOnWeb(selectedCountry)} className="gap-2">
+                        <Button variant="outline" onClick={() => openCountryPreview(selectedCountry)} className="gap-2">
                           <Eye className="h-4 w-4" />
                           Ver como cliente
                         </Button>
@@ -481,20 +524,69 @@ export default function PackagesPage() {
                       className={inputClass}
                     >
                       <option value="all">Todos</option>
-                      <option value="visible">Visibles en la web</option>
+                      <option value="visible">Visibles en el sitio</option>
                       <option value="hidden">En preparacion</option>
                     </select>
                   ) : null
                 }
               />
 
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+              <DataGrid minWidth={980}>
+                <DataGridHeader>
+                  <DataGridHeaderRow>
+                    <DataGridHeaderCell>Destino</DataGridHeaderCell>
+                    {canPublish ? <DataGridHeaderCell>Estado en el sitio</DataGridHeaderCell> : null}
+                    <DataGridHeaderCell>Precio desde</DataGridHeaderCell>
+                    <DataGridHeaderCell>Proxima salida</DataGridHeaderCell>
+                    <DataGridHeaderCell>Salidas activas</DataGridHeaderCell>
+                    <DataGridHeaderCell align="right">Acciones</DataGridHeaderCell>
+                  </DataGridHeaderRow>
+                </DataGridHeader>
+                <DataGridBody>
+                  {destinationsLoading ? (
+                    <tr>
+                      <td colSpan={canPublish ? 6 : 5} className="px-4 py-20">
+                        <div className="flex items-center justify-center">
+                          <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
+                        </div>
+                      </td>
+                    </tr>
+                  ) : filteredDestinations.length === 0 ? (
+                    <DataGridEmptyState
+                      colSpan={canPublish ? 6 : 5}
+                      icon={MapPinned}
+                      title={destinations.length === 0 ? "Todavia no hay destinos cargados" : "No encontramos destinos"}
+                      description={
+                        destinations.length === 0
+                          ? "Crea el primer destino de este pais para empezar a cargar salidas y contenido."
+                          : "Ajusta la busqueda o el filtro para ver otros resultados."
+                      }
+                    />
+                  ) : (
+                    filteredDestinations.map((destination) => (
+                      <DestinationTableRow
+                        key={destination.publicId}
+                        destination={destination}
+                        canEdit={canEdit}
+                        canPublish={canPublish}
+                        onEdit={() => openDestinationEditor(destination.publicId)}
+                        onView={() => openDestinationPreview(destination)}
+                        onCopy={() => copyDestinationPublication(destination)}
+                        onPublish={() => handlePublish(destination)}
+                        onUnpublish={() => handleUnpublish(destination)}
+                      />
+                    ))
+                  )}
+                </DataGridBody>
+              </DataGrid>
+
+              <MobileRecordList>
                 {destinationsLoading ? (
-                  <div className="flex h-64 items-center justify-center">
-                    <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
+                  <div className="flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-10 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
                   </div>
                 ) : filteredDestinations.length === 0 ? (
-                  <EmptyState
+                  <ListEmptyState
                     icon={MapPinned}
                     title={destinations.length === 0 ? "Todavia no hay destinos cargados" : "No encontramos destinos"}
                     description={
@@ -502,39 +594,24 @@ export default function PackagesPage() {
                         ? "Crea el primer destino de este pais para empezar a cargar salidas y contenido."
                         : "Ajusta la busqueda o el filtro para ver otros resultados."
                     }
+                    className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
                   />
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
-                      <thead className="bg-slate-50 dark:bg-slate-950/40">
-                        <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                          <th className="px-5 py-3">Destino</th>
-                          {canPublish ? <th className="px-4 py-3">Estado en la web</th> : null}
-                          <th className="px-4 py-3">Precio desde</th>
-                          <th className="px-4 py-3">Proxima salida</th>
-                          <th className="px-4 py-3">Salidas activas</th>
-                          <th className="px-5 py-3 text-right">Acciones</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filteredDestinations.map((destination) => (
-                          <DestinationRow
-                            key={destination.publicId}
-                            destination={destination}
-                            canEdit={canEdit}
-                            canPublish={canPublish}
-                            onEdit={() => openDestinationEditor(destination.publicId)}
-                            onView={() => openDestinationOnWeb(destination)}
-                            onCopy={() => copyDestinationPublication(destination)}
-                            onPublish={() => handlePublish(destination)}
-                            onUnpublish={() => handleUnpublish(destination)}
-                          />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  filteredDestinations.map((destination) => (
+                    <DestinationMobileCard
+                      key={destination.publicId}
+                      destination={destination}
+                      canEdit={canEdit}
+                      canPublish={canPublish}
+                      onEdit={() => openDestinationEditor(destination.publicId)}
+                      onView={() => openDestinationPreview(destination)}
+                      onCopy={() => copyDestinationPublication(destination)}
+                      onPublish={() => handlePublish(destination)}
+                      onUnpublish={() => handleUnpublish(destination)}
+                    />
+                  ))
                 )}
-              </div>
+              </MobileRecordList>
             </>
           )}
         </section>
@@ -553,30 +630,27 @@ export default function PackagesPage() {
 }
 
 function CountryListItem({ country, selected, onClick }) {
+  const stateClass =
+    country.publishedDestinations > 0
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+      : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+
   return (
     <button
       type="button"
       onClick={onClick}
       className={`w-full rounded-xl border px-4 py-3 text-left transition ${
         selected
-          ? "border-indigo-200 bg-indigo-50/60 shadow-sm dark:border-indigo-900/60 dark:bg-indigo-900/20"
+          ? "border-indigo-200 bg-indigo-50/70 shadow-sm dark:border-indigo-900/60 dark:bg-indigo-900/20"
           : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{country.name}</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            {country.totalDestinations} destinos cargados
-          </p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{country.totalDestinations} destinos cargados</p>
         </div>
-        <span
-          className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-            country.publishedDestinations > 0
-              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-              : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-          }`}
-        >
+        <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${stateClass}`}>
           {country.publishedDestinations > 0 ? `${country.publishedDestinations} visibles` : "En preparacion"}
         </span>
       </div>
@@ -584,22 +658,38 @@ function CountryListItem({ country, selected, onClick }) {
   );
 }
 
-function DestinationRow({ destination, canEdit, canPublish, onEdit, onView, onCopy, onPublish, onUnpublish }) {
-  const publicationTone = destination.isPublished
-    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-    : destination.canPublish
-      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-      : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
-
-  const publicationLabel = destination.isPublished
-    ? "Visible"
-    : destination.canPublish
-      ? "Lista para mostrar"
-      : "En preparacion";
+function SummaryCard({ label, value, tone = "slate" }) {
+  const toneClass =
+    tone === "emerald"
+      ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200"
+      : tone === "amber"
+        ? "bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200"
+        : "bg-slate-50 text-slate-900 dark:bg-slate-950/40 dark:text-white";
 
   return (
-    <tr>
-      <td className="px-5 py-4">
+    <div className={`rounded-xl border border-slate-200 px-4 py-4 dark:border-slate-800 ${toneClass}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-2 text-2xl font-bold tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+function DestinationStateBadge({ destination }) {
+  if (destination.isPublished) {
+    return <Badge tone="emerald">Visible</Badge>;
+  }
+
+  if (destination.canPublish) {
+    return <Badge tone="blue">Lista para mostrar</Badge>;
+  }
+
+  return <Badge tone="amber">En preparacion</Badge>;
+}
+
+function DestinationTableRow({ destination, canEdit, canPublish, onEdit, onView, onCopy, onPublish, onUnpublish }) {
+  return (
+    <DataGridRow>
+      <DataGridCell>
         <div className="space-y-1">
           <p className="text-sm font-semibold text-slate-900 dark:text-white">{destination.title || destination.name}</p>
           {destination.title && destination.name && destination.title !== destination.name ? (
@@ -608,65 +698,127 @@ function DestinationRow({ destination, canEdit, canPublish, onEdit, onView, onCo
             <p className="text-xs text-slate-500 dark:text-slate-400">{destination.tagline}</p>
           ) : null}
         </div>
-      </td>
+      </DataGridCell>
       {canPublish ? (
-        <td className="px-4 py-4">
-          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${publicationTone}`}>{publicationLabel}</span>
-        </td>
+        <DataGridCell>
+          <DestinationStateBadge destination={destination} />
+        </DataGridCell>
       ) : null}
-      <td className="px-4 py-4 text-sm font-semibold text-slate-900 dark:text-white">{formatMoney(destination.fromPrice, destination.currency)}</td>
-      <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-300">{formatLongDate(destination.nextDepartureDate)}</td>
-      <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-300">
-        {destination.activeDepartureCount} activas{destination.departureCount > destination.activeDepartureCount ? ` de ${destination.departureCount}` : ""}
-      </td>
-      <td className="px-5 py-4">
-        <div className="flex flex-wrap justify-end gap-2">
-          {canEdit ? (
-            <Button variant="outline" size="sm" onClick={onEdit} className="gap-2">
-              <Pencil className="h-4 w-4" />
-              Editar
+      <DataGridCell className="font-semibold text-slate-900 dark:text-white">
+        {formatMoney(destination.fromPrice, destination.currency)}
+      </DataGridCell>
+      <DataGridCell>{formatLongDate(destination.nextDepartureDate)}</DataGridCell>
+      <DataGridCell>
+        {destination.activeDepartureCount} activas
+        {destination.departureCount > destination.activeDepartureCount ? ` de ${destination.departureCount}` : ""}
+      </DataGridCell>
+      <DataGridActionCell>
+        {canEdit ? (
+          <Button variant="outline" size="sm" onClick={onEdit} className="gap-2">
+            <Pencil className="h-4 w-4" />
+            Editar
+          </Button>
+        ) : null}
+        {canPublish ? (
+          <>
+            <Button variant="outline" size="sm" onClick={onView} className="gap-2">
+              <Eye className="h-4 w-4" />
+              Ver como cliente
             </Button>
-          ) : null}
-          {canPublish ? (
-            <>
-              <Button variant="outline" size="sm" onClick={onView} className="gap-2">
-                <Eye className="h-4 w-4" />
-                Ver como cliente
+            <Button variant="outline" size="sm" onClick={onCopy} className="gap-2">
+              <Copy className="h-4 w-4" />
+              Copiar para la web
+            </Button>
+            {destination.isPublished ? (
+              <Button variant="outline" size="sm" onClick={onUnpublish} className="gap-2">
+                <Rocket className="h-4 w-4" />
+                Retirar
               </Button>
-              <Button variant="outline" size="sm" onClick={onCopy} className="gap-2">
-                <Copy className="h-4 w-4" />
-                Copiar para la web
+            ) : destination.canPublish ? (
+              <Button size="sm" onClick={onPublish} className="gap-2">
+                <Rocket className="h-4 w-4" />
+                Mostrar
               </Button>
-              {destination.isPublished ? (
-                <Button variant="outline" size="sm" onClick={onUnpublish} className="gap-2">
-                  <Rocket className="h-4 w-4" />
-                  Retirar
-                </Button>
-              ) : destination.canPublish ? (
-                <Button size="sm" onClick={onPublish} className="gap-2">
-                  <Rocket className="h-4 w-4" />
-                  Mostrar
-                </Button>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-      </td>
-    </tr>
+            ) : null}
+          </>
+        ) : null}
+      </DataGridActionCell>
+    </DataGridRow>
   );
 }
 
-function SummaryPill({ label, value, tone = "slate" }) {
-  const styles = {
-    slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
-    emerald: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-    amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  };
-
+function DestinationMobileCard({ destination, canEdit, canPublish, onEdit, onView, onCopy, onPublish, onUnpublish }) {
   return (
-    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${styles[tone] || styles.slate}`}>
-      {label}: {value}
-    </span>
+    <MobileRecordCard
+      accentSlot={
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 shadow-sm dark:bg-indigo-900/30 dark:text-indigo-300">
+          <MapPinned className="h-5 w-5" />
+        </div>
+      }
+      statusSlot={canPublish ? <DestinationStateBadge destination={destination} /> : null}
+      title={destination.title || destination.name}
+      subtitle={destination.title && destination.name && destination.title !== destination.name ? destination.name : destination.tagline || ""}
+      meta={
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <span>Precio desde</span>
+            <span className="font-semibold text-slate-900 dark:text-white">{formatMoney(destination.fromPrice, destination.currency)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span>Proxima salida</span>
+            <span>{formatLongDate(destination.nextDepartureDate)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span>Salidas activas</span>
+            <span>
+              {destination.activeDepartureCount}
+              {destination.departureCount > destination.activeDepartureCount ? ` de ${destination.departureCount}` : ""}
+            </span>
+          </div>
+        </>
+      }
+      footer={
+        canPublish ? (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={onCopy} className="gap-2">
+              <Copy className="h-4 w-4" />
+              Copiar para la web
+            </Button>
+            {destination.isPublished ? (
+              <Button variant="outline" size="sm" onClick={onUnpublish}>
+                Retirar
+              </Button>
+            ) : destination.canPublish ? (
+              <Button size="sm" onClick={onPublish}>
+                Mostrar
+              </Button>
+            ) : null}
+          </div>
+        ) : null
+      }
+      footerActions={
+        <>
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            >
+              Editar
+            </button>
+          ) : null}
+          {canPublish ? (
+            <button
+              type="button"
+              onClick={onView}
+              className="flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            >
+              Ver
+            </button>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
@@ -679,11 +831,9 @@ function CountryModal({ open, form, saving, onChange, onClose, onSubmit }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-            {form.publicId ? "Editar pais" : "Nuevo pais"}
-          </h3>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{form.publicId ? "Editar pais" : "Nuevo pais"}</h3>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Crea un pais para agrupar destinos y mantener la oferta ordenada.
+            Crea un pais para agrupar destinos y ordenar la oferta del sitio.
           </p>
         </div>
 
@@ -714,16 +864,15 @@ function CountryModal({ open, form, saving, onChange, onClose, onSubmit }) {
   );
 }
 
-function EmptyState({ icon: Icon, title, description }) {
-  return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
-      <div className="rounded-full bg-slate-100 p-4 text-slate-400 dark:bg-slate-800">
-        <Icon className="h-7 w-7" />
-      </div>
-      <div className="space-y-1">
-        <p className="text-base font-semibold text-slate-900 dark:text-white">{title}</p>
-        <p className="text-sm text-slate-500 dark:text-slate-400">{description}</p>
-      </div>
-    </div>
-  );
+function Badge({ children, tone = "slate" }) {
+  const toneClass =
+    tone === "emerald"
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+      : tone === "blue"
+        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+        : tone === "amber"
+          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${toneClass}`}>{children}</span>;
 }

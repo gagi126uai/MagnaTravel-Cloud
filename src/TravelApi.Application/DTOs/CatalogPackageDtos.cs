@@ -152,6 +152,47 @@ public class PublicCountryEmbedDto
     public IReadOnlyList<PublicCountryDestinationDto> Destinations { get; set; } = Array.Empty<PublicCountryDestinationDto>();
 }
 
+public class PreviewPackageDepartureDto : PublicPackageDepartureDto
+{
+    public bool IsActive { get; set; }
+}
+
+public class PreviewPackageDetailDto
+{
+    public string Title { get; set; } = string.Empty;
+    public string Slug { get; set; } = string.Empty;
+    public string? Tagline { get; set; }
+    public string? Destination { get; set; }
+    public string? CountryName { get; set; }
+    public string? CountrySlug { get; set; }
+    public int DestinationOrder { get; set; }
+    public string? GeneralInfo { get; set; }
+    public string? HeroImageUrl { get; set; }
+    public decimal? FromPrice { get; set; }
+    public string? Currency { get; set; }
+    public bool IsPublished { get; set; }
+    public IReadOnlyList<string> PublishIssues { get; set; } = Array.Empty<string>();
+    public PreviewPackageDepartureDto? PrimaryDeparture { get; set; }
+    public IReadOnlyList<PreviewPackageDepartureDto> Departures { get; set; } = Array.Empty<PreviewPackageDepartureDto>();
+}
+
+public class PreviewCountryDestinationDto
+{
+    public string PackageSlug { get; set; } = string.Empty;
+    public string Destination { get; set; } = string.Empty;
+    public int Order { get; set; }
+    public decimal? FromPrice { get; set; }
+    public string? Currency { get; set; }
+    public bool IsPublished { get; set; }
+}
+
+public class PreviewCountryEmbedDto
+{
+    public string CountryName { get; set; } = string.Empty;
+    public string CountrySlug { get; set; } = string.Empty;
+    public IReadOnlyList<PreviewCountryDestinationDto> Destinations { get; set; } = Array.Empty<PreviewCountryDestinationDto>();
+}
+
 public record PublicPackageLeadRequest(
     string FullName,
     string Phone,

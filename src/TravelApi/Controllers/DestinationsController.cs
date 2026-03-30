@@ -42,7 +42,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpGet("preview/by-slug/{slug}")]
-    public async Task<ActionResult<PublicPackageDetailDto>> GetPreviewBySlug(
+    public async Task<ActionResult<PreviewPackageDetailDto>> GetPreviewBySlug(
         string slug,
         CancellationToken cancellationToken)
     {

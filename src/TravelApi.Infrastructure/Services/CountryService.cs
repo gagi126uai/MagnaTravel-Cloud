@@ -85,9 +85,9 @@ public class CountryService : ICountryService
         return await GetCountryEmbedBySlugAsync(countrySlug, includeOnlyPublished: true, returnEmptyCountry: false, ct);
     }
 
-    public async Task<PublicCountryEmbedDto?> GetPreviewCountryBySlugAsync(string countrySlug, CancellationToken ct)
+    public async Task<PreviewCountryEmbedDto?> GetPreviewCountryBySlugAsync(string countrySlug, CancellationToken ct)
     {
-        return await GetCountryEmbedBySlugAsync(countrySlug, includeOnlyPublished: false, returnEmptyCountry: true, ct);
+        return await GetPreviewCountryEmbedBySlugAsync(countrySlug, ct);
     }
 
     private async Task<PublicCountryEmbedDto?> GetCountryEmbedBySlugAsync(
@@ -142,6 +142,59 @@ public class CountryService : ICountryService
         }
 
         return new PublicCountryEmbedDto
+        {
+            CountryName = country.Name,
+            CountrySlug = country.Slug,
+            Destinations = destinations
+        };
+    }
+
+    private async Task<PreviewCountryEmbedDto?> GetPreviewCountryEmbedBySlugAsync(string countrySlug, CancellationToken ct)
+    {
+        var normalizedCountrySlug = NormalizeSlug(countrySlug);
+        if (string.IsNullOrWhiteSpace(normalizedCountrySlug))
+        {
+            return null;
+        }
+
+        var country = await _db.Countries
+            .AsNoTracking()
+            .Include(item => item.Destinations)
+                .ThenInclude(destination => destination.Departures)
+            .FirstOrDefaultAsync(item => item.Slug == normalizedCountrySlug, ct);
+
+        if (country is null)
+        {
+            return null;
+        }
+
+        var destinations = country.Destinations
+            .OrderBy(item => item.DisplayOrder)
+            .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(item =>
+            {
+                var pricedDeparture = item.Departures
+                    .Where(departure => departure.IsActive)
+                    .OrderBy(departure => departure.SalePrice)
+                    .ThenBy(departure => departure.StartDate)
+                    .FirstOrDefault()
+                    ?? item.Departures
+                        .OrderBy(departure => departure.StartDate)
+                        .FirstOrDefault();
+
+                return new PreviewCountryDestinationDto
+                {
+                    PackageSlug = item.Slug,
+                    Destination = item.Name,
+                    Order = item.DisplayOrder,
+                    FromPrice = pricedDeparture?.SalePrice,
+                    Currency = pricedDeparture?.Currency,
+                    IsPublished = item.IsPublished
+                };
+            })
+            .ToList();
+
+        return new PreviewCountryEmbedDto
         {
             CountryName = country.Name,
             CountrySlug = country.Slug,
