@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { MapPinned } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { showError } from "../alerts";
 import { PackageEmbedExperience } from "../features/packages/components/PackageEmbedExperience";
 
 export default function PublicPackageEmbedPage() {
@@ -28,7 +27,6 @@ export default function PublicPackageEmbedPage() {
       } catch (error) {
         if (!cancelled) {
           setPackageData(null);
-          showError(error.message || "No se pudo cargar el paquete.");
         }
       } finally {
         if (!cancelled) {
@@ -144,6 +142,8 @@ export default function PublicPackageEmbedPage() {
       embedKey={`package:${slug}:${countrySlug || "direct"}`}
       selector={selector}
       onSubmitLead={submitLead}
+      emptyTitle="Paquete no disponible"
+      emptyDescription="Esta propuesta no esta publicada en este momento o el enlace ya no esta disponible."
     />
   );
 }

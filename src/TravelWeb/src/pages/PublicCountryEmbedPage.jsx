@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { MapPinned } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { showError } from "../alerts";
 import { PackageEmbedExperience } from "../features/packages/components/PackageEmbedExperience";
 
 export default function PublicCountryEmbedPage() {
@@ -29,7 +28,6 @@ export default function PublicCountryEmbedPage() {
         if (!cancelled) {
           setCountryData(null);
           setSelectedPackageSlug("");
-          showError(error.message || "No se pudieron cargar los destinos.");
         }
       } finally {
         if (!cancelled) {
@@ -105,11 +103,11 @@ export default function PublicCountryEmbedPage() {
       selector={selector}
       onSubmitLead={async () => {}}
       loadingLabel="Cargando destinos..."
-      emptyTitle={countryData ? "Elegi un destino" : "Pais no disponible"}
+      emptyTitle={countryData ? "Elegi un destino" : "Destinos no disponibles"}
       emptyDescription={
         countryData
           ? "Selecciona un destino del listado para abrir la ficha real del paquete en este mismo iframe."
-          : "Todavia no hay destinos publicados para este pais o las salidas activas no estan listas para el embed."
+          : "Todavia no hay paquetes publicados para este pais o las salidas activas no estan listas."
       }
     />
   );
