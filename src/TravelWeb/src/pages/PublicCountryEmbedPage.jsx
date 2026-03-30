@@ -107,7 +107,7 @@ export default function PublicCountryEmbedPage() {
       emptyDescription={
         countryData
           ? "Selecciona un destino del listado para abrir la ficha real del paquete en este mismo iframe."
-          : "Todavia no hay paquetes publicados para este pais o las salidas activas no estan listas."
+          : "Todavia no hay destinos publicados para este pais o las salidas activas no estan listas."
       }
     />
   );

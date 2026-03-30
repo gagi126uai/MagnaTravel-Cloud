@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Building2,
   CalendarDays,
   Copy,
   Eye,
+  FolderTree,
+  Globe2,
   ImagePlus,
   Loader2,
+  MapPinned,
   Pencil,
   Plus,
   Rocket,
   Save,
   Search,
   ShieldCheck,
-  Tag,
   Trash2,
   UploadCloud,
   X,
@@ -20,22 +23,32 @@ import { api, buildAppUrl } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import { hasPermission } from "../../../auth";
 import { ListPageHeader } from "../../../components/ui/ListPageHeader";
-import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { useDebounce } from "../../../hooks/useDebounce";
 
 const inputClass =
   "w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 const textareaClass = `${inputClass} min-h-[148px] resize-y`;
 
-const emptyForm = {
+const emptyCountryForm = {
   publicId: null,
+  name: "",
+  slug: "",
+  totalDestinations: 0,
+  publishedDestinations: 0,
+  draftDestinations: 0,
+  countryPagePath: "",
+};
+
+const emptyDestinationForm = {
+  publicId: null,
+  countryPublicId: "",
+  countryName: "",
+  countrySlug: "",
+  name: "",
   title: "",
   slug: "",
   tagline: "",
-  destination: "",
-  countryName: "",
-  countrySlug: "",
-  destinationOrder: 0,
+  displayOrder: 0,
   generalInfo: "",
   departures: [],
   isPublished: false,
@@ -110,12 +123,12 @@ function sanitizeEmbedToken(value) {
     .slice(0, 48);
 }
 
-function buildSnippet(item, { embedKind = "package" } = {}) {
-  const safeTitle = String(item.title || "Paquete").replace(/"/g, "&quot;");
+function buildSnippet(item, { embedKind = "destination" } = {}) {
+  const safeTitle = String(item.title || "Destino").replace(/"/g, "&quot;");
   const safeSlug = sanitizeEmbedToken(item.slug || "embed");
   const embedId = `mt-${embedKind}-${safeSlug || "embed"}`;
   const fallbackPath =
-    embedKind === "country" ? `/embed/countries/${item.slug || "pais"}` : `/embed/packages/${item.slug || "paquete"}`;
+    embedKind === "country" ? `/embed/countries/${item.slug || "pais"}` : `/embed/packages/${item.slug || "destino"}`;
   const baseSrc = buildAppUrl(item.publicPagePath || fallbackPath);
   const srcUrl = new URL(baseSrc);
   srcUrl.searchParams.set("embedId", embedId);
@@ -125,57 +138,61 @@ function buildSnippet(item, { embedKind = "package" } = {}) {
 (function () {
   var iframe = document.getElementById(${JSON.stringify(embedId)});
   if (!iframe) return;
-
   var allowedOrigin = ${JSON.stringify(srcUrl.origin)};
   var expectedEmbedId = ${JSON.stringify(embedId)};
   var minHeight = 320;
-
   function applyHeight(height) {
     var parsed = Number(height || 0);
     if (!parsed || !isFinite(parsed)) return;
-
-    var nextHeight = Math.max(minHeight, Math.min(5200, Math.round(parsed)));
-    iframe.style.height = nextHeight + "px";
+    iframe.style.height = Math.max(minHeight, Math.min(5200, Math.round(parsed))) + "px";
   }
-
   function handleMessage(event) {
     if (event.origin !== allowedOrigin) return;
-
     var data = event.data || {};
     if (data.type !== "magnatravel:embed:resize") return;
     if (data.embedId && data.embedId !== expectedEmbedId) return;
-
     applyHeight(data.height);
   }
-
   window.addEventListener("message", handleMessage, false);
 })();
 </script>`;
 }
 
-function buildPackageSnippet(item) {
+function buildDestinationSnippet(item) {
   return buildSnippet(
     {
-      title: item.title || "Paquete",
-      slug: item.slug || "paquete",
+      title: item.title || item.name || "Destino",
+      slug: item.slug || "destino",
       publicPagePath: item.publicPagePath || `/embed/packages/${item.slug}`,
     },
-    { embedKind: "package" }
+    { embedKind: "destination" }
   );
 }
 
 function buildCountrySnippet(item) {
   return buildSnippet(
     {
-      title: item.title || (item.countryName ? `Destinos en ${item.countryName}` : "Destinos"),
-      slug: item.countrySlug || item.slug || "pais",
-      publicPagePath: item.countryPagePath || `/embed/countries/${item.countrySlug}`,
+      title: item.name ? `Destinos en ${item.name}` : "Destinos",
+      slug: item.slug || "pais",
+      publicPagePath: item.countryPagePath || `/embed/countries/${item.slug}`,
     },
     { embedKind: "country" }
   );
 }
 
-function mapDetailToForm(detail) {
+function mapCountryToForm(country) {
+  return {
+    publicId: country.publicId,
+    name: country.name || "",
+    slug: country.slug || "",
+    totalDestinations: country.totalDestinations || 0,
+    publishedDestinations: country.publishedDestinations || 0,
+    draftDestinations: country.draftDestinations || 0,
+    countryPagePath: country.countryPagePath || `/embed/countries/${country.slug}`,
+  };
+}
+
+function mapDestinationDetailToForm(detail) {
   const departures = (detail.departures || []).map((departure) => ({
     clientId: departure.publicId || createClientId(),
     publicId: departure.publicId,
@@ -193,13 +210,14 @@ function mapDetailToForm(detail) {
 
   return {
     publicId: detail.publicId,
+    countryPublicId: detail.countryPublicId || "",
+    countryName: detail.countryName || "",
+    countrySlug: detail.countrySlug || "",
+    name: detail.name || "",
     title: detail.title || "",
     slug: detail.slug || "",
     tagline: detail.tagline || "",
-    destination: detail.destination || "",
-    countryName: detail.countryName || "",
-    countrySlug: detail.countrySlug || "",
-    destinationOrder: detail.destinationOrder ?? 0,
+    displayOrder: detail.displayOrder ?? 0,
     generalInfo: detail.generalInfo || "",
     departures,
     isPublished: Boolean(detail.isPublished),
@@ -213,84 +231,190 @@ function mapDetailToForm(detail) {
   };
 }
 
+function createEmptyDestinationForm(country) {
+  return {
+    ...emptyDestinationForm,
+    countryPublicId: country?.publicId || "",
+    countryName: country?.name || "",
+    countrySlug: country?.slug || "",
+    countryPagePath: country?.countryPagePath || (country?.slug ? `/embed/countries/${country.slug}` : ""),
+  };
+}
+
 export default function PackagesPage() {
   const canEdit = hasPermission("paquetes.edit");
   const canPublish = hasPermission("paquetes.publish");
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [pageState, setPageState] = useState({
-    page: 1,
-    pageSize: 25,
-    totalCount: 0,
-    totalPages: 0,
-    hasPreviousPage: false,
-    hasNextPage: false,
-  });
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [countryFilter, setCountryFilter] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const [slugTouched, setSlugTouched] = useState(false);
+  const [countries, setCountries] = useState([]);
+  const [countriesLoading, setCountriesLoading] = useState(true);
+  const [countrySearch, setCountrySearch] = useState("");
+  const [selectedCountryPublicId, setSelectedCountryPublicId] = useState("");
+  const [destinations, setDestinations] = useState([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(false);
+  const [destinationSearch, setDestinationSearch] = useState("");
+  const [destinationStatusFilter, setDestinationStatusFilter] = useState("all");
+  const [countryModalOpen, setCountryModalOpen] = useState(false);
+  const [countrySaving, setCountrySaving] = useState(false);
+  const [countryForm, setCountryForm] = useState(emptyCountryForm);
   const [countrySlugTouched, setCountrySlugTouched] = useState(false);
+  const [destinationModalOpen, setDestinationModalOpen] = useState(false);
+  const [destinationSaving, setDestinationSaving] = useState(false);
+  const [destinationForm, setDestinationForm] = useState(emptyDestinationForm);
+  const [slugTouched, setSlugTouched] = useState(false);
   const [departureDraft, setDepartureDraft] = useState(createDepartureDraft(true));
   const [editingDepartureClientId, setEditingDepartureClientId] = useState(null);
   const [selectedImageFile, setSelectedImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
-  const debouncedSearch = useDebounce(searchTerm, 300);
+  const debouncedCountrySearch = useDebounce(countrySearch, 300);
 
-  const loadPackages = useCallback(async () => {
-    setLoading(true);
+  const selectedCountry = useMemo(
+    () => countries.find((country) => country.publicId === selectedCountryPublicId) || null,
+    [countries, selectedCountryPublicId]
+  );
 
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-        sortBy: "updatedAt",
-        sortDir: "desc",
-      });
+  const summary = useMemo(
+    () =>
+      countries.reduce(
+        (accumulator, country) => {
+          accumulator.countries += 1;
+          accumulator.destinations += country.totalDestinations || 0;
+          accumulator.published += country.publishedDestinations || 0;
+          accumulator.draft += country.draftDestinations || 0;
+          return accumulator;
+        },
+        { countries: 0, destinations: 0, published: 0, draft: 0 }
+      ),
+    [countries]
+  );
 
-      if (debouncedSearch.trim()) {
-        params.set("search", debouncedSearch.trim());
-      }
+  const departuresSorted = useMemo(
+    () =>
+      [...(destinationForm.departures || [])].sort((left, right) => {
+        const leftDate = new Date(left.startDate);
+        const rightDate = new Date(right.startDate);
+        return leftDate - rightDate;
+      }),
+    [destinationForm.departures]
+  );
 
-      if (statusFilter !== "all") {
-        params.set("status", statusFilter);
-      }
+  const filteredDestinations = useMemo(() => {
+    return destinations.filter((destination) => {
+      const matchesSearch = !destinationSearch.trim()
+        ? true
+        : `${destination.title} ${destination.name} ${destination.slug}`.toLowerCase().includes(destinationSearch.trim().toLowerCase());
 
-      if (countryFilter.trim()) {
-        params.set("country", countryFilter.trim());
-      }
+      const matchesStatus =
+        destinationStatusFilter === "all"
+          ? true
+          : destinationStatusFilter === "published"
+            ? destination.isPublished
+            : !destination.isPublished;
 
-      const response = await api.get(`/packages?${params.toString()}`);
-      setItems(response?.items || []);
-      setPageState({
-        page: response?.page || page,
-        pageSize: response?.pageSize || pageSize,
-        totalCount: response?.totalCount || 0,
-        totalPages: response?.totalPages || 0,
-        hasPreviousPage: Boolean(response?.hasPreviousPage),
-        hasNextPage: Boolean(response?.hasNextPage),
-      });
-    } catch (error) {
-      console.error("Error loading packages:", error);
-      setItems([]);
-      showError("No se pudieron cargar los paquetes.");
-    } finally {
-      setLoading(false);
+      return matchesSearch && matchesStatus;
+    });
+  }, [destinationSearch, destinationStatusFilter, destinations]);
+
+  const effectiveCountrySlug = slugify(countryForm.slug || countryForm.name);
+  const effectiveDestinationSlug = slugify(destinationForm.slug || destinationForm.title || destinationForm.name);
+
+  const currentCountrySnippetItem = useMemo(() => {
+    if (destinationForm.countrySlug) {
+      return {
+        name: destinationForm.countryName || "Destino",
+        slug: destinationForm.countrySlug,
+        countryPagePath: destinationForm.countryPagePath || `/embed/countries/${destinationForm.countrySlug}`,
+      };
     }
-  }, [countryFilter, debouncedSearch, page, pageSize, statusFilter]);
+
+    if (!selectedCountry) {
+      return null;
+    }
+
+    return {
+      name: selectedCountry.name,
+      slug: selectedCountry.slug,
+      countryPagePath: selectedCountry.countryPagePath || `/embed/countries/${selectedCountry.slug}`,
+    };
+  }, [destinationForm.countryName, destinationForm.countryPagePath, destinationForm.countrySlug, selectedCountry]);
+
+  const currentDestinationSnippetItem = useMemo(
+    () => ({
+      title: destinationForm.title || destinationForm.name || "Destino",
+      name: destinationForm.name || destinationForm.title || "Destino",
+      slug: effectiveDestinationSlug,
+      publicPagePath: effectiveDestinationSlug ? `/embed/packages/${effectiveDestinationSlug}` : "",
+    }),
+    [destinationForm.name, destinationForm.title, effectiveDestinationSlug]
+  );
+
+  const destinationEmbedSnippet = effectiveDestinationSlug ? buildDestinationSnippet(currentDestinationSnippetItem) : "";
+  const countryEmbedSnippet = currentCountrySnippetItem?.slug ? buildCountrySnippet(currentCountrySnippetItem) : "";
+
+  const loadCountries = useCallback(
+    async (preferredCountryPublicId = null) => {
+      setCountriesLoading(true);
+
+      try {
+        const params = new URLSearchParams();
+        if (debouncedCountrySearch.trim()) {
+          params.set("search", debouncedCountrySearch.trim());
+        }
+
+        const response = await api.get(`/countries${params.toString() ? `?${params.toString()}` : ""}`);
+        const items = response || [];
+        setCountries(items);
+
+        setSelectedCountryPublicId((currentValue) => {
+          if (preferredCountryPublicId && items.some((item) => item.publicId === preferredCountryPublicId)) {
+            return preferredCountryPublicId;
+          }
+          if (currentValue && items.some((item) => item.publicId === currentValue)) {
+            return currentValue;
+          }
+          return items[0]?.publicId || "";
+        });
+      } catch (error) {
+        console.error("Error loading countries:", error);
+        setCountries([]);
+        setSelectedCountryPublicId("");
+        showError("No se pudieron cargar los países.");
+      } finally {
+        setCountriesLoading(false);
+      }
+    },
+    [debouncedCountrySearch]
+  );
+
+  const loadDestinations = useCallback(async (countryPublicId) => {
+    if (!countryPublicId) {
+      setDestinations([]);
+      return;
+    }
+
+    setDestinationsLoading(true);
+    try {
+      const response = await api.get(`/countries/${countryPublicId}/destinations`);
+      setDestinations(response || []);
+    } catch (error) {
+      console.error("Error loading destinations:", error);
+      setDestinations([]);
+      showError("No se pudieron cargar los destinos del país.");
+    } finally {
+      setDestinationsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    loadPackages();
-  }, [loadPackages]);
+    loadCountries();
+  }, [loadCountries]);
 
   useEffect(() => {
-    setPage(1);
-  }, [countryFilter, debouncedSearch, pageSize, statusFilter]);
+    if (!selectedCountryPublicId) {
+      setDestinations([]);
+      return;
+    }
+
+    loadDestinations(selectedCountryPublicId);
+  }, [loadDestinations, selectedCountryPublicId]);
 
   useEffect(() => {
     if (!imagePreviewUrl || !imagePreviewUrl.startsWith("blob:")) {
@@ -300,117 +424,95 @@ export default function PackagesPage() {
     return () => URL.revokeObjectURL(imagePreviewUrl);
   }, [imagePreviewUrl]);
 
-  const summary = useMemo(
-    () =>
-      items.reduce(
-        (accumulator, item) => {
-          accumulator.total += 1;
-          if (item.isPublished) {
-            accumulator.published += 1;
-          } else {
-            accumulator.draft += 1;
-          }
+  function resetCountryEditor(nextForm = emptyCountryForm) {
+    const safeForm = { ...emptyCountryForm, ...nextForm };
+    setCountryForm(safeForm);
+    setCountrySlugTouched(Boolean(safeForm.slug));
+  }
 
-          if (!item.canPublish) {
-            accumulator.pending += 1;
-          }
-
-          return accumulator;
-        },
-        { total: 0, published: 0, draft: 0, pending: 0 }
-      ),
-    [items]
-  );
-
-  const departuresSorted = useMemo(
-    () =>
-      [...(form.departures || [])].sort((left, right) => {
-        const leftDate = new Date(left.startDate);
-        const rightDate = new Date(right.startDate);
-        return leftDate - rightDate;
-      }),
-    [form.departures]
-  );
-
-  const effectiveSlug = slugify(form.slug || form.title);
-  const effectiveCountrySlug = slugify(form.countrySlug || form.countryName);
-  const currentPackageSnippetItem = useMemo(
-    () => ({
-      title: form.title || "Paquete",
-      slug: effectiveSlug,
-      publicPagePath: effectiveSlug ? `/embed/packages/${effectiveSlug}` : "",
-    }),
-    [effectiveSlug, form.title]
-  );
-  const currentCountrySnippetItem = useMemo(
-    () => ({
-      title: form.countryName ? `Destinos en ${form.countryName}` : form.title || "Destinos",
-      slug: effectiveCountrySlug,
-      countrySlug: effectiveCountrySlug,
-      countryName: form.countryName || null,
-      countryPagePath: effectiveCountrySlug ? `/embed/countries/${effectiveCountrySlug}` : "",
-    }),
-    [effectiveCountrySlug, form.countryName, form.title]
-  );
-  const packageEmbedSnippet = effectiveSlug ? buildPackageSnippet(currentPackageSnippetItem) : "";
-  const countryEmbedSnippet = effectiveCountrySlug ? buildCountrySnippet(currentCountrySnippetItem) : "";
-
-  function resetEditor(nextForm = emptyForm) {
+  function resetDestinationEditor(nextForm = createEmptyDestinationForm(selectedCountry)) {
     const safeForm = {
-      ...emptyForm,
+      ...emptyDestinationForm,
       ...nextForm,
       departures: [...(nextForm.departures || [])],
       publishIssues: [...(nextForm.publishIssues || [])],
     };
 
-    setForm(safeForm);
+    setDestinationForm(safeForm);
     setSlugTouched(Boolean(safeForm.slug));
-    setCountrySlugTouched(Boolean(safeForm.countrySlug));
     setEditingDepartureClientId(null);
     setDepartureDraft(createDepartureDraft((safeForm.departures || []).length === 0));
     setSelectedImageFile(null);
     setImagePreviewUrl(safeForm.heroImageUrl || null);
   }
 
-  function openCreateModal() {
-    resetEditor(emptyForm);
-    setModalOpen(true);
+  function openCreateCountryModal() {
+    resetCountryEditor(emptyCountryForm);
+    setCountryModalOpen(true);
   }
 
-  async function openEditModal(publicId) {
+  function openEditCountryModal(country) {
+    resetCountryEditor(mapCountryToForm(country));
+    setCountryModalOpen(true);
+  }
+
+  function closeCountryModal() {
+    setCountryModalOpen(false);
+    resetCountryEditor(emptyCountryForm);
+  }
+
+  function openCreateDestinationModal() {
+    if (!selectedCountry) {
+      showError("Selecciona un país antes de crear un destino.");
+      return;
+    }
+
+    resetDestinationEditor(createEmptyDestinationForm(selectedCountry));
+    setDestinationModalOpen(true);
+  }
+
+  async function openEditDestinationModal(publicId) {
     try {
-      const detail = await api.get(`/packages/${publicId}`);
-      resetEditor(mapDetailToForm(detail));
-      setModalOpen(true);
+      const detail = await api.get(`/destinations/${publicId}`);
+      resetDestinationEditor(mapDestinationDetailToForm(detail));
+      setDestinationModalOpen(true);
     } catch (error) {
-      showError(error.message || "No se pudo abrir el paquete.");
+      showError(error.message || "No se pudo abrir el destino.");
     }
   }
 
-  function closeModal() {
-    setModalOpen(false);
-    resetEditor(emptyForm);
+  function closeDestinationModal() {
+    setDestinationModalOpen(false);
+    resetDestinationEditor(createEmptyDestinationForm(selectedCountry));
   }
 
-  function updateFormField(key, value) {
-    setForm((previous) => {
+  function updateCountryField(key, value) {
+    setCountryForm((previous) => {
       const next = { ...previous, [key]: value };
+      if (key === "name" && !countrySlugTouched) {
+        next.slug = slugify(value);
+        next.countryPagePath = next.slug ? `/embed/countries/${next.slug}` : "";
+      }
+
+      if (key === "slug") {
+        next.countryPagePath = value ? `/embed/countries/${slugify(value)}` : "";
+      }
+
+      return next;
+    });
+  }
+
+  function updateDestinationField(key, value) {
+    setDestinationForm((previous) => {
+      const next = { ...previous, [key]: value };
+
       if (key === "title" && !slugTouched) {
         next.slug = slugify(value);
         next.publicPagePath = next.slug ? `/embed/packages/${next.slug}` : "";
       }
 
-      if (key === "countryName" && !countrySlugTouched) {
-        next.countrySlug = slugify(value);
-        next.countryPagePath = next.countrySlug ? `/embed/countries/${next.countrySlug}` : "";
-      }
-
       if (key === "slug") {
         next.publicPagePath = value ? `/embed/packages/${slugify(value)}` : "";
-      }
-
-      if (key === "countrySlug") {
-        next.countryPagePath = value ? `/embed/countries/${slugify(value)}` : "";
       }
 
       return next;
@@ -433,12 +535,12 @@ export default function PackagesPage() {
 
   function clearDepartureEditor() {
     setEditingDepartureClientId(null);
-    setDepartureDraft(createDepartureDraft((form.departures || []).length === 0));
+    setDepartureDraft(createDepartureDraft((destinationForm.departures || []).length === 0));
   }
 
   function persistDeparture() {
     if (!departureDraft.startDate || !departureDraft.hotelName.trim() || !departureDraft.mealPlan.trim()) {
-      showError("Completa fecha, hotel y regimen antes de guardar la salida.");
+      showError("Completa fecha, hotel y régimen antes de guardar la salida.");
       return;
     }
 
@@ -452,7 +554,7 @@ export default function PackagesPage() {
       return;
     }
 
-    setForm((previous) => {
+    setDestinationForm((previous) => {
       const normalized = {
         ...departureDraft,
         nights: Number(departureDraft.nights),
@@ -497,8 +599,8 @@ export default function PackagesPage() {
   async function confirmRemoveDeparture(clientId) {
     const confirmed = await showConfirm(
       "Eliminar salida",
-      "La salida sera removida del paquete cuando guardes los cambios.",
-      "Si, eliminar",
+      "La salida será removida del destino cuando guardes los cambios.",
+      "Sí, eliminar",
       "red"
     );
 
@@ -506,7 +608,7 @@ export default function PackagesPage() {
       return;
     }
 
-    setForm((previous) => {
+    setDestinationForm((previous) => {
       let nextDepartures = previous.departures.filter((item) => item.clientId !== clientId);
       if (nextDepartures.length > 0 && !nextDepartures.some((item) => item.isPrimary)) {
         nextDepartures = nextDepartures.map((item, index) => ({
@@ -523,32 +625,75 @@ export default function PackagesPage() {
     }
   }
 
-  async function savePackage(event) {
+  async function saveCountry(event) {
     event.preventDefault();
 
-    if (!form.title.trim()) {
-      showError("El titulo del paquete es obligatorio.");
+    if (!countryForm.name.trim()) {
+      showError("El nombre del país es obligatorio.");
       return;
     }
 
-    if (!effectiveSlug) {
-      showError("El slug es obligatorio.");
+    if (!effectiveCountrySlug) {
+      showError("El slug del país es obligatorio.");
       return;
     }
 
-    setSaving(true);
-
+    setCountrySaving(true);
     try {
       const payload = {
-        title: form.title.trim(),
-        slug: effectiveSlug,
-        tagline: form.tagline.trim() || null,
-        destination: form.destination.trim() || null,
-        countryName: form.countryName.trim() || null,
-        countrySlug: effectiveCountrySlug || null,
-        destinationOrder: Number(form.destinationOrder || 0),
-        generalInfo: form.generalInfo.trim() || null,
-        departures: form.departures.map((departure) => ({
+        name: countryForm.name.trim(),
+        slug: effectiveCountrySlug,
+      };
+
+      const response = countryForm.publicId
+        ? await api.put(`/countries/${countryForm.publicId}`, payload)
+        : await api.post("/countries", payload);
+
+      showSuccess(countryForm.publicId ? "País actualizado." : "País creado.");
+      closeCountryModal();
+      await loadCountries(response.publicId);
+    } catch (error) {
+      console.error("Error saving country:", error);
+      showError(error.message || "No se pudo guardar el país.");
+    } finally {
+      setCountrySaving(false);
+    }
+  }
+
+  async function saveDestination(event) {
+    event.preventDefault();
+
+    if (!destinationForm.countryPublicId) {
+      showError("El destino debe pertenecer a un país.");
+      return;
+    }
+
+    if (!destinationForm.name.trim()) {
+      showError("El nombre del destino es obligatorio.");
+      return;
+    }
+
+    if (!destinationForm.title.trim()) {
+      showError("El título comercial es obligatorio.");
+      return;
+    }
+
+    if (!effectiveDestinationSlug) {
+      showError("El slug del destino es obligatorio.");
+      return;
+    }
+
+    setDestinationSaving(true);
+    try {
+      const payload = {
+        countryPublicId: destinationForm.countryPublicId,
+        name: destinationForm.name.trim(),
+        title: destinationForm.title.trim(),
+        slug: effectiveDestinationSlug,
+        tagline: destinationForm.tagline.trim() || null,
+        displayOrder: Number(destinationForm.displayOrder || 0),
+        generalInfo: destinationForm.generalInfo.trim() || null,
+        departures: destinationForm.departures.map((departure) => ({
           publicId: departure.publicId || null,
           startDate: new Date(`${departure.startDate}T00:00:00`).toISOString(),
           nights: Number(departure.nights),
@@ -563,32 +708,35 @@ export default function PackagesPage() {
         })),
       };
 
-      const response = form.publicId
-        ? await api.put(`/packages/${form.publicId}`, payload)
-        : await api.post("/packages", payload);
+      const response = destinationForm.publicId
+        ? await api.put(`/destinations/${destinationForm.publicId}`, payload)
+        : await api.post("/destinations", payload);
 
       if (selectedImageFile) {
         const imageFormData = new FormData();
         imageFormData.append("file", selectedImageFile);
-        await api.post(`/packages/${response.publicId}/hero-image`, imageFormData);
+        await api.post(`/destinations/${response.publicId}/hero-image`, imageFormData);
       }
 
-      showSuccess(form.publicId ? "Paquete actualizado." : "Paquete creado.");
-      closeModal();
-      await loadPackages();
+      showSuccess(destinationForm.publicId ? "Destino actualizado." : "Destino creado.");
+      closeDestinationModal();
+      await Promise.all([
+        loadCountries(destinationForm.countryPublicId),
+        loadDestinations(destinationForm.countryPublicId),
+      ]);
     } catch (error) {
-      console.error("Error saving package:", error);
-      showError(error.message || "No se pudo guardar el paquete.");
+      console.error("Error saving destination:", error);
+      showError(error.message || "No se pudo guardar el destino.");
     } finally {
-      setSaving(false);
+      setDestinationSaving(false);
     }
   }
 
-  async function handlePublish(item) {
+  async function handlePublish(destination) {
     const confirmed = await showConfirm(
-      "Publicar paquete",
-      "El paquete quedara disponible en la ficha publica embebible.",
-      "Si, publicar",
+      "Publicar destino",
+      "El destino quedará disponible en la ficha pública embebible.",
+      "Sí, publicar",
       "emerald"
     );
     if (!confirmed) {
@@ -596,19 +744,19 @@ export default function PackagesPage() {
     }
 
     try {
-      await api.patch(`/packages/${item.publicId}/publish`);
-      showSuccess("Paquete publicado.");
-      await loadPackages();
+      await api.patch(`/destinations/${destination.publicId}/publish`);
+      showSuccess("Destino publicado.");
+      await Promise.all([loadCountries(selectedCountryPublicId), loadDestinations(selectedCountryPublicId)]);
     } catch (error) {
-      showError(error.message || "No se pudo publicar el paquete.");
+      showError(error.message || "No se pudo publicar el destino.");
     }
   }
 
-  async function handleUnpublish(item) {
+  async function handleUnpublish(destination) {
     const confirmed = await showConfirm(
-      "Despublicar paquete",
-      "La ficha dejara de estar disponible desde el codigo embebido.",
-      "Si, despublicar",
+      "Despublicar destino",
+      "La ficha dejará de estar disponible desde el código embebido.",
+      "Sí, despublicar",
       "amber"
     );
     if (!confirmed) {
@@ -616,40 +764,40 @@ export default function PackagesPage() {
     }
 
     try {
-      await api.patch(`/packages/${item.publicId}/unpublish`);
-      showSuccess("Paquete despublicado.");
-      await loadPackages();
+      await api.patch(`/destinations/${destination.publicId}/unpublish`);
+      showSuccess("Destino despublicado.");
+      await Promise.all([loadCountries(selectedCountryPublicId), loadDestinations(selectedCountryPublicId)]);
     } catch (error) {
-      showError(error.message || "No se pudo despublicar el paquete.");
+      showError(error.message || "No se pudo despublicar el destino.");
     }
   }
 
-  async function copyPackageSnippet(item) {
+  async function copyDestinationSnippet(item) {
     try {
-      await navigator.clipboard.writeText(buildPackageSnippet(item));
-      showSuccess("Iframe por paquete copiado.");
+      await navigator.clipboard.writeText(buildDestinationSnippet(item));
+      showSuccess("Iframe por destino copiado.");
     } catch {
-      showError("No se pudo copiar el codigo embebido.");
+      showError("No se pudo copiar el código embebido.");
     }
   }
 
   async function copyCountrySnippet(item) {
-    if (!item?.countrySlug) {
-      showError("Completa el slug de pais para generar ese iframe.");
+    if (!item?.slug) {
+      showError("Completa el slug del país para generar ese iframe.");
       return;
     }
 
     try {
       await navigator.clipboard.writeText(buildCountrySnippet(item));
-      showSuccess("Iframe por pais copiado.");
+      showSuccess("Iframe por país copiado.");
     } catch {
-      showError("No se pudo copiar el codigo embebido.");
+      showError("No se pudo copiar el código embebido.");
     }
   }
 
-  function previewPackage(item) {
+  function previewDestination(item) {
     if (!item?.slug) {
-      showError("Define un slug antes de abrir la ficha publica.");
+      showError("Define un slug antes de abrir la ficha pública.");
       return;
     }
 
@@ -657,263 +805,220 @@ export default function PackagesPage() {
   }
 
   function previewCountry(item) {
-    if (!item?.countrySlug) {
-      showError("Completa el slug de pais antes de abrir el iframe por pais.");
+    if (!item?.slug) {
+      showError("Completa el slug del país antes de abrir el iframe por país.");
       return;
     }
 
-    window.open(
-      buildAppUrl(item.countryPagePath || `/embed/countries/${item.countrySlug}`),
-      "_blank",
-      "noopener,noreferrer"
-    );
+    window.open(buildAppUrl(item.countryPagePath || `/embed/countries/${item.slug}`), "_blank", "noopener,noreferrer");
   }
 
   return (
     <>
       <div className="space-y-6">
         <ListPageHeader
-          title="Paquetes"
-          subtitle="Administra las fichas publicas embebibles que se sincronizan con el ERP."
+          title="Países y destinos"
+          subtitle="Organiza los países del sitio y dentro de cada uno arma los destinos con sus salidas embebibles."
           actions={
-            canEdit ? (
-              <button
-                type="button"
-                onClick={openCreateModal}
-                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-500"
-              >
-                <Plus className="h-4 w-4" />
-                Nuevo paquete
-              </button>
-            ) : null
+            <div className="flex flex-wrap gap-2">
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={openCreateCountryModal}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-500"
+                >
+                  <Plus className="h-4 w-4" />
+                  Nuevo país
+                </button>
+              ) : null}
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={openCreateDestinationModal}
+                  disabled={!selectedCountry}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  <MapPinned className="h-4 w-4" />
+                  Nuevo destino
+                </button>
+              ) : null}
+            </div>
           }
         />
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard icon={Building2} label="Países" value={summary.countries} tone="indigo" />
+          <SummaryCard icon={FolderTree} label="Destinos" value={summary.destinations} tone="slate" />
           <SummaryCard icon={Rocket} label="Publicados" value={summary.published} tone="emerald" />
-          <SummaryCard icon={Tag} label="Borradores" value={summary.draft} tone="slate" />
-          <SummaryCard icon={ShieldCheck} label="Pendientes" value={summary.pending} tone="amber" />
-          <SummaryCard icon={CalendarDays} label="En esta vista" value={summary.total} tone="indigo" />
+          <SummaryCard icon={ShieldCheck} label="Borradores" value={summary.draft} tone="amber" />
         </div>
 
-        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_220px]">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar por titulo, slug, destino o pais..."
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+        <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <SectionTitle
+              eyebrow="Países"
+              title="Base de organización"
+              description="Cada país agrupa destinos y genera su propio iframe con dropdown."
             />
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={countrySearch}
+                onChange={(event) => setCountrySearch(event.target.value)}
+                placeholder="Buscar por país o slug..."
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+
+            <div className="space-y-3">
+              {countriesLoading ? (
+                <div className="flex h-56 items-center justify-center">
+                  <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
+                </div>
+              ) : countries.length === 0 ? (
+                <EmptyState
+                  icon={Building2}
+                  title="Todavía no hay países."
+                  description="Crea el primero para empezar a ordenar destinos y iframes."
+                />
+              ) : (
+                countries.map((country) => (
+                  <CountryCard
+                    key={country.publicId}
+                    country={country}
+                    selected={country.publicId === selectedCountryPublicId}
+                    onSelect={() => setSelectedCountryPublicId(country.publicId)}
+                    onEdit={() => openEditCountryModal(country)}
+                    onPreview={() => previewCountry(country)}
+                    onCopy={() => copyCountrySnippet(country)}
+                    canEdit={canEdit}
+                  />
+                ))
+              )}
+            </div>
           </div>
 
-          <input
-            type="text"
-            value={countryFilter}
-            onChange={(event) => setCountryFilter(event.target.value)}
-            placeholder="Filtrar por pais o slug de pais"
-            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-          />
+          <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            {selectedCountry ? (
+              <>
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-300">Destino real</p>
+                    <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 dark:text-white">{selectedCountry.name}</h2>
+                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                      Administra los destinos de este país y copia el iframe agrupado con dropdown.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                        Slug: {selectedCountry.slug}
+                      </span>
+                      <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200">
+                        {selectedCountry.totalDestinations} destinos
+                      </span>
+                    </div>
+                  </div>
 
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-          >
-            <option value="all">Todos</option>
-            <option value="published">Publicados</option>
-            <option value="draft">Borradores</option>
-          </select>
-        </div>
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton icon={Eye} label="Preview país" onClick={() => previewCountry(selectedCountry)} />
+                    <ActionButton icon={Copy} label="Iframe país" onClick={() => copyCountrySnippet(selectedCountry)} />
+                    {canEdit ? <ActionButton icon={Pencil} label="Editar país" onClick={() => openEditCountryModal(selectedCountry)} /> : null}
+                  </div>
+                </div>
 
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-200/40 dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
-          {loading ? (
-            <div className="flex h-64 items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex h-64 flex-col items-center justify-center gap-3 px-6 text-center">
-              <div className="rounded-2xl bg-slate-100 p-4 text-slate-400 dark:bg-slate-800">
-                <Tag className="h-8 w-8" />
-              </div>
-              <div>
-                <p className="text-base font-semibold text-slate-900 dark:text-white">No hay paquetes cargados.</p>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  Crea el primero para empezar a publicar fichas embebibles.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
-                <thead className="bg-slate-50/80 dark:bg-slate-950/40">
-                  <tr className="text-left text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    <th className="px-6 py-4">Paquete</th>
-                    <th className="px-4 py-4">Pais</th>
-                    <th className="px-4 py-4">Estado</th>
-                    <th className="px-4 py-4">Desde</th>
-                    <th className="px-4 py-4">Salidas</th>
-                    <th className="px-4 py-4">Slugs</th>
-                    <th className="px-6 py-4 text-right">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {items.map((item) => (
-                    <tr key={item.publicId} className="align-top">
-                      <td className="px-6 py-4">
-                        <div className="flex gap-4">
-                          <div className="h-20 w-28 overflow-hidden rounded-2xl bg-slate-100 dark:bg-slate-800">
-                            {item.heroImageUrl ? (
-                              <img src={item.heroImageUrl} alt={item.title} className="h-full w-full object-cover" />
-                            ) : (
-                              <div className="flex h-full items-center justify-center text-slate-400">
-                                <ImagePlus className="h-5 w-5" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.title}</p>
-                              <p className="text-xs text-slate-500 dark:text-slate-400">
-                                {item.tagline || item.destination || "Sin bajada todavia"}
-                              </p>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                             {item.destination ? (
-                                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                                  {item.destination}
-                                </span>
-                              ) : null}
-                              {item.countryName ? (
-                                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                  {item.countryName}
-                                </span>
-                              ) : null}
-                              {!item.hasHeroImage ? (
-                                <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-medium text-rose-600 dark:bg-rose-900/20 dark:text-rose-300">
-                                  Falta imagen
-                                </span>
-                              ) : null}
-                            </div>
-                            {item.publishIssues?.length > 0 ? (
-                              <p className="max-w-md text-xs text-amber-600 dark:text-amber-300">
-                                {item.publishIssues.join(" ")}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                      </td>
-                       <td className="px-4 py-4">
-                         <div className="space-y-1 text-sm text-slate-600 dark:text-slate-300">
-                           <p className="font-semibold text-slate-900 dark:text-white">{item.countryName || "Sin pais"}</p>
-                           <p>Orden: {item.destinationOrder ?? 0}</p>
-                         </div>
-                       </td>
-                       <td className="px-4 py-4">
-                         <span
-                           className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                             item.isPublished
-                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
-                              : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                          }`}
-                        >
-                          {item.isPublished ? "Publicado" : "Borrador"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 text-sm font-semibold text-slate-900 dark:text-white">
-                        {formatMoney(item.fromPrice, item.currency)}
-                      </td>
-                      <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-300">
-                        {item.activeDepartureCount}/{item.departureCount} activas
-                       </td>
-                       <td className="px-4 py-4">
-                         <div className="space-y-2 text-xs">
-                           <div>
-                             <p className="mb-1 font-semibold uppercase tracking-[0.18em] text-slate-400">Paquete</p>
-                             <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                               {item.slug}
-                             </code>
-                           </div>
-                           <div>
-                             <p className="mb-1 font-semibold uppercase tracking-[0.18em] text-slate-400">Pais</p>
-                             <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                               {item.countrySlug || "Pendiente"}
-                             </code>
-                           </div>
-                         </div>
-                       </td>
-                       <td className="px-6 py-4">
-                         <div className="flex flex-wrap justify-end gap-2">
-                           <ActionButton icon={Eye} label="Preview paquete" onClick={() => previewPackage(item)} />
-                           <ActionButton icon={Copy} label="Iframe paquete" onClick={() => copyPackageSnippet(item)} />
-                           <ActionButton
-                             icon={Eye}
-                             label="Preview pais"
-                             onClick={() => previewCountry(item)}
-                             disabled={!item.countrySlug}
-                           />
-                           <ActionButton
-                             icon={Copy}
-                             label="Iframe pais"
-                             onClick={() => copyCountrySnippet(item)}
-                             disabled={!item.countrySlug}
-                           />
-                           {canEdit ? (
-                             <ActionButton icon={Pencil} label="Editar" onClick={() => openEditModal(item.publicId)} />
-                           ) : null}
-                          {canPublish ? (
-                            item.isPublished ? (
-                              <ActionButton
-                                icon={X}
-                                label="Despublicar"
-                                onClick={() => handleUnpublish(item)}
-                                tone="amber"
-                              />
-                            ) : (
-                              <ActionButton
-                                icon={Rocket}
-                                label="Publicar"
-                                onClick={() => handlePublish(item)}
-                                tone="emerald"
-                                disabled={!item.canPublish}
-                              />
-                            )
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/50 lg:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={destinationSearch}
+                      onChange={(event) => setDestinationSearch(event.target.value)}
+                      placeholder="Buscar por título, destino o slug..."
+                      className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </div>
 
-          <div className="border-t border-slate-200 px-4 py-4 dark:border-slate-800">
-            <PaginationFooter
-              page={pageState.page}
-              pageSize={pageState.pageSize}
-              totalCount={pageState.totalCount}
-              totalPages={pageState.totalPages}
-              hasPreviousPage={pageState.hasPreviousPage}
-              hasNextPage={pageState.hasNextPage}
-              onPageChange={setPage}
-              onPageSizeChange={setPageSize}
-            />
+                  <select
+                    value={destinationStatusFilter}
+                    onChange={(event) => setDestinationStatusFilter(event.target.value)}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                  >
+                    <option value="all">Todos</option>
+                    <option value="published">Publicados</option>
+                    <option value="draft">Borradores</option>
+                  </select>
+                </div>
+
+                <div className="overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800">
+                  {destinationsLoading ? (
+                    <div className="flex h-64 items-center justify-center">
+                      <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+                    </div>
+                  ) : filteredDestinations.length === 0 ? (
+                    <EmptyState
+                      icon={MapPinned}
+                      title={destinations.length === 0 ? "Todavía no hay destinos." : "No hubo coincidencias."}
+                      description={
+                        destinations.length === 0
+                          ? "Crea el primer destino dentro de este país para armar sus salidas públicas."
+                          : "Ajusta los filtros para volver a ver los destinos de este país."
+                      }
+                    />
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
+                        <thead className="bg-slate-50/80 dark:bg-slate-950/40">
+                          <tr className="text-left text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                            <th className="px-6 py-4">Destino</th>
+                            <th className="px-4 py-4">Estado</th>
+                            <th className="px-4 py-4">Desde</th>
+                            <th className="px-4 py-4">Salidas</th>
+                            <th className="px-4 py-4">Slug</th>
+                            <th className="px-6 py-4 text-right">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredDestinations.map((destination) => (
+                            <DestinationRow
+                              key={destination.publicId}
+                              destination={destination}
+                              canEdit={canEdit}
+                              canPublish={canPublish}
+                              onPreview={() => previewDestination(destination)}
+                              onCopy={() => copyDestinationSnippet(destination)}
+                              onEdit={() => openEditDestinationModal(destination.publicId)}
+                              onPublish={() => handlePublish(destination)}
+                              onUnpublish={() => handleUnpublish(destination)}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <EmptyState
+                icon={Globe2}
+                title="Selecciona un país"
+                description="Desde aquí vas a administrar sus destinos, sus salidas y los iframes agrupados."
+              />
+            )}
           </div>
         </div>
       </div>
 
       <ModalShell
-        open={modalOpen}
-        title={form.publicId ? "Editar paquete" : "Nuevo paquete"}
-        subtitle="Configura la ficha publica, la imagen principal y las salidas que luego se mostraran en el iframe."
-        onClose={closeModal}
+        open={countryModalOpen}
+        title={countryForm.publicId ? "Editar pais" : "Nuevo pais"}
+        subtitle="El pais agrupa destinos y define el iframe con dropdown del sitio."
+        onClose={closeCountryModal}
         footer={
           <>
             <button
               type="button"
-              onClick={closeModal}
+              onClick={closeCountryModal}
               className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancelar
@@ -921,82 +1026,139 @@ export default function PackagesPage() {
             {canEdit ? (
               <button
                 type="submit"
-                form="package-editor-form"
-                disabled={saving}
+                form="country-editor-form"
+                disabled={countrySaving}
                 className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Guardar paquete
+                {countrySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Guardar pais
               </button>
             ) : null}
           </>
         }
       >
-        <form id="package-editor-form" onSubmit={savePackage} className="space-y-8">
+        <form id="country-editor-form" onSubmit={saveCountry} className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Nombre del pais">
+              <input
+                type="text"
+                value={countryForm.name}
+                onChange={(event) => updateCountryField("name", event.target.value)}
+                placeholder="Republica Dominicana"
+                className={inputClass}
+                disabled={!canEdit}
+              />
+            </Field>
+
+            <Field label="Slug del pais" hint="Se usa para /embed/countries/...">
+              <input
+                type="text"
+                value={countryForm.slug}
+                onChange={(event) => {
+                  setCountrySlugTouched(true);
+                  updateCountryField("slug", event.target.value);
+                }}
+                placeholder="republica-dominicana"
+                className={inputClass}
+                disabled={!canEdit}
+              />
+            </Field>
+          </div>
+
+          <SnippetPreview
+            title="Iframe por pais"
+            subtitle="Este iframe muestra el dropdown de destinos de este pais."
+            snippet={effectiveCountrySlug ? buildCountrySnippet({ name: countryForm.name, slug: effectiveCountrySlug }) : ""}
+            emptyMessage="Completa el nombre del pais para generar el iframe."
+            onPreview={() => previewCountry({ name: countryForm.name, slug: effectiveCountrySlug })}
+            onCopy={() => copyCountrySnippet({ name: countryForm.name, slug: effectiveCountrySlug })}
+            disabled={!effectiveCountrySlug}
+          />
+        </form>
+      </ModalShell>
+
+      <ModalShell
+        open={destinationModalOpen}
+        title={destinationForm.publicId ? "Editar destino" : "Nuevo destino"}
+        subtitle="Configura la ficha publica, la imagen principal y las salidas que luego se mostraran en el iframe."
+        onClose={closeDestinationModal}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={closeDestinationModal}
+              className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Cancelar
+            </button>
+            {canEdit ? (
+              <button
+                type="submit"
+                form="destination-editor-form"
+                disabled={destinationSaving}
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {destinationSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Guardar destino
+              </button>
+            ) : null}
+          </>
+        }
+      >
+        <form id="destination-editor-form" onSubmit={saveDestination} className="space-y-8">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.8fr)_minmax(280px,1fr)]">
             <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-5 dark:border-slate-800 dark:bg-slate-950/60">
               <SectionTitle
                 eyebrow="Ficha general"
                 title="Lo primero que va a ver el sitio"
-                description="Cada paquete representa un destino. Completa tambien el pais para habilitar el iframe agrupado con dropdown."
+                description="Cada destino vive dentro de un pais y mantiene su iframe publico individual."
               />
 
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Titulo del paquete">
+                <Field label="Nombre del destino" hint="Es el nombre visible dentro del dropdown del pais.">
                   <input
                     type="text"
-                    value={form.title}
-                    onChange={(event) => updateFormField("title", event.target.value)}
+                    value={destinationForm.name}
+                    onChange={(event) => updateDestinationField("name", event.target.value)}
                     placeholder="Punta Cana"
                     className={inputClass}
                     disabled={!canEdit}
                   />
                 </Field>
 
-                <Field label="Destino">
+                <Field label="Titulo comercial">
                   <input
                     type="text"
-                    value={form.destination}
-                    onChange={(event) => updateFormField("destination", event.target.value)}
-                    placeholder="Punta Cana"
+                    value={destinationForm.title}
+                    onChange={(event) => updateDestinationField("title", event.target.value)}
+                    placeholder="Punta Cana All Inclusive"
                     className={inputClass}
                     disabled={!canEdit}
                   />
                 </Field>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
-                <Field label="Pais">
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+                <Field label="Slug publico" hint="Se usa para la URL del iframe del destino y debe ser unico.">
                   <input
                     type="text"
-                    value={form.countryName}
-                    onChange={(event) => updateFormField("countryName", event.target.value)}
-                    placeholder="Republica Dominicana"
-                    className={inputClass}
-                    disabled={!canEdit}
-                  />
-                </Field>
-
-                <Field label="Slug de pais" hint="Se usa para /embed/countries/...">
-                  <input
-                    type="text"
-                    value={form.countrySlug}
+                    value={destinationForm.slug}
                     onChange={(event) => {
-                      setCountrySlugTouched(true);
-                      updateFormField("countrySlug", event.target.value);
+                      setSlugTouched(true);
+                      updateDestinationField("slug", event.target.value);
                     }}
-                    placeholder="republica-dominicana"
+                    placeholder="punta-cana"
                     className={inputClass}
                     disabled={!canEdit}
                   />
                 </Field>
 
-                <Field label="Orden destino" hint="Menor numero, mas arriba.">
+                <Field label="Orden destino" hint="Menor numero, mas arriba en el pais.">
                   <input
                     type="number"
                     min="0"
-                    value={form.destinationOrder}
-                    onChange={(event) => updateFormField("destinationOrder", event.target.value)}
+                    value={destinationForm.displayOrder}
+                    onChange={(event) => updateDestinationField("displayOrder", event.target.value)}
                     className={inputClass}
                     disabled={!canEdit}
                   />
@@ -1006,56 +1168,45 @@ export default function PackagesPage() {
               <Field label="Bajada comercial">
                 <input
                   type="text"
-                  value={form.tagline}
-                  onChange={(event) => updateFormField("tagline", event.target.value)}
+                  value={destinationForm.tagline}
+                  onChange={(event) => updateDestinationField("tagline", event.target.value)}
                   placeholder="Vivi el Caribe"
                   className={inputClass}
                   disabled={!canEdit}
                 />
               </Field>
 
-              <Field label="Slug publico" hint="Se usa para la URL del iframe y debe ser unico.">
-                <input
-                  type="text"
-                  value={form.slug}
-                  onChange={(event) => {
-                    setSlugTouched(true);
-                    updateFormField("slug", event.target.value);
-                  }}
-                  placeholder="punta-cana-julio-2026"
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
-              </Field>
+              <div className="grid gap-3 md:grid-cols-2">
+                <InfoPill label="Pais asociado" tone="indigo" value={destinationForm.countryName || "Pendiente"} />
+                <InfoPill label="Slug de pais" tone={destinationForm.countrySlug ? "indigo" : "amber"} value={destinationForm.countrySlug || "Pendiente"} />
+              </div>
 
               <div className="rounded-2xl border border-dashed border-indigo-200 bg-white p-4 dark:border-indigo-900/60 dark:bg-slate-900">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Previews tecnicos</p>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      Mantienes compatibilidad con iframe por paquete y sumas el nuevo iframe por pais con dropdown.
-                    </p>
-                  </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Previews tecnicos</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Mantienes el iframe individual del destino y, a la vez, el iframe agrupado del pais.
+                  </p>
                 </div>
 
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
                   <SnippetPreview
-                    title="Iframe por paquete"
-                    subtitle="Compatibilidad para embeds existentes."
-                    snippet={packageEmbedSnippet}
-                    emptyMessage="Completa al menos el titulo para generar el iframe del paquete."
-                    onPreview={() => previewPackage(currentPackageSnippetItem)}
-                    onCopy={() => copyPackageSnippet(currentPackageSnippetItem)}
-                    disabled={!effectiveSlug}
+                    title="Iframe por destino"
+                    subtitle="Ficha publica real del destino."
+                    snippet={destinationEmbedSnippet}
+                    emptyMessage="Completa al menos el titulo para generar el iframe del destino."
+                    onPreview={() => previewDestination(currentDestinationSnippetItem)}
+                    onCopy={() => copyDestinationSnippet(currentDestinationSnippetItem)}
+                    disabled={!effectiveDestinationSlug}
                   />
                   <SnippetPreview
                     title="Iframe por pais"
-                    subtitle="Carga destinos del pais dentro del mismo iframe."
+                    subtitle="Agrupa destinos del pais con dropdown."
                     snippet={countryEmbedSnippet}
-                    emptyMessage="Completa el pais para generar el iframe agrupado."
+                    emptyMessage="El pais asociado todavia no tiene slug disponible."
                     onPreview={() => previewCountry(currentCountrySnippetItem)}
                     onCopy={() => copyCountrySnippet(currentCountrySnippetItem)}
-                    disabled={!effectiveCountrySlug}
+                    disabled={!currentCountrySnippetItem?.slug}
                   />
                 </div>
               </div>
@@ -1071,31 +1222,22 @@ export default function PackagesPage() {
               <div className="space-y-3">
                 <InfoPill
                   label="Estado actual"
-                  tone={form.isPublished ? "emerald" : "slate"}
-                  value={form.isPublished ? "Publicado" : "Borrador"}
+                  tone={destinationForm.isPublished ? "emerald" : "slate"}
+                  value={destinationForm.isPublished ? "Publicado" : "Borrador"}
                 />
                 <InfoPill
                   label="Puede publicarse"
-                  tone={form.canPublish ? "emerald" : "amber"}
-                  value={form.canPublish ? "Si" : "Todavia no"}
+                  tone={destinationForm.canPublish ? "emerald" : "amber"}
+                  value={destinationForm.canPublish ? "Si" : "Todavia no"}
                 />
-                <InfoPill
-                  label="Slug publico"
-                  tone="indigo"
-                  value={effectiveSlug || "Pendiente"}
-                />
-                <InfoPill
-                  label="Slug de pais"
-                  tone={effectiveCountrySlug ? "indigo" : "amber"}
-                  value={effectiveCountrySlug || "Pendiente"}
-                />
+                <InfoPill label="Slug publico" tone="indigo" value={effectiveDestinationSlug || "Pendiente"} />
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60">
                 <p className="text-sm font-semibold text-slate-900 dark:text-white">Pendientes de publicacion</p>
-                {form.publishIssues?.length > 0 ? (
+                {destinationForm.publishIssues?.length > 0 ? (
                   <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                    {form.publishIssues.map((issue) => (
+                    {destinationForm.publishIssues.map((issue) => (
                       <li key={issue} className="rounded-xl bg-white px-3 py-2 dark:bg-slate-900">
                         {issue}
                       </li>
@@ -1112,15 +1254,11 @@ export default function PackagesPage() {
 
           <div className="grid gap-6 lg:grid-cols-[minmax(320px,440px)_minmax(0,1fr)]">
             <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-              <SectionTitle
-                eyebrow="Imagen principal"
-                title="Hero del paquete"
-                description="Esta imagen se muestra en la portada del embed. Reutiliza el flujo de uploads del ERP."
-              />
+              <SectionTitle eyebrow="Imagen principal" title="Hero del destino" description="Esta imagen se muestra en la portada del embed." />
 
               <div className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-950">
                 {imagePreviewUrl ? (
-                  <img src={imagePreviewUrl} alt={form.title || "Paquete"} className="h-72 w-full object-cover" />
+                  <img src={imagePreviewUrl} alt={destinationForm.title || "Destino"} className="h-72 w-full object-cover" />
                 ) : (
                   <div className="flex h-72 flex-col items-center justify-center gap-3 text-slate-400">
                     <ImagePlus className="h-10 w-10" />
@@ -1136,9 +1274,7 @@ export default function PackagesPage() {
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-slate-900 dark:text-white">Subir imagen hero</p>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      PNG, JPG o WEBP hasta 10 MB.
-                    </p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">PNG, JPG o WEBP hasta 10 MB.</p>
                   </div>
                   <input
                     type="file"
@@ -1150,21 +1286,17 @@ export default function PackagesPage() {
               </div>
 
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Archivo actual: {selectedImageFile?.name || form.heroImageFileName || "Sin imagen cargada"}
+                Archivo actual: {selectedImageFile?.name || destinationForm.heroImageFileName || "Sin imagen cargada"}
               </p>
             </div>
 
             <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-              <SectionTitle
-                eyebrow="Informacion general"
-                title="Contenido editorial del paquete"
-                description="Escribe el contenido que aparece en la pestana de informacion general del embed."
-              />
+              <SectionTitle eyebrow="Informacion general" title="Contenido editorial del destino" description="Escribe el contenido que aparece en la pestana de informacion general del embed." />
 
               <Field label="Texto de la ficha" hint="Puedes usar saltos de linea.">
                 <textarea
-                  value={form.generalInfo}
-                  onChange={(event) => updateFormField("generalInfo", event.target.value)}
+                  value={destinationForm.generalInfo}
+                  onChange={(event) => updateDestinationField("generalInfo", event.target.value)}
                   placeholder="Incluye lo mas importante del viaje, que servicios contempla y aclaraciones comerciales."
                   className={textareaClass}
                   disabled={!canEdit}
@@ -1174,117 +1306,41 @@ export default function PackagesPage() {
           </div>
 
           <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-            <SectionTitle
-              eyebrow="Salidas y tarifas"
-              title="Arma las opciones que se mostraran en la tabla publica"
-              description="Cada salida define fecha, hotel, regimen, base y tarifa. Debe existir una principal activa."
-            />
+            <SectionTitle eyebrow="Salidas y tarifas" title="Arma las opciones que se mostraran en la tabla publica" description="Cada salida define fecha, hotel, regimen, base y tarifa. Debe existir una principal activa." />
 
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
               <Field label="Fecha">
-                <input
-                  type="date"
-                  value={departureDraft.startDate}
-                  onChange={(event) => updateDepartureField("startDate", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="date" value={departureDraft.startDate} onChange={(event) => updateDepartureField("startDate", event.target.value)} className={inputClass} disabled={!canEdit} />
               </Field>
-
               <Field label="Noches">
-                <input
-                  type="number"
-                  min="1"
-                  value={departureDraft.nights}
-                  onChange={(event) => updateDepartureField("nights", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="number" min="1" value={departureDraft.nights} onChange={(event) => updateDepartureField("nights", event.target.value)} className={inputClass} disabled={!canEdit} />
               </Field>
-
               <Field label="Tarifa">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={departureDraft.salePrice}
-                  onChange={(event) => updateDepartureField("salePrice", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="number" min="0" step="0.01" value={departureDraft.salePrice} onChange={(event) => updateDepartureField("salePrice", event.target.value)} className={inputClass} disabled={!canEdit} />
               </Field>
-
               <Field label="Transporte">
-                <input
-                  type="text"
-                  value={departureDraft.transportLabel}
-                  onChange={(event) => updateDepartureField("transportLabel", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="text" value={departureDraft.transportLabel} onChange={(event) => updateDepartureField("transportLabel", event.target.value)} className={inputClass} disabled={!canEdit} />
               </Field>
-
               <Field label="Hotel">
-                <input
-                  type="text"
-                  value={departureDraft.hotelName}
-                  onChange={(event) => updateDepartureField("hotelName", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="text" value={departureDraft.hotelName} onChange={(event) => updateDepartureField("hotelName", event.target.value)} className={inputClass} disabled={!canEdit} />
               </Field>
-
               <Field label="Regimen">
-                <input
-                  type="text"
-                  value={departureDraft.mealPlan}
-                  onChange={(event) => updateDepartureField("mealPlan", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="text" value={departureDraft.mealPlan} onChange={(event) => updateDepartureField("mealPlan", event.target.value)} className={inputClass} disabled={!canEdit} />
               </Field>
-
               <Field label="Base">
-                <input
-                  type="text"
-                  value={departureDraft.roomBase}
-                  onChange={(event) => updateDepartureField("roomBase", event.target.value)}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="text" value={departureDraft.roomBase} onChange={(event) => updateDepartureField("roomBase", event.target.value)} className={inputClass} disabled={!canEdit} />
               </Field>
-
               <Field label="Moneda">
-                <input
-                  type="text"
-                  maxLength={3}
-                  value={departureDraft.currency}
-                  onChange={(event) => updateDepartureField("currency", event.target.value.toUpperCase())}
-                  className={inputClass}
-                  disabled={!canEdit}
-                />
+                <input type="text" maxLength={3} value={departureDraft.currency} onChange={(event) => updateDepartureField("currency", event.target.value.toUpperCase())} className={inputClass} disabled={!canEdit} />
               </Field>
 
               <div className="grid gap-3 md:grid-cols-2 xl:col-span-3">
                 <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={departureDraft.isPrimary}
-                    onChange={(event) => updateDepartureField("isPrimary", event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    disabled={!canEdit}
-                  />
+                  <input type="checkbox" checked={departureDraft.isPrimary} onChange={(event) => updateDepartureField("isPrimary", event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" disabled={!canEdit} />
                   Salida principal
                 </label>
-
                 <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={departureDraft.isActive}
-                    onChange={(event) => updateDepartureField("isActive", event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    disabled={!canEdit}
-                  />
+                  <input type="checkbox" checked={departureDraft.isActive} onChange={(event) => updateDepartureField("isActive", event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" disabled={!canEdit} />
                   Disponible para web
                 </label>
               </div>
@@ -1292,21 +1348,13 @@ export default function PackagesPage() {
 
             <div className="flex flex-wrap gap-2">
               {canEdit ? (
-                <button
-                  type="button"
-                  onClick={persistDeparture}
-                  className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-                >
+                <button type="button" onClick={persistDeparture} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
                   <Save className="h-4 w-4" />
                   {editingDepartureClientId ? "Actualizar salida" : "Agregar salida"}
                 </button>
               ) : null}
               {editingDepartureClientId ? (
-                <button
-                  type="button"
-                  onClick={clearDepartureEditor}
-                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
+                <button type="button" onClick={clearDepartureEditor} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
                   Cancelar edicion
                 </button>
               ) : null}
@@ -1314,17 +1362,7 @@ export default function PackagesPage() {
 
             <div className="overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800">
               {departuresSorted.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
-                  <div className="rounded-2xl bg-slate-100 p-4 text-slate-400 dark:bg-slate-800">
-                    <CalendarDays className="h-8 w-8" />
-                  </div>
-                  <div>
-                    <p className="text-base font-semibold text-slate-900 dark:text-white">Todavia no hay salidas.</p>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                      Agrega al menos una salida para poder publicar el paquete.
-                    </p>
-                  </div>
-                </div>
+                <EmptyState icon={CalendarDays} title="Todavia no hay salidas." description="Agrega al menos una salida para poder publicar el destino." />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
@@ -1342,51 +1380,7 @@ export default function PackagesPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {departuresSorted.map((departure) => (
-                        <tr key={departure.clientId}>
-                          <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">
-                            {formatDate(departure.startDate)}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.nights}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.hotelName}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.mealPlan}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.roomBase}</td>
-                          <td className="px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white">
-                            {formatMoney(departure.salePrice, departure.currency)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              {departure.isPrimary ? (
-                                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                  Principal
-                                </span>
-                              ) : null}
-                              <span
-                                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                                  departure.isActive
-                                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
-                                    : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                                }`}
-                              >
-                                {departure.isActive ? "Activa" : "Oculta"}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex justify-end gap-2">
-                              {canEdit ? (
-                                <>
-                                  <ActionButton icon={Pencil} label="Editar" onClick={() => editDeparture(departure)} />
-                                  <ActionButton
-                                    icon={Trash2}
-                                    label="Quitar"
-                                    onClick={() => confirmRemoveDeparture(departure.clientId)}
-                                    tone="rose"
-                                  />
-                                </>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
+                        <DepartureRow key={departure.clientId} departure={departure} canEdit={canEdit} onEdit={() => editDeparture(departure)} onRemove={() => confirmRemoveDeparture(departure.clientId)} />
                       ))}
                     </tbody>
                   </table>
@@ -1397,6 +1391,166 @@ export default function PackagesPage() {
         </form>
       </ModalShell>
     </>
+  );
+}
+
+function CountryCard({ country, selected, onSelect, onEdit, onPreview, onCopy, canEdit }) {
+  return (
+    <div
+      className={`cursor-pointer rounded-2xl border p-4 transition ${
+        selected
+          ? "border-indigo-300 bg-indigo-50/70 shadow-sm dark:border-indigo-800 dark:bg-indigo-950/30"
+          : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
+      }`}
+      onClick={onSelect}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-900 dark:text-white">{country.name}</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{country.slug}</p>
+        </div>
+        <div className="flex gap-2" onClick={(event) => event.stopPropagation()}>
+          <ActionButton icon={Eye} label="Abrir" onClick={onPreview} />
+          <ActionButton icon={Copy} label="Iframe" onClick={onCopy} />
+          {canEdit ? <ActionButton icon={Pencil} label="Editar" onClick={onEdit} /> : null}
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+          {country.totalDestinations} destinos
+        </span>
+        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">
+          {country.publishedDestinations} publicados
+        </span>
+        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+          {country.draftDestinations} borradores
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DestinationRow({ destination, canEdit, canPublish, onPreview, onCopy, onEdit, onPublish, onUnpublish }) {
+  return (
+    <tr className="align-top">
+      <td className="px-6 py-4">
+        <div className="flex gap-4">
+          <div className="h-20 w-28 overflow-hidden rounded-2xl bg-slate-100 dark:bg-slate-800">
+            {destination.heroImageUrl ? (
+              <img src={destination.heroImageUrl} alt={destination.title} className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full items-center justify-center text-slate-400">
+                <ImagePlus className="h-5 w-5" />
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">{destination.title}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{destination.tagline || destination.name || "Sin bajada todavia"}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                {destination.name}
+              </span>
+              <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                Orden {destination.displayOrder ?? 0}
+              </span>
+              {!destination.hasHeroImage ? (
+                <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-medium text-rose-600 dark:bg-rose-900/20 dark:text-rose-300">
+                  Falta imagen
+                </span>
+              ) : null}
+            </div>
+            {destination.publishIssues?.length > 0 ? (
+              <p className="max-w-md text-xs text-amber-600 dark:text-amber-300">{destination.publishIssues.join(" ")}</p>
+            ) : null}
+          </div>
+        </div>
+      </td>
+      <td className="px-4 py-4">
+        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${destination.isPublished ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}>
+          {destination.isPublished ? "Publicado" : "Borrador"}
+        </span>
+      </td>
+      <td className="px-4 py-4 text-sm font-semibold text-slate-900 dark:text-white">{formatMoney(destination.fromPrice, destination.currency)}</td>
+      <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-300">{destination.activeDepartureCount}/{destination.departureCount} activas</td>
+      <td className="px-4 py-4">
+        <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">{destination.slug}</code>
+      </td>
+      <td className="px-6 py-4">
+        <div className="flex flex-wrap justify-end gap-2">
+          <ActionButton icon={Eye} label="Preview destino" onClick={onPreview} />
+          <ActionButton icon={Copy} label="Iframe destino" onClick={onCopy} />
+          {canEdit ? <ActionButton icon={Pencil} label="Editar" onClick={onEdit} /> : null}
+          {canPublish ? (
+            destination.isPublished ? (
+              <ActionButton icon={X} label="Despublicar" onClick={onUnpublish} tone="amber" />
+            ) : (
+              <ActionButton icon={Rocket} label="Publicar" onClick={onPublish} tone="emerald" disabled={!destination.canPublish} />
+            )
+          ) : null}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function DepartureRow({ departure, canEdit, onEdit, onRemove }) {
+  return (
+    <tr>
+      <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">{formatDate(departure.startDate)}</td>
+      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.nights}</td>
+      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.hotelName}</td>
+      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.mealPlan}</td>
+      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.roomBase}</td>
+      <td className="px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white">{formatMoney(departure.salePrice, departure.currency)}</td>
+      <td className="px-4 py-3">
+        <div className="flex flex-wrap gap-2">
+          {departure.isPrimary ? (
+            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+              Principal
+            </span>
+          ) : null}
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${departure.isActive ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}>
+            {departure.isActive ? "Activa" : "Oculta"}
+          </span>
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex justify-end gap-2">
+          {canEdit ? (
+            <>
+              <ActionButton icon={Pencil} label="Editar" onClick={onEdit} />
+              <ActionButton icon={Trash2} label="Quitar" onClick={onRemove} tone="rose" />
+            </>
+          ) : null}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function EmptyState({ icon: Icon, title, description }) {
+  return (
+    <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+      <div className="rounded-2xl bg-slate-100 p-4 text-slate-400 dark:bg-slate-800">
+        <Icon className="h-8 w-8" />
+      </div>
+      <div>
+        <p className="text-base font-semibold text-slate-900 dark:text-white">{title}</p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>
+      </div>
+    </div>
   );
 }
 
@@ -1411,9 +1565,7 @@ function ModalShell({ open, title, subtitle, onClose, children, footer }) {
         <div className="w-full overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_30px_80px_-28px_rgba(15,23,42,0.45)] dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5 dark:border-slate-800">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-300">
-                Catalogo publico
-              </p>
+              <p className="text-xs font-bold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-300">Paises y destinos</p>
               <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 dark:text-white">{title}</h2>
               {subtitle ? <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">{subtitle}</p> : null}
             </div>
@@ -1428,10 +1580,7 @@ function ModalShell({ open, title, subtitle, onClose, children, footer }) {
           </div>
 
           <div className="max-h-[calc(100vh-10rem)] overflow-y-auto px-6 py-6">{children}</div>
-
-          <div className="flex flex-wrap justify-end gap-3 border-t border-slate-200 px-6 py-5 dark:border-slate-800">
-            {footer}
-          </div>
+          <div className="flex flex-wrap justify-end gap-3 border-t border-slate-200 px-6 py-5 dark:border-slate-800">{footer}</div>
         </div>
       </div>
     </div>
@@ -1441,9 +1590,7 @@ function ModalShell({ open, title, subtitle, onClose, children, footer }) {
 function SectionTitle({ eyebrow, title, description }) {
   return (
     <div>
-      {eyebrow ? (
-        <p className="text-xs font-bold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-300">{eyebrow}</p>
-      ) : null}
+      {eyebrow ? <p className="text-xs font-bold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-300">{eyebrow}</p> : null}
       <h3 className="mt-2 text-lg font-semibold text-slate-950 dark:text-white">{title}</h3>
       {description ? <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p> : null}
     </div>
@@ -1506,14 +1653,10 @@ function SummaryCard({ icon: Icon, label, value, tone = "slate" }) {
 
 function ActionButton({ icon: Icon, label, onClick, tone = "slate", disabled = false }) {
   const tones = {
-    slate:
-      "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800",
-    emerald:
-      "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-300 dark:hover:bg-emerald-900/30",
-    amber:
-      "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30",
-    rose:
-      "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300 dark:hover:bg-rose-900/30",
+    slate: "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-300 dark:hover:bg-emerald-900/30",
+    amber: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/30",
+    rose: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300 dark:hover:bg-rose-900/30",
   };
 
   return (
@@ -1521,9 +1664,7 @@ function ActionButton({ icon: Icon, label, onClick, tone = "slate", disabled = f
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-        tones[tone] || tones.slate
-      }`}
+      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${tones[tone] || tones.slate}`}
     >
       <Icon className="h-4 w-4" />
       {label}

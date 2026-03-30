@@ -61,7 +61,7 @@ public static class Permissions
         ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip },
         ["CRM"] = new[] { CrmView, CrmEdit },
         ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
-        ["Paquetes"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },
+        ["Paises y destinos"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },
     };
 
     public static readonly string[] All = AllByModule.Values.SelectMany(v => v).ToArray();

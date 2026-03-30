@@ -11,24 +11,24 @@ namespace TravelApi.Controllers;
 [AllowAnonymous]
 public class PublicPackagesController : ControllerBase
 {
-    private readonly ICatalogPackageService _catalogPackageService;
+    private readonly IDestinationService _destinationService;
 
-    public PublicPackagesController(ICatalogPackageService catalogPackageService)
+    public PublicPackagesController(IDestinationService destinationService)
     {
-        _catalogPackageService = catalogPackageService;
+        _destinationService = destinationService;
     }
 
     [HttpGet("{slug}")]
     public async Task<ActionResult<PublicPackageDetailDto>> GetPublicPackage(string slug, CancellationToken cancellationToken)
     {
-        var package = await _catalogPackageService.GetPublicPackageBySlugAsync(slug, cancellationToken);
+        var package = await _destinationService.GetPublicPackageBySlugAsync(slug, cancellationToken);
         return package is null ? NotFound() : Ok(package);
     }
 
     [HttpGet("{slug}/hero-image")]
     public async Task<IActionResult> GetPublicHeroImage(string slug, CancellationToken cancellationToken)
     {
-        var image = await _catalogPackageService.GetPublicHeroImageBySlugAsync(slug, cancellationToken);
+        var image = await _destinationService.GetPublicHeroImageBySlugAsync(slug, cancellationToken);
         return image is null ? NotFound() : File(image.Value.Bytes, image.Value.ContentType);
     }
 
@@ -41,7 +41,7 @@ public class PublicPackagesController : ControllerBase
     {
         try
         {
-            await _catalogPackageService.CreatePublicLeadAsync(
+            await _destinationService.CreatePublicLeadAsync(
                 slug,
                 request,
                 Request.Headers.Referer.ToString(),

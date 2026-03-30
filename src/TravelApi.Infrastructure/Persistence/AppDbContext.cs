@@ -257,6 +257,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
     public DbSet<OperationalFinanceSettings> OperationalFinanceSettings => Set<OperationalFinanceSettings>();
     public DbSet<CommissionRule> CommissionRules => Set<CommissionRule>();
+    public DbSet<Country> Countries => Set<Country>();
+    public DbSet<Destination> Destinations => Set<Destination>();
+    public DbSet<DestinationDeparture> DestinationDepartures => Set<DestinationDeparture>();
     
     // Sprint 5: Servicios específicos y Tarifario
     public DbSet<HotelBooking> HotelBookings => Set<HotelBooking>();
@@ -550,6 +553,56 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(departure => departure.Currency).HasMaxLength(3).IsRequired();
             entity.Property(departure => departure.SalePrice).HasPrecision(18, 2);
             entity.HasIndex(departure => new { departure.CatalogPackageId, departure.StartDate });
+        });
+
+        modelBuilder.Entity<Country>(entity =>
+        {
+            entity.ToTable("Countries");
+            entity.Property(country => country.Name).HasMaxLength(120).IsRequired();
+            entity.Property(country => country.Slug).HasMaxLength(120).IsRequired();
+            entity.HasIndex(country => country.PublicId).IsUnique();
+            entity.HasIndex(country => country.Slug).IsUnique();
+
+            entity.HasMany(country => country.Destinations)
+                .WithOne(destination => destination.Country)
+                .HasForeignKey(destination => destination.CountryId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Destination>(entity =>
+        {
+            entity.ToTable("Destinations");
+            entity.Property(destination => destination.Name).HasMaxLength(120).IsRequired();
+            entity.Property(destination => destination.Title).HasMaxLength(200).IsRequired();
+            entity.Property(destination => destination.Slug).HasMaxLength(200).IsRequired();
+            entity.Property(destination => destination.Tagline).HasMaxLength(120);
+            entity.Property(destination => destination.HeroImageFileName).HasMaxLength(260);
+            entity.Property(destination => destination.HeroImageStoredFileName).HasMaxLength(260);
+            entity.Property(destination => destination.HeroImageContentType).HasMaxLength(120);
+            entity.Property(destination => destination.GeneralInfo).HasMaxLength(8000);
+            entity.HasIndex(destination => destination.PublicId).IsUnique();
+            entity.HasIndex(destination => destination.Slug).IsUnique();
+            entity.HasIndex(destination => new { destination.CountryId, destination.DisplayOrder });
+            entity.HasIndex(destination => new { destination.CountryId, destination.Name });
+            entity.HasIndex(destination => new { destination.IsPublished, destination.CountryId, destination.DisplayOrder });
+
+            entity.HasMany(destination => destination.Departures)
+                .WithOne(departure => departure.Destination)
+                .HasForeignKey(departure => departure.DestinationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DestinationDeparture>(entity =>
+        {
+            entity.ToTable("DestinationDepartures");
+            entity.Property(departure => departure.TransportLabel).HasMaxLength(100).IsRequired();
+            entity.Property(departure => departure.HotelName).HasMaxLength(200).IsRequired();
+            entity.Property(departure => departure.MealPlan).HasMaxLength(100);
+            entity.Property(departure => departure.RoomBase).HasMaxLength(50);
+            entity.Property(departure => departure.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(departure => departure.SalePrice).HasPrecision(18, 2);
+            entity.HasIndex(departure => departure.PublicId).IsUnique();
+            entity.HasIndex(departure => new { departure.DestinationId, departure.StartDate });
         });
 
         // Quotes

@@ -9,39 +9,31 @@ using TravelApi.Infrastructure.Persistence;
 namespace TravelApi.Controllers;
 
 [ApiController]
-[Route("api/packages")]
+[Route("api/destinations")]
 [Authorize]
-public class PackagesController : ControllerBase
+public class DestinationsController : ControllerBase
 {
-    private readonly ICatalogPackageService _catalogPackageService;
+    private readonly IDestinationService _destinationService;
     private readonly EntityReferenceResolver _entityReferenceResolver;
 
-    public PackagesController(
-        ICatalogPackageService catalogPackageService,
+    public DestinationsController(
+        IDestinationService destinationService,
         EntityReferenceResolver entityReferenceResolver)
     {
-        _catalogPackageService = catalogPackageService;
+        _destinationService = destinationService;
         _entityReferenceResolver = entityReferenceResolver;
     }
 
-    [HttpGet]
-    public async Task<ActionResult<PagedResponse<CatalogPackageListItemDto>>> GetPackages(
-        [FromQuery] PackageListQuery query,
-        CancellationToken cancellationToken)
-    {
-        return Ok(await _catalogPackageService.GetPackagesAsync(query, cancellationToken));
-    }
-
     [HttpGet("{publicIdOrLegacyId}")]
-    public async Task<ActionResult<CatalogPackageDetailDto>> GetPackage(
+    public async Task<ActionResult<DestinationDetailDto>> GetDestination(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<CatalogPackage>(publicIdOrLegacyId, cancellationToken);
-            var package = await _catalogPackageService.GetPackageByIdAsync(id, cancellationToken);
-            return package is null ? NotFound() : Ok(package);
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Destination>(publicIdOrLegacyId, cancellationToken);
+            var destination = await _destinationService.GetDestinationByIdAsync(id, cancellationToken);
+            return destination is null ? NotFound() : Ok(destination);
         }
         catch (KeyNotFoundException)
         {
@@ -50,14 +42,14 @@ public class PackagesController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<CatalogPackageDetailDto>> Create(
-        [FromBody] PackageUpsertRequest request,
+    public async Task<ActionResult<DestinationDetailDto>> Create(
+        [FromBody] DestinationUpsertRequest request,
         CancellationToken cancellationToken)
     {
         try
         {
-            var created = await _catalogPackageService.CreateAsync(request, cancellationToken);
-            return CreatedAtAction(nameof(GetPackage), new { publicIdOrLegacyId = created.PublicId }, created);
+            var created = await _destinationService.CreateAsync(request, cancellationToken);
+            return CreatedAtAction(nameof(GetDestination), new { publicIdOrLegacyId = created.PublicId }, created);
         }
         catch (InvalidOperationException ex)
         {
@@ -66,15 +58,15 @@ public class PackagesController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
-    public async Task<ActionResult<CatalogPackageDetailDto>> Update(
+    public async Task<ActionResult<DestinationDetailDto>> Update(
         string publicIdOrLegacyId,
-        [FromBody] PackageUpsertRequest request,
+        [FromBody] DestinationUpsertRequest request,
         CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<CatalogPackage>(publicIdOrLegacyId, cancellationToken);
-            var updated = await _catalogPackageService.UpdateAsync(id, request, cancellationToken);
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Destination>(publicIdOrLegacyId, cancellationToken);
+            var updated = await _destinationService.UpdateAsync(id, request, cancellationToken);
             return updated is null ? NotFound() : Ok(updated);
         }
         catch (KeyNotFoundException)
@@ -88,14 +80,14 @@ public class PackagesController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/publish")]
-    public async Task<ActionResult<CatalogPackageDetailDto>> Publish(
+    public async Task<ActionResult<DestinationDetailDto>> Publish(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<CatalogPackage>(publicIdOrLegacyId, cancellationToken);
-            return Ok(await _catalogPackageService.PublishAsync(id, cancellationToken));
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Destination>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _destinationService.PublishAsync(id, cancellationToken));
         }
         catch (KeyNotFoundException)
         {
@@ -108,14 +100,14 @@ public class PackagesController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/unpublish")]
-    public async Task<ActionResult<CatalogPackageDetailDto>> Unpublish(
+    public async Task<ActionResult<DestinationDetailDto>> Unpublish(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<CatalogPackage>(publicIdOrLegacyId, cancellationToken);
-            return Ok(await _catalogPackageService.UnpublishAsync(id, cancellationToken));
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Destination>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _destinationService.UnpublishAsync(id, cancellationToken));
         }
         catch (KeyNotFoundException)
         {
@@ -125,7 +117,7 @@ public class PackagesController : ControllerBase
 
     [HttpPost("{publicIdOrLegacyId}/hero-image")]
     [EnableRateLimiting("uploads")]
-    public async Task<ActionResult<CatalogPackageDetailDto>> UploadHeroImage(
+    public async Task<ActionResult<DestinationDetailDto>> UploadHeroImage(
         string publicIdOrLegacyId,
         IFormFile file,
         CancellationToken cancellationToken)
@@ -137,9 +129,9 @@ public class PackagesController : ControllerBase
 
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<CatalogPackage>(publicIdOrLegacyId, cancellationToken);
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Destination>(publicIdOrLegacyId, cancellationToken);
             await using var stream = file.OpenReadStream();
-            var updated = await _catalogPackageService.UploadHeroImageAsync(
+            var updated = await _destinationService.UploadHeroImageAsync(
                 id,
                 stream,
                 file.FileName,
@@ -163,8 +155,8 @@ public class PackagesController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<CatalogPackage>(publicIdOrLegacyId, cancellationToken);
-            var image = await _catalogPackageService.GetHeroImageAsync(id, cancellationToken);
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Destination>(publicIdOrLegacyId, cancellationToken);
+            var image = await _destinationService.GetHeroImageAsync(id, cancellationToken);
             return image is null ? NotFound() : File(image.Value.Bytes, image.Value.ContentType);
         }
         catch (KeyNotFoundException)

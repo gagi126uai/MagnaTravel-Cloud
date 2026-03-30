@@ -10,17 +10,17 @@ namespace TravelApi.Controllers;
 [AllowAnonymous]
 public class PublicCountriesController : ControllerBase
 {
-    private readonly ICatalogPackageService _catalogPackageService;
+    private readonly ICountryService _countryService;
 
-    public PublicCountriesController(ICatalogPackageService catalogPackageService)
+    public PublicCountriesController(ICountryService countryService)
     {
-        _catalogPackageService = catalogPackageService;
+        _countryService = countryService;
     }
 
     [HttpGet("{countrySlug}")]
     public async Task<ActionResult<PublicCountryEmbedDto>> GetPublicCountry(string countrySlug, CancellationToken cancellationToken)
     {
-        var country = await _catalogPackageService.GetPublicCountryBySlugAsync(countrySlug, cancellationToken);
+        var country = await _countryService.GetPublicCountryBySlugAsync(countrySlug, cancellationToken);
         return country is null ? NotFound() : Ok(country);
     }
 }
