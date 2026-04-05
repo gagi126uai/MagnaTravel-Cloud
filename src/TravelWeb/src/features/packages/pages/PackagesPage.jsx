@@ -536,7 +536,7 @@ export default function PackagesPage() {
                   />
                 </div>
               ) : (
-                <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                <div className="grid gap-5 grid-cols-[repeat(auto-fit,minmax(24rem,1fr))]">
                   {filteredDestinations.map((destination) => (
                     <DestinationVisualCard
                       key={destination.publicId}
@@ -1097,24 +1097,24 @@ function DestinationVisualCard({
     destination.fromPrice != null ? formatMoney(destination.fromPrice, destination.currency) : "Sin tarifa principal";
 
   return (
-    <article className={`${cardClass} overflow-hidden`}>
-      <div className={`relative ${compact ? "h-48" : "h-52"}`}>
+    <article className={`${cardClass} flex h-full flex-col overflow-hidden`}>
+      <div className={`relative overflow-hidden border-b border-slate-200/70 dark:border-slate-800/70 ${compact ? "h-52" : "h-56"}`}>
         {heroImageUrl ? (
           <img src={heroImageUrl} alt={title} className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.22),_transparent_35%),linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.84))] px-6 text-center">
+          <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.18),_transparent_35%),linear-gradient(135deg,rgba(15,23,42,0.96),rgba(30,41,59,0.88))] px-6 text-center">
             <div>
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-white ring-1 ring-white/15">
                 <ImagePlus className="h-6 w-6" />
               </div>
-              <p className="mt-3 text-sm font-medium text-white">Agrega una imagen portada para destacar este destino</p>
+              <p className="mt-3 text-sm font-medium text-white">Agrega una imagen de portada para destacar este destino</p>
             </div>
           </div>
         )}
 
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/25 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-transparent" />
 
-        <div className="absolute left-4 right-4 top-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="absolute left-4 right-4 top-4 flex flex-wrap items-start justify-between gap-2">
           <div className="flex flex-wrap gap-2">
             {canPublish ? <DestinationStateBadge destination={destination} /> : null}
             {destination.publishIssues?.length && !destination.isPublished ? (
@@ -1128,25 +1128,31 @@ function DestinationVisualCard({
           </span>
         </div>
 
-        <div className="absolute bottom-4 left-4 right-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
+        <div className="absolute bottom-4 left-4 right-4">
+          <div className="min-w-0 max-w-[22rem]">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/65">{destination.countryName}</p>
-            <h3 className="mt-2 break-words text-2xl font-semibold tracking-tight text-white">{title}</h3>
-            {secondaryLine ? <p className="mt-2 max-w-xl break-words text-sm text-white/80">{secondaryLine}</p> : null}
-          </div>
-
-          <div className="w-full max-w-[220px] rounded-[22px] bg-white/95 px-4 py-3 text-slate-900 shadow-lg shadow-slate-950/15 backdrop-blur-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Precio desde</p>
-            <p className="mt-1 break-words text-lg font-semibold">{priceLabel}</p>
+            <h3 className="mt-2 text-[28px] font-semibold leading-[1.05] tracking-tight text-white">{title}</h3>
+            {secondaryLine ? <p className="mt-2 max-w-xl text-sm text-white/80">{secondaryLine}</p> : null}
           </div>
         </div>
       </div>
 
-      <div className={compact ? "space-y-4 p-4" : "space-y-4 p-5"}>
+      <div className={compact ? "flex flex-1 flex-col space-y-4 p-4" : "flex flex-1 flex-col space-y-4 p-5"}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Precio desde</p>
+            <p className="mt-1 break-words text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">{priceLabel}</p>
+          </div>
+
+          <div className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+            {destination.displayOrder != null ? `Orden ${destination.displayOrder}` : "Sin orden"}
+          </div>
+        </div>
+
         <div className={`${mutedPanelClass} ${compact ? "p-3.5" : "p-4"}`}>
-          <div className={`grid gap-3 ${compact ? "sm:grid-cols-2" : "xl:grid-cols-3"}`}>
+          <div className="space-y-2.5">
             <DestinationMetricItem label="Proxima salida" value={formatLongDate(destination.nextDepartureDate)} />
-            <DestinationMetricItem label="Salidas" value={activeDeparturesLabel} />
+            <DestinationMetricItem label="Salidas activas" value={activeDeparturesLabel} />
             <DestinationMetricItem label="Publicacion" value={stateLabel} />
           </div>
 
@@ -1158,9 +1164,9 @@ function DestinationVisualCard({
         </div>
 
         {(canEdit || canPublish) ? (
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-auto grid gap-2 sm:grid-cols-2">
             {canEdit ? (
-              <Button variant="outline" size="sm" onClick={onEdit} className="gap-2 rounded-xl">
+              <Button variant="outline" size="sm" onClick={onEdit} className="gap-2 rounded-xl justify-start">
                 <Pencil className="h-4 w-4" />
                 Editar
               </Button>
@@ -1168,21 +1174,21 @@ function DestinationVisualCard({
 
             {canPublish ? (
               <>
-                <Button variant="outline" size="sm" onClick={onView} className="gap-2 rounded-xl">
+                <Button variant="outline" size="sm" onClick={onView} className="gap-2 rounded-xl justify-start">
                   <Eye className="h-4 w-4" />
                   Vista previa
                 </Button>
-                <Button variant="outline" size="sm" onClick={onCopy} className="gap-2 rounded-xl">
+                <Button variant="outline" size="sm" onClick={onCopy} className="gap-2 rounded-xl justify-start">
                   <Copy className="h-4 w-4" />
                   Copiar codigo
                 </Button>
                 {destination.isPublished ? (
-                  <Button variant="outline" size="sm" onClick={onUnpublish} className="gap-2 rounded-xl">
+                  <Button variant="outline" size="sm" onClick={onUnpublish} className="gap-2 rounded-xl justify-start">
                     <Rocket className="h-4 w-4" />
                     Ocultar del sitio
                   </Button>
                 ) : (
-                  <Button size="sm" onClick={onPublish} disabled={!destination.canPublish} className="gap-2 rounded-xl">
+                  <Button size="sm" onClick={onPublish} disabled={!destination.canPublish} className="gap-2 rounded-xl justify-start">
                     <Rocket className="h-4 w-4" />
                     Mostrar en sitio
                   </Button>
@@ -1198,9 +1204,9 @@ function DestinationVisualCard({
 
 function DestinationMetricItem({ label, value }) {
   return (
-    <div className="rounded-[20px] border border-slate-200/80 bg-white/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/60">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-1 break-words text-sm font-medium text-slate-900 dark:text-white">{value}</p>
+    <div className="flex items-start justify-between gap-4 rounded-[18px] border border-slate-200/80 bg-white/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/60">
+      <p className="min-w-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="max-w-[60%] text-right text-sm font-medium text-slate-900 dark:text-white">{value}</p>
     </div>
   );
 }
