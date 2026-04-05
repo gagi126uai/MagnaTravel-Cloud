@@ -30,15 +30,17 @@ import {
 } from "../lib/publicationUtils";
 
 const inputClass =
-  "w-full rounded-[14px] border border-[#e1e3e4] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none transition placeholder:text-[#737780] focus:border-[#255dad] focus:ring-2 focus:ring-[#255dad]/15";
+  "w-full rounded-[14px] border border-[var(--st-border-strong)] bg-[var(--st-panel)] px-4 py-3 text-sm text-[var(--st-text)] outline-none transition placeholder:text-[var(--st-text-muted)] focus:border-sky-600 focus:ring-2 focus:ring-sky-500/15 dark:focus:border-sky-300 dark:focus:ring-sky-300/20";
 const cardClass =
-  "rounded-[24px] border border-[#e7e8e9] bg-white shadow-[0_12px_30px_rgba(25,28,29,0.04)]";
-const mutedPanelClass = "rounded-[18px] border border-[#e7e8e9] bg-[#f3f4f5]";
+  "rounded-[24px] border border-[var(--st-border)] bg-[var(--st-panel)] shadow-[0_12px_30px_rgba(25,28,29,0.04)] dark:shadow-[0_18px_40px_rgba(2,6,23,0.35)]";
+const mutedPanelClass = "rounded-[18px] border border-[var(--st-border)] bg-[var(--st-panel-soft)]";
 const pageCanvasClass =
-  "overflow-hidden rounded-[30px] border border-[#e1e3e4] bg-[#f8f9fa] text-[#191c1d] shadow-[0_24px_60px_rgba(25,28,29,0.06)]";
+  "overflow-hidden rounded-[30px] border border-[var(--st-border-strong)] bg-[var(--st-canvas)] text-[var(--st-text)] shadow-[0_24px_60px_rgba(25,28,29,0.06)] dark:shadow-[0_28px_70px_rgba(2,6,23,0.45)]";
 const outlineButtonClass =
-  "rounded-xl border-[#e1e3e4] bg-white text-[#001d44] hover:bg-[#f3f4f5] hover:text-[#001d44]";
-const primaryButtonClass = "rounded-xl bg-[#001d44] text-white hover:bg-[#00326b]";
+  "rounded-xl border-[var(--st-border-strong)] bg-[var(--st-panel)] text-[var(--st-text-strong)] hover:bg-[var(--st-panel-soft)] hover:text-[var(--st-text-strong)]";
+const primaryButtonClass = "rounded-xl bg-[var(--st-primary)] text-white hover:bg-[var(--st-primary-strong)] dark:text-[#08111f]";
+const stitchThemeClass =
+  "[--st-canvas:#f8f9fa] dark:[--st-canvas:#0b1220] [--st-panel:#ffffff] dark:[--st-panel:#111a2b] [--st-panel-soft:#f3f4f5] dark:[--st-panel-soft:#162033] [--st-border:#e7e8e9] dark:[--st-border:#23324c] [--st-border-strong:#e1e3e4] dark:[--st-border-strong:#2d3d59] [--st-text:#191c1d] dark:[--st-text:#e7edf7] [--st-text-strong:#001d44] dark:[--st-text-strong:#d7e2ff] [--st-text-soft:#43474f] dark:[--st-text-soft:#a6b4c9] [--st-text-muted:#737780] dark:[--st-text-muted:#8191a8] [--st-primary:#001d44] dark:[--st-primary:#abc7ff] [--st-primary-strong:#00326b] dark:[--st-primary-strong:#85b0ff] [--st-primary-solid:#255dad] dark:[--st-primary-solid:#6b9bef] [--st-primary-subtle:#d7e2ff] dark:[--st-primary-subtle:#1a2740] [--st-secondary-subtle:#cbe7f5] dark:[--st-secondary-subtle:#1b3140] [--st-secondary-text:#304a55] dark:[--st-secondary-text:#c1dcea] [--st-success-subtle:#d9f3ea] dark:[--st-success-subtle:#143427] [--st-success-text:#0f766e] dark:[--st-success-text:#76dfcd] [--st-warn-subtle:#ffdbca] dark:[--st-warn-subtle:#3e271d] [--st-warn-text:#723610] dark:[--st-warn-text:#ffbf99] [--st-neutral-subtle:#edeeef] dark:[--st-neutral-subtle:#1c273a] [--st-danger:#93000a] dark:[--st-danger:#ff98a1]";
 
 const emptyCountryForm = {
   publicId: null,
@@ -407,7 +409,7 @@ export default function PackagesPage() {
   }
 
   return (
-    <div className="animate-in fade-in space-y-5 duration-500 md:space-y-6">
+    <div className={`${stitchThemeClass} animate-in fade-in space-y-5 duration-500 md:space-y-6`}>
       <div className="hidden items-center justify-end gap-3 md:flex">
         {canEdit ? (
           <Button variant="outline" onClick={openCreateCountryModal} className={`gap-2 ${outlineButtonClass}`}>
@@ -425,22 +427,22 @@ export default function PackagesPage() {
 
       <div className={`hidden md:block ${pageCanvasClass}`}>
         <div className="grid min-h-[760px] grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="flex min-h-0 flex-col border-r border-[#e7e8e9] bg-[#f3f4f5]">
+          <aside className="flex min-h-0 flex-col border-r border-[var(--st-border)] bg-[var(--st-panel-soft)]">
             <div className="p-6">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-[26px] font-black tracking-tight text-[#001d44]">Paises</h2>
-                  <p className="mt-2 max-w-[220px] text-sm leading-6 text-[#43474f]">
+                  <h2 className="text-[26px] font-black tracking-tight text-[var(--st-text-strong)]">Paises</h2>
+                  <p className="mt-2 max-w-[220px] text-sm leading-6 text-[var(--st-text-soft)]">
                     Selecciona un pais para explorar destinos sin salir del contexto.
                   </p>
                 </div>
-                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#48626e]">
+                <span className="rounded-full bg-[var(--st-panel)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--st-secondary-text)]">
                   {countries.length}
                 </span>
               </div>
 
               <div className="relative mt-6">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#737780]" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
                 <input
                   type="text"
                   value={countrySearch}
@@ -454,7 +456,7 @@ export default function PackagesPage() {
             <div className="flex-1 space-y-1 overflow-y-auto px-4 pb-5">
               {countriesLoading ? (
                 <div className="flex h-44 items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-[#255dad]" />
+                  <Loader2 className="h-6 w-6 animate-spin text-[var(--st-primary-solid)]" />
                 </div>
               ) : countries.length === 0 ? (
                 <StitchEmptyState
@@ -476,7 +478,7 @@ export default function PackagesPage() {
             </div>
           </aside>
 
-          <section className="flex min-h-0 flex-col bg-[#f8f9fa]">
+          <section className="flex min-h-0 flex-col bg-[var(--st-canvas)]">
             {!selectedCountry ? (
               <div className="flex flex-1 items-center justify-center p-8">
                 <StitchEmptyState
@@ -487,7 +489,7 @@ export default function PackagesPage() {
               </div>
             ) : (
               <>
-                <div className="border-b border-[#e7e8e9] px-8 pb-5 pt-8">
+                <div className="border-b border-[var(--st-border)] px-8 pb-5 pt-8">
                   <DesktopCountryHero
                     country={selectedCountry}
                     canEdit={canEdit}
@@ -513,7 +515,7 @@ export default function PackagesPage() {
                 <div className="flex-1 overflow-y-auto p-8">
                   {destinationsLoading ? (
                     <div className="flex h-44 items-center justify-center">
-                      <Loader2 className="h-7 w-7 animate-spin text-[#255dad]" />
+                      <Loader2 className="h-7 w-7 animate-spin text-[var(--st-primary-solid)]" />
                     </div>
                   ) : filteredDestinations.length === 0 ? (
                     <StitchEmptyState
@@ -610,12 +612,12 @@ function MobileCountrySelectionScene({
   onCreateCountry,
 }) {
   return (
-    <div className="space-y-5 text-[#191c1d]">
+    <div className="space-y-5 text-[var(--st-text)]">
       <div className="px-1 pt-1">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-[26px] font-black tracking-tight text-[#001d44]">Paises y destinos</h1>
-            <p className="mt-1 text-sm text-[#43474f]">Busca por pais y continua con el detalle de destinos.</p>
+            <h1 className="text-[26px] font-black tracking-tight text-[var(--st-text-strong)]">Paises y destinos</h1>
+            <p className="mt-1 text-sm text-[var(--st-text-soft)]">Busca por pais y continua con el detalle de destinos.</p>
           </div>
           {canEdit ? (
             <Button size="icon" onClick={onCreateCountry} className={`h-11 w-11 ${primaryButtonClass}`}>
@@ -625,13 +627,13 @@ function MobileCountrySelectionScene({
         </div>
 
         <div className="relative mt-4">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#737780]" />
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
           <input
             type="text"
             value={countrySearch}
             onChange={(event) => onCountrySearchChange(event.target.value)}
             placeholder="Buscar por pais o region..."
-            className={`${inputClass} bg-[#f3f4f5] pl-11`}
+            className={`${inputClass} bg-[var(--st-panel-soft)] pl-11`}
           />
         </div>
       </div>
@@ -643,12 +645,12 @@ function MobileCountrySelectionScene({
 
       <div>
         <div className="px-1 pb-3">
-          <h2 className="text-lg font-bold tracking-tight text-[#191c1d]">Destinos Globales</h2>
+          <h2 className="text-lg font-bold tracking-tight text-[var(--st-text)]">Destinos Globales</h2>
         </div>
 
         {countriesLoading ? (
           <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-[#255dad]" />
+            <Loader2 className="h-6 w-6 animate-spin text-[var(--st-primary-solid)]" />
           </div>
         ) : countries.length === 0 ? (
           <StitchEmptyState
@@ -694,21 +696,21 @@ function MobileDestinationScene({
   const visibleCount = destinations.filter((destination) => destination.isPublished).length;
 
   return (
-    <div className="space-y-4 text-[#191c1d]">
+    <div className="space-y-4 text-[var(--st-text)]">
       <div className={`${cardClass} overflow-hidden`}>
         <div className="flex items-center justify-between gap-3 px-4 py-4">
           <button
             type="button"
             onClick={onBack}
-            className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#f3f4f5] text-[#001d44] transition hover:bg-[#e7e8e9]"
+            className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--st-panel-soft)] text-[var(--st-text-strong)] transition hover:bg-[var(--st-border)]"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
 
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#737780]">Region activa</p>
-            <h1 className="truncate text-[28px] font-black tracking-tight text-[#001d44]">{country.name}</h1>
-            <p className="text-xs text-[#737780]">{country.totalDestinations} destinos activos</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--st-text-muted)]">Region activa</p>
+            <h1 className="truncate text-[28px] font-black tracking-tight text-[var(--st-text-strong)]">{country.name}</h1>
+            <p className="text-xs text-[var(--st-text-muted)]">{country.totalDestinations} destinos activos</p>
           </div>
 
           {canEdit ? (
@@ -718,7 +720,7 @@ function MobileDestinationScene({
           ) : null}
         </div>
 
-        <div className="border-t border-[#e7e8e9] px-4 py-4">
+        <div className="border-t border-[var(--st-border)] px-4 py-4">
           <div className={`${mutedPanelClass} p-4`}>
             <div className="flex flex-wrap gap-2">
               <Badge tone="sky">{country.totalDestinations} destinos</Badge>
@@ -754,13 +756,13 @@ function MobileDestinationScene({
 
           <div className="mt-4 space-y-3">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#737780]" />
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
               <input
                 type="text"
                 value={searchValue}
                 onChange={(event) => onSearchChange(event.target.value)}
                 placeholder="Buscar destinos..."
-                className={`${inputClass} bg-[#f3f4f5] pl-11`}
+                className={`${inputClass} bg-[var(--st-panel-soft)] pl-11`}
               />
             </div>
 
@@ -768,7 +770,7 @@ function MobileDestinationScene({
               <select
                 value={filterValue}
                 onChange={(event) => onFilterChange(event.target.value)}
-                className={`${inputClass} bg-[#f3f4f5]`}
+                className={`${inputClass} bg-[var(--st-panel-soft)]`}
               >
                 <option value="all">Todos los estados</option>
                 <option value="visible">Visibles en el sitio</option>
@@ -781,7 +783,7 @@ function MobileDestinationScene({
 
       {loading ? (
         <div className={`${cardClass} flex items-center justify-center px-4 py-16`}>
-          <Loader2 className="h-7 w-7 animate-spin text-[#255dad]" />
+          <Loader2 className="h-7 w-7 animate-spin text-[var(--st-primary-solid)]" />
         </div>
       ) : destinations.length === 0 ? (
         <div className={`${cardClass} p-4`}>
@@ -821,14 +823,14 @@ function DesktopCountryHero({ country, canEdit, canPublish, onEdit, onCreateDest
   return (
     <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#737780]">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--st-text-muted)]">
           <span>Destinos</span>
           <ChevronRight className="h-3 w-3" />
           <span className="truncate">{country.name}</span>
         </div>
 
-        <h2 className="mt-3 text-5xl font-black tracking-tight text-[#001d44]">{country.name}</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-7 text-[#43474f]">
+        <h2 className="mt-3 text-5xl font-black tracking-tight text-[var(--st-text-strong)]">{country.name}</h2>
+        <p className="mt-3 max-w-2xl text-sm leading-7 text-[var(--st-text-soft)]">
           Explora la oferta actual del pais, revisa rapidamente el estado comercial de cada destino y accede a sus acciones clave sin salir del contexto.
         </p>
 
@@ -885,20 +887,20 @@ function DestinationToolbarPanel({
     <div className="mt-8 flex flex-col gap-4">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-6">
-          <button type="button" className="relative pb-3 text-sm font-bold text-[#001d44]">
+          <button type="button" className="relative pb-3 text-sm font-bold text-[var(--st-text-strong)]">
             Destinos
-            <span className="absolute -right-5 top-0 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#001d44] px-1.5 text-[10px] font-bold text-white">
+            <span className="absolute -right-5 top-0 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--st-primary)] px-1.5 text-[10px] font-bold text-white dark:text-[#08111f]">
               {filteredCount}
             </span>
-            <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-[#255dad]" />
+            <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-[var(--st-primary-solid)]" />
           </button>
-          <span className="pb-3 text-sm font-semibold text-[#737780]">Visibles {visibleCount}</span>
-          <span className="pb-3 text-sm font-semibold text-[#737780]">En preparacion {hiddenCount}</span>
+          <span className="pb-3 text-sm font-semibold text-[var(--st-text-muted)]">Visibles {visibleCount}</span>
+          <span className="pb-3 text-sm font-semibold text-[var(--st-text-muted)]">En preparacion {hiddenCount}</span>
         </div>
 
         <div className={`grid gap-3 ${canPublish ? "xl:min-w-[480px] md:grid-cols-[minmax(0,1fr)_220px]" : "xl:min-w-[320px]"}`}>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#737780]" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
             <input
               type="text"
               value={searchValue}
@@ -933,10 +935,12 @@ function CountryRailItem({ country, selected, onClick }) {
       type="button"
       onClick={onClick}
       className={`group relative w-full overflow-hidden rounded-[18px] px-4 py-4 text-left transition ${
-        selected ? "bg-white shadow-[0_10px_30px_rgba(25,28,29,0.06)]" : "bg-transparent hover:bg-white/80"
+        selected
+          ? "bg-[var(--st-panel)] shadow-[0_10px_30px_rgba(25,28,29,0.06)] dark:shadow-[0_16px_35px_rgba(2,6,23,0.28)]"
+          : "bg-transparent hover:bg-[var(--st-panel)]/80"
       }`}
     >
-      <span className={`absolute inset-y-4 left-0 w-1 rounded-r-full ${selected ? "bg-[#255dad]" : "bg-transparent"}`} />
+      <span className={`absolute inset-y-4 left-0 w-1 rounded-r-full ${selected ? "bg-[var(--st-primary-solid)]" : "bg-transparent"}`} />
 
       <div className="flex items-start gap-3">
         <CountryAvatar name={country.name} selected={selected} />
@@ -944,16 +948,18 @@ function CountryRailItem({ country, selected, onClick }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="break-words text-sm font-bold text-[#001d44]">{country.name}</p>
-              <p className="mt-0.5 text-[11px] text-[#737780]">
+              <p className="break-words text-sm font-bold text-[var(--st-text-strong)]">{country.name}</p>
+              <p className="mt-0.5 text-[11px] text-[var(--st-text-muted)]">
                 {country.publishedDestinations} visibles · {country.draftDestinations} borrador
               </p>
             </div>
-            <span className="shrink-0 rounded-full bg-[#cbe7f5] px-2 py-0.5 text-[10px] font-bold text-[#304a55]">{countLabel}</span>
+            <span className="shrink-0 rounded-full bg-[var(--st-secondary-subtle)] px-2 py-0.5 text-[10px] font-bold text-[var(--st-secondary-text)]">{countLabel}</span>
           </div>
         </div>
 
-        <ChevronRight className={`mt-1 h-4 w-4 shrink-0 ${selected ? "text-[#255dad]" : "text-[#c3c6d1] group-hover:translate-x-0.5 group-hover:text-[#001d44]"}`} />
+        <ChevronRight
+          className={`mt-1 h-4 w-4 shrink-0 ${selected ? "text-[var(--st-primary-solid)]" : "text-[var(--st-border-strong)] group-hover:translate-x-0.5 group-hover:text-[var(--st-text-strong)]"}`}
+        />
       </div>
     </button>
   );
@@ -964,17 +970,17 @@ function CountryStackItem({ country, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="group w-full rounded-[18px] border border-[#e7e8e9] bg-white px-4 py-4 text-left transition hover:bg-[#f3f4f5]"
+      className="group w-full rounded-[18px] border border-[var(--st-border)] bg-[var(--st-panel)] px-4 py-4 text-left transition hover:bg-[var(--st-panel-soft)]"
     >
       <div className="flex items-center gap-3">
         <CountryAvatar name={country.name} compact />
 
         <div className="min-w-0 flex-1">
-          <p className="break-words text-sm font-bold text-[#001d44]">{country.name}</p>
-          <p className="mt-1 break-words text-xs text-[#737780]">{country.totalDestinations} destinos · {country.publishedDestinations} visibles</p>
+          <p className="break-words text-sm font-bold text-[var(--st-text-strong)]">{country.name}</p>
+          <p className="mt-1 break-words text-xs text-[var(--st-text-muted)]">{country.totalDestinations} destinos | {country.publishedDestinations} visibles</p>
         </div>
 
-        <ChevronRight className="h-4 w-4 shrink-0 text-[#c3c6d1] transition group-hover:translate-x-0.5 group-hover:text-[#001d44]" />
+        <ChevronRight className="h-4 w-4 shrink-0 text-[var(--st-border-strong)] transition group-hover:translate-x-0.5 group-hover:text-[var(--st-text-strong)]" />
       </div>
     </button>
   );
@@ -994,8 +1000,8 @@ function CountryAvatar({ name, selected = false, compact = false }) {
         compact ? "h-11 w-11 text-sm" : "h-12 w-12 text-base"
       } ${
         selected
-          ? "bg-[#255dad] text-white shadow-[0_14px_30px_rgba(37,93,173,0.2)]"
-          : "bg-white text-[#304a55]"
+          ? "bg-[var(--st-primary-solid)] text-white shadow-[0_14px_30px_rgba(37,93,173,0.2)] dark:text-[#08111f]"
+          : "bg-[var(--st-panel)] text-[var(--st-secondary-text)]"
       }`}
     >
       {initials || "PA"}
@@ -1006,17 +1012,17 @@ function CountryAvatar({ name, selected = false, compact = false }) {
 function MiniStatCard({ label, value, accent = "slate" }) {
   const accentClass =
     accent === "sky"
-      ? "border-l-[#255dad]"
+      ? "border-l-[var(--st-primary-solid)]"
       : accent === "emerald"
-        ? "border-l-[#0f766e]"
+        ? "border-l-[var(--st-success-text)]"
         : accent === "amber"
-          ? "border-l-[#d8885c]"
-          : "border-l-[#c3c6d1]";
+          ? "border-l-[var(--st-warn-text)]"
+          : "border-l-[var(--st-border-strong)]";
 
   return (
-    <div className={`rounded-[18px] border border-[#e7e8e9] border-l-2 bg-white px-4 py-4 shadow-[0_6px_18px_rgba(25,28,29,0.03)] ${accentClass}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#737780]">{label}</p>
-      <p className="mt-2 break-words text-2xl font-black tracking-tight text-[#001d44]">{value}</p>
+    <div className={`rounded-[18px] border border-[var(--st-border)] border-l-2 bg-[var(--st-panel)] px-4 py-4 shadow-[0_6px_18px_rgba(25,28,29,0.03)] dark:shadow-[0_10px_24px_rgba(2,6,23,0.25)] ${accentClass}`}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--st-text-muted)]">{label}</p>
+      <p className="mt-2 break-words text-2xl font-black tracking-tight text-[var(--st-text-strong)]">{value}</p>
     </div>
   );
 }
@@ -1053,17 +1059,17 @@ function DestinationVisualCard({
     destination.fromPrice != null ? formatMoney(destination.fromPrice, destination.currency) : "Sin tarifa principal";
 
   return (
-    <article className="group flex h-full flex-col overflow-hidden rounded-[20px] border border-[#e7e8e9] bg-white shadow-[0_10px_30px_rgba(25,28,29,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_20px_40px_rgba(25,28,29,0.06)]">
+    <article className="group flex h-full flex-col overflow-hidden rounded-[20px] border border-[var(--st-border)] bg-[var(--st-panel)] shadow-[0_10px_30px_rgba(25,28,29,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_20px_40px_rgba(25,28,29,0.06)] dark:shadow-[0_18px_38px_rgba(2,6,23,0.3)]">
       <div className={`relative overflow-hidden ${compact ? "h-40" : "h-48"}`}>
         {heroImageUrl ? (
           <img src={heroImageUrl} alt={title} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#d7e2ff_0%,#cbe7f5_100%)] px-6 text-center">
+          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,var(--st-primary-subtle)_0%,var(--st-secondary-subtle)_100%)] px-6 text-center">
             <div>
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[#255dad] shadow-sm">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--st-panel)] text-[var(--st-primary-solid)] shadow-sm">
                 <ImagePlus className="h-6 w-6" />
               </div>
-              <p className="mt-3 text-sm font-medium text-[#001d44]">Agrega una imagen de portada para destacar este destino</p>
+              <p className="mt-3 text-sm font-medium text-[var(--st-text-strong)]">Agrega una imagen de portada para destacar este destino</p>
             </div>
           </div>
         )}
@@ -1076,16 +1082,16 @@ function DestinationVisualCard({
       <div className={compact ? "flex flex-1 flex-col p-4" : "flex flex-1 flex-col p-5"}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <h3 className="break-words text-[22px] font-black tracking-tight text-[#001d44]">{title}</h3>
-            <p className="mt-1 flex items-center gap-1.5 text-xs text-[#43474f]">
+            <h3 className="break-words text-[22px] font-black tracking-tight text-[var(--st-text-strong)]">{title}</h3>
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--st-text-soft)]">
               <MapPin className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{secondaryLine || destination.countryName}</span>
             </p>
           </div>
 
           <div className="shrink-0 text-right">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#737780]">Desde</p>
-            <p className="mt-1 text-xl font-black tracking-tight text-[#255dad]">{priceLabel}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--st-text-muted)]">Desde</p>
+            <p className="mt-1 text-xl font-black tracking-tight text-[var(--st-primary-solid)]">{priceLabel}</p>
           </div>
         </div>
 
@@ -1098,13 +1104,13 @@ function DestinationVisualCard({
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[#737780]">
+        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--st-text-muted)]">
           <span>{stateLabel}</span>
           {destination.publishIssues?.length && !destination.isPublished ? <span>{destination.publishIssues.length} pendientes</span> : null}
         </div>
 
         {canPublish && !destination.isPublished && !destination.canPublish && destination.publishIssues?.length ? (
-          <p className="mt-2 break-words text-xs text-[#93000a]">Completa los datos pendientes para poder publicarlo.</p>
+          <p className="mt-2 break-words text-xs text-[var(--st-danger)]">Completa los datos pendientes para poder publicarlo.</p>
         ) : null}
 
         {(canEdit || canPublish) ? (
@@ -1149,8 +1155,8 @@ function DestinationVisualCard({
 function DestinationMetricItem({ label, value }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#737780]">{label}</p>
-      <p className="mt-1 text-sm font-bold text-[#001d44]">{value}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--st-text-muted)]">{label}</p>
+      <p className="mt-1 text-sm font-bold text-[var(--st-text-strong)]">{value}</p>
     </div>
   );
 }
@@ -1170,11 +1176,11 @@ function DestinationStateBadge({ destination }) {
 function StitchEmptyState({ icon: Icon, title, description, compact = false }) {
   return (
     <div className={`flex flex-col items-center justify-center text-center ${compact ? "px-4 py-8" : "px-6 py-14"}`}>
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f3f4f5] text-[#255dad]">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--st-panel-soft)] text-[var(--st-primary-solid)]">
         <Icon className="h-6 w-6" />
       </div>
-      <p className="text-base font-bold tracking-tight text-[#001d44]">{title}</p>
-      {description ? <p className="mt-2 max-w-md text-sm leading-6 text-[#43474f]">{description}</p> : null}
+      <p className="text-base font-bold tracking-tight text-[var(--st-text-strong)]">{title}</p>
+      {description ? <p className="mt-2 max-w-md text-sm leading-6 text-[var(--st-text-soft)]">{description}</p> : null}
     </div>
   );
 }
@@ -1187,17 +1193,17 @@ function CountryModal({ open, form, saving, onChange, onClose, onSubmit }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
       <div className={`${cardClass} w-full max-w-lg overflow-hidden`}>
-        <div className="border-b border-[#e7e8e9] px-6 py-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#737780]">Catalogo</p>
-          <h3 className="mt-2 text-2xl font-black tracking-tight text-[#001d44]">{form.publicId ? "Editar pais" : "Nuevo pais"}</h3>
-          <p className="mt-2 text-sm text-[#43474f]">
+        <div className="border-b border-[var(--st-border)] px-6 py-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--st-text-muted)]">Catalogo</p>
+          <h3 className="mt-2 text-2xl font-black tracking-tight text-[var(--st-text-strong)]">{form.publicId ? "Editar pais" : "Nuevo pais"}</h3>
+          <p className="mt-2 text-sm text-[var(--st-text-soft)]">
             Crea o ajusta el pais para ordenar mejor la oferta y facilitar la navegacion por destinos.
           </p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-5 px-6 py-6">
           <label className="block space-y-2">
-            <span className="text-sm font-medium text-[#43474f]">Nombre del pais</span>
+            <span className="text-sm font-medium text-[var(--st-text-soft)]">Nombre del pais</span>
             <input
               type="text"
               value={form.name}
@@ -1208,7 +1214,7 @@ function CountryModal({ open, form, saving, onChange, onClose, onSubmit }) {
             />
           </label>
 
-          <div className="flex flex-wrap justify-end gap-2 border-t border-[#e7e8e9] pt-5">
+          <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--st-border)] pt-5">
             <Button type="button" variant="outline" onClick={onClose} className={outlineButtonClass}>
               Cancelar
             </Button>
@@ -1226,12 +1232,12 @@ function CountryModal({ open, form, saving, onChange, onClose, onSubmit }) {
 function Badge({ children, tone = "slate" }) {
   const toneClass =
     tone === "sky" || tone === "blue"
-      ? "bg-[#d7e2ff] text-[#00458f]"
+      ? "bg-[var(--st-primary-subtle)] text-[var(--st-primary-solid)]"
       : tone === "emerald"
-        ? "bg-[#d9f3ea] text-[#0f766e]"
+        ? "bg-[var(--st-success-subtle)] text-[var(--st-success-text)]"
         : tone === "amber"
-          ? "bg-[#ffdbca] text-[#723610]"
-          : "bg-[#edeeef] text-[#43474f]";
+          ? "bg-[var(--st-warn-subtle)] text-[var(--st-warn-text)]"
+          : "bg-[var(--st-neutral-subtle)] text-[var(--st-text-soft)]";
 
   return <span className={`inline-flex max-w-full items-center rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${toneClass}`}>{children}</span>;
 }
