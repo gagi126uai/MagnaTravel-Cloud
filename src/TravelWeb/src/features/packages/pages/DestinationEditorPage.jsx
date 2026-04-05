@@ -143,6 +143,17 @@ export default function DestinationEditorPage() {
     return sorted[0] || null;
   }, [form.departures]);
 
+  const departureSummary = useMemo(() => {
+    const activeCount = form.departures.filter((departure) => departure.isActive).length;
+    const primaryDeparture = form.departures.find((departure) => departure.isPrimary) || null;
+
+    return {
+      total: form.departures.length,
+      active: activeCount,
+      primaryDeparture,
+    };
+  }, [form.departures]);
+
   const publicationState = useMemo(() => {
     if (form.isPublished) {
       return { label: "Visible en el sitio", tone: "emerald" };
@@ -487,7 +498,7 @@ export default function DestinationEditorPage() {
         }
       />
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
         <div className="grid gap-3 md:grid-cols-4">
           <SummaryCard icon={Building2} label="Pais" value={form.countryName || "-"} />
           <SummaryCard icon={CheckCircle2} label="Estado" value={publicationState.label} tone={publicationState.tone} />
@@ -500,24 +511,25 @@ export default function DestinationEditorPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
         <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-800">
-          <div className="flex flex-wrap gap-2">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {steps.map((step, index) => (
               <button
                 key={step.key}
                 type="button"
                 onClick={() => goToStep(index)}
                 disabled={!form.publicId && index > 0}
-                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                className={`rounded-xl border px-4 py-3 text-left transition ${
                   currentStep === index
-                    ? "bg-indigo-600 text-white"
+                    ? "border-indigo-500 bg-indigo-600 text-white shadow-sm"
                     : index < currentStep || form.publicId
-                      ? "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                      : "bg-slate-100 text-slate-400 dark:bg-slate-900 dark:text-slate-600"
+                      ? "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                      : "border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-600"
                 }`}
               >
-                {index + 1}. {step.label}
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-80">Paso {index + 1}</span>
+                <span className="mt-1 block text-sm font-semibold">{step.label}</span>
               </button>
             ))}
           </div>
@@ -624,60 +636,28 @@ export default function DestinationEditorPage() {
                   Todavia no hay salidas cargadas para este destino.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
-                    <thead className="bg-slate-50 dark:bg-slate-950/40">
-                      <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                        <th className="px-4 py-3">Fecha</th>
-                        <th className="px-4 py-3">Noches</th>
-                        <th className="px-4 py-3">Hotel</th>
-                        <th className="px-4 py-3">Regimen</th>
-                        <th className="px-4 py-3">Base</th>
-                        <th className="px-4 py-3">Tarifa</th>
-                        <th className="px-4 py-3">Estado</th>
-                        <th className="px-4 py-3 text-right">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {form.departures.map((departure) => (
-                        <tr key={departure.clientId}>
-                          <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">
-                            {formatLongDate(departure.startDate)}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.nights}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.hotelName}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.mealPlan}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{departure.roomBase}</td>
-                          <td className="px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white">
-                            {formatMoney(departure.salePrice, departure.currency)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              {departure.isPrimary ? <StatusPill tone="indigo">Destacada</StatusPill> : null}
-                              <StatusPill tone={departure.isActive ? "emerald" : "amber"}>
-                                {departure.isActive ? "Visible" : "Oculta"}
-                              </StatusPill>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap justify-end gap-2">
-                              {canEdit ? (
-                                <>
-                                  <Button variant="outline" size="sm" onClick={() => openEditDeparture(departure)}>
-                                    Editar
-                                  </Button>
-                                  <Button variant="outline" size="sm" onClick={() => removeDeparture(departure)} className="gap-2">
-                                    <Trash2 className="h-4 w-4" />
-                                    Quitar
-                                  </Button>
-                                </>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <InlineSummaryCard label="Total de salidas" value={departureSummary.total} />
+                    <InlineSummaryCard label="Activas" value={departureSummary.active} tone="emerald" />
+                    <InlineSummaryCard
+                      label="Salida destacada"
+                      value={formatLongDate(departureSummary.primaryDeparture?.startDate)}
+                      tone="indigo"
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    {form.departures.map((departure) => (
+                      <DepartureListCard
+                        key={departure.clientId}
+                        departure={departure}
+                        canEdit={canEdit}
+                        onEdit={() => openEditDeparture(departure)}
+                        onRemove={() => removeDeparture(departure)}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
             </WizardSection>
@@ -807,6 +787,77 @@ function SummaryCard({ icon: Icon, label, value, tone = "slate" }) {
           <p className="mt-1 truncate text-sm font-semibold">{value}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function InlineSummaryCard({ label, value, tone = "slate" }) {
+  const toneClass =
+    tone === "emerald"
+      ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200"
+      : tone === "indigo"
+        ? "bg-indigo-50 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-200"
+        : "bg-slate-50 text-slate-900 dark:bg-slate-950/40 dark:text-white";
+
+  return (
+    <div className={`rounded-xl border border-slate-200 px-4 py-4 dark:border-slate-800 ${toneClass}`}>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-2 break-words text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function DepartureListCard({ departure, canEdit, onEdit, onRemove }) {
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap gap-2">
+            {departure.isPrimary ? <StatusPill tone="indigo">Destacada</StatusPill> : null}
+            <StatusPill tone={departure.isActive ? "emerald" : "amber"}>
+              {departure.isActive ? "Visible" : "Oculta"}
+            </StatusPill>
+          </div>
+
+          <h3 className="mt-3 text-lg font-semibold tracking-tight text-slate-900 dark:text-white">
+            {formatLongDate(departure.startDate)}
+          </h3>
+
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {departure.hotelName} / {departure.transportLabel}
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <DepartureMetaItem label="Noches" value={`${departure.nights}`} />
+            <DepartureMetaItem label="Tarifa" value={formatMoney(departure.salePrice, departure.currency)} highlight />
+            <DepartureMetaItem label="Regimen" value={departure.mealPlan} />
+            <DepartureMetaItem label="Base" value={departure.roomBase} />
+          </div>
+        </div>
+
+        {canEdit ? (
+          <div className="flex flex-wrap gap-2 xl:max-w-[220px] xl:justify-end">
+            <Button variant="outline" size="sm" onClick={onEdit}>
+              Editar
+            </Button>
+            <Button variant="outline" size="sm" onClick={onRemove} className="gap-2">
+              <Trash2 className="h-4 w-4" />
+              Quitar
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function DepartureMetaItem({ label, value, highlight = false }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/30">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className={`mt-1 text-sm ${highlight ? "font-semibold text-slate-900 dark:text-white" : "text-slate-700 dark:text-slate-200"}`}>
+        {value}
+      </p>
     </div>
   );
 }

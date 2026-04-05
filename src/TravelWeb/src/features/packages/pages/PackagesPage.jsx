@@ -19,19 +19,7 @@ import { Button } from "../../../components/ui/button";
 import { ListPageHeader } from "../../../components/ui/ListPageHeader";
 import { ListToolbar } from "../../../components/ui/ListToolbar";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
-import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { useDebounce } from "../../../hooks/useDebounce";
-import {
-  DataGrid,
-  DataGridActionCell,
-  DataGridBody,
-  DataGridCell,
-  DataGridEmptyState,
-  DataGridHeader,
-  DataGridHeaderCell,
-  DataGridHeaderRow,
-  DataGridRow,
-} from "../../../components/ui/DataGrid";
 import {
   buildCountryPublicationSnippet,
   buildDestinationPublicationSnippet,
@@ -154,6 +142,34 @@ export default function PackagesPage() {
   const selectedCountry = useMemo(
     () => countries.find((country) => country.publicId === selectedCountryPublicId) || null,
     [countries, selectedCountryPublicId]
+  );
+
+  const portfolioSummary = useMemo(
+    () =>
+      countries.reduce(
+        (summary, country) => {
+          const totalDestinations = Number(country.totalDestinations || 0);
+          const publishedDestinations = Number(country.publishedDestinations || 0);
+          const draftDestinations =
+            country.draftDestinations != null
+              ? Number(country.draftDestinations || 0)
+              : Math.max(totalDestinations - publishedDestinations, 0);
+
+          summary.totalCountries += 1;
+          summary.totalDestinations += totalDestinations;
+          summary.publishedDestinations += publishedDestinations;
+          summary.draftDestinations += draftDestinations;
+
+          return summary;
+        },
+        {
+          totalCountries: 0,
+          totalDestinations: 0,
+          publishedDestinations: 0,
+          draftDestinations: 0,
+        }
+      ),
+    [countries]
   );
 
   const filteredDestinations = useMemo(() => {
@@ -366,10 +382,17 @@ export default function PackagesPage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="hidden lg:block">
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-            <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-800">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard label="Paises cargados" value={portfolioSummary.totalCountries} />
+        <SummaryCard label="Destinos cargados" value={portfolioSummary.totalDestinations} />
+        <SummaryCard label="Visibles en el sitio" value={portfolioSummary.publishedDestinations} tone="emerald" />
+        <SummaryCard label="En preparacion" value={portfolioSummary.draftDestinations} tone="amber" />
+      </div>
+
+      <div className="grid items-start gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="space-y-4 xl:sticky xl:top-20">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+            <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-5 dark:border-slate-800 dark:bg-slate-950/30">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Paises</h2>
@@ -394,7 +417,7 @@ export default function PackagesPage() {
               </div>
             </div>
 
-            <div className="max-h-[calc(100vh-280px)] space-y-2 overflow-y-auto p-3">
+            <div className="space-y-2 overflow-y-auto p-3 xl:max-h-[calc(100vh-255px)]">
               {countriesLoading ? (
                 <div className="flex h-48 items-center justify-center">
                   <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
@@ -419,28 +442,10 @@ export default function PackagesPage() {
             </div>
           </div>
         </aside>
-        <section className="space-y-4">
-          <div className="lg:hidden">
-            <ListToolbar
-              searchSlot={
-                <select
-                  value={selectedCountryPublicId}
-                  onChange={(event) => syncSelectedCountry(event.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">Selecciona un pais</option>
-                  {countries.map((country) => (
-                    <option key={country.publicId} value={country.publicId}>
-                      {country.name}
-                    </option>
-                  ))}
-                </select>
-              }
-            />
-          </div>
 
+        <section className="space-y-4">
           {!selectedCountry ? (
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
               <ListEmptyState
                 icon={Globe2}
                 title="Selecciona un pais"
@@ -449,18 +454,24 @@ export default function PackagesPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Pais seleccionado</p>
-                    <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{selectedCountry.name}</h2>
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50 lg:p-6">
+                <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-start 2xl:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone="slate">Pais seleccionado</Badge>
+                      <Badge tone="emerald">{selectedCountry.publishedDestinations} visibles</Badge>
+                      <Badge tone="amber">{selectedCountry.draftDestinations} en preparacion</Badge>
+                    </div>
+                    <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-900 dark:text-white lg:text-3xl">
+                      {selectedCountry.name}
+                    </h2>
                     <p className="mt-2 max-w-2xl text-sm text-slate-500 dark:text-slate-400">
                       Administra los destinos de este pais, sus salidas y la informacion que se muestra en el sitio.
                     </p>
                   </div>
 
                   {canEdit ? (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 2xl:justify-end">
                       <Button variant="outline" onClick={() => openEditCountryModal(selectedCountry)} className="gap-2">
                         <Pencil className="h-4 w-4" />
                         Editar pais
@@ -473,14 +484,14 @@ export default function PackagesPage() {
                   ) : null}
                 </div>
 
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
                   <SummaryCard label="Destinos cargados" value={selectedCountry.totalDestinations} />
                   <SummaryCard label="Visibles en el sitio" value={selectedCountry.publishedDestinations} tone="emerald" />
                   <SummaryCard label="En preparacion" value={selectedCountry.draftDestinations} tone="amber" />
                 </div>
 
                 {canPublish ? (
-                  <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                  <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/40">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div>
                         <p className="text-sm font-semibold text-slate-900 dark:text-white">Publicacion en el sitio</p>
@@ -504,6 +515,11 @@ export default function PackagesPage() {
               </div>
 
               <ListToolbar
+                actionSlot={
+                  <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                    {filteredDestinations.length} destino{filteredDestinations.length === 1 ? "" : "s"}
+                  </div>
+                }
                 searchSlot={
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -531,74 +547,25 @@ export default function PackagesPage() {
                 }
               />
 
-              <DataGrid minWidth={980}>
-                <DataGridHeader>
-                  <DataGridHeaderRow>
-                    <DataGridHeaderCell>Destino</DataGridHeaderCell>
-                    {canPublish ? <DataGridHeaderCell>Estado en el sitio</DataGridHeaderCell> : null}
-                    <DataGridHeaderCell>Precio desde</DataGridHeaderCell>
-                    <DataGridHeaderCell>Proxima salida</DataGridHeaderCell>
-                    <DataGridHeaderCell>Salidas activas</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Acciones</DataGridHeaderCell>
-                  </DataGridHeaderRow>
-                </DataGridHeader>
-                <DataGridBody>
-                  {destinationsLoading ? (
-                    <tr>
-                      <td colSpan={canPublish ? 6 : 5} className="px-4 py-20">
-                        <div className="flex items-center justify-center">
-                          <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
-                        </div>
-                      </td>
-                    </tr>
-                  ) : filteredDestinations.length === 0 ? (
-                    <DataGridEmptyState
-                      colSpan={canPublish ? 6 : 5}
-                      icon={MapPinned}
-                      title={destinations.length === 0 ? "Todavia no hay destinos cargados" : "No encontramos destinos"}
-                      description={
-                        destinations.length === 0
-                          ? "Crea el primer destino de este pais para empezar a cargar salidas y contenido."
-                          : "Ajusta la busqueda o el filtro para ver otros resultados."
-                      }
-                    />
-                  ) : (
-                    filteredDestinations.map((destination) => (
-                      <DestinationTableRow
-                        key={destination.publicId}
-                        destination={destination}
-                        canEdit={canEdit}
-                        canPublish={canPublish}
-                        onEdit={() => openDestinationEditor(destination.publicId)}
-                        onView={() => openDestinationPreview(destination)}
-                        onCopy={() => copyDestinationPublication(destination)}
-                        onPublish={() => handlePublish(destination)}
-                        onUnpublish={() => handleUnpublish(destination)}
-                      />
-                    ))
-                  )}
-                </DataGridBody>
-              </DataGrid>
-
-              <MobileRecordList>
-                {destinationsLoading ? (
-                  <div className="flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-10 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                    <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
-                  </div>
-                ) : filteredDestinations.length === 0 ? (
-                  <ListEmptyState
-                    icon={MapPinned}
-                    title={destinations.length === 0 ? "Todavia no hay destinos cargados" : "No encontramos destinos"}
-                    description={
-                      destinations.length === 0
-                        ? "Crea el primer destino de este pais para empezar a cargar salidas y contenido."
-                        : "Ajusta la busqueda o el filtro para ver otros resultados."
-                    }
-                    className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
-                  />
-                ) : (
-                  filteredDestinations.map((destination) => (
-                    <DestinationMobileCard
+              {destinationsLoading ? (
+                <div className="flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-14 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+                  <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
+                </div>
+              ) : filteredDestinations.length === 0 ? (
+                <ListEmptyState
+                  icon={MapPinned}
+                  title={destinations.length === 0 ? "Todavia no hay destinos cargados" : "No encontramos destinos"}
+                  description={
+                    destinations.length === 0
+                      ? "Crea el primer destino de este pais para empezar a cargar salidas y contenido."
+                      : "Ajusta la busqueda o el filtro para ver otros resultados."
+                  }
+                  className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50"
+                />
+              ) : (
+                <div className="space-y-3">
+                  {filteredDestinations.map((destination) => (
+                    <DestinationListCard
                       key={destination.publicId}
                       destination={destination}
                       canEdit={canEdit}
@@ -609,9 +576,9 @@ export default function PackagesPage() {
                       onPublish={() => handlePublish(destination)}
                       onUnpublish={() => handleUnpublish(destination)}
                     />
-                  ))
-                )}
-              </MobileRecordList>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </section>
@@ -645,12 +612,12 @@ function CountryListItem({ country, selected, onClick }) {
           : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800"
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{country.name}</p>
+          <p className="text-sm font-semibold text-slate-900 dark:text-white">{country.name}</p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{country.totalDestinations} destinos cargados</p>
         </div>
-        <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${stateClass}`}>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold ${stateClass}`}>
           {country.publishedDestinations > 0 ? `${country.publishedDestinations} visibles` : "En preparacion"}
         </span>
       </div>
@@ -669,7 +636,7 @@ function SummaryCard({ label, value, tone = "slate" }) {
   return (
     <div className={`rounded-xl border border-slate-200 px-4 py-4 dark:border-slate-800 ${toneClass}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-2 text-2xl font-bold tracking-tight">{value}</p>
+      <p className="mt-2 break-words text-2xl font-bold tracking-tight">{value}</p>
     </div>
   );
 }
@@ -686,139 +653,97 @@ function DestinationStateBadge({ destination }) {
   return <Badge tone="amber">En preparacion</Badge>;
 }
 
-function DestinationTableRow({ destination, canEdit, canPublish, onEdit, onView, onCopy, onPublish, onUnpublish }) {
+function DestinationListCard({ destination, canEdit, canPublish, onEdit, onView, onCopy, onPublish, onUnpublish }) {
+  const stateLabel = destination.isPublished
+    ? "Visible en el sitio"
+    : destination.canPublish
+      ? "Lista para mostrar"
+      : "En preparacion";
+  const activeDeparturesLabel =
+    destination.departureCount > destination.activeDepartureCount
+      ? `${destination.activeDepartureCount} de ${destination.departureCount} activas`
+      : `${destination.activeDepartureCount} activas`;
+
   return (
-    <DataGridRow>
-      <DataGridCell>
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-slate-900 dark:text-white">{destination.title || destination.name}</p>
-          {destination.title && destination.name && destination.title !== destination.name ? (
-            <p className="text-xs text-slate-500 dark:text-slate-400">{destination.name}</p>
-          ) : destination.tagline ? (
-            <p className="text-xs text-slate-500 dark:text-slate-400">{destination.tagline}</p>
+    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900/50 dark:hover:border-slate-700 lg:p-5">
+      <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap gap-2">
+                {canPublish ? <DestinationStateBadge destination={destination} /> : null}
+                <Badge tone="slate">{activeDeparturesLabel}</Badge>
+              </div>
+
+              <h3 className="mt-3 text-lg font-semibold tracking-tight text-slate-900 dark:text-white">
+                {destination.title || destination.name}
+              </h3>
+
+              {destination.title && destination.name && destination.title !== destination.name ? (
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{destination.name}</p>
+              ) : destination.tagline ? (
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{destination.tagline}</p>
+              ) : null}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/40">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                Precio desde
+              </p>
+              <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
+                {formatMoney(destination.fromPrice, destination.currency)}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <DestinationMetaItem label="Proxima salida" value={formatLongDate(destination.nextDepartureDate)} />
+            <DestinationMetaItem label="Salidas" value={activeDeparturesLabel} />
+            <DestinationMetaItem label="Publicacion" value={stateLabel} />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 2xl:max-w-[320px] 2xl:justify-end">
+          {canEdit ? (
+            <Button variant="outline" size="sm" onClick={onEdit} className="gap-2">
+              <Pencil className="h-4 w-4" />
+              Editar
+            </Button>
+          ) : null}
+          {canPublish ? (
+            <>
+              <Button variant="outline" size="sm" onClick={onView} className="gap-2">
+                <Eye className="h-4 w-4" />
+                Vista previa
+              </Button>
+              <Button variant="outline" size="sm" onClick={onCopy} className="gap-2">
+                <Copy className="h-4 w-4" />
+                Copiar codigo
+              </Button>
+              {destination.isPublished ? (
+                <Button variant="outline" size="sm" onClick={onUnpublish} className="gap-2">
+                  <Rocket className="h-4 w-4" />
+                  Ocultar
+                </Button>
+              ) : destination.canPublish ? (
+                <Button size="sm" onClick={onPublish} className="gap-2">
+                  <Rocket className="h-4 w-4" />
+                  Publicar
+                </Button>
+              ) : null}
+            </>
           ) : null}
         </div>
-      </DataGridCell>
-      {canPublish ? (
-        <DataGridCell>
-          <DestinationStateBadge destination={destination} />
-        </DataGridCell>
-      ) : null}
-      <DataGridCell className="font-semibold text-slate-900 dark:text-white">
-        {formatMoney(destination.fromPrice, destination.currency)}
-      </DataGridCell>
-      <DataGridCell>{formatLongDate(destination.nextDepartureDate)}</DataGridCell>
-      <DataGridCell>
-        {destination.activeDepartureCount} activas
-        {destination.departureCount > destination.activeDepartureCount ? ` de ${destination.departureCount}` : ""}
-      </DataGridCell>
-      <DataGridActionCell>
-        {canEdit ? (
-          <Button variant="outline" size="sm" onClick={onEdit} className="gap-2">
-            <Pencil className="h-4 w-4" />
-            Editar
-          </Button>
-        ) : null}
-        {canPublish ? (
-          <>
-            <Button variant="outline" size="sm" onClick={onView} className="gap-2">
-              <Eye className="h-4 w-4" />
-              Ver como cliente
-            </Button>
-            <Button variant="outline" size="sm" onClick={onCopy} className="gap-2">
-              <Copy className="h-4 w-4" />
-              Copiar para la web
-            </Button>
-            {destination.isPublished ? (
-              <Button variant="outline" size="sm" onClick={onUnpublish} className="gap-2">
-                <Rocket className="h-4 w-4" />
-                Retirar
-              </Button>
-            ) : destination.canPublish ? (
-              <Button size="sm" onClick={onPublish} className="gap-2">
-                <Rocket className="h-4 w-4" />
-                Mostrar
-              </Button>
-            ) : null}
-          </>
-        ) : null}
-      </DataGridActionCell>
-    </DataGridRow>
+      </div>
+    </article>
   );
 }
 
-function DestinationMobileCard({ destination, canEdit, canPublish, onEdit, onView, onCopy, onPublish, onUnpublish }) {
+function DestinationMetaItem({ label, value }) {
   return (
-    <MobileRecordCard
-      accentSlot={
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 shadow-sm dark:bg-indigo-900/30 dark:text-indigo-300">
-          <MapPinned className="h-5 w-5" />
-        </div>
-      }
-      statusSlot={canPublish ? <DestinationStateBadge destination={destination} /> : null}
-      title={destination.title || destination.name}
-      subtitle={destination.title && destination.name && destination.title !== destination.name ? destination.name : destination.tagline || ""}
-      meta={
-        <>
-          <div className="flex items-center justify-between gap-3">
-            <span>Precio desde</span>
-            <span className="font-semibold text-slate-900 dark:text-white">{formatMoney(destination.fromPrice, destination.currency)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>Proxima salida</span>
-            <span>{formatLongDate(destination.nextDepartureDate)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>Salidas activas</span>
-            <span>
-              {destination.activeDepartureCount}
-              {destination.departureCount > destination.activeDepartureCount ? ` de ${destination.departureCount}` : ""}
-            </span>
-          </div>
-        </>
-      }
-      footer={
-        canPublish ? (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={onCopy} className="gap-2">
-              <Copy className="h-4 w-4" />
-              Copiar para la web
-            </Button>
-            {destination.isPublished ? (
-              <Button variant="outline" size="sm" onClick={onUnpublish}>
-                Retirar
-              </Button>
-            ) : destination.canPublish ? (
-              <Button size="sm" onClick={onPublish}>
-                Mostrar
-              </Button>
-            ) : null}
-          </div>
-        ) : null
-      }
-      footerActions={
-        <>
-          {canEdit ? (
-            <button
-              type="button"
-              onClick={onEdit}
-              className="flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-            >
-              Editar
-            </button>
-          ) : null}
-          {canPublish ? (
-            <button
-              type="button"
-              onClick={onView}
-              className="flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-            >
-              Ver
-            </button>
-          ) : null}
-        </>
-      }
-    />
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/30">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">{value}</p>
+    </div>
   );
 }
 
