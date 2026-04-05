@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+
+<html class="light" lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&amp;family=Inter:wght@400;500;600;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-secondary-container": "#4e6874",
+                    "secondary-fixed": "#cbe7f5",
+                    "primary-fixed": "#d7e2ff",
+                    "on-primary-container": "#6b9bef",
+                    "surface-dim": "#d9dadb",
+                    "surface-container-low": "#f3f4f5",
+                    "surface-bright": "#f8f9fa",
+                    "on-secondary-fixed": "#021f29",
+                    "surface-container-high": "#e7e8e9",
+                    "tertiary-container": "#592300",
+                    "primary-fixed-dim": "#abc7ff",
+                    "on-tertiary": "#ffffff",
+                    "on-secondary-fixed-variant": "#304a55",
+                    "tertiary-fixed": "#ffdbca",
+                    "on-tertiary-fixed": "#341100",
+                    "error": "#ba1a1a",
+                    "on-secondary": "#ffffff",
+                    "surface": "#f8f9fa",
+                    "secondary-fixed-dim": "#afcbd8",
+                    "inverse-primary": "#abc7ff",
+                    "on-tertiary-fixed-variant": "#723610",
+                    "error-container": "#ffdad6",
+                    "surface-container-highest": "#e1e3e4",
+                    "outline-variant": "#c3c6d1",
+                    "inverse-on-surface": "#f0f1f2",
+                    "on-error": "#ffffff",
+                    "tertiary": "#381300",
+                    "inverse-surface": "#2e3132",
+                    "surface-container": "#edeeef",
+                    "on-primary": "#ffffff",
+                    "tertiary-fixed-dim": "#ffb690",
+                    "secondary": "#48626e",
+                    "primary": "#001d44",
+                    "outline": "#737780",
+                    "on-error-container": "#93000a",
+                    "secondary-container": "#cbe7f5",
+                    "background": "#f8f9fa",
+                    "surface-tint": "#255dad",
+                    "on-tertiary-container": "#d8885c",
+                    "surface-variant": "#e1e3e4",
+                    "on-primary-fixed": "#001b3f",
+                    "on-background": "#191c1d",
+                    "on-surface-variant": "#43474f",
+                    "on-surface": "#191c1d",
+                    "on-primary-fixed-variant": "#00458f",
+                    "primary-container": "#00326b",
+                    "surface-container-lowest": "#ffffff"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Manrope"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-header {
+            background: rgba(248, 249, 250, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface font-body text-on-surface antialiased">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 glass-header shadow-sm">
+<div class="flex justify-between items-center px-6 py-4 w-full">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden bg-primary-fixed">
+<img alt="Travel Agent Profile" data-alt="Professional headshot of a travel consultant in a blue suit, soft corporate lighting, blurred office background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCivDbm2pIhkvetlEL8EaekTp4E-HZsPs9PhIGf5AykOl9dGi4iVMZMVyRw52XUklGRNsl9mTA0FLXeisqyF-ruYLXuv7n45kDXoxwt8CTWV-4LVVoGgMLhsM6ybjH-nMW6GtYyLiw1boDifoiyiC9aPaQ5RxAdKILGykB3HpTmCbtie9ScF9YaRnAp5hgQ4dDS3xQvXVJDPlCnbv5YdCfLNObIEb37709FDMFXHm5vYK-lEKun_7tQIxcxx2wWnSiA6KlXz0XB2h4D"/>
+</div>
+<h1 class="font-headline font-bold text-2xl tracking-tight text-[#001d44] dark:text-[#cbe7f5]">Países y Destinos</h1>
+</div>
+<button class="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-container-high text-[#001d44] hover:bg-slate-100 transition-colors active:scale-95 duration-150">
+<span class="material-symbols-outlined">search</span>
+</button>
+</div>
+<div class="bg-slate-200/50 dark:bg-slate-800/50 h-[1px]"></div>
+</header>
+<!-- Content Canvas -->
+<main class="pt-24 pb-32 px-6">
+<!-- Region Breadcrumb & Title -->
+<div class="mb-8">
+<div class="flex items-center gap-2 mb-2">
+<span class="bg-secondary-fixed text-on-secondary-fixed px-3 py-0.5 rounded-full font-label text-[10px] font-bold tracking-widest uppercase">Región: Europa</span>
+</div>
+<h2 class="font-headline text-3xl font-extrabold text-primary tracking-tight">España</h2>
+<p class="text-on-surface-variant text-sm mt-1">24 Destinos Activos</p>
+</div>
+<!-- Destination Cards List -->
+<div class="space-y-6">
+<!-- Card: Barcelona -->
+<div class="group relative bg-surface-container-lowest rounded-xl overflow-hidden transition-all duration-300 hover:shadow-[0_20px_40px_rgba(25,28,29,0.06)] active:scale-[0.98]">
+<div class="h-40 relative">
+<img alt="Barcelona skyline" class="w-full h-full object-cover" data-alt="Aerial cinematic view of Sagrada Familia and Barcelona city grid during a vibrant Mediterranean sunset" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB01w3p1baiKhy9ooUshDCoPfhjB3k0TSUey5JaBLX0ATh0ZYh53Nuek_9uZeP2-ZqagHwkaY2MbkAkUH8LVdkFFVHHl5EkYVhIuKHX1dCyf3AA5DKefKmpmNxQS4pGwACBBMkEMCt-dLxudSELiYqK0iIb0FXjY8rc_CYSg7p1G50gWVKe5MACsMHOYQVjBRalcc09yuOoLV-J5doEx2KrO8mmjWOFybShfrff0cm6FuRCEKchKE7yg_x0qzyZcRvNkr_juFrkAn6D"/>
+<div class="absolute top-4 left-4">
+<span class="bg-primary text-white font-label text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider">Popular</span>
+</div>
+</div>
+<div class="p-5">
+<div class="flex justify-between items-start mb-4">
+<div>
+<h3 class="font-headline text-xl font-bold text-primary">Barcelona</h3>
+<div class="flex items-center gap-1 text-on-surface-variant mt-1">
+<span class="material-symbols-outlined text-[16px]">location_on</span>
+<span class="text-xs font-medium">Cataluña</span>
+</div>
+</div>
+<div class="text-right">
+<span class="block text-[10px] text-on-surface-variant font-bold uppercase">Desde</span>
+<span class="text-xl font-headline font-extrabold text-surface-tint">€850</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-transparent bg-surface-container-low rounded-lg p-3">
+<div>
+<span class="block text-[10px] text-on-surface-variant font-semibold uppercase mb-1">Próxima Salida</span>
+<div class="flex items-center gap-2 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">event</span>
+                                12 Oct, 2023
+                            </div>
+</div>
+<div class="text-right">
+<span class="block text-[10px] text-on-surface-variant font-semibold uppercase mb-1">Paquetes</span>
+<div class="flex items-center justify-end gap-2 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">inventory_2</span>
+                                14 Activos
+                            </div>
+</div>
+</div>
+</div>
+<div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-12 bg-surface-tint rounded-r-full"></div>
+</div>
+<!-- Card: Madrid -->
+<div class="group relative bg-surface-container-lowest rounded-xl overflow-hidden transition-all duration-300 hover:shadow-[0_20px_40px_rgba(25,28,29,0.06)] active:scale-[0.98]">
+<div class="h-40 relative">
+<img alt="Madrid Gran Via" class="w-full h-full object-cover" data-alt="Wide angle view of Gran Via in Madrid at twilight, ornate classical architecture with golden lights and car light trails" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDwbou48Zs09vN9dquNV4610RFNCKXEevqo52Bae8C8CexcSBFnmMyBnNUUeR5PnDy8-uO2epa1Z63nP0yEHXoVBkK9QuAW71QSiDhN1VfzxJ0snP8A2MCLw-bBxwDuypO7z5eda5-__lQSRFO2b-EL66F3hnx4MyEioLZTHh5mmYCYNF2sAYuRYY6zMajj_t534f8IHscTmoMVNNymSenEA4Hlc5BQaEz53Q5UIT7K9DvkuYXc8WkarR0sYBd-fkuuJsK08qSA-tK4"/>
+<div class="absolute top-4 left-4">
+<span class="bg-tertiary-container text-on-tertiary-container font-label text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider">Demanda Alta</span>
+</div>
+</div>
+<div class="p-5">
+<div class="flex justify-between items-start mb-4">
+<div>
+<h3 class="font-headline text-xl font-bold text-primary">Madrid</h3>
+<div class="flex items-center gap-1 text-on-surface-variant mt-1">
+<span class="material-symbols-outlined text-[16px]">location_on</span>
+<span class="text-xs font-medium">Comunidad de Madrid</span>
+</div>
+</div>
+<div class="text-right">
+<span class="block text-[10px] text-on-surface-variant font-bold uppercase">Desde</span>
+<span class="text-xl font-headline font-extrabold text-surface-tint">€720</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-transparent bg-surface-container-low rounded-lg p-3">
+<div>
+<span class="block text-[10px] text-on-surface-variant font-semibold uppercase mb-1">Próxima Salida</span>
+<div class="flex items-center gap-2 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">event</span>
+                                15 Oct, 2023
+                            </div>
+</div>
+<div class="text-right">
+<span class="block text-[10px] text-on-surface-variant font-semibold uppercase mb-1">Paquetes</span>
+<div class="flex items-center justify-end gap-2 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">inventory_2</span>
+                                08 Activos
+                            </div>
+</div>
+</div>
+</div>
+</div>
+<!-- Card: Sevilla -->
+<div class="group relative bg-surface-container-lowest rounded-xl overflow-hidden transition-all duration-300 hover:shadow-[0_20px_40px_rgba(25,28,29,0.06)] active:scale-[0.98]">
+<div class="h-40 relative">
+<img alt="Sevilla Plaza de España" class="w-full h-full object-cover" data-alt="Intricate tile work and sunlit arches of Plaza de España in Seville, warm morning light and traditional Spanish architecture" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBl1ff1MP_KvwwdiDS1wdFc5psdyjfu1XIFToa2tFk_Z-X522vRx15p5IxuZk_IGgSvjzsfUdjC7O8wFpFvRz-1CCzV7ucFFAcAga0GeVCbLkzBSm8WzME7XKjZPg2shfSWaSuxbR4Bp1WPIxaOCnNO2-6Vc402aplNoWR21gSE_icGU_hSzFUG6qOAIDRMttn966TLC64Fh-6v35Plf7EkL8z4v7zk4ff8qexsKWFPUHhcLFQiCAwXR1CVN9UqtREKMZjvHVuzdpKJ"/>
+<div class="absolute top-4 left-4">
+<span class="bg-secondary-fixed text-on-secondary-fixed font-label text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider">Top Ventas</span>
+</div>
+</div>
+<div class="p-5">
+<div class="flex justify-between items-start mb-4">
+<div>
+<h3 class="font-headline text-xl font-bold text-primary">Sevilla</h3>
+<div class="flex items-center gap-1 text-on-surface-variant mt-1">
+<span class="material-symbols-outlined text-[16px]">location_on</span>
+<span class="text-xs font-medium">Andalucía</span>
+</div>
+</div>
+<div class="text-right">
+<span class="block text-[10px] text-on-surface-variant font-bold uppercase">Desde</span>
+<span class="text-xl font-headline font-extrabold text-surface-tint">€690</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-transparent bg-surface-container-low rounded-lg p-3">
+<div>
+<span class="block text-[10px] text-on-surface-variant font-semibold uppercase mb-1">Próxima Salida</span>
+<div class="flex items-center gap-2 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">event</span>
+                                20 Oct, 2023
+                            </div>
+</div>
+<div class="text-right">
+<span class="block text-[10px] text-on-surface-variant font-semibold uppercase mb-1">Paquetes</span>
+<div class="flex items-center justify-end gap-2 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">inventory_2</span>
+                                11 Activos
+                            </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 bg-white/90 dark:bg-[#001d44]/90 backdrop-blur-xl rounded-t-3xl shadow-[0_-10px_30px_rgba(0,0,0,0.05)]">
+<!-- Destinos Active -->
+<a class="flex flex-col items-center justify-center bg-gradient-to-br from-[#001d44] to-[#00326b] text-white rounded-2xl px-5 py-2 active:scale-90 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">explore</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Destinos</span>
+</a>
+<!-- Reservas Inactive -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#00326b] dark:hover:text-white transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">event_available</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Reservas</span>
+</a>
+<!-- Clientes Inactive -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#00326b] dark:hover:text-white transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Clientes</span>
+</a>
+<!-- Ajustes Inactive -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#00326b] dark:hover:text-white transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Ajustes</span>
+</a>
+</nav>
+<!-- FAB (Contextual) -->
+<button class="fixed right-6 bottom-28 w-14 h-14 bg-gradient-to-br from-primary to-primary-container text-white rounded-full shadow-lg flex items-center justify-center active:scale-90 transition-transform z-40">
+<span class="material-symbols-outlined">add</span>
+</button>
+</body></html>

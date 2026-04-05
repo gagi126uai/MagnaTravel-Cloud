@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+
+<html class="light" lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-container-highest": "#e1e3e4",
+                    "surface-container-high": "#e7e8e9",
+                    "inverse-surface": "#2e3132",
+                    "primary": "#001d44",
+                    "tertiary-fixed": "#ffdbca",
+                    "on-secondary-fixed-variant": "#304a55",
+                    "on-surface-variant": "#43474f",
+                    "on-secondary-fixed": "#021f29",
+                    "on-primary": "#ffffff",
+                    "surface-container-low": "#f3f4f5",
+                    "on-surface": "#191c1d",
+                    "on-primary-fixed-variant": "#00458f",
+                    "on-tertiary-container": "#d8885c",
+                    "surface-tint": "#255dad",
+                    "on-tertiary": "#ffffff",
+                    "secondary": "#48626e",
+                    "on-secondary": "#ffffff",
+                    "on-background": "#191c1d",
+                    "secondary-fixed": "#cbe7f5",
+                    "primary-fixed-dim": "#abc7ff",
+                    "on-error-container": "#93000a",
+                    "on-tertiary-fixed": "#341100",
+                    "primary-container": "#00326b",
+                    "surface": "#f8f9fa",
+                    "on-error": "#ffffff",
+                    "secondary-fixed-dim": "#afcbd8",
+                    "secondary-container": "#cbe7f5",
+                    "surface-container": "#edeeef",
+                    "on-secondary-container": "#4e6874",
+                    "outline": "#737780",
+                    "primary-fixed": "#d7e2ff",
+                    "surface-dim": "#d9dadb",
+                    "outline-variant": "#c3c6d1",
+                    "tertiary-fixed-dim": "#ffb690",
+                    "error-container": "#ffdad6",
+                    "inverse-primary": "#abc7ff",
+                    "inverse-on-surface": "#f0f1f2",
+                    "on-primary-container": "#6b9bef",
+                    "surface-container-lowest": "#ffffff",
+                    "on-primary-fixed": "#001b3f",
+                    "surface-bright": "#f8f9fa",
+                    "on-tertiary-fixed-variant": "#723610",
+                    "error": "#ba1a1a",
+                    "tertiary": "#381300",
+                    "surface-variant": "#e1e3e4",
+                    "tertiary-container": "#592300",
+                    "background": "#f8f9fa"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Manrope"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-headline { font-family: 'Manrope', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface flex min-h-screen overflow-hidden">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-screen w-64 bg-slate-50 dark:bg-slate-900 flex flex-col h-full border-r-0 z-50">
+<div class="p-6 flex flex-col items-start gap-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">public</span>
+</div>
+<div>
+<h1 class="text-xl font-bold text-[#001d44] dark:text-white font-headline">MagnaTravel</h1>
+<p class="text-xs text-slate-500">Global Concierge</p>
+</div>
+</div>
+<button class="w-full mt-4 bg-gradient-to-br from-primary to-primary-container text-white py-2.5 rounded-xl font-semibold text-sm shadow-sm hover:opacity-90 transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">add</span>
+                New Booking
+            </button>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg font-manrope font-semibold tracking-tight text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span>Dashboard</span>
+</a>
+<!-- Active State: Countries & Destinations -->
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg font-manrope font-semibold tracking-tight text-[#001d44] dark:text-white border-l-2 border-[#255dad] bg-slate-100 dark:bg-slate-800/50 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="public" style="font-variation-settings: 'FILL' 1;">public</span>
+<span>Countries &amp; Destinations</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg font-manrope font-semibold tracking-tight text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="confirmation_number">confirmation_number</span>
+<span>Bookings</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg font-manrope font-semibold tracking-tight text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span>Clients</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg font-manrope font-semibold tracking-tight text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span>Settings</span>
+</a>
+</nav>
+<div class="p-4 border-t border-slate-100 dark:border-slate-800 space-y-1">
+<a class="flex items-center gap-3 px-4 py-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors text-sm font-semibold" href="#">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+<span>Support</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors text-sm font-semibold" href="#">
+<span class="material-symbols-outlined" data-icon="logout">logout</span>
+<span>Sign Out</span>
+</a>
+</div>
+</aside>
+<!-- Main Wrapper -->
+<div class="flex-1 ml-64 flex flex-col min-h-screen max-h-screen overflow-hidden">
+<!-- TopNavBar -->
+<header class="sticky top-0 z-40 w-full bg-white/80 dark:bg-slate-950/80 backdrop-blur-md flex items-center justify-between px-8 py-3 shadow-sm dark:shadow-none">
+<div class="flex items-center gap-4 flex-1">
+<div class="relative w-full max-w-md">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
+<input class="w-full pl-10 pr-4 py-2 bg-surface-container-highest/50 border-none rounded-xl focus:ring-2 focus:ring-[#255dad]/30 text-sm font-inter" placeholder="Quick Search destinations, flights..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-slate-500 hover:text-[#255dad] transition-all">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<div class="h-8 w-[1px] bg-slate-200 mx-2"></div>
+<div class="flex items-center gap-3 cursor-pointer group">
+<div class="text-right">
+<p class="text-xs font-bold text-primary">Alex Rivera</p>
+<p class="text-[10px] text-slate-500">Senior Agent</p>
+</div>
+<span class="material-symbols-outlined text-slate-400 group-hover:text-primary transition-colors" data-icon="account_circle">account_circle</span>
+</div>
+</div>
+</header>
+<!-- Page Content: List-Detail Layout -->
+<main class="flex-1 flex overflow-hidden">
+<!-- Left Column: Countries List -->
+<section class="w-80 bg-surface-container-low flex flex-col border-r border-transparent">
+<div class="p-6">
+<h2 class="text-xl font-headline font-extrabold text-primary tracking-tight mb-4">Countries</h2>
+<div class="relative mb-6">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">filter_list</span>
+<input class="w-full pl-9 pr-4 py-2 bg-white rounded-lg text-xs border-none focus:ring-1 focus:ring-primary/20" placeholder="Filter countries..." type="text"/>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto px-4 pb-6 space-y-1">
+<!-- Country Item: Spain (Active) -->
+<div class="group relative p-4 rounded-xl bg-surface-container-lowest shadow-sm cursor-pointer transition-all">
+<div class="absolute left-0 top-4 bottom-4 w-1 bg-surface-tint rounded-r-full"></div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="text-xl">🇪🇸</span>
+<div>
+<p class="text-sm font-bold text-primary">Spain</p>
+<p class="text-[10px] text-on-surface-variant">Europe</p>
+</div>
+</div>
+<span class="bg-secondary-fixed text-on-secondary-fixed-variant px-2 py-0.5 rounded-full text-[10px] font-bold">42 Dest.</span>
+</div>
+</div>
+<!-- Other Country Items -->
+<div class="p-4 rounded-xl hover:bg-surface-container-high cursor-pointer transition-all flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="text-xl">🇫🇷</span>
+<div>
+<p class="text-sm font-semibold text-on-surface">France</p>
+<p class="text-[10px] text-on-surface-variant">Europe</p>
+</div>
+</div>
+<span class="text-[10px] font-medium text-on-surface-variant">38 Dest.</span>
+</div>
+<div class="p-4 rounded-xl hover:bg-surface-container-high cursor-pointer transition-all flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="text-xl">🇮🇹</span>
+<div>
+<p class="text-sm font-semibold text-on-surface">Italy</p>
+<p class="text-[10px] text-on-surface-variant">Europe</p>
+</div>
+</div>
+<span class="text-[10px] font-medium text-on-surface-variant">56 Dest.</span>
+</div>
+<div class="p-4 rounded-xl hover:bg-surface-container-high cursor-pointer transition-all flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="text-xl">🇯🇵</span>
+<div>
+<p class="text-sm font-semibold text-on-surface">Japan</p>
+<p class="text-[10px] text-on-surface-variant">Asia</p>
+</div>
+</div>
+<span class="text-[10px] font-medium text-on-surface-variant">29 Dest.</span>
+</div>
+<div class="p-4 rounded-xl hover:bg-surface-container-high cursor-pointer transition-all flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="text-xl">🇬🇷</span>
+<div>
+<p class="text-sm font-semibold text-on-surface">Greece</p>
+<p class="text-[10px] text-on-surface-variant">Europe</p>
+</div>
+</div>
+<span class="text-[10px] font-medium text-on-surface-variant">18 Dest.</span>
+</div>
+</div>
+</section>
+<!-- Right Column: Detail View -->
+<section class="flex-1 bg-surface flex flex-col overflow-hidden">
+<!-- Detail Header -->
+<div class="p-8 pb-0">
+<div class="flex justify-between items-start mb-8">
+<div>
+<div class="flex items-center gap-3 text-on-surface-variant mb-2">
+<span class="text-xs font-semibold tracking-widest uppercase">Destinations</span>
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+<span class="text-xs font-semibold tracking-widest uppercase text-primary">Europe</span>
+</div>
+<h2 class="text-4xl font-headline font-extrabold text-primary">Spain</h2>
+<p class="text-on-surface-variant mt-2 max-w-xl text-sm leading-relaxed">
+                                Explore the vibrant culture, historic landmarks, and stunning landscapes of the Iberian Peninsula. From the architectural marvels of Barcelona to the sun-drenched coasts of Andalusia.
+                            </p>
+</div>
+<div class="flex gap-3">
+<button class="px-4 py-2 bg-surface-container-high rounded-xl text-xs font-bold text-on-surface hover:bg-surface-container-highest transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">share</span>
+                                Export List
+                            </button>
+<button class="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold shadow-lg shadow-primary/20 hover:opacity-90 transition-all flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">add_location</span>
+                                Add Destination
+                            </button>
+</div>
+</div>
+<!-- Sub-navigation / Filter Bar -->
+<div class="flex items-center justify-between border-b border-surface-container-high mb-6">
+<div class="flex gap-8">
+<button class="pb-4 text-sm font-bold text-primary border-b-2 border-surface-tint relative">
+                                Ciudades
+                                <span class="absolute -top-1 -right-4 bg-primary text-white text-[9px] px-1.5 py-0.5 rounded-full">12</span>
+</button>
+<button class="pb-4 text-sm font-semibold text-on-surface-variant hover:text-primary transition-colors">Hoteles</button>
+<button class="pb-4 text-sm font-semibold text-on-surface-variant hover:text-primary transition-colors">Paquetes</button>
+<button class="pb-4 text-sm font-semibold text-on-surface-variant hover:text-primary transition-colors">Experiencias</button>
+</div>
+<div class="pb-4 flex items-center gap-4">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">search</span>
+<input class="pl-8 pr-4 py-1.5 bg-surface-container-low border-none rounded-lg text-xs w-64 focus:ring-1 focus:ring-primary/10" placeholder="Search destinations..." type="text"/>
+</div>
+<button class="p-1.5 hover:bg-surface-container-low rounded-lg text-on-surface-variant transition-colors">
+<span class="material-symbols-outlined text-lg">grid_view</span>
+</button>
+<button class="p-1.5 hover:bg-surface-container-low rounded-lg text-on-surface-variant transition-colors">
+<span class="material-symbols-outlined text-lg">format_list_bulleted</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Destinations Grid -->
+<div class="flex-1 overflow-y-auto p-8 pt-2">
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+<!-- Destination Card 1 -->
+<div class="group bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col border border-transparent hover:border-surface-tint/10">
+<div class="relative h-48 overflow-hidden">
+<img alt="Barcelona view" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" data-alt="Stunning aerial view of the Sagrada Familia in Barcelona with warm Mediterranean sunset lighting and city grid in background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDgkTXlHWIAen6x7wS9YdUL3sqEwmgGnZXFl_-xrdFPeksDc5afRzBr0V7xr70GlzlRHRTAP2egydxnqDJeVyG38HEWL2FqhpvJVhQmICwHMZ4qj7XcLIay6rFoJqexUZf-SdpqJ8XLUbZf6tDn4oEDaQGriejX-NjcweDnzXOEdOaAauR5dICGTFJuAXsIsWvooW3BZxKiOm6adY1jfpzNgWFxzmx4vHBiTIxUW8ht7pUgLIH3dxn1zNZo87OKLgh9ljpE3AC3SKE0"/>
+<div class="absolute top-3 left-3 flex gap-2">
+<span class="bg-white/90 backdrop-blur-md text-primary text-[10px] font-extrabold px-2 py-1 rounded-lg uppercase tracking-wider">Most Popular</span>
+</div>
+<button class="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white hover:text-red-500 transition-all flex items-center justify-center">
+<span class="material-symbols-outlined text-sm">favorite</span>
+</button>
+</div>
+<div class="p-5 flex flex-col flex-1">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-headline font-bold text-lg text-primary">Barcelona</h3>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-yellow-500 text-sm" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="text-xs font-bold">4.9</span>
+</div>
+</div>
+<p class="text-xs text-on-surface-variant flex items-center gap-1 mb-4">
+<span class="material-symbols-outlined text-xs">location_on</span>
+                                    Catalonia, Spain
+                                </p>
+<div class="mt-auto pt-4 flex items-center justify-between">
+<div class="flex -space-x-2">
+<div class="w-6 h-6 rounded-full border-2 border-white bg-slate-200 overflow-hidden">
+<img data-alt="Portrait of a travel agent in professional attire" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEbe_sVu3zpRoXVIPltU0rXLrv-CbvRKakXHyuZPRi78NOvISNb4Bgw5riNsfahd-cpXvpUYWE0C_ldhDG_5eZjPO_arNIw_77WuqNf4WJehT7YvSOyczmD-7gqshK-oOIZKUFKOQWvo69dcaDYAdtaOBEf4QGwb_j59i2qcMo-FSFQ0bQ98JuGlSqfn61Yipe5DJMHWDYQkXmkfkbqliSjNICe4z58KFsg3HcPHU019jc2ePAHehun9UksqshHQ60WyGAU7hYC0IR"/>
+</div>
+<div class="w-6 h-6 rounded-full border-2 border-white bg-slate-200 overflow-hidden">
+<img data-alt="Portrait of a female concierge staff member smiling" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBSx1fOIHPrv9gl1tZng4Ss4pWeuk6oo1vt7BCml4YV7Ydozd0n8VtxdYCoDoc86UkvYPtauZ_suuomDuwhyffRgieh3taQPXyTVwPnx02qJkfyK0PE8wG88WpUbCKTUnAyvPRc4nePtU0JV8GrzsmW03NmtGmTBNcOJp8NTxbDZ7LIpZtCQMG7U96nH7DWj0YD1eaHYIlOoBVBpS-SLBqScwFoiX3yCp8I1UkSCvaaorriwhGP2WgS1kn7LbtR_XiL4QRraHXmh1H7"/>
+</div>
+<div class="w-6 h-6 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[8px] font-bold">+12</div>
+</div>
+<button class="bg-secondary-container text-on-secondary-container px-4 py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all">View Details</button>
+</div>
+</div>
+</div>
+<!-- Destination Card 2 -->
+<div class="group bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col border border-transparent hover:border-surface-tint/10">
+<div class="relative h-48 overflow-hidden">
+<img alt="Madrid street" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" data-alt="Grand architectural buildings lining a bustling Madrid boulevard with deep blue sky and architectural details" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDB6nCP3KOq2OKpa6VnjTQeBOSd7n84yW-bPUZOpLNXWB7Ewn5q3xa-TK5TfMgfbmzP_w0ckeWw4VgkPeG7UC7cZ2D6eN6ylyPpQbQ0WM-KeoHcYN3vengrT6nalrF8Y9FzjBNhD9NUQ5DXtLLdnwhWdTEpsCwoq6rzfkra03LQX6XjuW1jfg4iMHRfo3-89KlGRsrVWghbgw9PWFnpArAT_Gr2yZ37dmXve98gjYtsS5DrfTWU-udf_lZXRnlO5Bcm9tSvxFnUSuwD"/>
+<div class="absolute top-3 left-3">
+<span class="bg-white/90 backdrop-blur-md text-primary text-[10px] font-extrabold px-2 py-1 rounded-lg uppercase tracking-wider">Capital City</span>
+</div>
+</div>
+<div class="p-5 flex flex-col flex-1">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-headline font-bold text-lg text-primary">Madrid</h3>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-yellow-500 text-sm" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="text-xs font-bold">4.8</span>
+</div>
+</div>
+<p class="text-xs text-on-surface-variant flex items-center gap-1 mb-4">
+<span class="material-symbols-outlined text-xs">location_on</span>
+                                    Community of Madrid, Spain
+                                </p>
+<div class="mt-auto pt-4 flex items-center justify-between">
+<span class="text-[10px] font-bold text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">apartment</span>
+                                        145 Hotels Listed
+                                    </span>
+<button class="bg-secondary-container text-on-secondary-container px-4 py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all">View Details</button>
+</div>
+</div>
+</div>
+<!-- Destination Card 3 -->
+<div class="group bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col border border-transparent hover:border-surface-tint/10">
+<div class="relative h-48 overflow-hidden">
+<img alt="Seville Plaza" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" data-alt="The Plaza de España in Seville with its ornate tiling and reflecting pools during the soft morning light" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD5v1KS7V2AH3NwjqB-GTb87E3M--qgIIOcJebbU-0uOXHhtIllCkQn9dZLr2xWwqaldNAmOO1PQkEW17aOfaQWLCHiviloRg5WfKKcxY0OngRlbxBKKF_xMerfHmX-hU862DKue6w1KF0OanUmoSN24u-tOHgokPXWjUZi4p-My0bBVEXdvVNmz2McrwdLWYkdx2lkqI26zhmGJFrpgsFUfVyYWp0SYpBDOZjzTJq4x2EF3gATovOj9iCWixib6O4KOqIkc1echMaL"/>
+</div>
+<div class="p-5 flex flex-col flex-1">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-headline font-bold text-lg text-primary">Seville</h3>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-yellow-500 text-sm" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="text-xs font-bold">4.7</span>
+</div>
+</div>
+<p class="text-xs text-on-surface-variant flex items-center gap-1 mb-4">
+<span class="material-symbols-outlined text-xs">location_on</span>
+                                    Andalusia, Spain
+                                </p>
+<div class="mt-auto pt-4 flex items-center justify-between">
+<span class="text-[10px] font-bold text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">confirmation_number</span>
+                                        24 Active Packages
+                                    </span>
+<button class="bg-secondary-container text-on-secondary-container px-4 py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all">View Details</button>
+</div>
+</div>
+</div>
+<!-- Destination Card 4 -->
+<div class="group bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col border border-transparent hover:border-surface-tint/10">
+<div class="relative h-48 overflow-hidden">
+<img alt="Granada Alhambra" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" data-alt="Panoramic view of the Alhambra palace in Granada set against the Sierra Nevada mountains with warm dusk lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCfQ0u1dxqhuF86kraPvqTzgDTZ6zV2u8-Dbyth0L5jcJclV2YaZ3S8tGmyCxkidGGs-CsRK9r1rFmGSfIAcZ7ltFVEgVuEmUFzFUTkGtpXZOMdgtGdovQ_9rJzr7X0eHBCD-yuRt2l0dVLvj2_v9eFPR7Keclk6pzFRzn0xqQB8WUcfinP9xLGbPNKjZ9Ysw9j-1JWFkZ3FN7EwS1AWDqqX9sJGjlI6-Z7ZPo7gyUgBeIv4zU6bhomI8-959H5clMrfSNt9tJCh-Wc"/>
+</div>
+<div class="p-5 flex flex-col flex-1">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-headline font-bold text-lg text-primary">Granada</h3>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-yellow-500 text-sm" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="text-xs font-bold">4.9</span>
+</div>
+</div>
+<p class="text-xs text-on-surface-variant flex items-center gap-1 mb-4">
+<span class="material-symbols-outlined text-xs">location_on</span>
+                                    Andalusia, Spain
+                                </p>
+<div class="mt-auto pt-4 flex items-center justify-between">
+<span class="text-[10px] font-bold text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">history_edu</span>
+                                        Cultural Heritage
+                                    </span>
+<button class="bg-secondary-container text-on-secondary-container px-4 py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all">View Details</button>
+</div>
+</div>
+</div>
+<!-- Destination Card 5 -->
+<div class="group bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col border border-transparent hover:border-surface-tint/10">
+<div class="relative h-48 overflow-hidden">
+<img alt="Ibiza beach" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" data-alt="Crystal clear turquoise waters and white sand beach in Ibiza with rocky cliffs and a small boat in distance" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8hqh1_wdyLYDfa3Rt-pvy7yu5AFet6bPTNq-ZdD5bwq3ORcGa1MTzzN3mYFXqnR7LsclVEGIGuMDVUNJeJj8EuQgsJqNHjUbKgMCKk_v-iioq58r7UIqCyYIRW3ij-GE1_c0qZcyJk_GuJ1C_gHksPWKhtje8uLCuldaioDQ7e3LGI0xZTgcpL5tk2HQt5VqNaGZgaaeZI5x9yHwTRkHK4psuCdQe3G8Y0CNWrglAJMrk_r97wZUrOUaPykmvO_F1_JueRaWx27C7"/>
+</div>
+<div class="p-5 flex flex-col flex-1">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-headline font-bold text-lg text-primary">Ibiza</h3>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-yellow-500 text-sm" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="text-xs font-bold">4.6</span>
+</div>
+</div>
+<p class="text-xs text-on-surface-variant flex items-center gap-1 mb-4">
+<span class="material-symbols-outlined text-xs">location_on</span>
+                                    Balearic Islands, Spain
+                                </p>
+<div class="mt-auto pt-4 flex items-center justify-between">
+<span class="text-[10px] font-bold text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">beach_access</span>
+                                        Luxury Resorts
+                                    </span>
+<button class="bg-secondary-container text-on-secondary-container px-4 py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all">View Details</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+</div>
+</body></html>

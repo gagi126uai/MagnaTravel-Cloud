@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-secondary-container": "#4e6874",
+                    "secondary-fixed": "#cbe7f5",
+                    "primary-fixed": "#d7e2ff",
+                    "on-primary-container": "#6b9bef",
+                    "surface-dim": "#d9dadb",
+                    "surface-container-low": "#f3f4f5",
+                    "surface-bright": "#f8f9fa",
+                    "on-secondary-fixed": "#021f29",
+                    "surface-container-high": "#e7e8e9",
+                    "tertiary-container": "#592300",
+                    "primary-fixed-dim": "#abc7ff",
+                    "on-tertiary": "#ffffff",
+                    "on-secondary-fixed-variant": "#304a55",
+                    "tertiary-fixed": "#ffdbca",
+                    "on-tertiary-fixed": "#341100",
+                    "error": "#ba1a1a",
+                    "on-secondary": "#ffffff",
+                    "surface": "#f8f9fa",
+                    "secondary-fixed-dim": "#afcbd8",
+                    "inverse-primary": "#abc7ff",
+                    "on-tertiary-fixed-variant": "#723610",
+                    "error-container": "#ffdad6",
+                    "surface-container-highest": "#e1e3e4",
+                    "outline-variant": "#c3c6d1",
+                    "inverse-on-surface": "#f0f1f2",
+                    "on-error": "#ffffff",
+                    "tertiary": "#381300",
+                    "inverse-surface": "#2e3132",
+                    "surface-container": "#edeeef",
+                    "on-primary": "#ffffff",
+                    "tertiary-fixed-dim": "#ffb690",
+                    "secondary": "#48626e",
+                    "primary": "#001d44",
+                    "outline": "#737780",
+                    "on-error-container": "#93000a",
+                    "secondary-container": "#cbe7f5",
+                    "background": "#f8f9fa",
+                    "surface-tint": "#255dad",
+                    "on-tertiary-container": "#d8885c",
+                    "surface-variant": "#e1e3e4",
+                    "on-primary-fixed": "#001b3f",
+                    "on-background": "#191c1d",
+                    "on-surface-variant": "#43474f",
+                    "on-surface": "#191c1d",
+                    "on-primary-fixed-variant": "#00458f",
+                    "primary-container": "#00326b",
+                    "surface-container-lowest": "#ffffff"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Manrope"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .premium-gradient {
+            background: linear-gradient(135deg, #001d44 0%, #00326b 100%);
+        }
+        .glass-effect {
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface text-on-surface min-h-screen pb-32">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md shadow-sm">
+<div class="flex justify-between items-center px-6 py-4 w-full">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-high">
+<img alt="Travel Agent Profile" class="w-full h-full object-cover" data-alt="professional portrait of a confident travel advisor in a modern bright office setting with soft cinematic lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAZKGr0NW_Gw2P73Ul4a8VxNhKw8pMXhtxR4BSWDQru7UpSImj2pJl-s34hfaW05to9vDDUIFukVvsi77jMvxvtZ9zj4Wh6eXIujXr4bMrCy3wsI4rqTNwfVV2vCm6DwUT8sgDGit_R6AN6miILNTtfhauK9COr-sOnYVf-p7bnJVcwgoCiFytmeaC7_WkmIbOzur--zR5DsDEPlUdxQdxU7YOxI01KQHCqTIQV24Ic4-Ok0JW6cmeYXxwGCX18UKcLuftJlAJbSHR0"/>
+</div>
+<h1 class="font-['Manrope'] font-bold text-2xl tracking-tight text-[#001d44] dark:text-[#cbe7f5]">Países y Destinos</h1>
+</div>
+<button class="flex items-center justify-center p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors active:scale-95 duration-150 ease-in-out">
+<span class="material-symbols-outlined" data-icon="search">search</span>
+</button>
+</div>
+<div class="bg-slate-200/50 dark:bg-slate-800/50 h-[1px]"></div>
+</header>
+<main class="pt-24 px-6">
+<!-- Search Section -->
+<div class="mb-8">
+<div class="relative group">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+<input class="w-full bg-surface-container-highest border-none rounded-xl pl-12 pr-4 py-4 text-body-md focus:ring-2 focus:ring-surface-tint/30 transition-all placeholder:text-on-surface-variant/60" placeholder="Buscar por país o región..." type="text"/>
+</div>
+</div>
+<!-- Bento Grid Stats (Contextual Metadata) -->
+<div class="grid grid-cols-2 gap-4 mb-8">
+<div class="bg-surface-container-lowest p-5 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.02)] border-l-2 border-surface-tint">
+<p class="text-label-sm text-on-surface-variant mb-1 font-semibold">PAÍSES ACTIVOS</p>
+<p class="text-headline-lg font-['Manrope'] text-primary">142</p>
+</div>
+<div class="bg-surface-container-lowest p-5 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
+<p class="text-label-sm text-on-surface-variant mb-1 font-semibold">TOTAL DESTINOS</p>
+<p class="text-headline-lg font-['Manrope'] text-primary">2.4k</p>
+</div>
+</div>
+<!-- Premium List of Countries -->
+<div class="space-y-3">
+<h2 class="font-headline font-bold text-lg mb-4 text-on-surface">Destinos Globales</h2>
+<!-- Country Item 1 -->
+<div class="group flex items-center p-4 bg-surface-container-lowest rounded-xl hover:bg-surface-container-low transition-all duration-200">
+<div class="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+<img alt="Italy" class="w-full h-full object-cover" data-alt="vibrant mediterranean landscape with historic italian villa overlooking the sea at sunrise with warm orange tones" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCDRP0mkzViz4Xk8ndM6EOWThvVXGa836-br2a_Lx9tLUfQ4XU6rwu7kaNNjFqQ-iblebAgrYyoYLOX3aHkvIVO5JKrgjslPVxXRdiCR8uNMSEQkQVqeu57bfCz3v_uNRQhgayD9w2qNT6nYk9z0oCAIyiPWrOuA9MdM4kGC0uX6aRzZQ3f4h-8F8Fd7cd_K-G_dj-fb3eEUJ3uGb4KHLyjb9kf_HtxUk0jMuZicsd2HCITKpiLFIByUkf42NFLmCvYxxbB0dgqZ43D"/>
+</div>
+<div class="ml-4 flex-grow">
+<h3 class="font-headline font-bold text-primary">Italia</h3>
+<p class="text-label-sm text-on-surface-variant">Europa • 42 Destinos</p>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<!-- Country Item 2 -->
+<div class="group flex items-center p-4 bg-surface-container-lowest rounded-xl hover:bg-surface-container-low transition-all duration-200">
+<div class="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+<img alt="Japan" class="w-full h-full object-cover" data-alt="serene japanese pagoda surrounded by cherry blossoms in full bloom with soft morning mist and mountains in background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDp8h_3kFRf4BP6tjdpfTOC8_SUX5CgvfUmIa4UP_euKVdtmjxG3RsNqqBM8qB5Q5bM9EaJW8ZSAZlIUcyFwD363P1yUio2MP7XoQdYSJotfi-4POVIHp0uQBL6-CpgVjs0rOzAA4Y-3AbudGQ_dfyOCqBxZMnHQzR7fW-SHOsdPwozyd6_f9xzWX2G6qpbvFYh7mFTw0IhDeqd6CFDmnM-mYwwdM0V4GDl7-sop-arQLnbR_B4HJL-LtYJhqZczalaKmHMtkwX0HeA"/>
+</div>
+<div class="ml-4 flex-grow">
+<h3 class="font-headline font-bold text-primary">Japón</h3>
+<p class="text-label-sm text-on-surface-variant">Asia • 38 Destinos</p>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<!-- Country Item 3 (Active State Highlight) -->
+<div class="group flex items-center p-4 bg-surface-container-low rounded-xl border-l-2 border-surface-tint">
+<div class="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+<img alt="France" class="w-full h-full object-cover" data-alt="elegant parisian street scene at dusk with eiffel tower visible in background and warm street lamps glowing" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBVlpFQ8O4TVUixAN5i8MHb2YFccqZFQvgsJDHUW83xzrcKVh_yht7d1ShypwWkX3I_cD5YOxSWfzz-si3Vudc1WI9uh-KSnmwfry340eFkaCOHkUeEV1iuwyiNd_SS_7vbl19ibbqH2Ks9HgjPK4AnKJvCYQ9Ypy0nWNi2kwiJV4KtdZIQSOgEO-hWYBcACcDQWa9ApYIApmCayq4K-bg_9qda8Rjji2FoguOc7PqICRgDTyOYt2bqtbE6RbsvownFT0z9N3yFEswq"/>
+</div>
+<div class="ml-4 flex-grow">
+<h3 class="font-headline font-bold text-primary">Francia</h3>
+<p class="text-label-sm text-on-surface-variant">Europa • 56 Destinos</p>
+</div>
+<span class="material-symbols-outlined text-primary" data-icon="arrow_forward">arrow_forward</span>
+</div>
+<!-- Country Item 4 -->
+<div class="group flex items-center p-4 bg-surface-container-lowest rounded-xl hover:bg-surface-container-low transition-all duration-200">
+<div class="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+<img alt="Switzerland" class="w-full h-full object-cover" data-alt="crystalline alpine lake reflecting snow-capped peaks in switzerland under a bright blue sky with pine trees" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB2YBo9CelcYp329FlMKjjWqfUmYO0KvLp2i7OMcJ5PTPe0YejBfvo7XRQYn7KL4vCkHaMIqMgWpefJbChlwa1hJNbmqQNf7fA5RR-DvXlgTVLTyMH2NZrL_JDl6lF2iyEK7LYiIIPpxLKx_iB4Xw4H4JnJuMzdko1tswDwKzbe3fju_MKNsDiy4IjipaU9hXqXbO9XX3TP0F5evAJbvLR4Qp3pSWNfPD8x_hMi_VtgVYr5h-kz6mQbXGYU6vaObKtnuSWiu4dzwKdp"/>
+</div>
+<div class="ml-4 flex-grow">
+<h3 class="font-headline font-bold text-primary">Suiza</h3>
+<p class="text-label-sm text-on-surface-variant">Europa • 24 Destinos</p>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<!-- Country Item 5 -->
+<div class="group flex items-center p-4 bg-surface-container-lowest rounded-xl hover:bg-surface-container-low transition-all duration-200">
+<div class="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+<img alt="Thailand" class="w-full h-full object-cover" data-alt="traditional thai long-tail boat on turquoise water in maya bay with dramatic limestone cliffs in soft tropical light" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDGEjr441zJyGiHKqCPAPbXO1blchwwLVze1eMXy5_msJrok7FROF8RwPbQqlQKkpCyUHtuwOclHkT3rkxWij0_STNZn1309s3yWoi-lwlfwttt15rRmTuxHlekwnnCN6nY-lyjm1R6GVcOQ98TlxwHS9-pTK53axbJkiS1PkKU-GNvr42yy5V8CtFbNqLzT1vo8GQQ0TeL0tiYZmUXTxDlX54RspYaF1nAM0R9enSsiiS25jKtc_Y2RvnCLQvXZw1aB2LSbBkydaDl"/>
+</div>
+<div class="ml-4 flex-grow">
+<h3 class="font-headline font-bold text-primary">Tailandia</h3>
+<p class="text-label-sm text-on-surface-variant">Asia • 47 Destinos</p>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<!-- Country Item 6 -->
+<div class="group flex items-center p-4 bg-surface-container-lowest rounded-xl hover:bg-surface-container-low transition-all duration-200">
+<div class="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+<img alt="Egypt" class="w-full h-full object-cover" data-alt="majestic pyramids of giza at sunset with golden sand and dramatic shadows in high contrast luxury style" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD4eWM324-CpA7pAjGczafHODcCV_N3ystR6b3XwNe87uC-UVlTXmmi8DiBH3Ej-SUPmR422e_wQ_0xFaJIwJFTiO31XN9WKlo_J8Z-NHnaBF0VeIZp8vnFUh-NvaYTvyrtSHupwHmIgW03XiPBUy5FSz7wIFEvYAlsv7zfzJ6loWbId94sXjDQ4gVOVRVSMEb8yTsuKy00LA-fb2ychhRsVtSPQW88NIPIXpbzvcNKDyToTM2qYrTkYFnnD2TwBgvI_04jlrfgwOnM"/>
+</div>
+<div class="ml-4 flex-grow">
+<h3 class="font-headline font-bold text-primary">Egipto</h3>
+<p class="text-label-sm text-on-surface-variant">África • 19 Destinos</p>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+</div>
+<!-- Featured Collections (Editorial Feel) -->
+<div class="mt-12 mb-8">
+<h2 class="font-headline font-bold text-lg mb-4 text-on-surface">Colecciones Sugeridas</h2>
+<div class="bg-primary-container premium-gradient p-6 rounded-2xl relative overflow-hidden shadow-xl">
+<div class="relative z-10">
+<span class="text-[10px] tracking-widest font-bold text-secondary-fixed opacity-80 mb-2 block">EDICIÓN LIMITADA</span>
+<h3 class="font-headline font-extrabold text-2xl text-white mb-2 leading-tight">Escapadas de Lujo: Invierno</h3>
+<p class="text-body-md text-secondary-fixed opacity-90 mb-6 max-w-[200px]">Descubre los retiros más exclusivos de los Alpes Suizos.</p>
+<button class="bg-surface-container-lowest text-primary font-bold px-6 py-2.5 rounded-lg text-sm transition-transform active:scale-95">Ver Colección</button>
+</div>
+<div class="absolute -right-8 -bottom-8 w-48 h-48 opacity-20">
+<span class="material-symbols-outlined text-[12rem]" data-icon="snowboarding">snowboarding</span>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 bg-white/90 dark:bg-[#001d44]/90 backdrop-blur-xl rounded-t-3xl shadow-[0_-10px_30px_rgba(0,0,0,0.05)]">
+<!-- Tab 1: Destinos (Active) -->
+<a class="flex flex-col items-center justify-center bg-gradient-to-br from-[#001d44] to-[#00326b] text-white rounded-2xl px-5 py-2 active:scale-90 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="explore" style="font-variation-settings: 'FILL' 1;">explore</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Destinos</span>
+</a>
+<!-- Tab 2: Reservas -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#00326b] dark:hover:text-white transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="event_available">event_available</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Reservas</span>
+</a>
+<!-- Tab 3: Clientes -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#00326b] dark:hover:text-white transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Clientes</span>
+</a>
+<!-- Tab 4: Ajustes -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#00326b] dark:hover:text-white transition-colors active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-['Inter'] text-[11px] font-semibold tracking-wide mt-1">Ajustes</span>
+</a>
+</nav>
+</body></html>
