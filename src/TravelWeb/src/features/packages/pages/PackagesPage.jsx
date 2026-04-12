@@ -1,46 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, Loader2, Plus, Search } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import {
-  ArrowLeft,
-  Building2,
-  ChevronRight,
-  Copy,
-  Eye,
-  Globe2,
-  ImagePlus,
-  Loader2,
-  MapPin,
-  MapPinned,
-  Pencil,
-  Plus,
-  Rocket,
-  Search,
-} from "lucide-react";
 import { api, buildAppUrl } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import { hasPermission } from "../../../auth";
 import { Button } from "../../../components/ui/button";
+import { ListPageHeader } from "../../../components/ui/ListPageHeader";
 import { useDebounce } from "../../../hooks/useDebounce";
+import { CountryModal } from "../components/admin/CountryModal";
+import { PackagesCountrySidebar } from "../components/admin/PackagesCountrySidebar";
+import { PackagesDestinationsPanel } from "../components/admin/PackagesDestinationsPanel";
 import {
   buildCountryPublicationSnippet,
   buildDestinationPublicationSnippet,
-  formatLongDate,
-  formatMoney,
   mapCountryForm,
 } from "../lib/publicationUtils";
 
 const inputClass =
-  "w-full rounded-[14px] border border-[var(--st-border-strong)] bg-[var(--st-panel)] px-4 py-3 text-sm text-[var(--st-text)] outline-none transition placeholder:text-[var(--st-text-muted)] focus:border-sky-600 focus:ring-2 focus:ring-sky-500/15 dark:focus:border-sky-300 dark:focus:ring-sky-300/20";
-const cardClass =
-  "rounded-[24px] border border-[var(--st-border)] bg-[var(--st-panel)] shadow-[0_12px_30px_rgba(25,28,29,0.04)] dark:shadow-[0_18px_40px_rgba(2,6,23,0.35)]";
-const mutedPanelClass = "rounded-[18px] border border-[var(--st-border)] bg-[var(--st-panel-soft)]";
-const pageCanvasClass =
-  "overflow-hidden rounded-[30px] border border-[var(--st-border-strong)] bg-[var(--st-canvas)] text-[var(--st-text)] shadow-[0_24px_60px_rgba(25,28,29,0.06)] dark:shadow-[0_28px_70px_rgba(2,6,23,0.45)]";
-const outlineButtonClass =
-  "rounded-xl border-[var(--st-border-strong)] bg-[var(--st-panel)] text-[var(--st-text-strong)] hover:bg-[var(--st-panel-soft)] hover:text-[var(--st-text-strong)]";
-const primaryButtonClass = "rounded-xl bg-[var(--st-primary)] text-white hover:bg-[var(--st-primary-strong)] dark:text-[#08111f]";
-const stitchThemeClass =
-  "[--st-canvas:#f8f9fa] dark:[--st-canvas:#0b1220] [--st-panel:#ffffff] dark:[--st-panel:#111a2b] [--st-panel-soft:#f3f4f5] dark:[--st-panel-soft:#162033] [--st-border:#e7e8e9] dark:[--st-border:#23324c] [--st-border-strong:#e1e3e4] dark:[--st-border-strong:#2d3d59] [--st-text:#191c1d] dark:[--st-text:#e7edf7] [--st-text-strong:#001d44] dark:[--st-text-strong:#d7e2ff] [--st-text-soft:#43474f] dark:[--st-text-soft:#a6b4c9] [--st-text-muted:#737780] dark:[--st-text-muted:#8191a8] [--st-primary:#001d44] dark:[--st-primary:#abc7ff] [--st-primary-strong:#00326b] dark:[--st-primary-strong:#85b0ff] [--st-primary-solid:#255dad] dark:[--st-primary-solid:#6b9bef] [--st-primary-subtle:#d7e2ff] dark:[--st-primary-subtle:#1a2740] [--st-secondary-subtle:#cbe7f5] dark:[--st-secondary-subtle:#1b3140] [--st-secondary-text:#304a55] dark:[--st-secondary-text:#c1dcea] [--st-success-subtle:#d9f3ea] dark:[--st-success-subtle:#143427] [--st-success-text:#0f766e] dark:[--st-success-text:#76dfcd] [--st-warn-subtle:#ffdbca] dark:[--st-warn-subtle:#3e271d] [--st-warn-text:#723610] dark:[--st-warn-text:#ffbf99] [--st-neutral-subtle:#edeeef] dark:[--st-neutral-subtle:#1c273a] [--st-danger:#93000a] dark:[--st-danger:#ff98a1]";
+  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 
 const emptyCountryForm = {
   publicId: null,
@@ -66,13 +43,6 @@ export default function PackagesPage() {
   const [countryModalOpen, setCountryModalOpen] = useState(false);
   const [countrySaving, setCountrySaving] = useState(false);
   const [countryForm, setCountryForm] = useState(emptyCountryForm);
-  const [isDesktopViewport, setIsDesktopViewport] = useState(() => {
-    if (typeof window === "undefined") {
-      return true;
-    }
-
-    return window.matchMedia("(min-width: 768px)").matches;
-  });
 
   const debouncedCountrySearch = useDebounce(countrySearch, 250);
 
@@ -125,24 +95,6 @@ export default function PackagesPage() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    const mediaQuery = window.matchMedia("(min-width: 768px)");
-    const handleChange = () => setIsDesktopViewport(mediaQuery.matches);
-
-    handleChange();
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", handleChange);
-      return () => mediaQuery.removeEventListener("change", handleChange);
-    }
-
-    mediaQuery.addListener(handleChange);
-    return () => mediaQuery.removeListener(handleChange);
-  }, []);
-
-  useEffect(() => {
     loadCountries();
   }, [loadCountries]);
 
@@ -166,17 +118,15 @@ export default function PackagesPage() {
     }
 
     if (!selectedCountryPublicId) {
-      if (isDesktopViewport) {
-        syncSelectedCountry(countries[0].publicId);
-      }
+      syncSelectedCountry(countries[0].publicId);
       return;
     }
 
     const exists = countries.some((country) => country.publicId === selectedCountryPublicId);
     if (!exists) {
-      syncSelectedCountry(isDesktopViewport ? countries[0].publicId : "");
+      syncSelectedCountry(countries[0].publicId);
     }
-  }, [countries, countriesLoading, isDesktopViewport, selectedCountryPublicId, syncSelectedCountry]);
+  }, [countries, countriesLoading, selectedCountryPublicId, syncSelectedCountry]);
 
   useEffect(() => {
     loadDestinations(selectedCountryPublicId);
@@ -239,12 +189,6 @@ export default function PackagesPage() {
       return !destination.isPublished;
     });
   }, [canPublish, destinationSearch, destinationStatusFilter, destinations]);
-
-  const visibleDestinationCount = useMemo(
-    () => filteredDestinations.filter((destination) => destination.isPublished).length,
-    [filteredDestinations]
-  );
-  const hiddenDestinationCount = Math.max(filteredDestinations.length - visibleDestinationCount, 0);
 
   function openCreateCountryModal() {
     setCountryForm(emptyCountryForm);
@@ -409,184 +353,172 @@ export default function PackagesPage() {
   }
 
   return (
-    <div className={`${stitchThemeClass} animate-in fade-in space-y-5 duration-500 md:space-y-6`}>
-      <div className="hidden items-center justify-end gap-3 md:flex">
-        {canEdit ? (
-          <Button variant="outline" onClick={openCreateCountryModal} className={`gap-2 ${outlineButtonClass}`}>
-            <Plus className="h-4 w-4" />
-            Nuevo pais
-          </Button>
-        ) : null}
-        {canEdit && selectedCountry ? (
-          <Button onClick={openCreateDestination} className={`gap-2 ${primaryButtonClass}`}>
-            <Plus className="h-4 w-4" />
-            Nuevo destino
-          </Button>
-        ) : null}
-      </div>
+    <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
+      <ListPageHeader
+        title="Paises y destinos"
+        subtitle="Organiza el catalogo por pais, revisa destinos y controla su publicacion."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {canEdit ? (
+              <Button type="button" variant="outline" onClick={openCreateCountryModal} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Nuevo pais
+              </Button>
+            ) : null}
+            {canEdit && selectedCountry ? (
+              <Button type="button" onClick={openCreateDestination} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Nuevo destino
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
 
-      <div className={`hidden md:block ${pageCanvasClass}`}>
-        <div className="grid min-h-[760px] grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="flex min-h-0 flex-col border-r border-[var(--st-border)] bg-[var(--st-panel-soft)]">
-            <div className="p-6">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-[26px] font-black tracking-tight text-[var(--st-text-strong)]">Paises</h2>
-                  <p className="mt-2 max-w-[220px] text-sm leading-6 text-[var(--st-text-soft)]">
-                    Selecciona un pais para explorar destinos sin salir del contexto.
-                  </p>
-                </div>
-                <span className="rounded-full bg-[var(--st-panel)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--st-secondary-text)]">
-                  {countries.length}
-                </span>
-              </div>
-
-              <div className="relative mt-6">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
-                <input
-                  type="text"
-                  value={countrySearch}
-                  onChange={(event) => setCountrySearch(event.target.value)}
-                  placeholder="Filtrar paises..."
-                  className={`${inputClass} bg-white pl-10`}
-                />
-              </div>
-            </div>
-
-            <div className="flex-1 space-y-1 overflow-y-auto px-4 pb-5">
-              {countriesLoading ? (
-                <div className="flex h-44 items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-[var(--st-primary-solid)]" />
-                </div>
-              ) : countries.length === 0 ? (
-                <StitchEmptyState
-                  icon={Building2}
-                  title="Todavia no hay paises"
-                  description="Crea el primero para empezar a organizar la oferta."
-                  compact
-                />
-              ) : (
-                countries.map((country) => (
-                  <CountryRailItem
-                    key={country.publicId}
-                    country={country}
-                    selected={country.publicId === selectedCountryPublicId}
-                    onClick={() => syncSelectedCountry(country.publicId)}
-                  />
-                ))
-              )}
-            </div>
-          </aside>
-
-          <section className="flex min-h-0 flex-col bg-[var(--st-canvas)]">
-            {!selectedCountry ? (
-              <div className="flex flex-1 items-center justify-center p-8">
-                <StitchEmptyState
-                  icon={Globe2}
-                  title="Selecciona un pais"
-                  description="Cuando elijas un pais, aqui veras un detalle limpio con sus destinos y acciones principales."
-                />
-              </div>
-            ) : (
-              <>
-                <div className="border-b border-[var(--st-border)] px-8 pb-5 pt-8">
-                  <DesktopCountryHero
-                    country={selectedCountry}
-                    canEdit={canEdit}
-                    canPublish={canPublish}
-                    onEdit={() => openEditCountryModal(selectedCountry)}
-                    onCreateDestination={openCreateDestination}
-                    onPreview={() => openCountryPreview(selectedCountry)}
-                    onCopy={() => copyCountryPublication(selectedCountry)}
-                  />
-
-                  <DestinationToolbarPanel
-                    searchValue={destinationSearch}
-                    onSearchChange={setDestinationSearch}
-                    filterValue={destinationStatusFilter}
-                    onFilterChange={setDestinationStatusFilter}
-                    filteredCount={filteredDestinations.length}
-                    visibleCount={visibleDestinationCount}
-                    hiddenCount={hiddenDestinationCount}
-                    canPublish={canPublish}
-                  />
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-8">
-                  {destinationsLoading ? (
-                    <div className="flex h-44 items-center justify-center">
-                      <Loader2 className="h-7 w-7 animate-spin text-[var(--st-primary-solid)]" />
-                    </div>
-                  ) : filteredDestinations.length === 0 ? (
-                    <StitchEmptyState
-                      icon={MapPinned}
-                      title={destinations.length === 0 ? "Todavia no hay destinos cargados" : "No encontramos destinos"}
-                      description={
-                        destinations.length === 0
-                          ? "Crea el primer destino de este pais para empezar a cargar salidas y contenido."
-                          : "Ajusta la busqueda o el filtro para ver otros resultados."
-                      }
-                    />
-                  ) : (
-                    <div className="grid gap-6 xl:grid-cols-2 2xl:grid-cols-3">
-                      {filteredDestinations.map((destination) => (
-                        <DestinationVisualCard
-                          key={destination.publicId}
-                          destination={destination}
-                          canEdit={canEdit}
-                          canPublish={canPublish}
-                          onEdit={() => openDestinationEditor(destination.publicId)}
-                          onView={() => openDestinationPreview(destination)}
-                          onCopy={() => copyDestinationPublication(destination)}
-                          onPublish={() => handlePublish(destination)}
-                          onUnpublish={() => handleUnpublish(destination)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </section>
-        </div>
-      </div>
-
-      <div className={`space-y-4 md:hidden ${pageCanvasClass} p-4`}>
-        {!selectedCountry ? (
-          <MobileCountrySelectionScene
+      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="hidden xl:block">
+          <PackagesCountrySidebar
             countries={countries}
             countriesLoading={countriesLoading}
             countrySearch={countrySearch}
             onCountrySearchChange={setCountrySearch}
+            selectedCountryPublicId={selectedCountryPublicId}
             onSelectCountry={syncSelectedCountry}
+            selectedCountry={selectedCountry}
             portfolioSummary={portfolioSummary}
             canEdit={canEdit}
             onCreateCountry={openCreateCountryModal}
+            onEditCountry={openEditCountryModal}
           />
-        ) : (
-          <MobileDestinationScene
-            country={selectedCountry}
-            destinations={filteredDestinations}
-            allDestinations={destinations}
-            loading={destinationsLoading}
-            searchValue={destinationSearch}
-            onSearchChange={setDestinationSearch}
-            filterValue={destinationStatusFilter}
-            onFilterChange={setDestinationStatusFilter}
-            canEdit={canEdit}
-            canPublish={canPublish}
-            onBack={() => syncSelectedCountry("")}
-            onEditCountry={() => openEditCountryModal(selectedCountry)}
-            onCreateDestination={openCreateDestination}
-            onPreviewCountry={() => openCountryPreview(selectedCountry)}
-            onCopyCountry={() => copyCountryPublication(selectedCountry)}
-            onEditDestination={(destinationPublicId) => openDestinationEditor(destinationPublicId)}
-            onViewDestination={openDestinationPreview}
-            onCopyDestination={copyDestinationPublication}
-            onPublishDestination={handlePublish}
-            onUnpublishDestination={handleUnpublish}
-          />
-        )}
+        </div>
+
+        <div className="space-y-4">
+          <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50 xl:hidden">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white">Pais activo</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Cambia el pais para revisar su lista de destinos.
+                </p>
+              </div>
+              {canEdit ? (
+                <Button type="button" size="sm" onClick={openCreateCountryModal} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Nuevo
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={countrySearch}
+                  onChange={(event) => setCountrySearch(event.target.value)}
+                  placeholder="Buscar pais..."
+                  className={`${inputClass} pl-9`}
+                />
+              </div>
+
+              {countriesLoading ? (
+                <div className="flex h-20 items-center justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
+                </div>
+              ) : countries.length === 0 ? (
+                <div className="rounded-md border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  No hay paises cargados.
+                </div>
+              ) : (
+                <>
+                  <div className="relative">
+                    <select
+                      value={selectedCountryPublicId}
+                      onChange={(event) => syncSelectedCountry(event.target.value)}
+                      className={`${inputClass} appearance-none pr-10`}
+                    >
+                      {countries.map((country) => (
+                        <option key={country.publicId} value={country.publicId}>
+                          {country.name}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  </div>
+
+                  {selectedCountry ? (
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        <MobileStat label="Destinos" value={selectedCountry.totalDestinations} />
+                        <MobileStat label="Visibles" value={selectedCountry.publishedDestinations} />
+                        <MobileStat label="Borrador" value={selectedCountry.draftDestinations} />
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {canEdit ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEditCountryModal(selectedCountry)}
+                            className="gap-2"
+                          >
+                            Editar pais
+                          </Button>
+                        ) : null}
+                        {canEdit ? (
+                          <Button type="button" size="sm" onClick={openCreateDestination} className="gap-2">
+                            <Plus className="h-4 w-4" />
+                            Nuevo destino
+                          </Button>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </section>
+
+          {!selectedCountry ? (
+            <section className="rounded-lg border border-slate-200 bg-white px-4 py-12 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+              {countriesLoading ? (
+                <div className="flex justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">No hay un pais seleccionado</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Crea o selecciona un pais para empezar a administrar sus destinos.
+                  </p>
+                </>
+              )}
+            </section>
+          ) : (
+            <PackagesDestinationsPanel
+              selectedCountry={selectedCountry}
+              destinations={destinations}
+              filteredDestinations={filteredDestinations}
+              loading={destinationsLoading}
+              searchValue={destinationSearch}
+              onSearchChange={setDestinationSearch}
+              filterValue={destinationStatusFilter}
+              onFilterChange={setDestinationStatusFilter}
+              canEdit={canEdit}
+              canPublish={canPublish}
+              onEditCountry={openEditCountryModal}
+              onCreateDestination={openCreateDestination}
+              onPreviewCountry={openCountryPreview}
+              onCopyCountry={copyCountryPublication}
+              onEditDestination={openDestinationEditor}
+              onViewDestination={openDestinationPreview}
+              onCopyDestination={copyDestinationPublication}
+              onPublishDestination={handlePublish}
+              onUnpublishDestination={handleUnpublish}
+            />
+          )}
+        </div>
       </div>
 
       <CountryModal
@@ -601,643 +533,11 @@ export default function PackagesPage() {
   );
 }
 
-function MobileCountrySelectionScene({
-  countries,
-  countriesLoading,
-  countrySearch,
-  onCountrySearchChange,
-  onSelectCountry,
-  portfolioSummary,
-  canEdit,
-  onCreateCountry,
-}) {
+function MobileStat({ label, value }) {
   return (
-    <div className="space-y-5 text-[var(--st-text)]">
-      <div className="px-1 pt-1">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-[26px] font-black tracking-tight text-[var(--st-text-strong)]">Paises y destinos</h1>
-            <p className="mt-1 text-sm text-[var(--st-text-soft)]">Busca por pais y continua con el detalle de destinos.</p>
-          </div>
-          {canEdit ? (
-            <Button size="icon" onClick={onCreateCountry} className={`h-11 w-11 ${primaryButtonClass}`}>
-              <Plus className="h-5 w-5" />
-            </Button>
-          ) : null}
-        </div>
-
-        <div className="relative mt-4">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
-          <input
-            type="text"
-            value={countrySearch}
-            onChange={(event) => onCountrySearchChange(event.target.value)}
-            placeholder="Buscar por pais o region..."
-            className={`${inputClass} bg-[var(--st-panel-soft)] pl-11`}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <MiniStatCard label="Paises activos" value={portfolioSummary.totalCountries} accent="sky" />
-        <MiniStatCard label="Total destinos" value={portfolioSummary.totalDestinations} />
-      </div>
-
-      <div>
-        <div className="px-1 pb-3">
-          <h2 className="text-lg font-bold tracking-tight text-[var(--st-text)]">Destinos Globales</h2>
-        </div>
-
-        {countriesLoading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-[var(--st-primary-solid)]" />
-          </div>
-        ) : countries.length === 0 ? (
-          <StitchEmptyState
-            icon={Building2}
-            title="Todavia no hay paises"
-            description="Crea el primero para empezar a organizar la oferta."
-            compact
-          />
-        ) : (
-          <div className="space-y-2.5">
-            {countries.map((country) => (
-              <CountryStackItem key={country.publicId} country={country} onClick={() => onSelectCountry(country.publicId)} />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    <span className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
+      <span>{label}</span>
+      <span className="rounded-md bg-white/70 px-1.5 py-0.5 text-xs font-semibold dark:bg-slate-900/40">{value}</span>
+    </span>
   );
-}
-
-function MobileDestinationScene({
-  country,
-  destinations,
-  allDestinations,
-  loading,
-  searchValue,
-  onSearchChange,
-  filterValue,
-  onFilterChange,
-  canEdit,
-  canPublish,
-  onBack,
-  onEditCountry,
-  onCreateDestination,
-  onPreviewCountry,
-  onCopyCountry,
-  onEditDestination,
-  onViewDestination,
-  onCopyDestination,
-  onPublishDestination,
-  onUnpublishDestination,
-}) {
-  const visibleCount = destinations.filter((destination) => destination.isPublished).length;
-
-  return (
-    <div className="space-y-4 text-[var(--st-text)]">
-      <div className={`${cardClass} overflow-hidden`}>
-        <div className="flex items-center justify-between gap-3 px-4 py-4">
-          <button
-            type="button"
-            onClick={onBack}
-            className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--st-panel-soft)] text-[var(--st-text-strong)] transition hover:bg-[var(--st-border)]"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--st-text-muted)]">Region activa</p>
-            <h1 className="truncate text-[28px] font-black tracking-tight text-[var(--st-text-strong)]">{country.name}</h1>
-            <p className="text-xs text-[var(--st-text-muted)]">{country.totalDestinations} destinos activos</p>
-          </div>
-
-          {canEdit ? (
-            <Button size="icon" onClick={onCreateDestination} className={`h-11 w-11 ${primaryButtonClass}`}>
-              <Plus className="h-5 w-5" />
-            </Button>
-          ) : null}
-        </div>
-
-        <div className="border-t border-[var(--st-border)] px-4 py-4">
-          <div className={`${mutedPanelClass} p-4`}>
-            <div className="flex flex-wrap gap-2">
-              <Badge tone="sky">{country.totalDestinations} destinos</Badge>
-              <Badge tone="emerald">{country.publishedDestinations} visibles</Badge>
-              <Badge tone="amber">{country.draftDestinations} en preparacion</Badge>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <MiniStatCard label="Resultados" value={destinations.length} accent="sky" />
-              <MiniStatCard label="Visibles" value={visibleCount} accent="emerald" />
-            </div>
-
-            {(canEdit || canPublish) ? (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {canEdit ? (
-                  <Button variant="outline" size="sm" onClick={onEditCountry} className={outlineButtonClass}>
-                    Editar pais
-                  </Button>
-                ) : null}
-                {canPublish ? (
-                  <>
-                    <Button variant="outline" size="sm" onClick={onPreviewCountry} className={outlineButtonClass}>
-                      Ver como cliente
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={onCopyCountry} className={outlineButtonClass}>
-                      Copiar codigo
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-4 space-y-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
-              <input
-                type="text"
-                value={searchValue}
-                onChange={(event) => onSearchChange(event.target.value)}
-                placeholder="Buscar destinos..."
-                className={`${inputClass} bg-[var(--st-panel-soft)] pl-11`}
-              />
-            </div>
-
-            {canPublish ? (
-              <select
-                value={filterValue}
-                onChange={(event) => onFilterChange(event.target.value)}
-                className={`${inputClass} bg-[var(--st-panel-soft)]`}
-              >
-                <option value="all">Todos los estados</option>
-                <option value="visible">Visibles en el sitio</option>
-                <option value="hidden">En preparacion</option>
-              </select>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className={`${cardClass} flex items-center justify-center px-4 py-16`}>
-          <Loader2 className="h-7 w-7 animate-spin text-[var(--st-primary-solid)]" />
-        </div>
-      ) : destinations.length === 0 ? (
-        <div className={`${cardClass} p-4`}>
-          <StitchEmptyState
-            icon={MapPinned}
-            title={allDestinations.length === 0 ? "Todavia no hay destinos cargados" : "No encontramos destinos"}
-            description={
-              allDestinations.length === 0
-                ? "Crea el primer destino de este pais para empezar a cargar salidas y contenido."
-                : "Ajusta la busqueda o el filtro para ver otros resultados."
-            }
-          />
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {destinations.map((destination) => (
-            <DestinationVisualCard
-              key={destination.publicId}
-              destination={destination}
-              canEdit={canEdit}
-              canPublish={canPublish}
-              onEdit={() => onEditDestination(destination.publicId)}
-              onView={() => onViewDestination(destination)}
-              onCopy={() => onCopyDestination(destination)}
-              onPublish={() => onPublishDestination(destination)}
-              onUnpublish={() => onUnpublishDestination(destination)}
-              compact
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DesktopCountryHero({ country, canEdit, canPublish, onEdit, onCreateDestination, onPreview, onCopy }) {
-  return (
-    <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--st-text-muted)]">
-          <span>Destinos</span>
-          <ChevronRight className="h-3 w-3" />
-          <span className="truncate">{country.name}</span>
-        </div>
-
-        <h2 className="mt-3 text-5xl font-black tracking-tight text-[var(--st-text-strong)]">{country.name}</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-7 text-[var(--st-text-soft)]">
-          Explora la oferta actual del pais, revisa rapidamente el estado comercial de cada destino y accede a sus acciones clave sin salir del contexto.
-        </p>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <Badge tone="sky">{country.totalDestinations} destinos</Badge>
-          <Badge tone="emerald">{country.publishedDestinations} visibles</Badge>
-          <Badge tone="amber">{country.draftDestinations} en preparacion</Badge>
-        </div>
-      </div>
-
-      {(canEdit || canPublish) ? (
-        <div className="flex max-w-[360px] flex-wrap justify-end gap-3">
-          {canEdit ? (
-            <>
-              <Button variant="outline" onClick={onEdit} className={`gap-2 ${outlineButtonClass}`}>
-                <Pencil className="h-4 w-4" />
-                Editar pais
-              </Button>
-              <Button onClick={onCreateDestination} className={`gap-2 ${primaryButtonClass}`}>
-                <Plus className="h-4 w-4" />
-                Nuevo destino
-              </Button>
-            </>
-          ) : null}
-          {canPublish ? (
-            <>
-              <Button variant="outline" onClick={onPreview} className={`gap-2 ${outlineButtonClass}`}>
-                <Eye className="h-4 w-4" />
-                Ver como cliente
-              </Button>
-              <Button variant="outline" onClick={onCopy} className={`gap-2 ${outlineButtonClass}`}>
-                <Copy className="h-4 w-4" />
-                Copiar codigo
-              </Button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function DestinationToolbarPanel({
-  searchValue,
-  onSearchChange,
-  filterValue,
-  onFilterChange,
-  filteredCount,
-  visibleCount,
-  hiddenCount,
-  canPublish,
-}) {
-  return (
-    <div className="mt-8 flex flex-col gap-4">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-6">
-          <button type="button" className="relative pb-3 text-sm font-bold text-[var(--st-text-strong)]">
-            Destinos
-            <span className="absolute -right-5 top-0 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--st-primary)] px-1.5 text-[10px] font-bold text-white dark:text-[#08111f]">
-              {filteredCount}
-            </span>
-            <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-[var(--st-primary-solid)]" />
-          </button>
-          <span className="pb-3 text-sm font-semibold text-[var(--st-text-muted)]">Visibles {visibleCount}</span>
-          <span className="pb-3 text-sm font-semibold text-[var(--st-text-muted)]">En preparacion {hiddenCount}</span>
-        </div>
-
-        <div className={`grid gap-3 ${canPublish ? "xl:min-w-[480px] md:grid-cols-[minmax(0,1fr)_220px]" : "xl:min-w-[320px]"}`}>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--st-text-muted)]" />
-            <input
-              type="text"
-              value={searchValue}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Buscar destinos..."
-              className={`${inputClass} bg-white pl-10`}
-            />
-          </div>
-
-          {canPublish ? (
-            <select
-              value={filterValue}
-              onChange={(event) => onFilterChange(event.target.value)}
-              className={`${inputClass} bg-white`}
-            >
-              <option value="all">Todos los estados</option>
-              <option value="visible">Visibles en el sitio</option>
-              <option value="hidden">En preparacion</option>
-            </select>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CountryRailItem({ country, selected, onClick }) {
-  const countLabel = `${country.totalDestinations} Dest.`;
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group relative w-full overflow-hidden rounded-[18px] px-4 py-4 text-left transition ${
-        selected
-          ? "bg-[var(--st-panel)] shadow-[0_10px_30px_rgba(25,28,29,0.06)] dark:shadow-[0_16px_35px_rgba(2,6,23,0.28)]"
-          : "bg-transparent hover:bg-[var(--st-panel)]/80"
-      }`}
-    >
-      <span className={`absolute inset-y-4 left-0 w-1 rounded-r-full ${selected ? "bg-[var(--st-primary-solid)]" : "bg-transparent"}`} />
-
-      <div className="flex items-start gap-3">
-        <CountryAvatar name={country.name} selected={selected} />
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="break-words text-sm font-bold text-[var(--st-text-strong)]">{country.name}</p>
-              <p className="mt-0.5 text-[11px] text-[var(--st-text-muted)]">
-                {country.publishedDestinations} visibles · {country.draftDestinations} borrador
-              </p>
-            </div>
-            <span className="shrink-0 rounded-full bg-[var(--st-secondary-subtle)] px-2 py-0.5 text-[10px] font-bold text-[var(--st-secondary-text)]">{countLabel}</span>
-          </div>
-        </div>
-
-        <ChevronRight
-          className={`mt-1 h-4 w-4 shrink-0 ${selected ? "text-[var(--st-primary-solid)]" : "text-[var(--st-border-strong)] group-hover:translate-x-0.5 group-hover:text-[var(--st-text-strong)]"}`}
-        />
-      </div>
-    </button>
-  );
-}
-
-function CountryStackItem({ country, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group w-full rounded-[18px] border border-[var(--st-border)] bg-[var(--st-panel)] px-4 py-4 text-left transition hover:bg-[var(--st-panel-soft)]"
-    >
-      <div className="flex items-center gap-3">
-        <CountryAvatar name={country.name} compact />
-
-        <div className="min-w-0 flex-1">
-          <p className="break-words text-sm font-bold text-[var(--st-text-strong)]">{country.name}</p>
-          <p className="mt-1 break-words text-xs text-[var(--st-text-muted)]">{country.totalDestinations} destinos | {country.publishedDestinations} visibles</p>
-        </div>
-
-        <ChevronRight className="h-4 w-4 shrink-0 text-[var(--st-border-strong)] transition group-hover:translate-x-0.5 group-hover:text-[var(--st-text-strong)]" />
-      </div>
-    </button>
-  );
-}
-
-function CountryAvatar({ name, selected = false, compact = false }) {
-  const initials = String(name || "PA")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() || "")
-    .join("");
-
-  return (
-    <div
-      className={`flex shrink-0 items-center justify-center rounded-[20px] font-semibold ${
-        compact ? "h-11 w-11 text-sm" : "h-12 w-12 text-base"
-      } ${
-        selected
-          ? "bg-[var(--st-primary-solid)] text-white shadow-[0_14px_30px_rgba(37,93,173,0.2)] dark:text-[#08111f]"
-          : "bg-[var(--st-panel)] text-[var(--st-secondary-text)]"
-      }`}
-    >
-      {initials || "PA"}
-    </div>
-  );
-}
-
-function MiniStatCard({ label, value, accent = "slate" }) {
-  const accentClass =
-    accent === "sky"
-      ? "border-l-[var(--st-primary-solid)]"
-      : accent === "emerald"
-        ? "border-l-[var(--st-success-text)]"
-        : accent === "amber"
-          ? "border-l-[var(--st-warn-text)]"
-          : "border-l-[var(--st-border-strong)]";
-
-  return (
-    <div className={`rounded-[18px] border border-[var(--st-border)] border-l-2 bg-[var(--st-panel)] px-4 py-4 shadow-[0_6px_18px_rgba(25,28,29,0.03)] dark:shadow-[0_10px_24px_rgba(2,6,23,0.25)] ${accentClass}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--st-text-muted)]">{label}</p>
-      <p className="mt-2 break-words text-2xl font-black tracking-tight text-[var(--st-text-strong)]">{value}</p>
-    </div>
-  );
-}
-
-function DestinationVisualCard({
-  destination,
-  canEdit,
-  canPublish,
-  onEdit,
-  onView,
-  onCopy,
-  onPublish,
-  onUnpublish,
-  compact = false,
-}) {
-  const heroImageUrl = destination.heroImageUrl ? buildAppUrl(destination.heroImageUrl) : null;
-  const title = destination.title || destination.name;
-  const secondaryLine =
-    destination.title && destination.name && destination.title !== destination.name
-      ? destination.name
-      : destination.tagline || destination.countryName || "";
-  const stateLabel = destination.isPublished
-    ? "Visible en el sitio"
-    : destination.canPublish
-      ? "Lista para mostrar"
-      : destination.publishIssues?.length
-        ? "Completar datos"
-        : "En preparacion";
-  const activeDeparturesLabel =
-    destination.departureCount > destination.activeDepartureCount
-      ? `${destination.activeDepartureCount} de ${destination.departureCount} activas`
-      : `${destination.activeDepartureCount} activas`;
-  const priceLabel =
-    destination.fromPrice != null ? formatMoney(destination.fromPrice, destination.currency) : "Sin tarifa principal";
-
-  return (
-    <article className="group flex h-full flex-col overflow-hidden rounded-[20px] border border-[var(--st-border)] bg-[var(--st-panel)] shadow-[0_10px_30px_rgba(25,28,29,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_20px_40px_rgba(25,28,29,0.06)] dark:shadow-[0_18px_38px_rgba(2,6,23,0.3)]">
-      <div className={`relative overflow-hidden ${compact ? "h-40" : "h-48"}`}>
-        {heroImageUrl ? (
-          <img src={heroImageUrl} alt={title} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,var(--st-primary-subtle)_0%,var(--st-secondary-subtle)_100%)] px-6 text-center">
-            <div>
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--st-panel)] text-[var(--st-primary-solid)] shadow-sm">
-                <ImagePlus className="h-6 w-6" />
-              </div>
-              <p className="mt-3 text-sm font-medium text-[var(--st-text-strong)]">Agrega una imagen de portada para destacar este destino</p>
-            </div>
-          </div>
-        )}
-
-        <div className="absolute left-4 top-4">
-          {canPublish ? <DestinationStateBadge destination={destination} /> : null}
-        </div>
-      </div>
-
-      <div className={compact ? "flex flex-1 flex-col p-4" : "flex flex-1 flex-col p-5"}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <h3 className="break-words text-[22px] font-black tracking-tight text-[var(--st-text-strong)]">{title}</h3>
-            <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--st-text-soft)]">
-              <MapPin className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{secondaryLine || destination.countryName}</span>
-            </p>
-          </div>
-
-          <div className="shrink-0 text-right">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--st-text-muted)]">Desde</p>
-            <p className="mt-1 text-xl font-black tracking-tight text-[var(--st-primary-solid)]">{priceLabel}</p>
-          </div>
-        </div>
-
-        <div className={`${mutedPanelClass} mt-4 grid grid-cols-2 gap-4 p-3`}>
-          <div>
-            <DestinationMetricItem label="Proxima salida" value={formatLongDate(destination.nextDepartureDate)} />
-          </div>
-          <div>
-            <DestinationMetricItem label="Paquetes" value={activeDeparturesLabel} />
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--st-text-muted)]">
-          <span>{stateLabel}</span>
-          {destination.publishIssues?.length && !destination.isPublished ? <span>{destination.publishIssues.length} pendientes</span> : null}
-        </div>
-
-        {canPublish && !destination.isPublished && !destination.canPublish && destination.publishIssues?.length ? (
-          <p className="mt-2 break-words text-xs text-[var(--st-danger)]">Completa los datos pendientes para poder publicarlo.</p>
-        ) : null}
-
-        {(canEdit || canPublish) ? (
-          <div className={`mt-4 ${compact ? "grid grid-cols-2 gap-2" : "flex flex-wrap gap-2"}`}>
-            {canEdit ? (
-              <Button variant="outline" size="sm" onClick={onEdit} className={`gap-2 justify-start text-xs ${outlineButtonClass}`}>
-                <Pencil className="h-4 w-4" />
-                Editar
-              </Button>
-            ) : null}
-
-            {canPublish ? (
-              <>
-                <Button variant="outline" size="sm" onClick={onView} className={`gap-2 justify-start text-xs ${outlineButtonClass}`}>
-                  <Eye className="h-4 w-4" />
-                  Vista previa
-                </Button>
-                <Button variant="outline" size="sm" onClick={onCopy} className={`gap-2 justify-start text-xs ${outlineButtonClass}`}>
-                  <Copy className="h-4 w-4" />
-                  Copiar
-                </Button>
-                {destination.isPublished ? (
-                  <Button variant="outline" size="sm" onClick={onUnpublish} className={`gap-2 justify-start text-xs ${outlineButtonClass}`}>
-                    <Rocket className="h-4 w-4" />
-                    Ocultar
-                  </Button>
-                ) : (
-                  <Button size="sm" onClick={onPublish} disabled={!destination.canPublish} className={`gap-2 justify-start text-xs ${primaryButtonClass}`}>
-                    <Rocket className="h-4 w-4" />
-                    Publicar
-                  </Button>
-                )}
-              </>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-function DestinationMetricItem({ label, value }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--st-text-muted)]">{label}</p>
-      <p className="mt-1 text-sm font-bold text-[var(--st-text-strong)]">{value}</p>
-    </div>
-  );
-}
-
-function DestinationStateBadge({ destination }) {
-  if (destination.isPublished) {
-    return <Badge tone="emerald">Visible</Badge>;
-  }
-
-  if (destination.canPublish) {
-    return <Badge tone="sky">Lista</Badge>;
-  }
-
-  return <Badge tone="amber">{destination.publishIssues?.length ? "Completar" : "Borrador"}</Badge>;
-}
-
-function StitchEmptyState({ icon: Icon, title, description, compact = false }) {
-  return (
-    <div className={`flex flex-col items-center justify-center text-center ${compact ? "px-4 py-8" : "px-6 py-14"}`}>
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--st-panel-soft)] text-[var(--st-primary-solid)]">
-        <Icon className="h-6 w-6" />
-      </div>
-      <p className="text-base font-bold tracking-tight text-[var(--st-text-strong)]">{title}</p>
-      {description ? <p className="mt-2 max-w-md text-sm leading-6 text-[var(--st-text-soft)]">{description}</p> : null}
-    </div>
-  );
-}
-
-function CountryModal({ open, form, saving, onChange, onClose, onSubmit }) {
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
-      <div className={`${cardClass} w-full max-w-lg overflow-hidden`}>
-        <div className="border-b border-[var(--st-border)] px-6 py-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--st-text-muted)]">Catalogo</p>
-          <h3 className="mt-2 text-2xl font-black tracking-tight text-[var(--st-text-strong)]">{form.publicId ? "Editar pais" : "Nuevo pais"}</h3>
-          <p className="mt-2 text-sm text-[var(--st-text-soft)]">
-            Crea o ajusta el pais para ordenar mejor la oferta y facilitar la navegacion por destinos.
-          </p>
-        </div>
-
-        <form onSubmit={onSubmit} className="space-y-5 px-6 py-6">
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-[var(--st-text-soft)]">Nombre del pais</span>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(event) => onChange(event.target.value)}
-              placeholder="Ej. Republica Dominicana"
-              className={inputClass}
-              autoFocus
-            />
-          </label>
-
-          <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--st-border)] pt-5">
-            <Button type="button" variant="outline" onClick={onClose} className={outlineButtonClass}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={saving} className={`gap-2 ${primaryButtonClass}`}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Guardar
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function Badge({ children, tone = "slate" }) {
-  const toneClass =
-    tone === "sky" || tone === "blue"
-      ? "bg-[var(--st-primary-subtle)] text-[var(--st-primary-solid)]"
-      : tone === "emerald"
-        ? "bg-[var(--st-success-subtle)] text-[var(--st-success-text)]"
-        : tone === "amber"
-          ? "bg-[var(--st-warn-subtle)] text-[var(--st-warn-text)]"
-          : "bg-[var(--st-neutral-subtle)] text-[var(--st-text-soft)]";
-
-  return <span className={`inline-flex max-w-full items-center rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${toneClass}`}>{children}</span>;
 }
