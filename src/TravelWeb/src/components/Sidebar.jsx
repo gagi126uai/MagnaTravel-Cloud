@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+﻿import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
   Users,
@@ -29,8 +29,8 @@ const mainLinks = [
   { to: "/cash", label: "Caja", icon: ArrowLeftRight, requiredPermission: "caja.view" },
   { to: "/rates", label: "Tarifario", icon: DollarSign, requiredPermission: "tarifario.view" },
   { to: "/packages", label: "Paises y destinos", icon: Package, requiredPermission: "paquetes.view" },
-  { to: "/audit", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
-  { to: "/settings", label: "Configuración", icon: Settings, requiredPermission: "configuracion.view" },
+  { to: "/administracion", label: "AdministraciÃ³n", icon: Shield, requiredPermission: "auditoria.view" },
+  { to: "/settings", label: "ConfiguraciÃ³n", icon: Settings, requiredPermission: "configuracion.view" },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onCloseMobile }) {
@@ -133,3 +133,4 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onClo
     </aside>
   );
 }
+
