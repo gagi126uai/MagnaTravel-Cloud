@@ -171,6 +171,7 @@ public class PreviewPackageDetailDto
     public decimal? FromPrice { get; set; }
     public string? Currency { get; set; }
     public bool IsPublished { get; set; }
+    public bool IsCountryPublished { get; set; }
     public IReadOnlyList<string> PublishIssues { get; set; } = Array.Empty<string>();
     public PreviewPackageDepartureDto? PrimaryDeparture { get; set; }
     public IReadOnlyList<PreviewPackageDepartureDto> Departures { get; set; } = Array.Empty<PreviewPackageDepartureDto>();
@@ -190,6 +191,8 @@ public class PreviewCountryEmbedDto
 {
     public string CountryName { get; set; } = string.Empty;
     public string CountrySlug { get; set; } = string.Empty;
+    public bool IsPublished { get; set; }
+    public DateTime? PublishedAt { get; set; }
     public IReadOnlyList<PreviewCountryDestinationDto> Destinations { get; set; } = Array.Empty<PreviewCountryDestinationDto>();
 }
 

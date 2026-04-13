@@ -99,18 +99,31 @@ export default function PreviewCountryPage() {
 
   const destinations = countryData?.destinations || [];
   const publishedCount = destinations.filter((item) => item.isPublished).length;
+  const previewIssues = useMemo(() => {
+    if (!countryData || countryData.isPublished) {
+      return [];
+    }
+
+    return [
+      "El pais esta retirado del sitio. El iframe publico del pais y los destinos directos quedan bloqueados hasta volver a publicarlo.",
+    ];
+  }, [countryData]);
 
   return (
     <PackagePreviewShell
       title={countryData?.countryName || "Vista previa del pais"}
       subtitle={
         countryData
-          ? `${destinations.length} destinos cargados | ${publishedCount} visibles en el sitio`
+          ? `${destinations.length} destinos cargados | ${publishedCount} publicados por destino`
           : "Revisa como se vera la seleccion de destinos antes de publicarla."
       }
-      isPublished={publishedCount > 0}
-      helperText="Selecciona un destino para abrir la ficha interna. Esta vista te permite revisar el orden y la navegacion del pais en el sitio."
-      issues={[]}
+      isPublished={Boolean(countryData?.isPublished && publishedCount > 0)}
+      helperText={
+        countryData?.isPublished === false
+          ? "Selecciona un destino para revisar la ficha interna. Aunque el pais este apagado, la vista previa sigue disponible para revisar contenido y orden."
+          : "Selecciona un destino para abrir la ficha interna. Esta vista te permite revisar el orden y la navegacion del pais en el sitio."
+      }
+      issues={previewIssues}
     >
       <PackageEmbedExperience
         packageData={null}

@@ -1,4 +1,4 @@
-import { Copy, Eye, Loader2, Pencil, Plus, Rocket, Search } from "lucide-react";
+import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, Rocket, Search } from "lucide-react";
 import { Button } from "../../../../components/ui/button";
 import { ListToolbar } from "../../../../components/ui/ListToolbar";
 import { formatLongDate, formatMoney, formatShortDate } from "../../lib/publicationUtils";
@@ -19,6 +19,8 @@ export function PackagesDestinationsPanel({
   canPublish,
   onEditCountry,
   onCreateDestination,
+  onPublishCountry,
+  onUnpublishCountry,
   onPreviewCountry,
   onCopyCountry,
   onEditDestination,
@@ -27,8 +29,10 @@ export function PackagesDestinationsPanel({
   onPublishDestination,
   onUnpublishDestination,
 }) {
-  const visibleCount = destinations.filter((destination) => destination.isPublished).length;
-  const draftCount = Math.max(destinations.length - visibleCount, 0);
+  const publishedCount = destinations.filter((destination) => destination.isPublished).length;
+  const effectiveVisibleCount = selectedCountry.isPublished ? publishedCount : 0;
+  const blockedCount = selectedCountry.isPublished ? 0 : publishedCount;
+  const draftCount = Math.max(destinations.length - publishedCount, 0);
 
   return (
     <div className="space-y-4">
@@ -38,10 +42,18 @@ export function PackagesDestinationsPanel({
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
               Pais seleccionado
             </p>
-            <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">{selectedCountry.name}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">{selectedCountry.name}</h2>
+              <CountryStatusBadge isPublished={selectedCountry.isPublished} />
+            </div>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               Gestiona la grilla de destinos, su estado comercial y sus accesos de publicacion.
             </p>
+            {!selectedCountry.isPublished ? (
+              <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-200">
+                Este pais esta retirado del sitio. Los destinos marcados como visibles siguen publicados en admin, pero quedan bloqueados hasta volver a publicar el pais.
+              </p>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -52,23 +64,38 @@ export function PackagesDestinationsPanel({
               </Button>
             ) : null}
             {canPublish ? (
-              <>
-                <Button type="button" variant="outline" onClick={() => onPreviewCountry(selectedCountry)} className="gap-2">
+              selectedCountry.isPublished ? (
+                <Button type="button" variant="outline" onClick={() => onUnpublishCountry(selectedCountry)} className="gap-2">
+                  <EyeOff className="h-4 w-4" />
+                  Retirar del sitio
+                </Button>
+              ) : (
+                <Button type="button" onClick={() => onPublishCountry(selectedCountry)} className="gap-2">
                   <Eye className="h-4 w-4" />
-                  Vista previa
+                  Publicar pais
                 </Button>
-                <Button type="button" variant="outline" onClick={() => onCopyCountry(selectedCountry)} className="gap-2">
-                  <Copy className="h-4 w-4" />
-                  Copiar codigo
-                </Button>
-              </>
+              )
+            ) : null}
+            {canPublish ? (
+              <Button type="button" variant="outline" onClick={() => onPreviewCountry(selectedCountry)} className="gap-2">
+                <Eye className="h-4 w-4" />
+                Vista previa
+              </Button>
+            ) : null}
+            {canPublish ? (
+              <Button type="button" variant="outline" onClick={() => onCopyCountry(selectedCountry)} className="gap-2">
+                <Copy className="h-4 w-4" />
+                Copiar codigo
+              </Button>
             ) : null}
           </div>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
           <MetricPill label="Destinos" value={destinations.length} />
-          <MetricPill label="Visibles" value={visibleCount} tone="emerald" />
+          <MetricPill label="Publicados" value={publishedCount} tone="blue" />
+          <MetricPill label="Sitio visible" value={effectiveVisibleCount} tone="emerald" />
+          <MetricPill label="Bloqueados" value={blockedCount} tone={blockedCount > 0 ? "amber" : "slate"} />
           <MetricPill label="Borrador" value={draftCount} tone="amber" />
         </div>
       </section>
@@ -91,6 +118,7 @@ export function PackagesDestinationsPanel({
             <select value={filterValue} onChange={(event) => onFilterChange(event.target.value)} className={inputClass}>
               <option value="all">Todos los estados</option>
               <option value="visible">Visibles en el sitio</option>
+              <option value="blocked">Bloqueados por pais</option>
               <option value="hidden">En borrador</option>
             </select>
           ) : null
@@ -174,7 +202,11 @@ export function PackagesDestinationsPanel({
                         </td>
                         <td className="px-4 py-4">
                           <StatusBadge status={status} />
-                          {destination.publishIssues?.length > 0 && !destination.isPublished ? (
+                          {destination.isPublished && !destination.isCountryPublished ? (
+                            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                              Pais oculto
+                            </p>
+                          ) : destination.publishIssues?.length > 0 && !destination.isPublished ? (
                             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                               {destination.publishIssues.length} pendiente{destination.publishIssues.length === 1 ? "" : "s"}
                             </p>
@@ -276,7 +308,11 @@ function DestinationMobileRow({
         />
       </div>
 
-      {destination.publishIssues?.length > 0 && !destination.isPublished ? (
+      {destination.isPublished && !destination.isCountryPublished ? (
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
+          Este destino esta visible en admin, pero queda bloqueado mientras el pais este oculto.
+        </p>
+      ) : destination.publishIssues?.length > 0 && !destination.isPublished ? (
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
           {destination.publishIssues.length} pendiente{destination.publishIssues.length === 1 ? "" : "s"} para publicarlo
         </p>
@@ -348,6 +384,7 @@ function MetricPill({ label, value, tone = "slate" }) {
       "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/10 dark:text-emerald-300",
     amber:
       "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-300",
+    blue: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/10 dark:text-blue-300",
   };
 
   return (
@@ -361,11 +398,26 @@ function MetricPill({ label, value, tone = "slate" }) {
 function StatusBadge({ status }) {
   const tones = {
     visible: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+    blocked: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
     ready: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-    draft: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+    draft: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
   };
 
   return <span className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${tones[status.key]}`}>{status.label}</span>;
+}
+
+function CountryStatusBadge({ isPublished }) {
+  return (
+    <span
+      className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${
+        isPublished
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+      }`}
+    >
+      {isPublished ? "Sitio visible" : "Sitio oculto"}
+    </span>
+  );
 }
 
 function MobileMetric({ label, value }) {
@@ -378,8 +430,12 @@ function MobileMetric({ label, value }) {
 }
 
 function getDestinationStatus(destination) {
-  if (destination.isPublished) {
+  if (destination.isPublished && destination.isCountryPublished) {
     return { key: "visible", label: "Visible" };
+  }
+
+  if (destination.isPublished && !destination.isCountryPublished) {
+    return { key: "blocked", label: "Bloqueado" };
   }
 
   if (destination.canPublish) {

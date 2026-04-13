@@ -560,8 +560,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.ToTable("Countries");
             entity.Property(country => country.Name).HasMaxLength(120).IsRequired();
             entity.Property(country => country.Slug).HasMaxLength(120).IsRequired();
+            entity.Property(country => country.IsPublished).HasDefaultValue(true);
             entity.HasIndex(country => country.PublicId).IsUnique();
             entity.HasIndex(country => country.Slug).IsUnique();
+            entity.HasIndex(country => new { country.IsPublished, country.Slug });
 
             entity.HasMany(country => country.Destinations)
                 .WithOne(destination => destination.Country)

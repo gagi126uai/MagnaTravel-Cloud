@@ -53,7 +53,9 @@ public class CountryService : ICountryService
     {
         var country = new Country
         {
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            IsPublished = true,
+            PublishedAt = DateTime.UtcNow
         };
 
         await ApplyRequestAsync(country, request, ct);
@@ -76,6 +78,39 @@ public class CountryService : ICountryService
         }
 
         await ApplyRequestAsync(country, request, ct);
+        await _db.SaveChangesAsync(ct);
+        return MapCountryDetail(country);
+    }
+
+    public async Task<CountryDetailDto> PublishAsync(int id, CancellationToken ct)
+    {
+        var country = await _db.Countries
+            .Include(item => item.Destinations)
+            .FirstOrDefaultAsync(item => item.Id == id, ct)
+            ?? throw new KeyNotFoundException("Pais no encontrado.");
+
+        if (!country.IsPublished)
+        {
+            country.IsPublished = true;
+            country.PublishedAt = DateTime.UtcNow;
+        }
+
+        country.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return MapCountryDetail(country);
+    }
+
+    public async Task<CountryDetailDto> UnpublishAsync(int id, CancellationToken ct)
+    {
+        var country = await _db.Countries
+            .Include(item => item.Destinations)
+            .FirstOrDefaultAsync(item => item.Id == id, ct)
+            ?? throw new KeyNotFoundException("Pais no encontrado.");
+
+        country.IsPublished = false;
+        country.PublishedAt = null;
+        country.UpdatedAt = DateTime.UtcNow;
+
         await _db.SaveChangesAsync(ct);
         return MapCountryDetail(country);
     }
@@ -109,6 +144,11 @@ public class CountryService : ICountryService
             .FirstOrDefaultAsync(item => item.Slug == normalizedCountrySlug, ct);
 
         if (country is null)
+        {
+            return null;
+        }
+
+        if (includeOnlyPublished && !country.IsPublished)
         {
             return null;
         }
@@ -198,6 +238,8 @@ public class CountryService : ICountryService
         {
             CountryName = country.Name,
             CountrySlug = country.Slug,
+            IsPublished = country.IsPublished,
+            PublishedAt = country.PublishedAt,
             Destinations = destinations
         };
     }
@@ -256,6 +298,8 @@ public class CountryService : ICountryService
             PublicId = country.PublicId,
             Name = country.Name,
             Slug = country.Slug,
+            IsPublished = country.IsPublished,
+            PublishedAt = country.PublishedAt,
             TotalDestinations = totalDestinations,
             PublishedDestinations = publishedDestinations,
             DraftDestinations = totalDestinations - publishedDestinations,
@@ -275,6 +319,8 @@ public class CountryService : ICountryService
             PublicId = country.PublicId,
             Name = country.Name,
             Slug = country.Slug,
+            IsPublished = country.IsPublished,
+            PublishedAt = country.PublishedAt,
             TotalDestinations = totalDestinations,
             PublishedDestinations = publishedDestinations,
             DraftDestinations = totalDestinations - publishedDestinations,

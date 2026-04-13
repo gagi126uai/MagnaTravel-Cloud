@@ -9,10 +9,10 @@ import {
     FolderOpen,
     User,
     AlertCircle,
-    Search,
     Loader2
 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
+import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import Swal from "sweetalert2";
 import { getPublicId } from "../../../lib/publicIds";
 
@@ -82,7 +82,53 @@ export default function PaymentsTrashPage() {
             </div>
 
             {payments.length > 0 ? (
-                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+                <>
+                    <MobileRecordList>
+                        {payments.map((payment) => (
+                            <MobileRecordCard
+                                key={getPublicId(payment)}
+                                accentSlot={
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-900/30">
+                                        <CreditCard className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                                    </div>
+                                }
+                                statusSlot={
+                                    <span className="text-xs font-medium text-rose-500">
+                                        {formatDate(payment.deletedAt)}
+                                    </span>
+                                }
+                                title={formatCurrency(payment.amount)}
+                                subtitle={payment.method || "Sin metodo"}
+                                meta={
+                                    <>
+                                        <span className="flex items-center gap-2 text-xs">
+                                            <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
+                                            {payment.numeroReserva ? `${payment.numeroReserva}${payment.fileName ? ` · ${payment.fileName}` : ""}` : "Sin reserva"}
+                                        </span>
+                                        <span className="flex items-center gap-2 text-xs">
+                                            <User className="h-3.5 w-3.5 text-slate-400" />
+                                            {payment.customerName || "Sin cliente"}
+                                        </span>
+                                        <span className="text-xs">Pago: {formatDate(payment.paidAt)}</span>
+                                    </>
+                                }
+                                footer={<span className="text-xs text-slate-500 dark:text-slate-400">Eliminado: {formatDate(payment.deletedAt)}</span>}
+                                footerActions={
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleRestore(payment)}
+                                        className="gap-1.5 text-emerald-600 border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/20"
+                                    >
+                                        <RotateCcw className="h-3.5 w-3.5" />
+                                        Restaurar
+                                    </Button>
+                                }
+                            />
+                        ))}
+                    </MobileRecordList>
+
+                    <div className="hidden rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800 md:block">
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm min-w-[700px]">
                             <thead className="bg-slate-50 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800">
@@ -155,7 +201,8 @@ export default function PaymentsTrashPage() {
                             </tbody>
                         </table>
                     </div>
-                </div>
+                    </div>
+                </>
             ) : (
                 <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-12 text-center">
                     <div className="mx-auto h-14 w-14 rounded-full bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center mb-4">

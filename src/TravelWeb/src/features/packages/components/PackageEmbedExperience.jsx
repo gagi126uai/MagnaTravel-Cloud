@@ -89,6 +89,9 @@ export function PackageEmbedExperience({
   emptyDescription = "Esta ficha todavia no esta publicada o ya no tiene una salida principal activa.",
 }) {
   const isEmbedded = typeof window !== "undefined" && window.parent !== window;
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === "undefined" ? 1280 : window.innerWidth
+  );
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState("departures");
   const [leadOpen, setLeadOpen] = useState(false);
@@ -101,6 +104,35 @@ export function PackageEmbedExperience({
     }
 
     return new URLSearchParams(window.location.search).get("embedId") || "";
+  }, []);
+  const viewportMode = useMemo(() => {
+    if (viewportWidth < 640) {
+      return "mobile";
+    }
+
+    if (viewportWidth < 960) {
+      return "tablet";
+    }
+
+    return "desktop";
+  }, [viewportWidth]);
+  const isMobileViewport = viewportMode === "mobile";
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const syncViewport = () => {
+      setViewportWidth(window.innerWidth);
+    };
+
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+
+    return () => {
+      window.removeEventListener("resize", syncViewport);
+    };
   }, []);
 
   useEffect(() => {
@@ -196,6 +228,9 @@ export function PackageEmbedExperience({
           slug: packageData?.slug,
           embedId,
           height: getEmbedDocumentHeight(contentRef.current),
+          viewportWidth,
+          viewportMode,
+          isMobile: isMobileViewport,
         },
         "*"
       );
@@ -247,7 +282,7 @@ export function PackageEmbedExperience({
       window.removeEventListener("load", scheduleHeightSync);
       window.removeEventListener("resize", scheduleHeightSync);
     };
-  }, [activeTab, embedId, embedKey, leadOpen, loading, packageData, selectedDeparture, submitting]);
+  }, [activeTab, embedId, embedKey, isMobileViewport, leadOpen, loading, packageData, selectedDeparture, submitting, viewportMode, viewportWidth]);
 
   function openLeadModal(departure = null) {
     setSelectedDeparture(departure || displayDeparture || null);
@@ -317,10 +352,10 @@ export function PackageEmbedExperience({
     return (
       <div
         className={`flex items-center justify-center bg-[linear-gradient(180deg,#f6fbfa_0%,#eff7f5_100%)] px-4 ${
-          isEmbedded ? "min-h-0 py-6" : "min-h-screen"
+          isEmbedded ? "min-h-0 py-4 sm:py-6" : "min-h-screen"
         }`}
       >
-        <div className="flex items-center gap-3 rounded-3xl bg-white px-6 py-5 text-slate-700 shadow-xl shadow-slate-200/70">
+        <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm text-slate-700 shadow-xl shadow-slate-200/70 sm:px-6 sm:py-5">
           <Loader2 className="h-5 w-5 animate-spin text-teal-700" />
           {loadingLabel}
         </div>
@@ -332,12 +367,12 @@ export function PackageEmbedExperience({
     return (
       <div
         className={`flex items-center justify-center bg-[linear-gradient(180deg,#f6fbfa_0%,#eff7f5_100%)] px-4 ${
-          isEmbedded ? "min-h-0 py-6" : "min-h-screen"
+          isEmbedded ? "min-h-0 py-4 sm:py-6" : "min-h-screen"
         }`}
       >
-        <div className="w-full max-w-2xl rounded-[2rem] border border-white/80 bg-white px-8 py-10 text-center shadow-[0_24px_60px_-28px_rgba(15,23,42,0.35)]">
+        <div className="w-full max-w-2xl rounded-2xl border border-white/80 bg-white px-5 py-8 text-center shadow-[0_24px_60px_-28px_rgba(15,23,42,0.35)] sm:rounded-[2rem] sm:px-8 sm:py-10">
           {selector ? <div className="mx-auto mb-6 max-w-lg text-left">{selector}</div> : null}
-          <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-950">{emptyTitle}</h1>
+          <h1 className="mt-3 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{emptyTitle}</h1>
           <p className="mt-3 text-sm leading-6 text-slate-500">{emptyDescription}</p>
         </div>
       </div>
@@ -348,21 +383,26 @@ export function PackageEmbedExperience({
     <>
       <div
         ref={contentRef}
+        data-embed-mode={viewportMode}
         className={`bg-[radial-gradient(circle_at_top_left,rgba(111,210,214,0.18),transparent_28%),linear-gradient(180deg,#f6fbfa_0%,#eef6f3_100%)] px-3 py-4 sm:px-5 sm:py-6 ${
           isEmbedded ? "min-h-0" : "min-h-screen"
         }`}
       >
         <div className="mx-auto max-w-[1180px]">
-          <div className="overflow-hidden rounded-[2rem] border border-white/80 bg-white shadow-[0_28px_70px_-34px_rgba(15,23,42,0.4)]">
-            <div className="grid gap-6 px-4 py-4 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1.55fr)_390px]">
-              <div className="overflow-hidden rounded-[1.6rem] bg-slate-100">
+          <div className="overflow-hidden rounded-2xl border border-white/80 bg-white shadow-[0_28px_70px_-34px_rgba(15,23,42,0.4)] sm:rounded-[2rem]">
+            <div className="grid gap-4 px-4 py-4 sm:gap-6 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1.55fr)_390px]">
+              <div className="overflow-hidden rounded-2xl bg-slate-100 sm:rounded-[1.6rem]">
                 {packageData.heroImageUrl ? (
-                  <img src={packageData.heroImageUrl} alt={packageData.title} className="h-full min-h-[320px] w-full object-cover" />
+                  <img
+                    src={packageData.heroImageUrl}
+                    alt={packageData.title}
+                    className="h-full min-h-[220px] w-full object-cover sm:min-h-[320px]"
+                  />
                 ) : (
-                  <div className="flex min-h-[320px] items-center justify-center bg-[linear-gradient(135deg,#7ed5d6_0%,#d7f0ea_100%)] text-center text-slate-700">
+                  <div className="flex min-h-[220px] items-center justify-center bg-[linear-gradient(135deg,#7ed5d6_0%,#d7f0ea_100%)] px-4 text-center text-slate-700 sm:min-h-[320px]">
                     <div>
                       <p className="text-xs font-bold uppercase tracking-[0.3em]">MagnaTravel</p>
-                      <p className="mt-3 text-3xl font-bold">{packageData.title}</p>
+                      <p className="mt-3 text-2xl font-bold sm:text-3xl">{packageData.title}</p>
                     </div>
                   </div>
                 )}
@@ -375,15 +415,15 @@ export function PackageEmbedExperience({
                   <p className="text-xs font-bold uppercase tracking-[0.28em] text-teal-700">
                     {packageData.destination || "Paquete destacado"}
                   </p>
-                  <h1 className="mt-2 text-4xl font-black tracking-tight text-slate-950">{packageData.title}</h1>
-                  <p className="mt-2 text-lg leading-7 text-slate-600">
+                  <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">{packageData.title}</h1>
+                  <p className="mt-2 text-base leading-7 text-slate-600 sm:text-lg">
                     {packageData.tagline || "Vivilo con fechas y tarifas listas para reservar."}
                   </p>
                 </div>
 
                 <div className="mt-6">
                   <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">Desde</p>
-                  <p className="mt-1 text-5xl font-black tracking-tight text-[#9fd7d2]">{priceLabel}</p>
+                  <p className="mt-1 text-4xl font-black tracking-tight text-[#9fd7d2] sm:text-5xl">{priceLabel}</p>
                 </div>
 
                 <div className="mt-6 space-y-3">
@@ -393,7 +433,7 @@ export function PackageEmbedExperience({
                   <QuickFact label={dateFact.label} value={dateFact.value} icon={CalendarDays} />
                 </div>
 
-                <div className="mt-6 rounded-[1.2rem] border border-[#d8e8e5] bg-[#f5fbf8] px-4 py-4 text-sm text-slate-600">
+                <div className="mt-6 rounded-2xl border border-[#d8e8e5] bg-[#f5fbf8] px-4 py-4 text-sm text-slate-600 sm:rounded-[1.2rem]">
                   {previewNotice || "Selecciona una fecha en la tabla de abajo para enviar la consulta con la salida elegida."}
                 </div>
               </aside>
@@ -417,7 +457,7 @@ export function PackageEmbedExperience({
                   </div>
 
                   {departuresSorted.length === 0 ? (
-                    <div className="rounded-[1.4rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-500">
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-500 sm:rounded-[1.4rem]">
                       Aun no hay salidas cargadas para esta propuesta.
                     </div>
                   ) : (
@@ -469,8 +509,8 @@ export function PackageEmbedExperience({
 
                       <div className="grid gap-3 md:hidden">
                         {departuresSorted.map((departure) => (
-                          <div key={departure.publicId} className="rounded-[1.4rem] border border-slate-200 bg-white p-4 shadow-sm">
-                            <div className="flex items-start justify-between gap-4">
+                          <div key={departure.publicId} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[1.4rem]">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                               <div>
                                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-teal-700">
                                   {formatDate(departure.startDate)}
@@ -494,7 +534,7 @@ export function PackageEmbedExperience({
                             <button
                               type="button"
                               onClick={() => openLeadModal(departure)}
-                              className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-[#0f4d5b] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#0d4350]"
+                              className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-[#0f4d5b] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#0d4350]"
                             >
                               Solicitar reserva
                             </button>
@@ -505,7 +545,7 @@ export function PackageEmbedExperience({
                   )}
                 </div>
               ) : (
-                <div className="rounded-[1.6rem] border border-slate-200 bg-[linear-gradient(180deg,#fcfffe_0%,#f5fbf8_100%)] p-5 sm:p-6">
+                <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,#fcfffe_0%,#f5fbf8_100%)] p-5 sm:rounded-[1.6rem] sm:p-6">
                   <h2 className="text-2xl font-bold tracking-tight text-slate-950">Informacion general</h2>
                   <p className="mt-4 whitespace-pre-line text-sm leading-7 text-slate-600">
                     {packageData.generalInfo || "Estamos preparando el contenido comercial de esta propuesta."}
@@ -533,7 +573,7 @@ export function PackageEmbedExperience({
 
 function QuickFact({ label, value, icon: Icon }) {
   return (
-    <div className="rounded-[1.2rem] bg-[#ede5de] px-4 py-3">
+    <div className="rounded-2xl bg-[#ede5de] px-4 py-3 sm:rounded-[1.2rem]">
       <div className="flex items-start gap-3">
         <div className="rounded-full bg-white/70 p-2 text-[#0f4d5b]">
           <Icon className="h-4 w-4" />
@@ -581,13 +621,13 @@ function LeadModal({ open, packageTitle, departure, leadForm, submitting, onClos
   }
 
   return (
-    <div data-embed-modal-root className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
+    <div data-embed-modal-root className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 p-0 sm:p-4 backdrop-blur-sm">
       <div className="mx-auto flex min-h-full max-w-2xl items-center justify-center">
         <div
           data-embed-modal-panel
-          className="w-full overflow-hidden rounded-[2rem] bg-white shadow-[0_30px_80px_-30px_rgba(15,23,42,0.55)]"
+          className="min-h-screen w-full overflow-hidden bg-white shadow-[0_30px_80px_-30px_rgba(15,23,42,0.55)] sm:min-h-0 sm:rounded-[2rem]"
         >
-          <div className="border-b border-slate-200 px-6 py-5">
+          <div className="border-b border-slate-200 px-5 py-5 sm:px-6">
             <p className="text-xs font-bold uppercase tracking-[0.26em] text-teal-700">Consulta web</p>
             <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">Solicitar informacion</h2>
             <p className="mt-2 text-sm text-slate-500">
@@ -596,7 +636,7 @@ function LeadModal({ open, packageTitle, departure, leadForm, submitting, onClos
             </p>
           </div>
 
-          <form onSubmit={onSubmit} className="space-y-4 px-6 py-6">
+          <form onSubmit={onSubmit} className="space-y-4 px-5 py-6 sm:px-6">
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Nombre y apellido" icon={User}>
                 <input

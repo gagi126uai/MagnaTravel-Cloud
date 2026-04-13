@@ -8,6 +8,8 @@ public interface ICountryService
     Task<CountryDetailDto?> GetCountryByIdAsync(int id, CancellationToken ct);
     Task<CountryDetailDto> CreateAsync(CountryUpsertRequest request, CancellationToken ct);
     Task<CountryDetailDto?> UpdateAsync(int id, CountryUpsertRequest request, CancellationToken ct);
+    Task<CountryDetailDto> PublishAsync(int id, CancellationToken ct);
+    Task<CountryDetailDto> UnpublishAsync(int id, CancellationToken ct);
     Task<PublicCountryEmbedDto?> GetPublicCountryBySlugAsync(string countrySlug, CancellationToken ct);
     Task<PreviewCountryEmbedDto?> GetPreviewCountryBySlugAsync(string countrySlug, CancellationToken ct);
 }

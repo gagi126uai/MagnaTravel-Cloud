@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, Loader2, Plus, Search } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Loader2, Plus, Search } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, buildAppUrl } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
@@ -22,6 +22,8 @@ const inputClass =
 const emptyCountryForm = {
   publicId: null,
   name: "",
+  isPublished: true,
+  publishedAt: null,
 };
 
 export default function PackagesPage() {
@@ -183,12 +185,29 @@ export default function PackagesPage() {
       }
 
       if (destinationStatusFilter === "visible") {
-        return destination.isPublished;
+        return destination.isPublished && destination.isCountryPublished;
+      }
+
+      if (destinationStatusFilter === "blocked") {
+        return destination.isPublished && !destination.isCountryPublished;
       }
 
       return !destination.isPublished;
     });
   }, [canPublish, destinationSearch, destinationStatusFilter, destinations]);
+
+  function applyCountryUpdate(updatedCountry) {
+    setCountries((current) =>
+      current.map((country) => (country.publicId === updatedCountry.publicId ? updatedCountry : country))
+    );
+    setDestinations((current) =>
+      current.map((destination) =>
+        destination.countryPublicId === updatedCountry.publicId
+          ? { ...destination, isCountryPublished: updatedCountry.isPublished }
+          : destination
+      )
+    );
+  }
 
   function openCreateCountryModal() {
     setCountryForm(emptyCountryForm);
@@ -328,6 +347,50 @@ export default function PackagesPage() {
     }
   }
 
+  async function handlePublishCountry(country) {
+    const confirmed = await showConfirm({
+      title: "Publicar pais",
+      eyebrow: "Publicacion web",
+      text: "El iframe del pais y los destinos publicados de este pais volveran a responder en el sitio sin cambiar cada destino.",
+      confirmText: "Publicar pais",
+      confirmColor: "emerald",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const updated = await api.patch(`/countries/${country.publicId}/publish`);
+      applyCountryUpdate(updated);
+      showSuccess("El pais volvio a estar visible en el sitio.");
+    } catch (error) {
+      showError(error.message || "No pudimos publicar el pais.");
+    }
+  }
+
+  async function handleUnpublishCountry(country) {
+    const confirmed = await showConfirm({
+      title: "Retirar pais del sitio",
+      eyebrow: "Publicacion web",
+      text: "El iframe del pais y todos los destinos publicos directos de este pais dejaran de responder, pero cada destino conservara su estado propio.",
+      confirmText: "Retirar pais",
+      confirmColor: "amber",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const updated = await api.patch(`/countries/${country.publicId}/unpublish`);
+      applyCountryUpdate(updated);
+      showSuccess("El pais dejo de mostrarse en el sitio.");
+    } catch (error) {
+      showError(error.message || "No pudimos retirar el pais del sitio.");
+    }
+  }
+
   async function handleUnpublish(destination) {
     const confirmed = await showConfirm({
       title: "Retirar destino del sitio",
@@ -389,6 +452,9 @@ export default function PackagesPage() {
             canEdit={canEdit}
             onCreateCountry={openCreateCountryModal}
             onEditCountry={openEditCountryModal}
+            canPublish={canPublish}
+            onPublishCountry={handlePublishCountry}
+            onUnpublishCountry={handleUnpublishCountry}
           />
         </div>
 
@@ -455,6 +521,19 @@ export default function PackagesPage() {
                       </div>
 
                       <div className="flex flex-wrap gap-2">
+                        {canPublish ? (
+                          selectedCountry.isPublished ? (
+                            <Button type="button" variant="outline" size="sm" onClick={() => handleUnpublishCountry(selectedCountry)} className="gap-2">
+                              <EyeOff className="h-4 w-4" />
+                              Retirar del sitio
+                            </Button>
+                          ) : (
+                            <Button type="button" size="sm" onClick={() => handlePublishCountry(selectedCountry)} className="gap-2">
+                              <Eye className="h-4 w-4" />
+                              Publicar pais
+                            </Button>
+                          )
+                        ) : null}
                         {canEdit ? (
                           <Button
                             type="button"
@@ -509,6 +588,8 @@ export default function PackagesPage() {
               canPublish={canPublish}
               onEditCountry={openEditCountryModal}
               onCreateDestination={openCreateDestination}
+              onPublishCountry={handlePublishCountry}
+              onUnpublishCountry={handleUnpublishCountry}
               onPreviewCountry={openCountryPreview}
               onCopyCountry={copyCountryPublication}
               onEditDestination={openDestinationEditor}

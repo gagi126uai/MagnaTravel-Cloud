@@ -29,6 +29,7 @@ import {
 import { api } from "../api";
 import { showConfirm, showError, showSuccess } from "../alerts";
 import { PaginationFooter } from "../components/ui/PaginationFooter";
+import { MobileRecordCard, MobileRecordList } from "../components/ui/MobileRecordCard";
 import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 
 const STATUSES = [
@@ -334,7 +335,20 @@ export default function CRMPage() {
                 <input type="text" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar por nombre, telefono, email o destino..." className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm shadow-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-900" />
             </div>
 
-            <div className="overflow-hidden rounded-3xl border border-slate-200/60 bg-white shadow-xl shadow-slate-200/50 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-none">
+            {leads.length === 0 ? (
+                <div className="rounded-3xl border border-slate-200/60 bg-white px-6 py-16 text-center shadow-sm dark:border-slate-800/60 dark:bg-slate-900 md:hidden">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800">
+                        <Users className="h-8 w-8 text-slate-300 dark:text-slate-600" />
+                    </div>
+                    <p className="text-base font-bold text-slate-400">No hay posibles clientes en esta vista</p>
+                </div>
+            ) : (
+                <MobileRecordList className="space-y-3">
+                    {leads.map((lead) => <LeadMobileCard key={getPublicId(lead)} lead={lead} onOpen={() => loadDetail(getPublicId(lead))} />)}
+                </MobileRecordList>
+            )}
+
+            <div className="hidden overflow-hidden rounded-3xl border border-slate-200/60 bg-white shadow-xl shadow-slate-200/50 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-none md:block">
                 {leads.length === 0 ? (
                     <div className="px-6 py-20 text-center">
                         <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800">
@@ -375,6 +389,21 @@ export default function CRMPage() {
                     />
                 </div>
             </div>
+
+            {leads.length > 0 ? (
+                <div className="md:hidden">
+                    <PaginationFooter
+                        page={leadsPage.page || page}
+                        pageSize={leadsPage.pageSize || pageSize}
+                        totalCount={leadsPage.totalCount || 0}
+                        totalPages={leadsPage.totalPages || 0}
+                        hasPreviousPage={Boolean(leadsPage.hasPreviousPage)}
+                        hasNextPage={Boolean(leadsPage.hasNextPage)}
+                        onPageChange={setPage}
+                        onPageSizeChange={setPageSize}
+                    />
+                </div>
+            ) : null}
 
             {showModal && <LeadFormModal sources={SOURCES} onSave={handleCreate} onClose={() => setShowModal(false)} />}
             {detailLead && (
@@ -453,6 +482,47 @@ function LeadRow({ lead, onOpen }) {
             <td className="px-4 py-4 text-right text-[11px] font-medium text-slate-400">{timeAgo(lead.createdAt)}</td>
             <td className="px-6 py-4 text-right"><div className="flex justify-end"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm dark:bg-slate-800"><ChevronRight className="h-4 w-4 text-indigo-600" /></div></div></td>
         </tr>
+    );
+}
+
+function LeadMobileCard({ lead, onOpen }) {
+    const statusConfig = getStatusConfig(lead.status);
+
+    return (
+        <MobileRecordCard
+            onClick={onOpen}
+            accentSlot={
+                <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-xs font-black shadow-sm ${lead.source === "WhatsApp" ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30" : "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30"}`}>
+                    {lead.source === "WhatsApp" ? <Smartphone className="h-5 w-5" /> : lead.fullName?.[0]?.toUpperCase()}
+                </div>
+            }
+            statusSlot={
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${statusConfig.badge}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${statusConfig.dot}`}></span>
+                    {statusConfig.label}
+                </span>
+            }
+            title={lead.fullName}
+            subtitle={lead.phone || lead.email || "Sin contacto"}
+            meta={
+                <>
+                    <span className="flex items-center gap-2 text-xs">
+                        <MapPin className="h-3.5 w-3.5 text-indigo-400" />
+                        {lead.interestedIn || "Interes pendiente"}
+                    </span>
+                    <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${lead.source === "WhatsApp" ? "text-emerald-500" : "text-slate-500"}`}>
+                        {lead.source === "WhatsApp" ? <Smartphone className="h-3.5 w-3.5" /> : null}
+                        {lead.source || "Directo"}
+                    </span>
+                </>
+            }
+            footer={<span className="text-xs text-slate-500 dark:text-slate-400">Ingreso {timeAgo(lead.createdAt)}</span>}
+            footerActions={
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
+                    <ChevronRight className="h-4 w-4 text-indigo-600" />
+                </div>
+            }
+        />
     );
 }
 

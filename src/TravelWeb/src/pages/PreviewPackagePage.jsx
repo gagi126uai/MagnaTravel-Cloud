@@ -131,6 +131,10 @@ export default function PreviewPackagePage() {
       return "Esta vista interna te permite revisar el diseno final antes de publicarlo en el sitio.";
     }
 
+    if (packageData.isPublished && packageData.isCountryPublished === false) {
+      return "Esta vista interna sigue disponible, pero el pais esta retirado del sitio. El destino queda bloqueado en publico hasta volver a publicar el pais.";
+    }
+
     if (!packageData.primaryDeparture && (packageData.departures || []).length > 0) {
       return "Estas viendo una salida de borrador para revisar el diseno. Todavia no esta visible en el sitio.";
     }
@@ -142,6 +146,16 @@ export default function PreviewPackagePage() {
     return "Esta vista interna simula la experiencia final del sitio. Los formularios no generan consultas reales desde aqui.";
   }, [packageData]);
 
+  const previewIssues = useMemo(() => {
+    const issues = [...(packageData?.publishIssues || [])];
+
+    if (packageData?.isCountryPublished === false) {
+      issues.unshift("El pais esta retirado del sitio y bloquea la publicacion publica de este destino.");
+    }
+
+    return issues;
+  }, [packageData]);
+
   return (
     <PackagePreviewShell
       title={packageData?.title || "Vista previa del destino"}
@@ -150,9 +164,9 @@ export default function PreviewPackagePage() {
           ? `${packageData.destination || "Destino"} | ${packageData.countryName}`
           : "Revisa como se vera este destino en el sitio."
       }
-      isPublished={Boolean(packageData?.isPublished)}
+      isPublished={Boolean(packageData?.isPublished && packageData?.isCountryPublished)}
       helperText={helperText}
-      issues={packageData?.publishIssues || []}
+      issues={previewIssues}
     >
       <PackageEmbedExperience
         packageData={packageData}

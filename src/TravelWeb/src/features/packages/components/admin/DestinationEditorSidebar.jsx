@@ -13,6 +13,7 @@ export function DestinationEditorSidebar({
   publicationState,
   nextDepartureDate,
   fromPrice,
+  countryOverrideActive,
   onBack,
   onSave,
   onDisplayOrderChange,
@@ -50,6 +51,7 @@ export function DestinationEditorSidebar({
           </div>
 
           <SidebarField label="Pais" value={form.countryName || "-"} />
+          <SidebarField label="Pais en sitio" value={countryOverrideActive ? "Oculto" : "Visible"} />
 
           <label className="block space-y-2">
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Orden de aparicion</span>
@@ -117,10 +119,21 @@ export function DestinationEditorSidebar({
             ) : (
               <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/40 dark:bg-emerald-900/10">
                 <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
-                  {form.isPublished ? "El destino ya esta visible en el sitio." : "El destino esta listo para publicarse."}
+                  {form.isPublished && !countryOverrideActive
+                    ? "El destino ya esta visible en el sitio."
+                    : "El destino esta listo para publicarse."}
                 </p>
               </div>
             )}
+
+            {countryOverrideActive ? (
+              <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-900/10">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-200">El pais esta retirado del sitio</p>
+                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+                  Aunque este destino quede publicado, su enlace publico y el embed quedan bloqueados hasta volver a publicar el pais.
+                </p>
+              </div>
+            ) : null}
 
             {canPublish ? (
               <div className="mt-4">

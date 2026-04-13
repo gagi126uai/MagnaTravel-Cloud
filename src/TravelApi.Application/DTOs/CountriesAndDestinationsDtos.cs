@@ -9,6 +9,8 @@ public class CountryListItemDto
     public Guid PublicId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Slug { get; set; } = string.Empty;
+    public bool IsPublished { get; set; }
+    public DateTime? PublishedAt { get; set; }
     public int TotalDestinations { get; set; }
     public int PublishedDestinations { get; set; }
     public int DraftDestinations { get; set; }
@@ -22,6 +24,8 @@ public class CountryDetailDto
     public Guid PublicId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Slug { get; set; } = string.Empty;
+    public bool IsPublished { get; set; }
+    public DateTime? PublishedAt { get; set; }
     public int TotalDestinations { get; set; }
     public int PublishedDestinations { get; set; }
     public int DraftDestinations { get; set; }
@@ -59,6 +63,7 @@ public class DestinationListItemDto
     public Guid CountryPublicId { get; set; }
     public string CountryName { get; set; } = string.Empty;
     public string CountrySlug { get; set; } = string.Empty;
+    public bool IsCountryPublished { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Slug { get; set; } = string.Empty;
@@ -102,6 +107,7 @@ public class DestinationDetailDto
     public Guid CountryPublicId { get; set; }
     public string CountryName { get; set; } = string.Empty;
     public string CountrySlug { get; set; } = string.Empty;
+    public bool IsCountryPublished { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Slug { get; set; } = string.Empty;

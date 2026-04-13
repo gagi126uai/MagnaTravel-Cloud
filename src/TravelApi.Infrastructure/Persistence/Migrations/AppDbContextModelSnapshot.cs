@@ -683,10 +683,18 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("IsPublished")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("PublicId")
                         .HasColumnType("uuid");
@@ -703,6 +711,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PublicId")
                         .IsUnique();
+
+                    b.HasIndex("IsPublished", "Slug");
 
                     b.HasIndex("Slug")
                         .IsUnique();

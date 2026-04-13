@@ -127,8 +127,12 @@ export default function DestinationEditorPage() {
   }, [form.departures]);
 
   const publicationState = useMemo(() => {
-    if (form.isPublished) {
+    if (form.isPublished && form.isCountryPublished) {
       return { label: "Visible en el sitio", tone: "emerald" };
+    }
+
+    if (form.isPublished && !form.isCountryPublished) {
+      return { label: "Bloqueado por pais", tone: "amber" };
     }
 
     if (form.canPublish) {
@@ -472,6 +476,12 @@ export default function DestinationEditorPage() {
             </div>
           </section>
 
+          {!form.isCountryPublished ? (
+            <section className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-200">
+              Este pais esta retirado del sitio. Puedes seguir editando, previsualizando y dejando destinos listos, pero la ficha publica y el iframe no responderan hasta volver a publicar el pais.
+            </section>
+          ) : null}
+
           <SectionCard
             title="Datos principales"
             description="Define el nombre comercial, el texto corto y la descripcion principal del destino."
@@ -592,6 +602,7 @@ export default function DestinationEditorPage() {
           publicationState={publicationState}
           nextDepartureDate={nextDepartureDate}
           fromPrice={fromPrice}
+          countryOverrideActive={!form.isCountryPublished}
           onBack={() => navigate(backPath)}
           onSave={handleSave}
           onDisplayOrderChange={(value) => updateField("displayOrder", value)}

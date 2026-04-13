@@ -98,6 +98,38 @@ public class CountriesController : ControllerBase
         }
     }
 
+    [HttpPatch("{publicIdOrLegacyId}/publish")]
+    public async Task<ActionResult<CountryDetailDto>> Publish(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Country>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _countryService.PublishAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpPatch("{publicIdOrLegacyId}/unpublish")]
+    public async Task<ActionResult<CountryDetailDto>> Unpublish(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Country>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _countryService.UnpublishAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/destinations")]
     public async Task<ActionResult<IReadOnlyList<DestinationListItemDto>>> GetDestinations(
         string publicIdOrLegacyId,

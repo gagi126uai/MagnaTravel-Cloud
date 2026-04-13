@@ -149,7 +149,9 @@ export default function PublicPackageEmbedPage({ preview = false }) {
       leadPreviewMode={preview}
       previewNotice={
         preview
-          ? "Esta es una vista previa interna. Cuando el destino este visible en el sitio, las consultas entraran desde aqui."
+          ? packageData?.isCountryPublished === false
+            ? "Esta es una vista previa interna. El destino puede estar listo, pero el pais esta retirado del sitio y bloquea la ficha publica hasta volver a publicarlo."
+            : "Esta es una vista previa interna. Cuando el destino este visible en el sitio, las consultas entraran desde aqui."
           : ""
       }
       emptyTitle={preview ? "Vista previa no disponible" : "Paquete no disponible"}

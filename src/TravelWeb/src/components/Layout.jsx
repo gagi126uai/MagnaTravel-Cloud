@@ -75,7 +75,7 @@ export default function Layout({ children, onLogout, isAdmin }) {
 
             <UrgentBannerStack />
 
-            <div className="flex flex-1 relative overflow-hidden">
+            <div className="relative flex flex-1 min-w-0 overflow-hidden">
                 {/* Mobile Overlay */}
                 {sidebarOpen && (
                     <div
@@ -101,7 +101,7 @@ export default function Layout({ children, onLogout, isAdmin }) {
 
                 {/* Main Content */}
                 <div className={`
-                    flex-1 flex flex-col transition-all duration-300
+                    flex min-w-0 flex-1 flex-col transition-all duration-300
                     ${sidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}
                 `}>
                     {/* Header */}
@@ -201,8 +201,8 @@ export default function Layout({ children, onLogout, isAdmin }) {
                         </div>
                     </header>
 
-                    <main className="flex-1 p-3 md:p-6 lg:p-8 overflow-y-auto">
-                        <div className="mx-auto max-w-7xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-6 lg:p-8">
+                        <div className="mx-auto w-full max-w-7xl min-w-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
                             {children}
                         </div>
                     </main>

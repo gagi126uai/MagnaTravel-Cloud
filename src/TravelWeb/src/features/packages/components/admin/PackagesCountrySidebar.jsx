@@ -1,4 +1,4 @@
-import { Loader2, Pencil, Plus, Search } from "lucide-react";
+import { Eye, EyeOff, Loader2, Pencil, Plus, Search } from "lucide-react";
 import { Button } from "../../../../components/ui/button";
 
 const inputClass =
@@ -14,8 +14,11 @@ export function PackagesCountrySidebar({
   selectedCountry,
   portfolioSummary,
   canEdit,
+  canPublish,
   onCreateCountry,
   onEditCountry,
+  onPublishCountry,
+  onUnpublishCountry,
 }) {
   return (
     <aside className="space-y-4 xl:sticky xl:top-6">
@@ -53,11 +56,28 @@ export function PackagesCountrySidebar({
           />
         </div>
 
-        {canEdit && selectedCountry ? (
-          <Button type="button" variant="outline" onClick={() => onEditCountry(selectedCountry)} className="mt-3 w-full gap-2">
-            <Pencil className="h-4 w-4" />
-            Editar pais seleccionado
-          </Button>
+        {selectedCountry ? (
+          <div className="mt-3 space-y-2">
+            {canEdit ? (
+              <Button type="button" variant="outline" onClick={() => onEditCountry(selectedCountry)} className="w-full gap-2">
+                <Pencil className="h-4 w-4" />
+                Editar pais seleccionado
+              </Button>
+            ) : null}
+            {canPublish ? (
+              selectedCountry.isPublished ? (
+                <Button type="button" variant="outline" onClick={() => onUnpublishCountry(selectedCountry)} className="w-full gap-2">
+                  <EyeOff className="h-4 w-4" />
+                  Retirar del sitio
+                </Button>
+              ) : (
+                <Button type="button" onClick={() => onPublishCountry(selectedCountry)} className="w-full gap-2">
+                  <Eye className="h-4 w-4" />
+                  Publicar pais
+                </Button>
+              )
+            ) : null}
+          </div>
         ) : null}
       </section>
 
@@ -93,12 +113,27 @@ export function PackagesCountrySidebar({
                     <p className={`truncate text-sm font-medium ${selected ? "text-indigo-700 dark:text-indigo-300" : "text-slate-900 dark:text-white"}`}>
                       {country.name}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {country.totalDestinations} destinos · {country.publishedDestinations} visibles · {country.draftDestinations} borrador
-                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      <span>{country.totalDestinations} destinos</span>
+                      <span>&middot;</span>
+                      <span>{country.isPublished ? country.publishedDestinations : 0} sitio</span>
+                      <span>&middot;</span>
+                      <span>{country.draftDestinations} borrador</span>
+                      {!country.isPublished ? (
+                        <span className="rounded-md bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                          Pais oculto
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                  <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                    {country.totalDestinations}
+                  <span
+                    className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${
+                      country.isPublished
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                        : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                    }`}
+                  >
+                    {country.isPublished ? "Sitio on" : "Sitio off"}
                   </span>
                 </button>
               );

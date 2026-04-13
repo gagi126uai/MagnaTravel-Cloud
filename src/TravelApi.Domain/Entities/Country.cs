@@ -16,8 +16,10 @@ public class Country : IHasPublicId
     [MaxLength(120)]
     public string Slug { get; set; } = string.Empty;
 
+    public bool IsPublished { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
+    public DateTime? PublishedAt { get; set; }
 
     public ICollection<Destination> Destinations { get; set; } = new List<Destination>();
 }

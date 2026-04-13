@@ -89,9 +89,16 @@ function buildPublicationSnippet(item, { publicationType }) {
   var allowedOrigin = ${JSON.stringify(srcUrl.origin)};
   var expectedEmbedId = ${JSON.stringify(embedId)};
   var minHeight = 320;
-  function applyHeight(height) {
+  function applyHeight(height, data) {
     var parsed = Number(height || 0);
     if (!parsed || !isFinite(parsed)) return;
+    if (data && typeof data.viewportMode === "string") {
+      iframe.dataset.mtViewport = data.viewportMode;
+    }
+    if (data && typeof data.isMobile === "boolean") {
+      iframe.dataset.mtMobile = data.isMobile ? "true" : "false";
+      iframe.style.minHeight = data.isMobile ? "420px" : minHeight + "px";
+    }
     iframe.style.height = Math.max(minHeight, Math.min(5200, Math.round(parsed))) + "px";
   }
   function handleMessage(event) {
@@ -99,7 +106,7 @@ function buildPublicationSnippet(item, { publicationType }) {
     var data = event.data || {};
     if (data.type !== "magnatravel:embed:resize") return;
     if (data.embedId && data.embedId !== expectedEmbedId) return;
-    applyHeight(data.height);
+    applyHeight(data.height, data);
   }
   window.addEventListener("message", handleMessage, false);
 })();
@@ -118,6 +125,8 @@ export function mapCountryForm(country) {
   return {
     publicId: country?.publicId || null,
     name: country?.name || "",
+    isPublished: Boolean(country?.isPublished),
+    publishedAt: country?.publishedAt || null,
   };
 }
 
@@ -127,6 +136,7 @@ export function mapDestinationForm(detail) {
     countryPublicId: detail?.countryPublicId || "",
     countryName: detail?.countryName || "",
     countrySlug: detail?.countrySlug || "",
+    isCountryPublished: detail?.isCountryPublished ?? true,
     name: detail?.name || "",
     title: detail?.title || "",
     slug: detail?.slug || "",
@@ -166,6 +176,7 @@ export function createEmptyDestinationForm(country) {
     countryPublicId: country?.publicId || "",
     countryName: country?.name || "",
     countrySlug: country?.slug || "",
+    isCountryPublished: country?.isPublished ?? true,
     name: "",
     title: "",
     slug: "",

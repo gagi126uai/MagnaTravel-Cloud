@@ -244,7 +244,13 @@ public class DestinationService : IDestinationService
             .AsNoTracking()
             .Include(item => item.Country)
             .Include(item => item.Departures)
-            .FirstOrDefaultAsync(item => item.IsPublished && item.Slug == normalizedSlug, ct);
+            .FirstOrDefaultAsync(
+                item =>
+                    item.IsPublished &&
+                    item.Country != null &&
+                    item.Country.IsPublished &&
+                    item.Slug == normalizedSlug,
+                ct);
 
         if (destination is null)
         {
@@ -287,7 +293,14 @@ public class DestinationService : IDestinationService
 
         var destination = await _db.Destinations
             .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.IsPublished && item.Slug == normalizedSlug, ct);
+            .Include(item => item.Country)
+            .FirstOrDefaultAsync(
+                item =>
+                    item.IsPublished &&
+                    item.Country != null &&
+                    item.Country.IsPublished &&
+                    item.Slug == normalizedSlug,
+                ct);
 
         return destination is null ? null : await ReadHeroImageAsync(destination, ct);
     }
@@ -311,7 +324,13 @@ public class DestinationService : IDestinationService
         var destination = await _db.Destinations
             .Include(item => item.Country)
             .Include(item => item.Departures)
-            .FirstOrDefaultAsync(item => item.IsPublished && item.Slug == normalizedSlug, ct)
+            .FirstOrDefaultAsync(
+                item =>
+                    item.IsPublished &&
+                    item.Country != null &&
+                    item.Country.IsPublished &&
+                    item.Slug == normalizedSlug,
+                ct)
             ?? throw new KeyNotFoundException("Destino no encontrado.");
 
         var activeDepartures = destination.Departures
@@ -500,6 +519,7 @@ public class DestinationService : IDestinationService
             CountryPublicId = destination.Country?.PublicId ?? Guid.Empty,
             CountryName = destination.Country?.Name ?? string.Empty,
             CountrySlug = destination.Country?.Slug ?? string.Empty,
+            IsCountryPublished = destination.Country?.IsPublished ?? false,
             Name = destination.Name,
             Title = destination.Title,
             Slug = destination.Slug,
@@ -544,6 +564,7 @@ public class DestinationService : IDestinationService
             CountryPublicId = destination.Country?.PublicId ?? Guid.Empty,
             CountryName = destination.Country?.Name ?? string.Empty,
             CountrySlug = destination.Country?.Slug ?? string.Empty,
+            IsCountryPublished = destination.Country?.IsPublished ?? false,
             Name = destination.Name,
             Title = destination.Title,
             Slug = destination.Slug,
@@ -692,6 +713,7 @@ public class DestinationService : IDestinationService
             FromPrice = priceReference?.SalePrice,
             Currency = priceReference?.Currency,
             IsPublished = destination.IsPublished,
+            IsCountryPublished = destination.Country?.IsPublished ?? false,
             PublishIssues = issues,
             PrimaryDeparture = previewPrimaryDeparture is null ? null : MapPreviewDeparture(previewPrimaryDeparture),
             Departures = departures
