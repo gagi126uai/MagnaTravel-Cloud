@@ -184,16 +184,9 @@ export function PackagesDestinationsPanel({
                         <td className="px-4 py-4">
                           <div className="flex justify-end gap-1">
                             {canEdit ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => onEditDestination(destination.publicId)}
-                                className="gap-2 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-                              >
+                              <IconActionButton title="Editar" onClick={() => onEditDestination(destination.publicId)}>
                                 <Pencil className="h-4 w-4" />
-                                Editar
-                              </Button>
+                              </IconActionButton>
                             ) : null}
                             {canPublish ? (
                               <IconActionButton title="Vista previa" onClick={() => onViewDestination(destination)}>
