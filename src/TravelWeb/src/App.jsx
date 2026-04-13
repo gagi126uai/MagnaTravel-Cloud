@@ -2,7 +2,7 @@
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import { api, hasSessionCookieHint } from "./api";
-import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState, hasPermission } from "./auth";
+import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState, hasPermission, isAdmin } from "./auth";
 import { usePermissions } from "./hooks/usePermissions";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
@@ -231,7 +231,7 @@ export default function App() {
                     <Route path="/notifications" element={<NotificationsPage />} />
                                       <Route
                       path="/admin"
-                      element={hasPermission("auditoria.view") ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}
+                      element={isAdmin() ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}
                     />
                   </Routes>                </Layout>
               </AlertsProvider>
@@ -242,6 +242,7 @@ export default function App() {
     </>
   );
 }
+
 
 
 

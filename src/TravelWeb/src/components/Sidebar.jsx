@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
-import { hasPermission } from "../auth";
+import { hasPermission, isAdmin } from "../auth";
 
 const mainLinks = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -133,5 +133,6 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onClo
     </aside>
   );
 }
+
 
 
