@@ -140,7 +140,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet("me/permissions")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<IEnumerable<string>>> GetMyPermissions()
     {
         var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;

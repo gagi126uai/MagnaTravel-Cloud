@@ -43,9 +43,16 @@ public class WebhooksController : ControllerBase
 
     private bool ValidateSecret()
     {
-        var expected = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
+        var expected = _config["WhatsApp:WebhookSecret"];
+        if (string.IsNullOrWhiteSpace(expected) ||
+            expected.Contains("CHANGE_THIS", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogCritical("WhatsApp webhook secret is not configured or is using a default value. All webhooks will be rejected.");
+            return false;
+        }
+
         var provided = Request.Headers["X-Webhook-Secret"].FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(provided))
+        if (string.IsNullOrWhiteSpace(provided))
         {
             return false;
         }

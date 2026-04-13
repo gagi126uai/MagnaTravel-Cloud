@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Application.Contracts.Leads;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -45,9 +46,9 @@ public class LeadsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<LeadDetailDto>> Create([FromBody] Lead lead, CancellationToken cancellationToken)
+    public async Task<ActionResult<LeadDetailDto>> Create([FromBody] LeadUpsertRequest request, CancellationToken cancellationToken)
     {
-        var created = await _leadService.CreateAsync(lead, cancellationToken);
+        var created = await _leadService.CreateAsync(MapLeadFromRequest(request), cancellationToken);
         return CreatedAtAction(
             nameof(GetById),
             new { publicIdOrLegacyId = created.PublicId },
@@ -57,11 +58,11 @@ public class LeadsController : ControllerBase
     [HttpPut("{publicIdOrLegacyId}")]
     public async Task<ActionResult<LeadDetailDto>> Update(
         string publicIdOrLegacyId,
-        [FromBody] Lead updated,
+        [FromBody] LeadUpsertRequest request,
         CancellationToken cancellationToken)
     {
         var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
-        var lead = await _leadService.UpdateAsync(id, updated, cancellationToken);
+        var lead = await _leadService.UpdateAsync(id, MapLeadFromRequest(request), cancellationToken);
         return Ok(MapLeadDetail(lead));
     }
 
@@ -87,10 +88,16 @@ public class LeadsController : ControllerBase
     [HttpPost("{publicIdOrLegacyId}/activities")]
     public async Task<ActionResult<LeadActivityDto>> AddActivity(
         string publicIdOrLegacyId,
-        [FromBody] LeadActivity activity,
+        [FromBody] LeadActivityUpsertRequest request,
         CancellationToken cancellationToken)
     {
         var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        var activity = new LeadActivity
+        {
+            Type = request.Type,
+            Description = request.Description,
+            CreatedBy = request.CreatedBy ?? User.Identity?.Name ?? "Sistema"
+        };
         var created = await _leadService.AddActivityAsync(id, activity, cancellationToken);
         return Ok(MapLeadActivity(created));
     }
@@ -209,6 +216,25 @@ public class LeadsController : ControllerBase
             Description = activity.Description,
             CreatedBy = activity.CreatedBy,
             CreatedAt = activity.CreatedAt
+        };
+    }
+
+    private static Lead MapLeadFromRequest(LeadUpsertRequest request)
+    {
+        return new Lead
+        {
+            FullName = request.FullName,
+            Email = request.Email,
+            Phone = request.Phone,
+            Source = request.Source,
+            InterestedIn = request.InterestedIn,
+            TravelDates = request.TravelDates,
+            Travelers = request.Travelers,
+            EstimatedBudget = request.EstimatedBudget,
+            Notes = request.Notes,
+            AssignedToUserId = request.AssignedToUserId,
+            AssignedToName = request.AssignedToName,
+            NextFollowUp = request.NextFollowUp
         };
     }
 }
