@@ -29,8 +29,8 @@ const mainLinks = [
   { to: "/cash", label: "Caja", icon: ArrowLeftRight, requiredPermission: "caja.view" },
   { to: "/rates", label: "Tarifario", icon: DollarSign, requiredPermission: "tarifario.view" },
   { to: "/packages", label: "Paises y destinos", icon: Package, requiredPermission: "paquetes.view" },
-  { to: "/admin", label: "AdministraciÃ³n", icon: Shield, requiredPermission: "auditoria.view" },
-  { to: "/settings", label: "ConfiguraciÃ³n", icon: Settings, requiredPermission: "configuracion.view" },
+  { to: "/admin", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
+  { to: "/settings", label: "Configuración", icon: Settings, requiredPermission: "configuracion.view" },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onCloseMobile }) {

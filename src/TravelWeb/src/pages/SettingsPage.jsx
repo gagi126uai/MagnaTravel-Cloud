@@ -42,11 +42,11 @@ import { getPublicId } from "../lib/publicIds";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
-  { value: "Aereo", label: "AÃ©reo" },
+  { value: "Aereo", label: "Aéreo" },
   { value: "Hotel", label: "Hotel" },
   { value: "Traslado", label: "Traslado" },
   { value: "Asistencia", label: "Asistencia" },
-  { value: "Excursion", label: "ExcursiÃ³n" },
+  { value: "Excursion", label: "Excursión" },
   { value: "Paquete", label: "Paquete" },
   { value: "Otro", label: "Otro" },
 ];
@@ -242,19 +242,19 @@ export default function SettingsPage() {
 
   const handleLogoutBot = async () => {
     const confirmed = await showConfirm(
-      "Â¿Cerrar sesiÃ³n de WhatsApp?",
-      "El bot dejarÃ¡ de funcionar hasta que vuelvas a escanear el QR.",
-      "SÃ­, cerrar sesiÃ³n",
+      "Â¿Cerrar sesión de WhatsApp?",
+      "El bot dejará de funcionar hasta que vuelvas a escanear el QR.",
+      "Sí, cerrar sesión",
       "red"
     );
 
     if (confirmed) {
       try {
         await api.post("/webhooks/logout");
-        showSuccess("SesiÃ³n cerrada");
+        showSuccess("Sesión cerrada");
         loadBotStatus();
       } catch {
-        showError("No se pudo cerrar la sesiÃ³n");
+        showError("No se pudo cerrar la sesión");
       }
     }
   };
@@ -285,7 +285,7 @@ export default function SettingsPage() {
       // Optional: Trigger reload on bot
       try { await api.post("/whatsapp/webhook/reload"); } catch { }
     } catch {
-      showError("No se pudo guardar la configuraciÃ³n");
+      showError("No se pudo guardar la configuración");
     } finally {
       setSavingBot(false);
     }
@@ -361,7 +361,7 @@ export default function SettingsPage() {
       showSuccess("Configuración de agencia actualizada");
       loadAgencySettings();
     } catch (error) {
-      showError("No se pudo guardar la configuraciÃ³n");
+      showError("No se pudo guardar la configuración");
     } finally {
       setSavingAgency(false);
     }
@@ -438,8 +438,8 @@ export default function SettingsPage() {
   const deleteCommissionRule = async (id) => {
     const confirmed = await showConfirm(
       "Â¿Eliminar regla?",
-      "Esta acciÃ³n no se puede deshacer y afectarÃ¡ el cÃ¡lculo de comisiones futuro.",
-      "SÃ­, eliminar",
+      "Esta acción no se puede deshacer y afectará el cálculo de comisiones futuro.",
+      "Sí, eliminar",
       "red"
     );
 
@@ -496,7 +496,7 @@ export default function SettingsPage() {
         method: "PUT",
         body: JSON.stringify({ newPassword: passwordForm.newPassword })
       });
-      showSuccess("ContraseÃ±a actualizada.");
+      showSuccess("Contraseña actualizada.");
       closeModal();
     } catch (error) {
       showError(error.message);
@@ -506,8 +506,8 @@ export default function SettingsPage() {
   const handleDeleteUser = async (user) => {
     const confirmed = await showConfirm(
       "Eliminar Usuario",
-      `Â¿EstÃ¡s seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acciÃ³n no se puede deshacer.`,
-      "SÃ­, eliminar",
+      `Â¿Estás seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acción no se puede deshacer.`,
+      "Sí, eliminar",
       "red"
     );
 
@@ -615,13 +615,13 @@ export default function SettingsPage() {
                       <h4 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">Identidad Comercial</h4>
                       <div className="grid gap-5 md:grid-cols-2">
                         <div className="col-span-2">
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nombre de FantasÃ­a (Visible al cliente)</label>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nombre de Fantasía (Visible al cliente)</label>
                           <input type="text" required className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             placeholder="Ej: Magna Travel"
                             value={agencyForm.agencyName} onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })} />
                         </div>
                         <div className="col-span-2">
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">RazÃ³n Social</label>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Razón Social</label>
                           <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             placeholder="Ej: Magna Travel S.A."
                             value={agencyForm.legalName} onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })} />
@@ -633,7 +633,7 @@ export default function SettingsPage() {
                             value={agencyForm.taxId} onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })} />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CondiciÃ³n IVA</label>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Condición IVA</label>
                           <select className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             value={agencyForm.taxCondition} onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}>
                             <option value="Responsable Inscripto">Responsable Inscripto</option>
@@ -646,15 +646,15 @@ export default function SettingsPage() {
 
                     {/* Contacto */}
                     <div className="space-y-4">
-                      <h4 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">UbicaciÃ³n y Contacto</h4>
+                      <h4 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">Ubicación y Contacto</h4>
                       <div className="grid gap-5 md:grid-cols-2">
                         <div className="col-span-2">
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">DirecciÃ³n</label>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Dirección</label>
                           <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             value={agencyForm.address} onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })} />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">TelÃ©fono</label>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Teléfono</label>
                           <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             value={agencyForm.phone} onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })} />
                         </div>
@@ -690,7 +690,7 @@ export default function SettingsPage() {
                     <select className="form-select w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
                       value={agencyForm.currency} onChange={e => setAgencyForm({ ...agencyForm, currency: e.target.value })}>
                       <option value="ARS">ARS - Peso Argentino</option>
-                      <option value="USD">USD - DÃ³lar Estadounidense</option>
+                      <option value="USD">USD - Dólar Estadounidense</option>
                       <option value="EUR">EUR - Euro</option>
                     </select>
                     <p className="text-xs text-slate-400 mt-2">Moneda utilizada para reportes y balances.</p>
@@ -738,7 +738,7 @@ export default function SettingsPage() {
           </div>
           {modalType === 'create' && (
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">ContraseÃ±a</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Contraseña</label>
               <input type="password" required className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
                 value={createForm.password}
                 onChange={e => setCreateForm({ ...createForm, password: e.target.value })} />
@@ -769,27 +769,27 @@ export default function SettingsPage() {
       </Modal>
 
       {/* Password Modal */}
-      <Modal isOpen={modalType === 'password'} onClose={closeModal} title="Cambiar ContraseÃ±a">
+      <Modal isOpen={modalType === 'password'} onClose={closeModal} title="Cambiar Contraseña">
         <form onSubmit={handlePasswordReset} className="space-y-4">
           <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-sm mb-4">
-            Cambiando contraseÃ±a para <strong>{selectedUser?.fullName}</strong>
+            Cambiando contraseña para <strong>{selectedUser?.fullName}</strong>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nueva ContraseÃ±a</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nueva Contraseña</label>
             <input type="password" required minLength={6} className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
               value={passwordForm.newPassword}
               onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} />
           </div>
           <div className="pt-2">
             <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl">
-              Actualizar ContraseÃ±a
+              Actualizar Contraseña
             </Button>
           </div>
         </form>
       </Modal>
 
       {/* Commission Modal */}
-      <Modal isOpen={showCommissionModal} onClose={() => setShowCommissionModal(false)} title={commissionForm.id ? "Editar Regla" : "Nueva Regla de ComisiÃ³n"}>
+      <Modal isOpen={showCommissionModal} onClose={() => setShowCommissionModal(false)} title={commissionForm.id ? "Editar Regla" : "Nueva Regla de Comisión"}>
         <form onSubmit={saveCommissionRule} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor (opcional)</label>
@@ -801,7 +801,7 @@ export default function SettingsPage() {
               <option value="">Todos los proveedores</option>
               {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name}</option>)}
             </select>
-            <p className="text-xs text-slate-500 mt-1">Si se deja vacÃ­o, aplica a todos.</p>
+            <p className="text-xs text-slate-500 mt-1">Si se deja vacío, aplica a todos.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo de Servicio (opcional)</label>
@@ -816,7 +816,7 @@ export default function SettingsPage() {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">ComisiÃ³n (%)</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Comisión (%)</label>
               <div className="relative mt-1">
                 <input
                   type="number" step="0.01" required

@@ -42,11 +42,11 @@ import { getPublicId } from "../lib/publicIds";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
-  { value: "Aereo", label: "AÃ©reo" },
+  { value: "Aereo", label: "Aéreo" },
   { value: "Hotel", label: "Hotel" },
   { value: "Traslado", label: "Traslado" },
   { value: "Asistencia", label: "Asistencia" },
-  { value: "Excursion", label: "ExcursiÃ³n" },
+  { value: "Excursion", label: "Excursión" },
   { value: "Paquete", label: "Paquete" },
   { value: "Otro", label: "Otro" },
 ];
@@ -241,19 +241,19 @@ export default function AdminHubPage() {
 
   const handleLogoutBot = async () => {
     const confirmed = await showConfirm(
-      "Â¿Cerrar sesiÃ³n de WhatsApp?",
-      "El bot dejarÃ¡ de funcionar hasta que vuelvas a escanear el QR.",
-      "SÃ­, cerrar sesiÃ³n",
+      "Â¿Cerrar sesión de WhatsApp?",
+      "El bot dejará de funcionar hasta que vuelvas a escanear el QR.",
+      "Sí, cerrar sesión",
       "red"
     );
 
     if (confirmed) {
       try {
         await api.post("/webhooks/logout");
-        showSuccess("SesiÃ³n cerrada");
+        showSuccess("Sesión cerrada");
         loadBotStatus();
       } catch {
-        showError("No se pudo cerrar la sesiÃ³n");
+        showError("No se pudo cerrar la sesión");
       }
     }
   };
@@ -284,7 +284,7 @@ export default function AdminHubPage() {
       // Optional: Trigger reload on bot
       try { await api.post("/whatsapp/webhook/reload"); } catch { }
     } catch {
-      showError("No se pudo guardar la configuraciÃ³n");
+      showError("No se pudo guardar la configuración");
     } finally {
       setSavingBot(false);
     }
@@ -360,7 +360,7 @@ export default function AdminHubPage() {
       showSuccess("Configuración de agencia actualizada");
       loadAgencySettings();
     } catch (error) {
-      showError("No se pudo guardar la configuraciÃ³n");
+      showError("No se pudo guardar la configuración");
     } finally {
       setSavingAgency(false);
     }
@@ -437,8 +437,8 @@ export default function AdminHubPage() {
   const deleteCommissionRule = async (id) => {
     const confirmed = await showConfirm(
       "Â¿Eliminar regla?",
-      "Esta acciÃ³n no se puede deshacer y afectarÃ¡ el cÃ¡lculo de comisiones futuro.",
-      "SÃ­, eliminar",
+      "Esta acción no se puede deshacer y afectará el cálculo de comisiones futuro.",
+      "Sí, eliminar",
       "red"
     );
 
@@ -495,7 +495,7 @@ export default function AdminHubPage() {
         method: "PUT",
         body: JSON.stringify({ newPassword: passwordForm.newPassword })
       });
-      showSuccess("ContraseÃ±a actualizada.");
+      showSuccess("Contraseña actualizada.");
       closeModal();
     } catch (error) {
       showError(error.message);
@@ -505,8 +505,8 @@ export default function AdminHubPage() {
   const handleDeleteUser = async (user) => {
     const confirmed = await showConfirm(
       "Eliminar Usuario",
-      `Â¿EstÃ¡s seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acciÃ³n no se puede deshacer.`,
-      "SÃ­, eliminar",
+      `Â¿Estás seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acción no se puede deshacer.`,
+      "Sí, eliminar",
       "red"
     );
 
@@ -838,7 +838,7 @@ export default function AdminHubPage() {
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Reglas de ComisiÃ³n</h2>
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Reglas de Comisión</h2>
                 <p className="text-sm text-slate-500">Automatiza tus ganancias por proveedor.</p>
               </div>
               <Button onClick={openNewCommissionModal} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-lg shadow-emerald-500/20">
@@ -854,7 +854,7 @@ export default function AdminHubPage() {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Proveedor</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Servicio</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">ComisiÃ³n</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Comisión</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Prioridad</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Acciones</th>
                   </tr>

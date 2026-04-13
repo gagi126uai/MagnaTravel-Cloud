@@ -31,7 +31,7 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                             <thead>
                                 <tr className="border-b border-slate-100 dark:border-slate-800">
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Tipo</th>
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">DescripciÃ³n</th>
+                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Descripción</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
                                     {admin && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right">Neto Cto</th>}
