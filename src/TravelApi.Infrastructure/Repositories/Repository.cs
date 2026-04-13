@@ -28,12 +28,12 @@ public class Repository<T> : IRepository<T> where T : class
 
     public virtual async Task<IEnumerable<T>> ListAllAsync(CancellationToken ct = default)
     {
-        return await _dbSet.ToListAsync(ct);
+        return await _dbSet.AsNoTracking().ToListAsync(ct);
     }
 
     public virtual async Task<IEnumerable<T>> FindAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)
     {
-        return await _dbSet.Where(predicate).ToListAsync(ct);
+        return await _dbSet.AsNoTracking().Where(predicate).ToListAsync(ct);
     }
 
     public virtual async Task AddAsync(T entity, CancellationToken ct = default)
@@ -57,5 +57,10 @@ public class Repository<T> : IRepository<T> where T : class
     public virtual IQueryable<T> Query()
     {
         return _dbSet.AsQueryable();
+    }
+
+    public virtual IQueryable<T> QueryAsNoTracking()
+    {
+        return _dbSet.AsNoTracking();
     }
 }

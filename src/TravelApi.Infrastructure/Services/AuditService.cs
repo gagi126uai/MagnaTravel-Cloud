@@ -24,7 +24,7 @@ public class AuditService : IAuditService
         string? userId,
         CancellationToken ct)
     {
-        var query = _auditRepo.Query();
+        var query = _auditRepo.QueryAsNoTracking();
 
         if (!string.IsNullOrEmpty(entityName))
         {
@@ -78,7 +78,7 @@ public class AuditService : IAuditService
         pageSize = Math.Clamp(pageSize, 1, 100);
         page = Math.Max(1, page);
 
-        var query = _auditRepo.Query();
+        var query = _auditRepo.QueryAsNoTracking();
 
         // Filtrar por categoría (operativo vs sistema)
         if (!string.IsNullOrEmpty(category))

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -19,6 +20,7 @@ public class PublicPackagesController : ControllerBase
     }
 
     [HttpGet("{slug}")]
+    [OutputCache(PolicyName = "CatalogCache")]
     public async Task<ActionResult<PublicPackageDetailDto>> GetPublicPackage(string slug, CancellationToken cancellationToken)
     {
         var package = await _destinationService.GetPublicPackageBySlugAsync(slug, cancellationToken);
@@ -26,6 +28,7 @@ public class PublicPackagesController : ControllerBase
     }
 
     [HttpGet("{slug}/hero-image")]
+    [OutputCache(PolicyName = "CatalogCache")]
     public async Task<IActionResult> GetPublicHeroImage(string slug, CancellationToken cancellationToken)
     {
         var image = await _destinationService.GetPublicHeroImageBySlugAsync(slug, cancellationToken);

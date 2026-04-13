@@ -14,4 +14,5 @@ public interface IRepository<T> where T : class
     Task DeleteAsync(T entity, CancellationToken ct = default);
     
     IQueryable<T> Query();
+    IQueryable<T> QueryAsNoTracking();
 }

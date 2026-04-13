@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 
@@ -18,6 +19,7 @@ public class PublicCountriesController : ControllerBase
     }
 
     [HttpGet("{countrySlug}")]
+    [OutputCache(PolicyName = "CatalogCache")]
     public async Task<ActionResult<PublicCountryEmbedDto>> GetPublicCountry(string countrySlug, CancellationToken cancellationToken)
     {
         var country = await _countryService.GetPublicCountryBySlugAsync(countrySlug, cancellationToken);

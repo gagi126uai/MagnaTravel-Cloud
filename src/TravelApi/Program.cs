@@ -77,6 +77,17 @@ builder.Services.AddProblemDetails();
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
+builder.Services.AddOutputCache(options =>
+{
+    options.AddBasePolicy(builder => 
+        builder.Expire(TimeSpan.FromMinutes(10)));
+    options.AddPolicy("CatalogCache", builder => 
+        builder.Expire(TimeSpan.FromHours(24)).Tag("catalog"));
+});
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+});
 builder.Services.AddAutoMapper(typeof(Program), typeof(TravelApi.Application.Mappings.MappingProfile));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -514,6 +525,9 @@ app.Use(async (context, next) =>
 });
 
 app.UseSerilogRequestLogging();
+
+app.UseResponseCompression();
+app.UseOutputCache();
 
 app.UseRouting();
 app.UseRateLimiter();
