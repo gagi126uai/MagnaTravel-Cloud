@@ -11,18 +11,26 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<bool>(
-                name: "IsPublished",
-                table: "Countries",
-                type: "boolean",
-                nullable: false,
-                defaultValue: true);
+            // Idempotent: only add columns if they don't exist yet
+            migrationBuilder.Sql(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'Countries' AND column_name = 'IsPublished'
+                    ) THEN
+                        ALTER TABLE "Countries" ADD COLUMN "IsPublished" boolean NOT NULL DEFAULT TRUE;
+                    END IF;
 
-            migrationBuilder.AddColumn<DateTime>(
-                name: "PublishedAt",
-                table: "Countries",
-                type: "timestamp with time zone",
-                nullable: true);
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'Countries' AND column_name = 'PublishedAt'
+                    ) THEN
+                        ALTER TABLE "Countries" ADD COLUMN "PublishedAt" timestamp with time zone;
+                    END IF;
+                END $$;
+                """);
 
             migrationBuilder.Sql(
                 """
@@ -32,10 +40,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                   AND "PublishedAt" IS NULL;
                 """);
 
-            migrationBuilder.CreateIndex(
-                name: "IX_Countries_IsPublished_Slug",
-                table: "Countries",
-                columns: new[] { "IsPublished", "Slug" });
+            migrationBuilder.Sql(
+                """
+                CREATE INDEX IF NOT EXISTS "IX_Countries_IsPublished_Slug"
+                ON "Countries" ("IsPublished", "Slug");
+                """);
         }
 
         /// <inheritdoc />
