@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+﻿import { useCallback, useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import { api, hasSessionCookieHint } from "./api";
@@ -34,7 +34,7 @@ import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
 import PackagesPage from "./features/packages/pages/PackagesPage";
 import DestinationEditorPage from "./features/packages/pages/DestinationEditorPage";
-import AuditTab from "./pages/AuditPage";
+import AdminHubPage from "./pages/AdminHubPage";
 
 function FullScreenLoader() {
   return (
@@ -229,6 +229,10 @@ export default function App() {
                       element={hasPermission("cobranzas.edit") ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route path="/notifications" element={<NotificationsPage />} />
+                                      <Route
+                      path="/audit"
+                      element={hasPermission("auditoria.view") ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}
+                    />
                   </Routes>                </Layout>
               </AlertsProvider>
             </PrivateRoute>
@@ -238,3 +242,5 @@ export default function App() {
     </>
   );
 }
+
+

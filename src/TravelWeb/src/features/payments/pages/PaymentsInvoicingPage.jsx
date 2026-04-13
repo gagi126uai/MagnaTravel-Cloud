@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { Loader2, Calendar, ChevronLeft, ChevronRight, FileText, Receipt } from "lucide-react";
 import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
@@ -76,12 +76,12 @@ export default function PaymentsInvoicingPage() {
   
   const handlePrevMonth = () => {
     const prev = new Date(currentPeriodDate.getFullYear(), currentPeriodDate.getMonth() - 1, 1);
-    setInvoicePeriod(`-${String(prev.getMonth() + 1).padStart(2, '0')}`);
+    setInvoicePeriod(`${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`);
   };
   
   const handleNextMonth = () => {
     const next = new Date(currentPeriodDate.getFullYear(), currentPeriodDate.getMonth() + 1, 1);
-    setInvoicePeriod(`-${String(next.getMonth() + 1).padStart(2, '0')}`);
+    setInvoicePeriod(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`);
   };
 
   const monthName = currentPeriodDate.toLocaleDateString("es-AR", { month: "long", year: "numeric" });

@@ -145,15 +145,14 @@ const Avatar = ({ name, size = "md" }) => {
 
 
 const tabs = [
-  { id: "agency", label: "Agencia", icon: Building2 },
-  { id: "operations", label: "Operativa y Caja", icon: Settings2 },
-  { id: "afip", label: "Facturación", icon: FileText },
-  { id: "whatsapp", label: "WhatsApp Bot", icon: Smartphone },
-  { id: "logs", label: "Logs y Programación", icon: TerminalSquare }
+  { id: "audit", label: "Auditoría Central", icon: ShieldAlert },
+  { id: "users", label: "Usuarios", icon: User },
+  { id: "roles", label: "Roles y Permisos", icon: Shield },
+  { id: "commissions", label: "Comisiones", icon: Briefcase }
 ];
 
-export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState("agency");
+export default function AdminHubPage() {
+  const [activeTab, setActiveTab] = useState("audit");
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -549,7 +548,7 @@ export default function SettingsPage() {
     <div className="space-y-6 max-w-7xl mx-auto pb-20 md:pb-0">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">ConfiguraciÃ³n</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Administración</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             AdministraciÃ³n del sistema y preferencias.
           </p>
@@ -585,275 +584,193 @@ export default function SettingsPage() {
 
       {/* Content Area */}
       <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-
         {/* --- AUDIT TAB --- */}
-        {activeTab === "audit" && (
-            <AuditPage />
-        )}
+        {activeTab === "audit" && (<AuditPage />)}
 
         {/* --- AGENCY TAB --- */}
-        {activeTab === "agency" && (
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="lg:col-span-2 space-y-6">
-              <form onSubmit={saveAgencySettings} className="space-y-6">
-                {/* Identity Section */}
-                {/* Agency Settings Card */}
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
-                    <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
-                      <Building2 className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 dark:text-white">Datos de la Agencia</h3>
-                      <p className="text-xs text-slate-500">InformaciÃ³n legal y de contacto</p>
-                    </div>
-                  </div>
-
-                  <div className="p-6 space-y-8">
-                    {/* Identidad */}
-                    <div className="space-y-4">
-                      <h4 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">Identidad Comercial</h4>
-                      <div className="grid gap-5 md:grid-cols-2">
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nombre de FantasÃ­a (Visible al cliente)</label>
-                          <input type="text" required className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
-                            placeholder="Ej: Magna Travel"
-                            value={agencyForm.agencyName} onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })} />
-                        </div>
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">RazÃ³n Social</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
-                            placeholder="Ej: Magna Travel S.A."
-                            value={agencyForm.legalName} onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CUIT</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
-                            placeholder="XX-XXXXXXXX-X"
-                            value={agencyForm.taxId} onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CondiciÃ³n IVA</label>
-                          <select className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
-                            value={agencyForm.taxCondition} onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}>
-                            <option value="Responsable Inscripto">Responsable Inscripto</option>
-                            <option value="Monotributo">Monotributo</option>
-                            <option value="Exento">Exento</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Contacto */}
-                    <div className="space-y-4">
-                      <h4 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">UbicaciÃ³n y Contacto</h4>
-                      <div className="grid gap-5 md:grid-cols-2">
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">DirecciÃ³n</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
-                            value={agencyForm.address} onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">TelÃ©fono</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
-                            value={agencyForm.phone} onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-                          <input type="email" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
-                            value={agencyForm.email} onChange={e => setAgencyForm({ ...agencyForm, email: e.target.value })} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-                    <Button
-                      type="submit"
-                      disabled={savingAgency}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-6"
-                    >
-                      {savingAgency ? "Guardando..." : "Guardar Cambios"}
-                    </Button>
-                  </div>
-                </div>
-              </form>
+        {activeTab === "users" && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Equipo</h2>
+                <p className="text-sm text-slate-500">Gestiona el acceso a la plataforma.</p>
+              </div>
+              <Button onClick={openCreateModal} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg shadow-indigo-500/20">
+                <Plus className="h-4 w-4 mr-2" />
+                Nuevo Usuario
+              </Button>
             </div>
 
-            {/* Side Panel for Configs */}
-            <div className="space-y-6">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6">
-                <h3 className="font-semibold text-slate-900 dark:text-white mb-4">ConfiguraciÃ³n Regional</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Moneda Base</label>
-                    <select className="form-select w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
-                      value={agencyForm.currency} onChange={e => setAgencyForm({ ...agencyForm, currency: e.target.value })}>
-                      <option value="ARS">ARS - Peso Argentino</option>
-                      <option value="USD">USD - DÃ³lar Estadounidense</option>
-                      <option value="EUR">EUR - Euro</option>
-                    </select>
-                    <p className="text-xs text-slate-400 mt-2">Moneda utilizada para reportes y balances.</p>
+            {/* Desktop Table - Hidden on Mobile */}
+            <div className="hidden md:block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+              <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
+                <thead className="bg-slate-50 dark:bg-slate-800/50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Usuario</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Rol</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Estado</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {users.map((user) => (
+                    <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <Avatar name={user.fullName} size="sm" />
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-slate-900 dark:text-white">{user.fullName}</div>
+                            <div className="text-sm text-slate-500">{user.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <RoleBadge role={user.roles[0] || "Colaborador"} />
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${user.isActive ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}`}>
+                          {user.isActive ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => openEditModal(user)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded"><Pencil className="h-4 w-4" /></button>
+                          <button onClick={() => openPasswordModal(user)} className="text-amber-600 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300 p-1 hover:bg-amber-50 dark:hover:bg-amber-900/30 rounded"><Key className="h-4 w-4" /></button>
+                          <button onClick={() => handleDeleteUser(user)} className="text-rose-600 hover:text-rose-900 dark:text-rose-400 dark:hover:text-rose-300 p-1 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded"><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Smart List */}
+            <div className="md:hidden space-y-3">
+              {users.map((user) => (
+                <div key={user.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex items-center gap-3">
+                      <Avatar name={user.fullName} size="md" />
+                      <div>
+                        <div className="font-semibold text-slate-900 dark:text-white">{user.fullName}</div>
+                        <div className="text-xs text-slate-500">{user.email}</div>
+                      </div>
+                    </div>
+                    <RoleBadge role={user.roles[0] || "Colaborador"} />
+                  </div>
+                  <div className="flex justify-between items-center border-t border-slate-100 dark:border-slate-800 pt-3">
+                    <span className={`text-xs font-medium px-2 py-1 rounded-md ${user.isActive ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400' : 'bg-red-50 text-red-700'}`}>
+                      {user.isActive ? 'Activo' : 'Inactivo'}
+                    </span>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => openPasswordModal(user)} className="h-8 w-8 p-0 text-amber-600"><Key className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="sm" onClick={() => openEditModal(user)} className="h-8 w-8 p-0 text-indigo-600"><Pencil className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user)} className="h-8 w-8 p-0 text-rose-600"><Trash2 className="h-4 w-4" /></Button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ))}
             </div>
           </div>
         )}
 
-        {/* --- USERS TAB --- */}
-        {activeTab === "operations" && <OperationalFinanceSettingsTab />}
+        {/* --- ROLES TAB --- */}
+        {activeTab === "roles" && <RolesPermissionsTab />}
 
-        {/* --- AFIP TAB --- */}
-        {activeTab === "afip" && <AfipSettingsTab />}
-
-        {/* --- WHATSAPP TAB --- */}
-        {activeTab === "whatsapp" && <WhatsAppBotTab />}
-
-        {/* --- LOGS TAB --- */}
-        {activeTab === "logs" && <LogsDashboard />}
-
-      </div>
-
-      {/* --- MODALS --- */}
-
-      {/* Create/Edit User Modal */}
-      <Modal
-        isOpen={modalType === 'create' || modalType === 'edit'}
-        onClose={closeModal}
-        title={modalType === 'create' ? "Nuevo Usuario" : "Editar Usuario"}
-      >
-        <form onSubmit={modalType === 'create' ? handleCreateUser : handleEditUser} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre Completo</label>
-            <input type="text" required className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={modalType === 'create' ? createForm.fullName : editForm.fullName}
-              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, fullName: e.target.value }) : setEditForm({ ...editForm, fullName: e.target.value })} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
-            <input type="email" required className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={modalType === 'create' ? createForm.email : editForm.email}
-              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, email: e.target.value }) : setEditForm({ ...editForm, email: e.target.value })} />
-          </div>
-          {modalType === 'create' && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">ContraseÃ±a</label>
-              <input type="password" required className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-                value={createForm.password}
-                onChange={e => setCreateForm({ ...createForm, password: e.target.value })} />
-            </div>
-          )}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Rol</label>
-            <select className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={modalType === 'create' ? createForm.role : editForm.role}
-              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, role: e.target.value }) : setEditForm({ ...editForm, role: e.target.value })}>
-              {roleOptions.map(role => <option key={role} value={role}>{role}</option>)}
-            </select>
-          </div>
-          {modalType === 'edit' && (
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="isActive" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
-                checked={editForm.isActive}
-                onChange={e => setEditForm({ ...editForm, isActive: e.target.checked })} />
-              <label htmlFor="isActive" className="text-sm font-medium text-slate-700 dark:text-slate-300">Usuario Activo</label>
-            </div>
-          )}
-          <div className="pt-2">
-            <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl">
-              {modalType === 'create' ? "Crear Usuario" : "Guardar Cambios"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Password Modal */}
-      <Modal isOpen={modalType === 'password'} onClose={closeModal} title="Cambiar ContraseÃ±a">
-        <form onSubmit={handlePasswordReset} className="space-y-4">
-          <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-sm mb-4">
-            Cambiando contraseÃ±a para <strong>{selectedUser?.fullName}</strong>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nueva ContraseÃ±a</label>
-            <input type="password" required minLength={6} className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={passwordForm.newPassword}
-              onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} />
-          </div>
-          <div className="pt-2">
-            <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl">
-              Actualizar ContraseÃ±a
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Commission Modal */}
-      <Modal isOpen={showCommissionModal} onClose={() => setShowCommissionModal(false)} title={commissionForm.id ? "Editar Regla" : "Nueva Regla de ComisiÃ³n"}>
-        <form onSubmit={saveCommissionRule} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor (opcional)</label>
-            <select
-              className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-              value={commissionForm.supplierId}
-              onChange={e => setCommissionForm({ ...commissionForm, supplierId: e.target.value })}
-            >
-              <option value="">Todos los proveedores</option>
-              {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name}</option>)}
-            </select>
-            <p className="text-xs text-slate-500 mt-1">Si se deja vacÃ­o, aplica a todos.</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo de Servicio (opcional)</label>
-            <select
-              className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-              value={commissionForm.serviceType}
-              onChange={e => setCommissionForm({ ...commissionForm, serviceType: e.target.value })}
-            >
-              <option value="">Todos los servicios</option>
-              {serviceTypes.map(st => st.value && <option key={st.value} value={st.value}>{st.label}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">ComisiÃ³n (%)</label>
-              <div className="relative mt-1">
-                <input
-                  type="number" step="0.01" required
-                  className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-3 pr-8 py-2 text-sm focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800"
-                  value={commissionForm.commissionPercent}
-                  onChange={e => setCommissionForm({ ...commissionForm, commissionPercent: e.target.value })}
-                />
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                  <span className="text-slate-500">%</span>
-                </div>
+        {/* --- COMMISSIONS TAB --- */}
+        {activeTab === "commissions" && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Reglas de ComisiÃ³n</h2>
+                <p className="text-sm text-slate-500">Automatiza tus ganancias por proveedor.</p>
               </div>
+              <Button onClick={openNewCommissionModal} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-lg shadow-emerald-500/20">
+                <Plus className="h-4 w-4 mr-2" />
+                Nueva Regla
+              </Button>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Prioridad</label>
-              <select
-                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800"
-                value={commissionForm.priority}
-                onChange={e => setCommissionForm({ ...commissionForm, priority: e.target.value })}
-              >
-                <option value="1">Baja (1)</option>
-                <option value="2">Media (2)</option>
-                <option value="3">Alta (3)</option>
-              </select>
+
+            {/* Desktop Table - Hidden on Mobile */}
+            <div className="hidden md:block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+              <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
+                <thead className="bg-slate-50 dark:bg-slate-800/50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Proveedor</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Servicio</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">ComisiÃ³n</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Prioridad</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {commissionRules.map((rule) => {
+                    const supplierName = rule.supplierName || "Todos";
+                    const service = rule.serviceType || "Todos";
+                    return (
+                      <tr key={rule.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900 dark:text-white">{supplierName}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">{service}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 font-bold text-xs ring-1 ring-inset ring-emerald-600/20">
+                            {rule.commissionPercent}%
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                          {rule.priority === 3 ? "Alta" : rule.priority === 2 ? "Media" : "Baja"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => editCommissionRule(rule)} className="text-indigo-600 p-1 hover:bg-slate-100 rounded"><Pencil className="h-4 w-4" /></button>
+                            <button onClick={() => deleteCommissionRule(rule.id)} className="text-rose-600 p-1 hover:bg-slate-100 rounded"><Trash2 className="h-4 w-4" /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Smart List */}
+            <div className="md:hidden grid gap-3">
+              {commissionRules.map((rule) => (
+                <div key={rule.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                      {rule.supplierName || "Todos los Proveedores"}
+                      {rule.priority === 3 && <span className="w-2 h-2 rounded-full bg-rose-500" title="Alta Prioridad"></span>}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                      <Briefcase className="h-3 w-3" />
+                      {rule.serviceType || "Todos los servicios"}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">{rule.commissionPercent}%</span>
+                    <div className="flex flex-col gap-1">
+                      <button onClick={() => editCommissionRule(rule)} className="bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 p-1.5 rounded-lg"><Pencil className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => deleteCommissionRule(rule.id)} className="bg-rose-50 dark:bg-rose-900/30 text-rose-600 p-1.5 rounded-lg"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {commissionRules.length === 0 && (
+                <div className="text-center py-10 px-4 text-slate-500 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                  <Briefcase className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No tienes reglas configuradas.</p>
+                  <Button variant="link" onClick={openNewCommissionModal} className="mt-1">Crear primera regla</Button>
+                </div>
+              )}
             </div>
           </div>
-          <div className="pt-2">
-            <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl">
-              Guardar Regla
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        )}
 
-
+        {/* --- OPERATIONS TAB --- */}
+              </div>
     </div>
   );
 }
-
 
 
