@@ -79,12 +79,13 @@ public class AuditLogsController : ControllerBase
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] string? searchTerm,
+        [FromQuery] string? category,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
     {
         var result = await _auditService.GetGlobalAuditLogsAsync(
-            entityName, action, userId, dateFrom, dateTo, searchTerm, page, pageSize, ct);
+            entityName, action, userId, dateFrom, dateTo, searchTerm, category, page, pageSize, ct);
 
         return Ok(new
         {
@@ -100,11 +101,8 @@ public class AuditLogsController : ControllerBase
     /// Lista de entidades unicas presentes en auditoria (para dropdown de filtro).
     /// </summary>
     [HttpGet("entities")]
-    public async Task<IActionResult> GetDistinctEntities(CancellationToken ct)
+    public IActionResult GetDistinctEntities()
     {
-        var result = await _auditService.GetGlobalAuditLogsAsync(
-            null, null, null, null, null, null, 1, 1, ct);
-
         // Optimizacion: consultar nombres de entidad distintos directamente
         // Por ahora devolvemos una lista fija basada en las entidades del sistema
         var entityNames = new[]
@@ -146,11 +144,12 @@ public class AuditLogsController : ControllerBase
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] string? searchTerm,
+        [FromQuery] string? category,
         CancellationToken ct = default)
     {
         // Exportar max 5000 registros para evitar timeout/memory
         var result = await _auditService.GetGlobalAuditLogsAsync(
-            entityName, action, userId, dateFrom, dateTo, searchTerm, 1, 5000, ct);
+            entityName, action, userId, dateFrom, dateTo, searchTerm, category, 1, 5000, ct);
 
         var sb = new StringBuilder();
         sb.AppendLine("Fecha,Usuario,Accion,Entidad,ID Entidad,Cambios");

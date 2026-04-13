@@ -16,11 +16,13 @@ public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly IAuditService _auditService;
 
-    public AuthController(IAuthService authService, UserManager<ApplicationUser> userManager)
+    public AuthController(IAuthService authService, UserManager<ApplicationUser> userManager, IAuditService auditService)
     {
         _authService = authService;
         _userManager = userManager;
+        _auditService = auditService;
     }
 
     [HttpPost("register")]
@@ -56,10 +58,19 @@ public class AuthController : ControllerBase
         {
             var response = await _authService.LoginAsync(request, GetIpAddress(), GetUserAgent());
             WriteSessionCookies(response);
+
+            _ = _auditService.LogBusinessEventAsync(
+                "Login", "Session", response.User.UserId,
+                null, response.User.UserId, response.User.FullName, CancellationToken.None);
+
             return Ok(new AuthSessionResponse(response.User, response.AccessTokenExpiresAt));
         }
         catch (UnauthorizedAccessException)
         {
+            _ = _auditService.LogBusinessEventAsync(
+                "LoginFailed", "Session", request.Email ?? "unknown",
+                null, "Anonymous", null, CancellationToken.None);
+
             ClearAuthCookies();
             return Unauthorized(new { message = "No se pudo iniciar sesion con las credenciales provistas." });
         }
@@ -98,10 +109,17 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Logout()
     {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "Anonymous";
+        var userName = User.FindFirstValue(ClaimTypes.Name);
+
         if (Request.Cookies.TryGetValue(AuthCookieNames.Refresh, out var refreshToken) && !string.IsNullOrWhiteSpace(refreshToken))
         {
             await _authService.RevokeRefreshTokenAsync(refreshToken);
         }
+
+        _ = _auditService.LogBusinessEventAsync(
+            "Logout", "Session", userId,
+            null, userId, userName, CancellationToken.None);
 
         ClearAuthCookies();
         return NoContent();
@@ -142,6 +160,10 @@ public class AuthController : ControllerBase
         {
             return result.Errors?.Contains("no encontrado") == true ? NotFound(result.Errors) : BadRequest(result.Errors);
         }
+
+        _ = _auditService.LogBusinessEventAsync(
+            "ChangePassword", "User", userId,
+            null, userId, User.FindFirstValue(ClaimTypes.Name), CancellationToken.None);
 
         ClearAuthCookies();
         return Ok(new { message = "Contraseña actualizada correctamente. Volvé a iniciar sesión." });

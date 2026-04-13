@@ -70,15 +70,28 @@ public class AuditService : IAuditService
         DateTime? dateFrom,
         DateTime? dateTo,
         string? searchTerm,
+        string? category,
         int page,
         int pageSize,
         CancellationToken ct)
     {
-        // Limitar page size para evitar abusos
         pageSize = Math.Clamp(pageSize, 1, 100);
         page = Math.Max(1, page);
 
         var query = _auditRepo.Query();
+
+        // Filtrar por categoría (operativo vs sistema)
+        if (!string.IsNullOrEmpty(category))
+        {
+            if (category == "operational")
+            {
+                query = query.Where(l => OperationalEntities.Contains(l.EntityName) || l.Category == "Business");
+            }
+            else if (category == "system")
+            {
+                query = query.Where(l => !OperationalEntities.Contains(l.EntityName) && l.Category != "Business");
+            }
+        }
 
         if (!string.IsNullOrEmpty(entityName))
         {
@@ -102,7 +115,6 @@ public class AuditService : IAuditService
 
         if (dateTo.HasValue)
         {
-            // Incluir todo el día de dateTo
             var endOfDay = dateTo.Value.Date.AddDays(1).ToUniversalTime();
             query = query.Where(l => l.Timestamp < endOfDay);
         }
@@ -126,4 +138,47 @@ public class AuditService : IAuditService
 
         return new PagedResult<AuditLog>(items, totalCount, page, pageSize);
     }
+
+    public async Task LogBusinessEventAsync(
+        string action,
+        string entityName,
+        string entityId,
+        string? details,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        var auditLog = new AuditLog
+        {
+            UserId = userId,
+            UserName = userName,
+            Action = action,
+            EntityName = entityName,
+            EntityId = entityId,
+            Timestamp = DateTime.UtcNow,
+            Category = "Business",
+            Changes = details
+        };
+
+        await _auditRepo.AddAsync(auditLog, ct);
+    }
+
+    /// <summary>
+    /// Entidades consideradas "operativas" (visibles para usuarios de negocio).
+    /// Todo lo que no esté aquí se considera "sistema".
+    /// </summary>
+    private static readonly HashSet<string> OperationalEntities = new(StringComparer.Ordinal)
+    {
+        "Reserva", "Customer", "Supplier", "Payment", "Invoice",
+        "Passenger", "ServicioReserva", "FlightSegment", "HotelBooking",
+        "PackageBooking", "TransferBooking", "Lead", "LeadActivity",
+        "Quote", "QuoteItem", "ReservaAttachment", "SupplierPayment",
+        "ManualCashMovement", "CommissionRule", "Rate",
+        "PaymentReceipt", "InvoiceItem", "InvoiceTribute",
+        "CatalogPackage", "CatalogPackageDeparture",
+        "Country", "Destination", "DestinationDeparture",
+        "WhatsAppDelivery",
+        // Business events (login, export, etc.)
+        "Session", "Report", "User"
+    };
 }

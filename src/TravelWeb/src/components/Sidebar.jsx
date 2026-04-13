@@ -30,7 +30,7 @@ const mainLinks = [
   { to: "/rates", label: "Tarifario", icon: DollarSign, requiredPermission: "tarifario.view" },
   { to: "/packages", label: "Paises y destinos", icon: Package, requiredPermission: "paquetes.view" },
   { to: "/reports", label: "Reportes e Inteligencia", icon: BarChart3, requiredPermission: "reportes.view" },
-  { to: "/audit", label: "Auditoría", icon: Shield, requiredPermission: "auditoria.view" },
+  { to: "/audit", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
   { to: "/settings", label: "Configuracion", icon: Settings, requiredPermission: "configuracion.view" },
 ];
 

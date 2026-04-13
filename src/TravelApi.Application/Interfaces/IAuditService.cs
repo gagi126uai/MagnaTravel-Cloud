@@ -27,7 +27,20 @@ public interface IAuditService
         DateTime? dateFrom,
         DateTime? dateTo,
         string? searchTerm,
+        string? category,
         int page,
         int pageSize,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Registra un evento de negocio manualmente (login, exportacion, etc).
+    /// </summary>
+    Task LogBusinessEventAsync(
+        string action,
+        string entityName,
+        string entityId,
+        string? details,
+        string userId,
+        string? userName,
         CancellationToken ct);
 }
