@@ -286,6 +286,20 @@ builder.Services.AddRateLimiter(options =>
             AutoReplenishment = true
         });
     });
+
+    options.AddPolicy("fiscal", context =>
+    {
+        var partitionKey = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                         ?? context.Connection.RemoteIpAddress?.ToString()
+                         ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 20,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
 });
 
 builder.Services.AddHttpClient();

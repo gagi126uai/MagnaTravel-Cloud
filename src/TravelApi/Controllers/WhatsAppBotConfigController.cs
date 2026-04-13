@@ -35,7 +35,15 @@ public class WhatsAppBotConfigController : ControllerBase
         var agency = await _db.AgencySettings.OrderBy(item => item.Id).FirstOrDefaultAsync() ?? new AgencySettings();
         
         return Ok(new {
-            config,
+            config = new {
+                config.WelcomeMessage,
+                config.AskInterestMessage,
+                config.AskDatesMessage,
+                config.AskTravelersMessage,
+                config.ThanksMessage,
+                config.AgentRequestMessage,
+                config.DuplicateMessage
+            },
             agencyName = agency.AgencyName
         });
     }

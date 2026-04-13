@@ -18,6 +18,8 @@ services:
       start_period: 10s
     expose:
       - "5432"
+    networks:
+      - backend
 
   api:
     build:
@@ -51,6 +53,9 @@ services:
       start_period: 40s
     expose:
       - "8080"
+    networks:
+      - backend
+      - frontend
 
   web:
     build:
@@ -73,6 +78,8 @@ services:
       start_period: 10s
     ports:
       - "3000:80"
+    networks:
+      - frontend
 
   whatsapp-bot:
     build:
@@ -98,8 +105,13 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    networks:
+      - frontend
 
 volumes:
   pgdata:
   whatsapp_auth:
 
+networks:
+  backend:
+  frontend:

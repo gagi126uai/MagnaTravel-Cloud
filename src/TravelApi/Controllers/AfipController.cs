@@ -53,10 +53,14 @@ public class AfipController : ControllerBase
     [HttpPost("settings")]
     public async Task<ActionResult<AfipSettingsResponse>> UpdateSettings([FromForm] AfipSettingsRequest request)
     {
+        const long maxCertSizeBytes = 100 * 1024; // 100 KB
+
         byte[]? certData = null;
         string? certFileName = null;
         if (request.Certificate != null)
         {
+            if (request.Certificate.Length > maxCertSizeBytes)
+                return BadRequest(new { message = "El certificado excede el tamaño máximo permitido (100 KB)." });
             using var memoryStream = new MemoryStream();
             await request.Certificate.CopyToAsync(memoryStream);
             certData = memoryStream.ToArray();
@@ -67,6 +71,8 @@ public class AfipController : ControllerBase
         string? prodCertFileName = null;
         if (request.ProdCertificate != null)
         {
+            if (request.ProdCertificate.Length > maxCertSizeBytes)
+                return BadRequest(new { message = "El certificado de producción excede el tamaño máximo permitido (100 KB)." });
             using var memoryStream = new MemoryStream();
             await request.ProdCertificate.CopyToAsync(memoryStream);
             prodCertData = memoryStream.ToArray();

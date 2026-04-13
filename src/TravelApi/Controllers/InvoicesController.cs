@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -12,6 +13,7 @@ namespace TravelApi.Controllers;
 [ApiController]
 [Route("api/invoices")]
 [Authorize]
+[EnableRateLimiting("fiscal")]
 public class InvoicesController : ControllerBase
 {
     private readonly IInvoiceService _invoiceService;

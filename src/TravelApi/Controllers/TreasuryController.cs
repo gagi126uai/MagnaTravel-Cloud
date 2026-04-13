@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -11,6 +12,7 @@ namespace TravelApi.Controllers;
 [ApiController]
 [Route("api/treasury")]
 [Authorize]
+[EnableRateLimiting("fiscal")]
 public class TreasuryController : ControllerBase
 {
     private readonly ITreasuryService _treasuryService;
