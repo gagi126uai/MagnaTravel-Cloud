@@ -665,7 +665,7 @@ export default function AdminHubPage() {
           </div>
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => setModalType(null)}>Cancelar</Button>
-            <Button onClick={handleChangePassword} className="bg-amber-600 hover:bg-amber-700 text-white border-none">
+            <Button onClick={handlePasswordReset} className="bg-amber-600 hover:bg-amber-700 text-white border-none">
               Guardar Contraseña
             </Button>
           </div>
@@ -927,6 +927,7 @@ export default function AdminHubPage() {
     </div>
   );
 }
+
 
 
 
