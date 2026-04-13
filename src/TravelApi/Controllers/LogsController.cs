@@ -68,20 +68,22 @@ namespace TravelApi.Controllers
 
         private List<string> ReadLastLines(string filePath, int count)
         {
+            const long maxScanBytes = 512 * 1024; // 512 KB max scan
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var start = Math.Max(0, fs.Length - maxScanBytes);
+            fs.Seek(start, SeekOrigin.Begin);
+            using var reader = new StreamReader(fs);
+            
+            // Skip potentially partial first line if we seeked into the middle
+            if (start > 0) reader.ReadLine();
+            
             var lines = new List<string>();
-            using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var reader = new StreamReader(fs))
+            while (!reader.EndOfStream)
             {
-                // Simple approach: read all and take last N. 
-                // For log files of a single day, this is usually acceptable.
-                var allLines = new List<string>();
-                while (!reader.EndOfStream)
-                {
-                    var line = reader.ReadLine();
-                    if (!string.IsNullOrWhiteSpace(line)) allLines.Add(line);
-                }
-                return allLines.TakeLast(count).ToList();
+                var line = reader.ReadLine();
+                if (!string.IsNullOrWhiteSpace(line)) lines.Add(line);
             }
+            return lines.TakeLast(count).ToList();
         }
     }
 }

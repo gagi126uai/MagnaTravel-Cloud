@@ -94,9 +94,9 @@ public class AfipController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: $"No se pudo validar la configuracion AFIP: {ex.Message}");
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "No se pudo validar la configuracion AFIP.");
         }
     }
 

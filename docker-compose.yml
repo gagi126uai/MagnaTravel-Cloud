@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-travel}
       POSTGRES_USER: ${POSTGRES_USER:-traveluser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travelpass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./logs:/var/lib/postgresql/logs # Optional db logs
@@ -34,14 +34,14 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:-travelpass}
-      Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY:-CHANGE_THIS_SECURITY_ENCRYPTION_KEY_WITH_AT_LEAST_32_CHARS}
-      Jwt__Key: ${JWT_KEY:-CHANGE_THIS_SECRET_IN_PRODUCTION}
+      ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY:?SECURITY_ENCRYPTION_KEY is required}
+      Jwt__Key: ${JWT_KEY:?JWT_KEY is required}
       Jwt__Issuer: ${JWT_ISSUER:-MagnaTravel}
       Jwt__Audience: ${JWT_AUDIENCE:-MagnaTravelUsers}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       Cors__Origins__0: ${WEB_ORIGIN:-http://localhost:3000}
-      WhatsApp__WebhookSecret: ${WHATSAPP_WEBHOOK_SECRET:-CHANGE_THIS_SECRET}
+      WhatsApp__WebhookSecret: ${WHATSAPP_WEBHOOK_SECRET:?WHATSAPP_WEBHOOK_SECRET is required}
       WhatsApp__BotUrl: http://whatsapp-bot:3001
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
@@ -89,7 +89,7 @@ services:
       - whatsapp_auth:/app/.wwebjs_auth
     environment:
       WEBHOOK_URL: http://api:8080/api/webhooks/whatsapp
-      WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-CHANGE_THIS_SECRET}
+      WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:?WHATSAPP_WEBHOOK_SECRET is required}
       BOT_SESSION_TIMEOUT_MINUTES: 30
       BOT_HTTP_PORT: 3001
     healthcheck:

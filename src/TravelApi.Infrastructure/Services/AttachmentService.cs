@@ -146,7 +146,7 @@ public class AttachmentService : IAttachmentService
         if (attachment == null) throw new KeyNotFoundException("Attachment not found.");
 
         var uploadsFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Files");
-        var filePath = Path.Combine(uploadsFolder, attachment.StoredFileName);
+        var filePath = GetSafeFilePath(uploadsFolder, attachment.StoredFileName);
 
         if (!File.Exists(filePath)) throw new FileNotFoundException("File not found on server.");
 
@@ -164,7 +164,7 @@ public class AttachmentService : IAttachmentService
         try
         {
             var uploadsFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Files");
-            var filePath = Path.Combine(uploadsFolder, attachment.StoredFileName);
+            var filePath = GetSafeFilePath(uploadsFolder, attachment.StoredFileName);
             if (File.Exists(filePath))
             {
                 File.Delete(filePath);
@@ -210,5 +210,15 @@ public class AttachmentService : IAttachmentService
             ".doc" or ".xls" => bytes.AsSpan().StartsWith(new byte[] { 0xD0, 0xCF, 0x11, 0xE0 }),
             _ => false
         };
+    }
+
+    private static string GetSafeFilePath(string baseFolder, string storedFileName)
+    {
+        var fullPath = Path.GetFullPath(Path.Combine(baseFolder, storedFileName));
+        if (!fullPath.StartsWith(Path.GetFullPath(baseFolder), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Ruta de archivo inválida.");
+        }
+        return fullPath;
     }
 }
