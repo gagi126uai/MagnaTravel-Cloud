@@ -45,6 +45,9 @@ public static class Permissions
     // Paquetes
     public const string PaquetesView = "paquetes.view";
     public const string PaquetesEdit = "paquetes.edit";
+
+    // Auditoría
+    public const string AuditoriaView = "auditoria.view";
     public const string PaquetesPublish = "paquetes.publish";
 
     /// <summary>
@@ -62,6 +65,7 @@ public static class Permissions
         ["CRM"] = new[] { CrmView, CrmEdit },
         ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
         ["Paises y destinos"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },
+        ["Auditoría"] = new[] { AuditoriaView },
     };
 
     public static readonly string[] All = AllByModule.Values.SelectMany(v => v).ToArray();

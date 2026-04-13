@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -95,7 +95,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 UserName = userName,
                 EntityName = entry.Entity.GetType().Name,
                 Timestamp = timestamp,
-                Action = entry.State.ToString()
+                Action = entry.State.ToString(),
+                Category = "Entity"
             };
 
             var changes = new Dictionary<string, object>();

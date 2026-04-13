@@ -1,6 +1,10 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Audit;
 using TravelApi.Application.Interfaces;
@@ -35,13 +39,21 @@ public class AuditLogsController : ControllerBase
 
     private readonly IAuditService _auditService;
     private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly UserManager<ApplicationUser> _userManager;
 
-    public AuditLogsController(IAuditService auditService, EntityReferenceResolver entityReferenceResolver)
+    public AuditLogsController(
+        IAuditService auditService,
+        EntityReferenceResolver entityReferenceResolver,
+        UserManager<ApplicationUser> userManager)
     {
         _auditService = auditService;
         _entityReferenceResolver = entityReferenceResolver;
+        _userManager = userManager;
     }
 
+    /// <summary>
+    /// Obtiene logs de auditoria para una entidad especifica (usado por AuditTimeline).
+    /// </summary>
     [HttpGet]
     public async Task<ActionResult<IEnumerable<AuditLogResponse>>> GetAuditLogs(
         [FromQuery] string? entityName,
@@ -54,6 +66,109 @@ public class AuditLogsController : ControllerBase
         var alternateEntityId = await ResolveAlternateEntityIdAsync(entityName, entityId, ct);
         var logs = await _auditService.GetAuditLogsAsync(entityName, entityId, alternateEntityId, dateFrom, dateTo, userId, ct);
         return Ok(logs.Select(MapResponse));
+    }
+
+    /// <summary>
+    /// Consulta global paginada de logs de auditoria (pantalla de auditoria).
+    /// </summary>
+    [HttpGet("global")]
+    public async Task<IActionResult> GetGlobalAuditLogs(
+        [FromQuery] string? entityName,
+        [FromQuery] string? action,
+        [FromQuery] string? userId,
+        [FromQuery] DateTime? dateFrom,
+        [FromQuery] DateTime? dateTo,
+        [FromQuery] string? searchTerm,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25,
+        CancellationToken ct = default)
+    {
+        var result = await _auditService.GetGlobalAuditLogsAsync(
+            entityName, action, userId, dateFrom, dateTo, searchTerm, page, pageSize, ct);
+
+        return Ok(new
+        {
+            items = result.Items.Select(MapResponse),
+            result.TotalCount,
+            result.Page,
+            result.PageSize,
+            result.TotalPages
+        });
+    }
+
+    /// <summary>
+    /// Lista de entidades unicas presentes en auditoria (para dropdown de filtro).
+    /// </summary>
+    [HttpGet("entities")]
+    public async Task<IActionResult> GetDistinctEntities(CancellationToken ct)
+    {
+        var result = await _auditService.GetGlobalAuditLogsAsync(
+            null, null, null, null, null, null, 1, 1, ct);
+
+        // Optimizacion: consultar nombres de entidad distintos directamente
+        // Por ahora devolvemos una lista fija basada en las entidades del sistema
+        var entityNames = new[]
+        {
+            "Reserva", "Customer", "Supplier", "Payment", "Invoice",
+            "Passenger", "ServicioReserva", "FlightSegment", "HotelBooking",
+            "PackageBooking", "TransferBooking", "Lead", "Quote", "QuoteItem",
+            "ReservaAttachment", "SupplierPayment", "ManualCashMovement",
+            "ApplicationUser", "CommissionRule", "Rate",
+            "AgencySettings", "OperationalFinanceSettings", "AfipSettings",
+            "WhatsAppBotConfig", "CatalogPackage", "Country", "Destination"
+        };
+
+        return Ok(entityNames.OrderBy(n => n));
+    }
+
+    /// <summary>
+    /// Lista usuarios para filtro de auditoria.
+    /// </summary>
+    [HttpGet("users")]
+    public async Task<IActionResult> GetUsers(CancellationToken ct)
+    {
+        var users = await _userManager.Users
+            .Select(u => new { u.Id, u.UserName, u.FullName })
+            .OrderBy(u => u.FullName ?? u.UserName)
+            .ToListAsync(ct);
+
+        return Ok(users);
+    }
+
+    /// <summary>
+    /// Exportar logs de auditoria a CSV con los mismos filtros de la vista global.
+    /// </summary>
+    [HttpGet("export")]
+    public async Task<IActionResult> ExportCsv(
+        [FromQuery] string? entityName,
+        [FromQuery] string? action,
+        [FromQuery] string? userId,
+        [FromQuery] DateTime? dateFrom,
+        [FromQuery] DateTime? dateTo,
+        [FromQuery] string? searchTerm,
+        CancellationToken ct = default)
+    {
+        // Exportar max 5000 registros para evitar timeout/memory
+        var result = await _auditService.GetGlobalAuditLogsAsync(
+            entityName, action, userId, dateFrom, dateTo, searchTerm, 1, 5000, ct);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Fecha,Usuario,Accion,Entidad,ID Entidad,Cambios");
+
+        foreach (var log in result.Items)
+        {
+            var date = log.Timestamp.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            var user = EscapeCsv(log.UserName ?? log.UserId);
+            var actionStr = EscapeCsv(log.Action);
+            var entity = EscapeCsv(log.EntityName);
+            var entityId = EscapeCsv(log.EntityId);
+            var changes = EscapeCsv(SummarizeChanges(log.Changes));
+
+            sb.AppendLine($"{date},{user},{actionStr},{entity},{entityId},{changes}");
+        }
+
+        var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+        return File(bytes, "text/csv; charset=utf-8", $"auditoria_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv");
     }
 
     private async Task<string?> ResolveAlternateEntityIdAsync(string? entityName, string? entityId, CancellationToken ct)
@@ -175,5 +290,39 @@ public class AuditLogsController : ControllerBase
                 }
             }
         }
+    }
+
+    private static string SummarizeChanges(string? rawChanges)
+    {
+        if (string.IsNullOrWhiteSpace(rawChanges))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(rawChanges);
+            if (node is JsonObject obj)
+            {
+                var fields = obj.Select(p => p.Key);
+                return string.Join("; ", fields);
+            }
+        }
+        catch
+        {
+            // ignorar
+        }
+
+        return "[datos]";
+    }
+
+    private static string EscapeCsv(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
+        {
+            return $"\"{value.Replace("\"", "\"\"")}\"";
+        }
+        return value;
     }
 }

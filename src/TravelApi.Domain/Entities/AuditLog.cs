@@ -26,4 +26,7 @@ public class AuditLog
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 
     public string? Changes { get; set; } // JSON: { "Field": { "Old": "Val1", "New": "Val2" } }
+
+    [MaxLength(30)]
+    public string Category { get; set; } = "Entity"; // Entity | Business
 }
