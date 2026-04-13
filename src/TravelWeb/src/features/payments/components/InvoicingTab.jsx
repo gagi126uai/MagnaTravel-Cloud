@@ -40,7 +40,7 @@ function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-function WorkItemSection({ status, onStatusChange, items, onInvoice, searchTerm, onSearchTermChange, customerFilter, onCustomerFilterChange, reservationFilter, onReservationFilterChange }) {
+export function WorkItemSection({ status, onStatusChange, items, onInvoice, searchTerm, onSearchTermChange, customerFilter, onCustomerFilterChange, reservationFilter, onReservationFilterChange }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-5 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
@@ -104,7 +104,7 @@ function WorkItemSection({ status, onStatusChange, items, onInvoice, searchTerm,
   );
 }
 
-function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDownloadPdf, onViewPdf, onRetryInvoice, onAnnulInvoice, searchTerm, onSearchTermChange, period, onPeriodChange, customerFilter, onCustomerFilterChange, reservationFilter, onReservationFilterChange, voucherNumberFilter, onVoucherNumberFilterChange, resultFilter, onResultFilterChange }) {
+export function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDownloadPdf, onViewPdf, onRetryInvoice, onAnnulInvoice, searchTerm, onSearchTermChange, period, onPeriodChange, customerFilter, onCustomerFilterChange, reservationFilter, onReservationFilterChange, voucherNumberFilter, onVoucherNumberFilterChange, resultFilter, onResultFilterChange }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-5 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">

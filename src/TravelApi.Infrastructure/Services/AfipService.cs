@@ -217,6 +217,25 @@ public class AfipService : IAfipService
             _logger.LogWarning(ex, "AFIP settings were loaded without decrypting sensitive fields because Security__EncryptionKey is missing.");
             return settings;
         }
+        catch (System.Security.Cryptography.CryptographicException ex)
+        {
+            _logger.LogError(ex, "AFIP data protection keys are invalid/expired. Clearing sensitive fields from memory to prevent blocking the UI.");
+            settings.Token = null;
+            settings.Sign = null;
+            settings.CertificateData = null;
+            settings.CertificatePassword = null;
+            settings.PadronToken = null;
+            settings.PadronSign = null;
+            
+            settings.ProdToken = null;
+            settings.ProdSign = null;
+            settings.ProdCertificateData = null;
+            settings.ProdCertificatePassword = null;
+            settings.ProdPadronToken = null;
+            settings.ProdPadronSign = null;
+
+            return settings;
+        }
     }
 
     public async Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, 

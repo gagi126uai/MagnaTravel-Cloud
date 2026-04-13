@@ -235,7 +235,6 @@ const fieldTranslations = {
   CreatedByIp: "IP de creación", UserAgent: "Navegador",
   IsPersistent: "Sesión persistente",
   RoleName: "Rol", Permission: "Permiso",
-  DocumentType: "Tipo de documento",
 
   // Secuencias
   LastValue: "Último valor", Year: "Año",

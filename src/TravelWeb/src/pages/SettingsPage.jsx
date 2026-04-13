@@ -27,7 +27,8 @@ import {
   Clock,
   Smartphone,
   TerminalSquare,
-  Settings2
+  Settings2,
+  ShieldAlert
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
@@ -36,6 +37,7 @@ import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
 import RolesPermissionsTab from "../components/RolesPermissionsTab";
+import AuditPage from "./AuditPage";
 import { getPublicId } from "../lib/publicIds";
 
 const serviceTypes = [
@@ -143,6 +145,7 @@ const Avatar = ({ name, size = "md" }) => {
 
 
 const tabs = [
+  { id: "audit", label: "Auditoría", icon: ShieldAlert },
   { id: "agency", label: "Agencia", icon: Building2 },
   { id: "users", label: "Usuarios", icon: User },
   { id: "roles", label: "Roles y Permisos", icon: Shield },
@@ -586,6 +589,11 @@ export default function SettingsPage() {
 
       {/* Content Area */}
       <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+
+        {/* --- AUDIT TAB --- */}
+        {activeTab === "audit" && (
+            <AuditPage />
+        )}
 
         {/* --- AGENCY TAB --- */}
         {activeTab === "agency" && (

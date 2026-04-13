@@ -34,7 +34,7 @@ import { AlertsProvider } from "./contexts/AlertsContext";
 import { Toaster } from "sonner";
 import PackagesPage from "./features/packages/pages/PackagesPage";
 import DestinationEditorPage from "./features/packages/pages/DestinationEditorPage";
-import AuditPage from "./pages/AuditPage";
+import AuditTab from "./pages/AuditPage";
 
 function FullScreenLoader() {
   return (
@@ -229,12 +229,7 @@ export default function App() {
                       element={hasPermission("cobranzas.edit") ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route path="/notifications" element={<NotificationsPage />} />
-                    <Route
-                      path="/audit"
-                      element={hasPermission("auditoria.view") ? <AuditPage /> : <Navigate to="/dashboard" replace />}
-                    />
-                  </Routes>
-                </Layout>
+                  </Routes>                </Layout>
               </AlertsProvider>
             </PrivateRoute>
           }
