@@ -230,7 +230,7 @@ export default function App() {
                     />
                     <Route path="/notifications" element={<NotificationsPage />} />
                                       <Route
-                      path="/administracion"
+                      path="/admin"
                       element={hasPermission("auditoria.view") ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}
                     />
                   </Routes>                </Layout>
@@ -242,6 +242,7 @@ export default function App() {
     </>
   );
 }
+
 
 
 
