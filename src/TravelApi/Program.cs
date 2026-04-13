@@ -277,10 +277,13 @@ builder.Services.AddRateLimiter(options =>
 
     options.AddPolicy("afip", context =>
     {
+        var isAuth = context.User.Identity?.IsAuthenticated == true;
+        if (isAuth) return RateLimitPartition.GetNoLimiter<string>("no-limit");
+
         var partitionKey = $"{context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous"}:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
-            PermitLimit = 150,
+            PermitLimit = 30,
             Window = TimeSpan.FromMinutes(5),
             QueueLimit = 0,
             AutoReplenishment = true
@@ -290,13 +293,15 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("fiscal", context =>
     {
         var isAuth = context.User.Identity?.IsAuthenticated == true;
+        if (isAuth) return RateLimitPartition.GetNoLimiter<string>("no-limit");
+        
         var partitionKey = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
                          ?? context.Connection.RemoteIpAddress?.ToString()
                          ?? "unknown";
                          
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
-            PermitLimit = isAuth ? 1600 : 50,
+            PermitLimit = 50,
             Window = TimeSpan.FromMinutes(5),
             QueueLimit = 0,
             AutoReplenishment = true

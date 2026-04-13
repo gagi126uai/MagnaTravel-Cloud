@@ -145,14 +145,14 @@ const Avatar = ({ name, size = "md" }) => {
 
 
 const tabs = [
-  { id: "audit", label: "Auditoría Central", icon: ShieldAlert },
   { id: "users", label: "Usuarios", icon: User },
   { id: "roles", label: "Roles y Permisos", icon: Shield },
-  { id: "commissions", label: "Comisiones", icon: Briefcase }
+  { id: "commissions", label: "Comisiones", icon: Briefcase },
+  { id: "audit", label: "Auditoría Central", icon: ShieldAlert }
 ];
 
 export default function AdminHubPage() {
-  const [activeTab, setActiveTab] = useState("audit");
+  const [activeTab, setActiveTab] = useState("users");
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -280,7 +280,7 @@ export default function AdminHubPage() {
     setSavingBot(true);
     try {
       await api.put("/whatsapp/config", botConfig);
-      showSuccess("ConfiguraciÃ³n del bot guardada");
+      showSuccess("Configuración del bot guardada");
       // Optional: Trigger reload on bot
       try { await api.post("/whatsapp/webhook/reload"); } catch { }
     } catch {
@@ -357,7 +357,7 @@ export default function AdminHubPage() {
     setSavingAgency(true);
     try {
       await api.put("/reports/settings", agencyForm);
-      showSuccess("ConfiguraciÃ³n de agencia actualizada");
+      showSuccess("Configuración de agencia actualizada");
       loadAgencySettings();
     } catch (error) {
       showError("No se pudo guardar la configuraciÃ³n");
@@ -550,7 +550,7 @@ export default function AdminHubPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Administración</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            AdministraciÃ³n del sistema y preferencias.
+            Administración del sistema y preferencias.
           </p>
         </div>
       </header>
@@ -583,11 +583,166 @@ export default function AdminHubPage() {
       </div>
 
       {/* Content Area */}
-      <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-        {/* --- AUDIT TAB --- */}
-        {activeTab === "audit" && (<AuditPage />)}
+      {/* Create / Edit User Modal */}
+      <Modal
+        isOpen={modalType === 'create' || modalType === 'edit'}
+        onClose={() => setModalType(null)}
+        title={modalType === 'create' ? "Nuevo Usuario" : "Editar Usuario"}
+      >
+        <div className="space-y-4">
+          <MsgInput
+            label="Nombre Completo"
+            value={modalType === 'create' ? createForm.fullName : editForm.fullName}
+            onChange={(val) => modalType === 'create' ? setCreateForm({ ...createForm, fullName: val }) : setEditForm({ ...editForm, fullName: val })}
+          />
+          <MsgInput
+            label="Email"
+            value={modalType === 'create' ? createForm.email : editForm.email}
+            onChange={(val) => modalType === 'create' ? setCreateForm({ ...createForm, email: val }) : setEditForm({ ...editForm, email: val })}
+          />
+          {modalType === 'create' && (
+            <MsgInput
+              label="Contraseña"
+              type="password"
+              value={createForm.password}
+              onChange={(val) => setCreateForm({ ...createForm, password: val })}
+            />
+          )}
+          <div className="space-y-1.5">
+            <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Rol</label>
+            <select
+              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm"
+              value={modalType === 'create' ? createForm.role : editForm.role}
+              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, role: e.target.value }) : setEditForm({ ...editForm, role: e.target.value })}
+            >
+              <option value="Colaborador">Colaborador</option>
+              <option value="Vendedor">Vendedor</option>
+              <option value="Admin">Admin</option>
+            </select>
+          </div>
+          {modalType === 'edit' && (
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="checkbox"
+                id="isActive"
+                checked={editForm.isActive}
+                onChange={(e) => setEditForm({...editForm, isActive: e.target.checked})}
+                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <label htmlFor="isActive" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Usuario Activo
+              </label>
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={() => setModalType(null)}>Cancelar</Button>
+            <Button onClick={modalType === 'create' ? handleCreateUser : handleEditUser}>
+              {modalType === 'create' ? "Crear Usuario" : "Guardar Cambios"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
-        {/* --- AGENCY TAB --- */}
+      {/* Change Password Modal */}
+      <Modal
+        isOpen={modalType === 'password'}
+        onClose={() => setModalType(null)}
+        title="Cambiar Contraseña"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-amber-50 p-4 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-800/30">
+            <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">Estás a punto de forzar el cambio de contraseña para {selectedUser?.fullName}.</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Nueva Contraseña</label>
+            <input
+              type="password"
+              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-amber-500 focus:border-amber-500"
+              value={passwordForm.newPassword}
+              onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+              placeholder="Mínimo 8 caracteres, números y letras..."
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={() => setModalType(null)}>Cancelar</Button>
+            <Button onClick={handleChangePassword} className="bg-amber-600 hover:bg-amber-700 text-white border-none">
+              Guardar Contraseña
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Commission Edit Modal */}
+      <Modal
+        isOpen={showCommissionModal}
+        onClose={() => setShowCommissionModal(false)}
+        title={commissionForm.id ? "Editar Regla de Comisión" : "Nueva Regla Especial"}
+      >
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Proveedor</label>
+            <select
+              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              value={commissionForm.supplierId}
+              onChange={e => setCommissionForm({ ...commissionForm, supplierId: e.target.value })}
+            >
+              <option value="">Cualquier Proveedor (Regla General)</option>
+              {suppliers.map(s => (
+                <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="space-y-1.5">
+            <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Tipo de Servicio</label>
+            <select
+              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              value={commissionForm.serviceType}
+              onChange={e => setCommissionForm({ ...commissionForm, serviceType: e.target.value })}
+            >
+              {serviceTypes.map(st => (
+                <option key={st.value} value={st.value}>{st.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Porcentaje (%)</label>
+              <input
+                type="number"
+                step="0.01"
+                className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                value={commissionForm.commissionPercent}
+                onChange={e => setCommissionForm({ ...commissionForm, commissionPercent: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Prioridad</label>
+              <input
+                type="number"
+                className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                value={commissionForm.priority}
+                onChange={e => setCommissionForm({ ...commissionForm, priority: parseInt(e.target.value) || 1 })}
+                placeholder="1 (Más alta)"
+              />
+            </div>
+          </div>
+          
+          <MsgInput
+            label="Descripción Interna"
+            value={commissionForm.description}
+            onChange={(val) => setCommissionForm({ ...commissionForm, description: val })}
+            sub="Opcional. Ej: Acuerdo primavera 2025."
+          />
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={() => setShowCommissionModal(false)}>Cancelar</Button>
+            <Button onClick={handleSaveCommission}>Guardar Regla</Button>
+          </div>
+        </div>
+      </Modal>
+
         {activeTab === "users" && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -768,9 +923,14 @@ export default function AdminHubPage() {
         )}
 
         {/* --- OPERATIONS TAB --- */}
-              </div>
+        {activeTab === "audit" && <AuditPage />}
     </div>
   );
 }
+
+
+
+
+
 
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 
@@ -20,6 +20,7 @@ const tabs = [
   { value: "reserved", label: "Reservadas" },
   { value: "operative", label: "Operativas" },
   { value: "closed", label: "Cerradas" },
+  { value: "archived", label: "Archivadas" },
 ];
 
 export default function ReservasPage() {
@@ -176,3 +177,4 @@ export default function ReservasPage() {
     </div>
   );
 }
+

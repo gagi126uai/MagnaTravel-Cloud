@@ -281,7 +281,7 @@ export default function SettingsPage() {
     setSavingBot(true);
     try {
       await api.put("/whatsapp/config", botConfig);
-      showSuccess("ConfiguraciÃ³n del bot guardada");
+      showSuccess("Configuración del bot guardada");
       // Optional: Trigger reload on bot
       try { await api.post("/whatsapp/webhook/reload"); } catch { }
     } catch {
@@ -358,7 +358,7 @@ export default function SettingsPage() {
     setSavingAgency(true);
     try {
       await api.put("/reports/settings", agencyForm);
-      showSuccess("ConfiguraciÃ³n de agencia actualizada");
+      showSuccess("Configuración de agencia actualizada");
       loadAgencySettings();
     } catch (error) {
       showError("No se pudo guardar la configuraciÃ³n");
@@ -549,9 +549,9 @@ export default function SettingsPage() {
     <div className="space-y-6 max-w-7xl mx-auto pb-20 md:pb-0">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">ConfiguraciÃ³n</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Configuración</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            AdministraciÃ³n del sistema y preferencias.
+            Administración del sistema y preferencias.
           </p>
         </div>
       </header>
@@ -605,7 +605,7 @@ export default function SettingsPage() {
                     </div>
                     <div>
                       <h3 className="font-semibold text-slate-900 dark:text-white">Datos de la Agencia</h3>
-                      <p className="text-xs text-slate-500">InformaciÃ³n legal y de contacto</p>
+                      <p className="text-xs text-slate-500">Información legal y de contacto</p>
                     </div>
                   </div>
 
@@ -683,7 +683,7 @@ export default function SettingsPage() {
             {/* Side Panel for Configs */}
             <div className="space-y-6">
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6">
-                <h3 className="font-semibold text-slate-900 dark:text-white mb-4">ConfiguraciÃ³n Regional</h3>
+                <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Configuración Regional</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Moneda Base</label>
@@ -854,6 +854,7 @@ export default function SettingsPage() {
     </div>
   );
 }
+
 
 
 

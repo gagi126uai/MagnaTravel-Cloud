@@ -1,7 +1,8 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { Loader2, Calendar, ChevronLeft, ChevronRight, FileText, Receipt } from "lucide-react";
 import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { ListToolbar } from "../../../components/ui/ListToolbar";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { FinanceMetricsGrid } from "../components/FinanceMetricsGrid";
 import { WorkItemSection, InvoiceSection } from "../components/InvoicingTab";
@@ -105,113 +106,49 @@ export default function PaymentsInvoicingPage() {
       ) : (
         <div className="space-y-4">
           
-          {/* Main Visual Tabs */}
-          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-            <div className="flex bg-slate-100 p-1 rounded-xl dark:bg-slate-800 w-full sm:w-auto overflow-x-auto">
-              <button
-                onClick={() => setMainTab("pending")}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ` + (mainTab === "pending" ? "bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200")}
-              >
-                <FileText className="h-4 w-4" />
-                Pendientes de Emitir
-              </button>
-              <button
-                onClick={() => setMainTab("issued")}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ` + (mainTab === "issued" ? "bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200")}
-              >
-                <Receipt className="h-4 w-4" />
-                Facturas Emitidas
-              </button>
-            </div>
-
-            {/* Month Filter Selector (Reservas Style) */}
-            {(mainTab === "issued" || mainTab === "pending") && (
-              <div className="flex w-full items-center justify-between gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800 sm:w-auto sm:justify-center shadow-sm">
-                <button onClick={handlePrevMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700" title="Mes anterior">
-                  <ChevronLeft className="w-4 h-4" />
+                    {/* Main Visual Tabs and Month Filter Selector */}
+          <ListToolbar
+            className="p-2"
+            searchSlot={
+              <div className="flex bg-slate-100 p-1 rounded-xl dark:bg-slate-800 w-full sm:w-auto overflow-x-auto">
+                <button
+                  onClick={() => setMainTab("pending")}
+                  className={"flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all " + (mainTab === "pending" ? "bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200")}
+                >
+                  <FileText className="h-4 w-4" />
+                  Pendientes de Emitir
                 </button>
-                <div className="flex items-center gap-1.5 px-1 sm:px-2">
-                  <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                  <span className="w-[110px] text-center text-sm font-medium capitalize text-slate-700 dark:text-slate-200">
-                    {monthName}
-                  </span>
-                </div>
-                <button onClick={handleNextMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700" title="Mes siguiente">
-                  <ChevronRight className="w-4 h-4" />
+                <button
+                  onClick={() => setMainTab("issued")}
+                  className={"flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all " + (mainTab === "issued" ? "bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200")}
+                >
+                  <Receipt className="h-4 w-4" />
+                  Facturas Emitidas
                 </button>
               </div>
-            )}
-          </div>
-
-          <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-            {mainTab === "pending" && (
-              <>
-                <WorkItemSection
-                  status={worklistStatus}
-                  onStatusChange={setWorklistStatus}
-                  items={workItems}
-                  onInvoice={setSelectedItem}
-                  searchTerm={worklistSearchTerm}
-                  onSearchTermChange={setWorklistSearchTerm}
-                  customerFilter={worklistCustomerFilter}
-                  onCustomerFilterChange={setWorklistCustomerFilter}
-                  reservationFilter={worklistReservationFilter}
-                  onReservationFilterChange={setWorklistReservationFilter}
-                />
-                <div className="mt-4">
-                    <PaginationFooter
-                      page={worklistPage}
-                      pageSize={worklistPageSize}
-                      totalCount={worklistTotalCount}
-                      totalPages={worklistTotalPages}
-                      hasPreviousPage={worklistHasPreviousPage}
-                      hasNextPage={worklistHasNextPage}
-                      onPageChange={setWorklistPage}
-                      onPageSizeChange={setWorklistPageSize}
-                    />
+            }
+            actionSlot={
+              (mainTab === "issued" || mainTab === "pending") && (
+                <div className="flex w-full items-center justify-between gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto sm:justify-center shadow-sm">
+                  <button onClick={handlePrevMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes anterior">
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <div className="flex items-center gap-1.5 px-1 sm:px-2">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                    <span className="w-[110px] text-center text-sm font-medium capitalize text-slate-700 dark:text-slate-200">
+                      {monthName}
+                    </span>
+                  </div>
+                  <button onClick={handleNextMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes siguiente">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
-              </>
-            )}
+              )
+            }
+          />
+      )}
 
-            {mainTab === "issued" && (
-              <>
-                <InvoiceSection
-                  invoiceKind={invoiceKind}
-                  onInvoiceKindChange={setInvoiceKind}
-                  items={invoices}
-                  onDownloadPdf={handleDownloadPdf}
-                  onViewPdf={handleViewPdf}
-                  onRetryInvoice={handleRetryInvoice}
-                  onAnnulInvoice={handleAnnulInvoice}
-                  searchTerm={invoiceSearchTerm}
-                  onSearchTermChange={setInvoiceSearchTerm}
-                  period={invoicePeriod}
-                  onPeriodChange={setInvoicePeriod}
-                  customerFilter={invoiceCustomerFilter}
-                  onCustomerFilterChange={setInvoiceCustomerFilter}
-                  reservationFilter={invoiceReservationFilter}
-                  onReservationFilterChange={setInvoiceReservationFilter}
-                  voucherNumberFilter={invoiceVoucherNumberFilter}
-                  onVoucherNumberFilterChange={setInvoiceVoucherNumberFilter}
-                  resultFilter={invoiceResultFilter}
-                  onResultFilterChange={setInvoiceResultFilter}
-                />
-                <div className="mt-4">
-                  <PaginationFooter
-                    page={invoicePage}
-                    pageSize={invoicePageSize}
-                    totalCount={invoiceTotalCount}
-                    totalPages={invoiceTotalPages}
-                    hasPreviousPage={invoiceHasPreviousPage}
-                    hasNextPage={invoiceHasNextPage}
-                    onPageChange={setInvoicePage}
-                    onPageSizeChange={setInvoicePageSize}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+              </div>
       )}
 
       <CreateInvoiceModal
@@ -238,3 +175,5 @@ export default function PaymentsInvoicingPage() {
     </div>
   );
 }
+
+

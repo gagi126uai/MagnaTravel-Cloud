@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import { api } from "../api";
 import { format, isToday, isYesterday, formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
@@ -35,31 +35,31 @@ const entityTranslations = {
   ServicioReserva: "Servicio", FlightSegment: "Vuelo",
   HotelBooking: "Hotel", PackageBooking: "Paquete", TransferBooking: "Transfer",
   Lead: "Posible cliente", LeadActivity: "Actividad Lead",
-  Quote: "Cotización", QuoteItem: "Ítem Cotización",
+  Quote: "CotizaciÃ³n", QuoteItem: "Ãtem CotizaciÃ³n",
   ReservaAttachment: "Adjunto", SupplierPayment: "Pago a proveedor",
-  ManualCashMovement: "Movimiento de caja", CommissionRule: "Regla de comisión",
+  ManualCashMovement: "Movimiento de caja", CommissionRule: "Regla de comisiÃ³n",
   Rate: "Tarifa", PaymentReceipt: "Recibo de pago",
-  InvoiceItem: "Ítem de factura", InvoiceTribute: "Tributo de factura",
-  CatalogPackage: "Paquete catálogo", CatalogPackageDeparture: "Salida de paquete",
-  Country: "País", Destination: "Destino", DestinationDeparture: "Salida de destino",
+  InvoiceItem: "Ãtem de factura", InvoiceTribute: "Tributo de factura",
+  CatalogPackage: "Paquete catÃ¡logo", CatalogPackageDeparture: "Salida de paquete",
+  Country: "PaÃ­s", Destination: "Destino", DestinationDeparture: "Salida de destino",
   WhatsAppDelivery: "Mensaje WhatsApp",
   // Sistema
-  ApplicationUser: "Usuario", RefreshToken: "Sesión",
+  ApplicationUser: "Usuario", RefreshToken: "SesiÃ³n",
   AgencySettings: "Config. agencia", OperationalFinanceSettings: "Config. finanzas",
   AfipSettings: "Config. AFIP", WhatsAppBotConfig: "Config. WhatsApp Bot",
-  BusinessSequence: "Numeración", RolePermission: "Permiso de rol",
-  BnaExchangeRateSnapshot: "Cotización BNA", Notification: "Notificación",
+  BusinessSequence: "NumeraciÃ³n", RolePermission: "Permiso de rol",
+  BnaExchangeRateSnapshot: "CotizaciÃ³n BNA", Notification: "NotificaciÃ³n",
   // Eventos de negocio
-  Session: "Sesión", Report: "Reporte", User: "Usuario",
+  Session: "SesiÃ³n", Report: "Reporte", User: "Usuario",
 };
 
 const actionTranslations = {
-  Create: "Creó", Update: "Modificó", Delete: "Eliminó", SoftDelete: "Envió a papelera",
-  Login: "Inició sesión", LoginFailed: "Intento de login fallido",
-  Logout: "Cerró sesión", ChangePassword: "Cambió contraseña",
-  InvoiceIssued: "Emitió factura", InvoiceForced: "Forzó factura",
-  ReportExported: "Exportó reporte", UserCreated: "Creó usuario",
-  PermissionsChanged: "Cambió permisos", WhatsAppSent: "Envió WhatsApp",
+  Create: "CreÃ³", Update: "ModificÃ³", Delete: "EliminÃ³", SoftDelete: "EnviÃ³ a papelera",
+  Login: "IniciÃ³ sesiÃ³n", LoginFailed: "Intento de login fallido",
+  Logout: "CerrÃ³ sesiÃ³n", ChangePassword: "CambiÃ³ contraseÃ±a",
+  InvoiceIssued: "EmitiÃ³ factura", InvoiceForced: "ForzÃ³ factura",
+  ReportExported: "ExportÃ³ reporte", UserCreated: "CreÃ³ usuario",
+  PermissionsChanged: "CambiÃ³ permisos", WhatsAppSent: "EnviÃ³ WhatsApp",
 };
 
 const actionColors = {
@@ -83,16 +83,16 @@ const actionBadgeColors = {
   ChangePassword: "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",
 };
 
-// Mapa EXHAUSTIVO de campos de entidad → español legible
+// Mapa EXHAUSTIVO de campos de entidad â†’ espaÃ±ol legible
 const fieldTranslations = {
   // Generales
   Id: "ID", PublicId: "Identificador",
-  Name: "Nombre", FullName: "Nombre completo", LegalName: "Razón social",
-  Description: "Descripción", Notes: "Notas", InternalNotes: "Notas internas",
+  Name: "Nombre", FullName: "Nombre completo", LegalName: "RazÃ³n social",
+  Description: "DescripciÃ³n", Notes: "Notas", InternalNotes: "Notas internas",
   Status: "Estado", IsActive: "Activo", IsDeleted: "Eliminado",
-  Email: "Email", Phone: "Teléfono", Address: "Dirección",
-  CreatedAt: "Fecha de creación", UpdatedAt: "Última modificación",
-  DeletedAt: "Fecha de eliminación", ClosedAt: "Fecha de cierre",
+  Email: "Email", Phone: "TelÃ©fono", Address: "DirecciÃ³n",
+  CreatedAt: "Fecha de creaciÃ³n", UpdatedAt: "Ãšltima modificaciÃ³n",
+  DeletedAt: "Fecha de eliminaciÃ³n", ClosedAt: "Fecha de cierre",
   CreatedBy: "Creado por", UploadedBy: "Subido por", UploadedAt: "Fecha de subida",
 
   // Reservas
@@ -100,50 +100,50 @@ const fieldTranslations = {
   TotalPaid: "Total pagado", Balance: "Saldo", GrossMargin: "Margen bruto",
   StartDate: "Fecha de salida", EndDate: "Fecha de regreso",
   PayerId: "Cliente pagador", ResponsibleUserId: "Responsable",
-  SourceLeadId: "Lead origen", SourceQuoteId: "Cotización origen",
-  WhatsAppPhoneOverride: "Teléfono WhatsApp",
+  SourceLeadId: "Lead origen", SourceQuoteId: "CotizaciÃ³n origen",
+  WhatsAppPhoneOverride: "TelÃ©fono WhatsApp",
 
   // Pasajeros
   DocumentType: "Tipo de documento", DocumentNumber: "Nro. de documento",
-  BirthDate: "Fecha de nacimiento", Nationality: "Nacionalidad", Gender: "Género",
+  BirthDate: "Fecha de nacimiento", Nationality: "Nacionalidad", Gender: "GÃ©nero",
 
   // Servicios
   ServiceType: "Tipo de servicio", ProductType: "Tipo de producto",
-  ConfirmationNumber: "Nro. de confirmación", SupplierName: "Proveedor",
-  SalePrice: "Precio de venta", NetCost: "Costo neto", Commission: "Comisión",
-  Tax: "Impuesto", CommissionPercent: "% comisión",
+  ConfirmationNumber: "Nro. de confirmaciÃ³n", SupplierName: "Proveedor",
+  SalePrice: "Precio de venta", NetCost: "Costo neto", Commission: "ComisiÃ³n",
+  Tax: "Impuesto", CommissionPercent: "% comisiÃ³n",
   DepartureDate: "Fecha de salida", ReturnDate: "Fecha de regreso",
 
   // Pagos
-  Amount: "Importe", Method: "Método de pago", PaidAt: "Fecha de pago",
+  Amount: "Importe", Method: "MÃ©todo de pago", PaidAt: "Fecha de pago",
   Reference: "Referencia", EntryType: "Tipo de movimiento",
   AffectsCash: "Afecta caja", OriginalPaymentId: "Pago original",
   RelatedInvoiceId: "Factura asociada", ReceiptNumber: "Nro. de recibo",
 
   // Vuelos
-  AirlineCode: "Aerolínea", FlightNumber: "Nro. de vuelo",
+  AirlineCode: "AerolÃ­nea", FlightNumber: "Nro. de vuelo",
   Origin: "Origen", Destination: "Destino",
   DepartureTime: "Hora de salida", ArrivalTime: "Hora de llegada",
   CabinClass: "Clase", Baggage: "Equipaje", BaggageIncluded: "Equipaje incluido",
   PNR: "PNR", TicketNumber: "Nro. de ticket", FareBase: "Tarifa base",
   IsRoundTrip: "Ida y vuelta", OriginCity: "Ciudad origen", DestinationCity: "Ciudad destino",
-  AirlineName: "Nombre aerolínea",
+  AirlineName: "Nombre aerolÃ­nea",
 
   // Hoteles
   HotelName: "Hotel", CheckIn: "Fecha de ingreso", CheckOut: "Fecha de salida",
-  RoomType: "Tipo de habitación", MealPlan: "Régimen de comidas",
+  RoomType: "Tipo de habitaciÃ³n", MealPlan: "RÃ©gimen de comidas",
   Nights: "Noches", City: "Ciudad", StarRating: "Estrellas",
-  RoomCategory: "Categoría", RoomFeatures: "Características",
+  RoomCategory: "CategorÃ­a", RoomFeatures: "CaracterÃ­sticas",
   HotelPriceType: "Tipo de precio", Rooms: "Habitaciones",
-  RoomBase: "Base habitación",
+  RoomBase: "Base habitaciÃ³n",
 
   // Transfers
   PickupLocation: "Punto de recogida", DropoffLocation: "Punto de destino",
   PickupDateTime: "Fecha y hora de recogida", ReturnDateTime: "Fecha y hora de regreso",
-  VehicleType: "Tipo de vehículo", MaxPassengers: "Máx. pasajeros",
+  VehicleType: "Tipo de vehÃ­culo", MaxPassengers: "MÃ¡x. pasajeros",
 
   // Paquetes
-  PackageName: "Nombre del paquete", DurationDays: "Duración (días)",
+  PackageName: "Nombre del paquete", DurationDays: "DuraciÃ³n (dÃ­as)",
   Adults: "Adultos", Children: "Menores",
   IncludesFlight: "Incluye vuelo", IncludesHotel: "Incluye hotel",
   IncludesTransfer: "Incluye transfer", IncludesExcursions: "Incluye excursiones",
@@ -153,15 +153,15 @@ const fieldTranslations = {
   // Facturas
   TipoComprobante: "Tipo de comprobante", NumeroComprobante: "Nro. de comprobante",
   PuntoDeVenta: "Punto de venta", CAE: "CAE", VencimientoCAE: "Vto. CAE",
-  IssuedAt: "Fecha de emisión", IsVoided: "Anulada", VoidedAt: "Fecha anulación",
+  IssuedAt: "Fecha de emisiÃ³n", IsVoided: "Anulada", VoidedAt: "Fecha anulaciÃ³n",
   WasForced: "Fue forzada", ForceReason: "Motivo de forzado",
   ForcedByUserId: "Forzada por (ID)", ForcedByUserName: "Forzada por",
   OutstandingBalanceAtIssuance: "Saldo al emitir", Resultado: "Resultado",
   CustomerSnapshot: "Datos del cliente", AgencySnapshot: "Datos de la agencia",
   BaseImponible: "Base imponible", ImporteNeto: "Importe neto",
   ImporteTotal: "Importe total", ImporteIva: "IVA",
-  Alicuota: "Alícuota", AlicuotaIvaId: "Alícuota IVA",
-  TaxCondition: "Condición fiscal", TaxConditionId: "Condición fiscal (ID)",
+  Alicuota: "AlÃ­cuota", AlicuotaIvaId: "AlÃ­cuota IVA",
+  TaxCondition: "CondiciÃ³n fiscal", TaxConditionId: "CondiciÃ³n fiscal (ID)",
   TaxId: "CUIT/DNI",
 
   // CRM / Leads
@@ -169,55 +169,55 @@ const fieldTranslations = {
   InterestedIn: "Interesado en", EstimatedBudget: "Presupuesto estimado",
   TravelDates: "Fechas de viaje", TravelStartDate: "Inicio de viaje",
   TravelEndDate: "Fin de viaje", Travelers: "Viajeros",
-  NextFollowUp: "Próximo seguimiento",
+  NextFollowUp: "PrÃ³ximo seguimiento",
   ConvertedCustomerId: "Cliente convertido", ConvertedReservaId: "Reserva generada",
   AssignedToUserId: "Asignado a (ID)", AssignedToName: "Asignado a",
-  AcceptedAt: "Fecha de aceptación",
-  QuoteNumber: "Nro. de cotización", ValidUntil: "Válida hasta",
-  LeadId: "Lead asociado", QuoteId: "Cotización asociada",
+  AcceptedAt: "Fecha de aceptaciÃ³n",
+  QuoteNumber: "Nro. de cotizaciÃ³n", ValidUntil: "VÃ¡lida hasta",
+  LeadId: "Lead asociado", QuoteId: "CotizaciÃ³n asociada",
 
   // Cotizaciones
   Total: "Total", UnitPrice: "Precio unitario", UnitCost: "Costo unitario",
   Quantity: "Cantidad", ProductName: "Producto",
 
   // Caja
-  Direction: "Dirección", Category: "Categoría",
+  Direction: "DirecciÃ³n", Category: "CategorÃ­a",
   OccurredAt: "Fecha", RelatedReservaId: "Reserva asociada",
   RelatedSupplierId: "Proveedor asociado",
 
   // Adjuntos
-  FileName: "Nombre del archivo", FileSize: "Tamaño", ContentType: "Tipo de archivo",
+  FileName: "Nombre del archivo", FileSize: "TamaÃ±o", ContentType: "Tipo de archivo",
   StoredFileName: "Archivo almacenado",
 
-  // Catálogo
-  Title: "Título", Slug: "URL amigable", Tagline: "Subtítulo",
-  IsPublished: "Publicado", PublishedAt: "Fecha de publicación",
-  GeneralInfo: "Información general",
+  // CatÃ¡logo
+  Title: "TÃ­tulo", Slug: "URL amigable", Tagline: "SubtÃ­tulo",
+  IsPublished: "Publicado", PublishedAt: "Fecha de publicaciÃ³n",
+  GeneralInfo: "InformaciÃ³n general",
   HeroImageFileName: "Imagen principal", HeroImageStoredFileName: "Archivo de imagen",
-  HeroImageContentType: "Tipo de imagen", HeroImageFileSize: "Tamaño de imagen",
-  CountryName: "País", CountrySlug: "URL del país",
+  HeroImageContentType: "Tipo de imagen", HeroImageFileSize: "TamaÃ±o de imagen",
+  CountryName: "PaÃ­s", CountrySlug: "URL del paÃ­s",
   TransportLabel: "Transporte", Currency: "Moneda",
   DisplayOrder: "Orden", DestinationOrder: "Orden destino",
-  CatalogPackageId: "Paquete", DestinationId: "Destino", CountryId: "País",
+  CatalogPackageId: "Paquete", DestinationId: "Destino", CountryId: "PaÃ­s",
 
   // Proveedores extras
   ContactName: "Nombre de contacto", Cuit: "CUIT",
-  CreditLimit: "Límite de crédito", CurrentBalance: "Saldo actual",
-  DefaultCommissionPercent: "% comisión por defecto",
+  CreditLimit: "LÃ­mite de crÃ©dito", CurrentBalance: "Saldo actual",
+  DefaultCommissionPercent: "% comisiÃ³n por defecto",
 
   // Clientes extras
   AgencyName: "Agencia",
 
   // Comisiones
-  ValidFrom: "Válida desde", ValidTo: "Válida hasta",
+  ValidFrom: "VÃ¡lida desde", ValidTo: "VÃ¡lida hasta",
   MarkupPercent: "% markup", ChildrenPayPercent: "% pago menores",
-  ChildMaxAge: "Edad máx. menores",
+  ChildMaxAge: "Edad mÃ¡x. menores",
 
   // WhatsApp
   MessageText: "Mensaje", AttachmentName: "Adjunto", BotMessageId: "ID mensaje bot",
-  SentAt: "Fecha de envío", SentBy: "Enviado por", Error: "Error",
+  SentAt: "Fecha de envÃ­o", SentBy: "Enviado por", Error: "Error",
   Kind: "Tipo", IsPrimary: "Principal",
-  WelcomeMessage: "Mensaje de bienvenida", AskInterestMessage: "Mensaje de interés",
+  WelcomeMessage: "Mensaje de bienvenida", AskInterestMessage: "Mensaje de interÃ©s",
   AskTravelersMessage: "Mensaje de viajeros", AskDatesMessage: "Mensaje de fechas",
   ThanksMessage: "Mensaje de agradecimiento", DuplicateMessage: "Mensaje duplicado",
   AgentRequestMessage: "Mensaje solicitud agente",
@@ -227,34 +227,34 @@ const fieldTranslations = {
   RequireFullPaymentForOperativeStatus: "Requiere pago completo para operativa",
   RequireFullPaymentForVoucher: "Requiere pago completo para voucher",
   EnableUpcomingUnpaidReservationNotifications: "Alertas reservas impagas",
-  UpcomingUnpaidReservationAlertDays: "Días de anticipación alerta",
+  UpcomingUnpaidReservationAlertDays: "DÃ­as de anticipaciÃ³n alerta",
 
-  // Tokens / Sesión (sistema)
-  TokenHash: "Sesión", ReplacedByTokenHash: "Reemplazada por",
-  RevokedAt: "Fecha de revocación", ExpiresAt: "Fecha de expiración",
-  CreatedByIp: "IP de creación", UserAgent: "Navegador",
-  IsPersistent: "Sesión persistente",
+  // Tokens / SesiÃ³n (sistema)
+  TokenHash: "SesiÃ³n", ReplacedByTokenHash: "Reemplazada por",
+  RevokedAt: "Fecha de revocaciÃ³n", ExpiresAt: "Fecha de expiraciÃ³n",
+  CreatedByIp: "IP de creaciÃ³n", UserAgent: "Navegador",
+  IsPersistent: "SesiÃ³n persistente",
   RoleName: "Rol", Permission: "Permiso",
 
   // Secuencias
-  LastValue: "Último valor", Year: "Año",
+  LastValue: "Ãšltimo valor", Year: "AÃ±o",
 
   // BNA
-  UsdSeller: "Dólar (venta)", EuroSeller: "Euro (venta)", RealSeller: "Real (venta)",
-  PublishedDate: "Fecha publicación", PublishedTime: "Hora publicación",
+  UsdSeller: "DÃ³lar (venta)", EuroSeller: "Euro (venta)", RealSeller: "Real (venta)",
+  PublishedDate: "Fecha publicaciÃ³n", PublishedTime: "Hora publicaciÃ³n",
   FetchedAt: "Consultado",
 
   // Notificaciones
-  Message: "Mensaje", IsRead: "Leída", IsDismissed: "Descartada",
+  Message: "Mensaje", IsRead: "LeÃ­da", IsDismissed: "Descartada",
   RelatedEntityType: "Tipo entidad", RelatedEntityId: "ID entidad",
   UserId: "Usuario",
 
   // Paquetes
   ServiceDetailsJson: "Detalles del servicio",
-  PreparedAt: "Fecha de preparación", Segments: "Segmentos",
+  PreparedAt: "Fecha de preparaciÃ³n", Segments: "Segmentos",
 
-  // Misceláneos
-  Type: "Tipo", Importe: "Importe", Items: "Ítems",
+  // MiscelÃ¡neos
+  Type: "Tipo", Importe: "Importe", Items: "Ãtems",
   TributeId: "Tributo", Tributes: "Tributos",
   SupplierId: "Proveedor", CustomerId: "Cliente",
   ReservaId: "Reserva", ServicioReservaId: "Servicio",
@@ -314,23 +314,23 @@ function NarrativeSummary({ log }) {
 
   let summary = "";
   if (log.action === "Create") {
-    summary = `creó ${entity}`;
+    summary = `creÃ³ ${entity}`;
   } else if (log.action === "Delete") {
-    summary = `eliminó ${entity}`;
+    summary = `eliminÃ³ ${entity}`;
   } else if (log.action === "SoftDelete") {
-    summary = `envió a papelera ${entity}`;
+    summary = `enviÃ³ a papelera ${entity}`;
   } else if (log.action === "Update") {
     if (fieldCount === 0) {
-      summary = `modificó ${entity}`;
+      summary = `modificÃ³ ${entity}`;
     } else if (fieldCount <= 3) {
       const translatedFields = changedFields.map(f => translateField(f)).join(", ");
-      summary = `modificó ${translatedFields} de ${entity}`;
+      summary = `modificÃ³ ${translatedFields} de ${entity}`;
     } else {
       const firstTwo = changedFields.slice(0, 2).map(f => translateField(f)).join(", ");
-      summary = `modificó ${firstTwo} y ${fieldCount - 2} campo(s) más de ${entity}`;
+      summary = `modificÃ³ ${firstTwo} y ${fieldCount - 2} campo(s) mÃ¡s de ${entity}`;
     }
   } else {
-    summary = `${translateAction(log.action).toLowerCase()} — ${entity}`;
+    summary = `${translateAction(log.action).toLowerCase()} â€” ${entity}`;
   }
 
   return (
@@ -371,12 +371,12 @@ function ChangeDetail({ changes: raw }) {
 }
 
 function formatValue(val) {
-  if (val === null || val === undefined) return "—";
-  if (typeof val === "boolean") return val ? "Sí" : "No";
-  if (val === "True" || val === "true") return "Sí";
+  if (val === null || val === undefined) return "â€”";
+  if (typeof val === "boolean") return val ? "SÃ­" : "No";
+  if (val === "True" || val === "true") return "SÃ­";
   if (val === "False" || val === "false") return "No";
   const str = String(val);
-  if (str.length > 80) return str.substring(0, 80) + "…";
+  if (str.length > 80) return str.substring(0, 80) + "â€¦";
   return str;
 }
 
@@ -385,12 +385,12 @@ function formatValue(val) {
 // ================================================================
 
 const TABS = [
-  { id: "operational", label: "Operativa", icon: Briefcase, description: "Reservas, clientes, pagos y más" },
-  { id: "system", label: "Sistema", icon: Server, description: "Usuarios, sesiones, configuración" },
+  { id: "operational", label: "Operativa", icon: Briefcase, description: "Reservas, clientes, pagos y mÃ¡s" },
+  { id: "system", label: "Sistema", icon: Server, description: "Usuarios, sesiones, configuraciÃ³n" },
 ];
 
 // ================================================================
-// PÁGINA PRINCIPAL
+// PÃGINA PRINCIPAL
 // ================================================================
 
 export default function AuditPage() {
@@ -419,6 +419,9 @@ export default function AuditPage() {
   // Datos para dropdowns
   const [entities, setEntities] = useState([]);
   const [users, setUsers] = useState([]);
+
+  const systemEntities = ["ApplicationUser", "RefreshToken", "AgencySettings", "OperationalFinanceSettings", "AfipSettings", "WhatsAppBotConfig", "BusinessSequence", "RolePermission", "BnaExchangeRateSnapshot", "Notification", "Session", "User", "Report"];
+  const uiEntities = entities.filter(e => activeTab === "system" ? systemEntities.includes(e) : !systemEntities.includes(e));
 
   useEffect(() => {
     api.get("/auditlogs/entities").then(setEntities).catch(() => {});
@@ -502,7 +505,7 @@ export default function AuditPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Shield className="h-6 w-6 text-indigo-500" />
-            Administración
+            AdministraciÃ³n
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             Control y trazabilidad de movimientos del sistema
@@ -577,23 +580,23 @@ export default function AuditPage() {
               <select value={entityName} onChange={(e) => { setEntityName(e.target.value); setPage(1); }}
                 className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500">
                 <option value="">Todas</option>
-                {entities.map((e) => <option key={e} value={e}>{translateEntity(e)}</option>)}
+                {uiEntities.map((e) => <option key={e} value={e}>{translateEntity(e)}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Acción</label>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">AcciÃ³n</label>
               <select value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }}
                 className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500">
                 <option value="">Todas</option>
-                <option value="Create">Creación</option>
-                <option value="Update">Modificación</option>
-                <option value="Delete">Eliminación</option>
+                <option value="Create">CreaciÃ³n</option>
+                <option value="Update">ModificaciÃ³n</option>
+                <option value="Delete">EliminaciÃ³n</option>
                 <option value="SoftDelete">Papelera</option>
                 {activeTab === "system" && <>
-                  <option value="Login">Inicio de sesión</option>
+                  <option value="Login">Inicio de sesiÃ³n</option>
                   <option value="LoginFailed">Login fallido</option>
-                  <option value="Logout">Cierre de sesión</option>
-                  <option value="ChangePassword">Cambio de contraseña</option>
+                  <option value="Logout">Cierre de sesiÃ³n</option>
+                  <option value="ChangePassword">Cambio de contraseÃ±a</option>
                 </>}
               </select>
             </div>
@@ -629,7 +632,7 @@ export default function AuditPage() {
       {/* Info */}
       <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
         <span>{totalCount.toLocaleString()} {totalCount === 1 ? "registro" : "registros"}{hasActiveFilters && " (filtrado)"}</span>
-        {totalPages > 1 && <span>Página {page} de {totalPages}</span>}
+        {totalPages > 1 && <span>PÃ¡gina {page} de {totalPages}</span>}
       </div>
 
       {/* Lista */}
@@ -644,7 +647,7 @@ export default function AuditPage() {
             <Shield className="h-10 w-10 mb-3 opacity-50" />
             <p className="text-sm font-medium">No hay registros</p>
             <p className="text-xs mt-1">
-              {activeTab === "operational" ? "Los movimientos operativos aparecerán aquí" : "Los eventos del sistema aparecerán aquí"}
+              {activeTab === "operational" ? "Los movimientos operativos aparecerÃ¡n aquÃ­" : "Los eventos del sistema aparecerÃ¡n aquÃ­"}
             </p>
           </div>
         ) : (
@@ -695,7 +698,7 @@ export default function AuditPage() {
         )}
       </div>
 
-      {/* Paginación */}
+      {/* PaginaciÃ³n */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -730,3 +733,4 @@ export default function AuditPage() {
     </div>
   );
 }
+
