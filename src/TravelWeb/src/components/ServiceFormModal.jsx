@@ -136,7 +136,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required disabled={disabled}>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
+                        {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
                     </select>
                 </div>
             </div>
@@ -171,7 +171,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required disabled={disabled}>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
+                        {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
                     </select>
                 </div>
             </div>
@@ -218,7 +218,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required disabled={disabled}>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
+                        {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
                     </select>
                 </div>
             </div>
