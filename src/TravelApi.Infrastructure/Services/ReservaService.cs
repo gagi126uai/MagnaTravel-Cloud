@@ -166,7 +166,9 @@ public class ReservaService : IReservaService
                     ResponsibleUserId = createdByUserId,
                     StartDate = request.StartDate,
                     Description = request.Description,
-                    Status = EstadoReserva.Reserved
+                    Status = string.IsNullOrWhiteSpace(request.Status) 
+                        ? EstadoReserva.Budget 
+                        : request.Status
                 };
                 
                 _context.Reservas.Add(file);
@@ -674,9 +676,10 @@ public class ReservaService : IReservaService
             "balance" => desc
                 ? query.OrderByDescending(r => r.Balance).ThenByDescending(r => r.CreatedAt)
                 : query.OrderBy(r => r.Balance).ThenByDescending(r => r.CreatedAt),
-            _ => desc
+            "startdate" => desc
                 ? query.OrderBy(r => r.StartDate == null).ThenByDescending(r => r.StartDate).ThenByDescending(r => r.CreatedAt)
-                : query.OrderBy(r => r.StartDate == null).ThenBy(r => r.StartDate).ThenByDescending(r => r.CreatedAt)
+                : query.OrderBy(r => r.StartDate == null).ThenBy(r => r.StartDate).ThenByDescending(r => r.CreatedAt),
+            _ => query.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
         };
     }
 
