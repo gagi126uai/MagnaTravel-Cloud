@@ -39,49 +39,67 @@ public class MappingProfile : Profile
                 src.TipoComprobante == 51 ? "M" : 
                 "UNK"));
 
-        // Services
+        // === BOOKING SERVICES (con RatePublicId) ===
+
         CreateMap<FlightSegment, FlightSegmentDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
             .ForMember(dest => dest.SupplierPublicId, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.PublicId : Guid.Empty))
-            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty));
+            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
+            .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
+            .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)));
             
         CreateMap<CreateFlightRequest, FlightSegment>()
-            .ForMember(dest => dest.SupplierId, opt => opt.Ignore());
+            .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore());
         CreateMap<UpdateFlightRequest, FlightSegment>()
-            .ForMember(dest => dest.SupplierId, opt => opt.Ignore());
+            .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore());
 
         CreateMap<HotelBooking, HotelBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
             .ForMember(dest => dest.SupplierPublicId, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.PublicId : Guid.Empty))
-            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty));
+            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
+            .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
+            .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || 
+                (src.Rate.SalePrice * src.Nights * src.Rooms == src.SalePrice && src.Rate.NetCost * src.Nights * src.Rooms == src.NetCost)));
 
         CreateMap<CreateHotelRequest, HotelBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days));
         CreateMap<UpdateHotelRequest, HotelBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days));
 
         CreateMap<TransferBooking, TransferBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
             .ForMember(dest => dest.SupplierPublicId, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.PublicId : Guid.Empty))
-            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty));
+            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
+            .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
+            .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)));
 
         CreateMap<CreateTransferRequest, TransferBooking>()
-            .ForMember(dest => dest.SupplierId, opt => opt.Ignore());
+            .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore());
         CreateMap<UpdateTransferRequest, TransferBooking>()
-            .ForMember(dest => dest.SupplierId, opt => opt.Ignore());
+            .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore());
 
         CreateMap<PackageBooking, PackageBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
             .ForMember(dest => dest.SupplierPublicId, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.PublicId : Guid.Empty))
-            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty));
+            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
+            .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
+            .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)));
             
         CreateMap<CreatePackageRequest, PackageBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
         CreateMap<UpdatePackageRequest, PackageBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
 
         // Customers
@@ -92,6 +110,7 @@ public class MappingProfile : Profile
         CreateMap<ServicioReserva, ServicioReservaDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
             .ForMember(dest => dest.SupplierPublicId, opt => opt.MapFrom(src => src.Supplier != null ? (Guid?)src.Supplier.PublicId : null))
+            .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
             .ForMember(dest => dest.ReservaPublicId, opt => opt.MapFrom(src => src.Reserva != null ? (Guid?)src.Reserva.PublicId : null))
             .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : src.SupplierName));
 

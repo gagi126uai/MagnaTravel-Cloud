@@ -5,6 +5,7 @@ public class FlightSegmentDto
     public Guid PublicId { get; set; }
     public Guid SupplierPublicId { get; set; }
     public string SupplierName { get; set; } = string.Empty;
+    public Guid? RatePublicId { get; set; }
     public string AirlineCode { get; set; } = string.Empty;
     public string? AirlineName { get; set; }
     public string FlightNumber { get; set; } = string.Empty;
@@ -15,6 +16,6 @@ public class FlightSegmentDto
     public string CabinClass { get; set; } = "Economy";
     public string Status { get; set; } = "HK";
     public string? PNR { get; set; }
-    public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
+    public bool IsPriceSynced { get; set; } = true;
 }

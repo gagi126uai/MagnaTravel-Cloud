@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using TravelApi.Infrastructure.Persistence;
 namespace TravelApi.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260413233309_LinkTariffToCrmAndOps")]
+    partial class LinkTariffToCrmAndOps
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1025,9 +1028,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PublicId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("RateId")
-                        .HasColumnType("integer");
-
                     b.Property<int>("ReservaId")
                         .HasColumnType("integer")
                         .HasColumnName("TravelFileId");
@@ -1058,8 +1058,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PublicId")
                         .IsUnique();
-
-                    b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
 
@@ -1136,9 +1134,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PublicId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("RateId")
-                        .HasColumnType("integer");
-
                     b.Property<int>("ReservaId")
                         .HasColumnType("integer")
                         .HasColumnName("TravelFileId");
@@ -1169,8 +1164,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PublicId")
                         .IsUnique();
-
-                    b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
 
@@ -1689,9 +1682,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PublicId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("RateId")
-                        .HasColumnType("integer");
-
                     b.Property<int>("ReservaId")
                         .HasColumnType("integer")
                         .HasColumnName("TravelFileId");
@@ -1714,8 +1704,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PublicId")
                         .IsUnique();
-
-                    b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
 
@@ -2717,9 +2705,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PublicId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("RateId")
-                        .HasColumnType("integer");
-
                     b.Property<int>("ReservaId")
                         .HasColumnType("integer")
                         .HasColumnName("TravelFileId");
@@ -2747,8 +2732,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PublicId")
                         .IsUnique();
-
-                    b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
 
@@ -2979,11 +2962,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Domain.Entities.FlightSegment", b =>
                 {
-                    b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
-                        .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("FlightSegments")
                         .HasForeignKey("ReservaId")
@@ -3000,8 +2978,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Rate");
-
                     b.Navigation("Reserva");
 
                     b.Navigation("ServicioReserva");
@@ -3011,11 +2987,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Domain.Entities.HotelBooking", b =>
                 {
-                    b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
-                        .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("HotelBookings")
                         .HasForeignKey("ReservaId")
@@ -3027,8 +2998,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasForeignKey("SupplierId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("Rate");
 
                     b.Navigation("Reserva");
 
@@ -3111,11 +3080,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Domain.Entities.PackageBooking", b =>
                 {
-                    b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
-                        .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("PackageBookings")
                         .HasForeignKey("ReservaId")
@@ -3127,8 +3091,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasForeignKey("SupplierId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("Rate");
 
                     b.Navigation("Reserva");
 
@@ -3361,11 +3323,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Domain.Entities.TransferBooking", b =>
                 {
-                    b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
-                        .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("TransferBookings")
                         .HasForeignKey("ReservaId")
@@ -3377,8 +3334,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasForeignKey("SupplierId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("Rate");
 
                     b.Navigation("Reserva");
 

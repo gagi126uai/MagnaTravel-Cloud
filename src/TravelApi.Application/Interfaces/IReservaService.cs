@@ -1,4 +1,4 @@
-using TravelApi.Application.Contracts.Files;
+﻿using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 
@@ -10,9 +10,9 @@ public interface IReservaService
     Task<ReservaDto> GetReservaByIdAsync(int id);
     Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId);
     
-    Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request);
-    Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request);
-    Task RemoveServiceAsync(int serviceId);
+    Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request, CancellationToken ct = default);
+    Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request, CancellationToken ct = default);
+    Task RemoveServiceAsync(int serviceId, CancellationToken ct = default);
 
     Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId);
     Task<PassengerDto> AddPassengerAsync(int reservaId, Passenger passenger);
@@ -29,3 +29,4 @@ public interface IReservaService
     Task<Reserva> ArchiveReservaAsync(int id);
     Task DeleteReservaAsync(int id);
 }
+

@@ -1,5 +1,5 @@
-﻿import React from 'react';
-import { Plus, Plane, Hotel, Car, Package, Edit2, Trash2, TrendingUp, ShieldCheck } from "lucide-react";
+import React from 'react';
+import { Plus, Plane, Hotel, Car, Package, Edit2, Trash2, TrendingUp, ShieldCheck, AlertCircle } from "lucide-react";
 import { isAdmin } from "../../../auth";
 import { getPublicId } from "../../../lib/publicIds";
 
@@ -76,8 +76,20 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                                 </td>
                                             )}
                                             <td className="py-4 align-middle text-right text-sm font-bold text-gray-900 dark:text-white">
-                                                <span className="text-[10px] text-slate-400 font-normal mr-1">VENTA</span>
-                                                ${salePrice.toLocaleString()}
+                                                <div className="flex flex-col items-end">
+                                                    <span className="text-[10px] text-slate-400 font-normal">VENTA</span>
+                                                    <div className="flex items-center gap-1.5">
+                                                        {!svc.isPriceSynced && (
+                                                            <div className="group/sync relative">
+                                                                <AlertCircle className="w-4 h-4 text-amber-500 cursor-help" />
+                                                                <div className="absolute bottom-full right-0 mb-2 hidden group-hover/sync:block w-48 p-2 bg-slate-800 text-white text-[10px] rounded shadow-xl z-50 leading-tight">
+                                                                    Atención: El precio de este servicio en el tarifario ha cambiado.
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                        ${salePrice.toLocaleString()}
+                                                    </div>
+                                                </div>
                                             </td>
                                             {admin && (
                                                 <td className="py-4 align-middle text-right">
@@ -135,7 +147,10 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                             <div className="flex items-center gap-2">
                                                 <div className="text-right">
                                                     <div className="text-[9px] text-slate-400 leading-none">VENTA TOTAL</div>
-                                                    <div className="font-bold text-slate-900 dark:text-white">${salePrice.toLocaleString()}</div>
+                                                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                                                        {!svc.isPriceSynced && <AlertCircle className="w-3.5 h-3.5 text-amber-500" />}
+                                                        ${salePrice.toLocaleString()}
+                                                    </div>
                                                 </div>
                                                 <div className="flex gap-1 ml-2">
                                                     <button onClick={() => onEditService(svc)} className="p-2 text-slate-400 rounded-lg bg-slate-50 dark:bg-slate-800"><Edit2 className="w-3.5 h-3.5" /></button>

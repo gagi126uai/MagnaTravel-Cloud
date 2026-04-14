@@ -40,12 +40,32 @@ public class BookingService : IBookingService
         _mapper = mapper;
     }
 
+    // === RATE RESOLUTION (Snapshot) ===
+    // Resuelve el RateId público a interno y aplica snapshot de precios si corresponde.
+    private async Task<int?> ResolveRateIdAsync(string? ratePublicIdOrLegacyId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(ratePublicIdOrLegacyId)) return null;
+
+        var rateId = await _db.Set<Rate>().AsNoTracking()
+            .ResolveInternalIdAsync(ratePublicIdOrLegacyId, ct);
+
+        return rateId;
+    }
+
+    private async Task<Rate?> GetRateAsync(string? ratePublicIdOrLegacyId, CancellationToken ct)
+    {
+        var rateId = await ResolveRateIdAsync(ratePublicIdOrLegacyId, ct);
+        if (!rateId.HasValue) return null;
+        return await _db.Set<Rate>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == rateId.Value, ct);
+    }
+
     #region Flights
 
     public async Task<IEnumerable<FlightSegmentDto>> GetFlightsAsync(int reservaId, CancellationToken ct)
     {
         return await _flightRepo.Query()
             .Where(f => f.ReservaId == reservaId)
+            .Include(f => f.Rate)
             .OrderBy(f => f.DepartureTime)
             .ProjectTo<FlightSegmentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
@@ -61,6 +81,17 @@ public class BookingService : IBookingService
         var flight = _mapper.Map<FlightSegment>(req);
         flight.ReservaId = reservaId;
         flight.SupplierId = supplierId;
+
+        // Snapshot desde tarifario: si viene RateId, congelamos precios del tarifario
+        var rate = await GetRateAsync(req.RateId, ct);
+        if (rate != null)
+        {
+            flight.RateId = rate.Id;
+            flight.NetCost = rate.NetCost;
+            flight.SalePrice = rate.SalePrice;
+            flight.Commission = rate.Commission;
+            flight.Tax = rate.Tax;
+        }
 
         await _flightRepo.AddAsync(flight, ct);
 
@@ -89,6 +120,11 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, flight);
         flight.SupplierId = supplierId;
+
+        // Si viene un RateId nuevo, actualizar snapshot
+        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        if (rateId.HasValue)
+            flight.RateId = rateId.Value;
 
         if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
         {
@@ -153,6 +189,7 @@ public class BookingService : IBookingService
     {
         return await _hotelRepo.Query()
             .Where(h => h.ReservaId == reservaId)
+            .Include(h => h.Rate)
             .OrderBy(h => h.CheckIn)
             .ProjectTo<HotelBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
@@ -175,6 +212,16 @@ public class BookingService : IBookingService
         var hotel = _mapper.Map<HotelBooking>(req);
         hotel.ReservaId = reservaId;
         hotel.SupplierId = supplierId;
+
+        // Snapshot desde tarifario
+        var rate = await GetRateAsync(req.RateId, ct);
+        if (rate != null)
+        {
+            hotel.RateId = rate.Id;
+            hotel.NetCost = rate.NetCost;
+            hotel.SalePrice = rate.SalePrice;
+            hotel.Commission = rate.Commission;
+        }
 
         await _hotelRepo.AddAsync(hotel, ct);
 
@@ -203,6 +250,10 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, hotel);
         hotel.SupplierId = supplierId;
+
+        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        if (rateId.HasValue)
+            hotel.RateId = rateId.Value;
 
         if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
         {
@@ -267,6 +318,7 @@ public class BookingService : IBookingService
     {
         return await _packageRepo.Query()
             .Where(p => p.ReservaId == reservaId)
+            .Include(p => p.Rate)
             .OrderBy(p => p.CreatedAt)
             .ProjectTo<PackageBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
@@ -282,6 +334,16 @@ public class BookingService : IBookingService
         var package = _mapper.Map<PackageBooking>(req);
         package.ReservaId = reservaId;
         package.SupplierId = supplierId;
+
+        // Snapshot desde tarifario
+        var rate = await GetRateAsync(req.RateId, ct);
+        if (rate != null)
+        {
+            package.RateId = rate.Id;
+            package.NetCost = rate.NetCost;
+            package.SalePrice = rate.SalePrice;
+            package.Commission = rate.Commission;
+        }
 
         await _packageRepo.AddAsync(package, ct);
 
@@ -310,6 +372,10 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, package);
         package.SupplierId = supplierId;
+
+        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        if (rateId.HasValue)
+            package.RateId = rateId.Value;
 
         if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
         {
@@ -374,6 +440,7 @@ public class BookingService : IBookingService
     {
         return await _transferRepo.Query()
             .Where(t => t.ReservaId == reservaId)
+            .Include(t => t.Rate)
             .OrderBy(t => t.PickupDateTime)
             .ProjectTo<TransferBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
@@ -389,6 +456,16 @@ public class BookingService : IBookingService
         var transfer = _mapper.Map<TransferBooking>(req);
         transfer.ReservaId = reservaId;
         transfer.SupplierId = supplierId;
+
+        // Snapshot desde tarifario
+        var rate = await GetRateAsync(req.RateId, ct);
+        if (rate != null)
+        {
+            transfer.RateId = rate.Id;
+            transfer.NetCost = rate.NetCost;
+            transfer.SalePrice = rate.SalePrice;
+            transfer.Commission = rate.Commission;
+        }
 
         await _transferRepo.AddAsync(transfer, ct);
 
@@ -417,6 +494,10 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, transfer);
         transfer.SupplierId = supplierId;
+
+        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        if (rateId.HasValue)
+            transfer.RateId = rateId.Value;
 
         if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)
         {

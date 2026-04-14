@@ -22,5 +22,6 @@ public class ServicioReservaDto
     public string? SupplierName { get; set; }
     public Guid? SupplierPublicId { get; set; }
     
+    public Guid? RatePublicId { get; set; }
     public Guid? ReservaPublicId { get; set; }
 }

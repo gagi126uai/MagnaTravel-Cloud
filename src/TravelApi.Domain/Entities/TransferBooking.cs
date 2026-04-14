@@ -15,6 +15,10 @@ public class TransferBooking : IHasPublicId
     public int SupplierId { get; set; }
     public Supplier? Supplier { get; set; }
     
+    // Tarifario - snapshot de precios al momento de crear
+    public int? RateId { get; set; }
+    public Rate? Rate { get; set; }
+
     // Datos del Transfer
     [Required]
     [MaxLength(200)]

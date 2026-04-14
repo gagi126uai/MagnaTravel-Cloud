@@ -1,4 +1,4 @@
-using AutoMapper;
+﻿using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
@@ -170,7 +170,7 @@ public class ReservaService : IReservaService
         return file;
     }
 
-    public async Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request)
+    public async Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request, CancellationToken ct = default)
     {
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -224,7 +224,7 @@ public class ReservaService : IReservaService
         return (reservation, warning);
     }
 
-    public async Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request)
+    public async Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request, CancellationToken ct = default)
     {
         var service = await _context.Servicios
             .Include(r => r.Reserva)
@@ -264,7 +264,7 @@ public class ReservaService : IReservaService
         return service;
     }
 
-    public async Task RemoveServiceAsync(int serviceId)
+    public async Task RemoveServiceAsync(int serviceId, CancellationToken ct = default)
     {
         var service = await _context.Servicios
             .Include(r => r.Reserva)
@@ -371,7 +371,7 @@ public class ReservaService : IReservaService
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (payment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
-        if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un método de pago");
+        if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un mÃ©todo de pago");
         
         payment.ReservaId = reservaId;
         payment.PaidAt = payment.PaidAt == default ? DateTime.UtcNow : payment.PaidAt.ToUniversalTime();
@@ -436,18 +436,18 @@ public class ReservaService : IReservaService
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         var validStatuses = new[] { EstadoReserva.Budget, EstadoReserva.Reserved, EstadoReserva.Operational, EstadoReserva.Closed, EstadoReserva.Cancelled };
-        if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no válido");
+        if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no vÃ¡lido");
 
         if (file.Status == EstadoReserva.Reserved && status == EstadoReserva.Budget)
         {
              var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted);
-             if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. Elimínalos primero.");
+             if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. ElimÃ­nalos primero.");
 
              var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id);
-             if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Crédito).");
+             if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de CrÃ©dito).");
 
              var hasServices = await HasServicesAsync(id);
-             if (hasServices) throw new InvalidOperationException("No se puede volver a Presupuesto porque tiene servicios cargados. Elimínalos primero.");
+             if (hasServices) throw new InvalidOperationException("No se puede volver a Presupuesto porque tiene servicios cargados. ElimÃ­nalos primero.");
         }
 
         if (status == EstadoReserva.Operational)
@@ -704,3 +704,5 @@ public class ReservaService : IReservaService
         return $"F-{year}-{sequence.LastValue}";
     }
 }
+
+

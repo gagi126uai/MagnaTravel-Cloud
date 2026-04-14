@@ -82,6 +82,10 @@ public class FlightSegment : IHasPublicId
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
+    // Tarifario - snapshot de precios al momento de crear
+    public int? RateId { get; set; }
+    public Rate? Rate { get; set; }
+
     // Legacy - mantener compatibilidad temporal
     public int? ServicioReservaId { get; set; }
     public ServicioReserva? ServicioReserva { get; set; }

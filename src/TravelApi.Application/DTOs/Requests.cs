@@ -6,7 +6,8 @@ public record CreateFlightRequest(
     string SupplierId, string AirlineCode, string? AirlineName, string FlightNumber,
     string Origin, string? OriginCity, string Destination, string? DestinationCity,
     DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, string? PNR,
-    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes,
+    string? RateId = null
 );
 
 public record UpdateFlightRequest(
@@ -14,28 +15,32 @@ public record UpdateFlightRequest(
     string Origin, string? OriginCity, string Destination, string? DestinationCity,
     DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, 
     string? TicketNumber, string? PNR,
-    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes,
+    string? RateId = null
 );
 
 public record CreateHotelRequest(
     string SupplierId, string HotelName, int? StarRating, string City, string? Country,
     DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
     int Adults, int Children, int Rooms, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
+    string? RateId = null
 );
 
 public record UpdateHotelRequest(
     string SupplierId, string HotelName, int? StarRating, string City, string? Country,
     DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
     int Adults, int Children, int Rooms, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
+    string? RateId = null
 );
 
 public record CreateTransferRequest(
     string SupplierId, string PickupLocation, string DropoffLocation,
     DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
-    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
+    string? RateId = null
 );
 
 public record UpdateTransferRequest(
@@ -43,7 +48,8 @@ public record UpdateTransferRequest(
     DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
     string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
+    string? RateId = null
 );
 
 public record CreatePackageRequest(
@@ -51,7 +57,8 @@ public record CreatePackageRequest(
     DateTime StartDate, DateTime EndDate,
     bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
     int Adults, int Children, string? Itinerary,
-    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
+    string? RateId = null
 );
 
 public record UpdatePackageRequest(
@@ -59,5 +66,6 @@ public record UpdatePackageRequest(
     DateTime StartDate, DateTime EndDate,
     bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
     int Adults, int Children, string? Itinerary, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes
+    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
+    string? RateId = null
 );

@@ -409,6 +409,7 @@ export default function ReservaDetailPage() {
         isOpen={showServiceModal}
         onClose={() => setShowServiceModal(false)}
         reservaId={publicId}
+        reservaStatus={reserva?.status}
         serviceToEdit={serviceToEdit}
         onSuccess={fetchReserva}
         suppliers={suppliers}

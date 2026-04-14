@@ -8,5 +8,6 @@ public record AddServiceRequest(
     DateTime DepartureDate,
     DateTime? ReturnDate,
     decimal SalePrice,
-    decimal NetCost
+    decimal NetCost,
+    string? RateId = null
 );

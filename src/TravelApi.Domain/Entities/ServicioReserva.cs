@@ -37,6 +37,9 @@ public class ServicioReserva : IHasPublicId
     public int? SupplierId { get; set; }
     public Supplier? Supplier { get; set; }
     
+    public int? RateId { get; set; }
+    public Rate? Rate { get; set; }
+    
     public string? ConfirmationNumber { get; set; }
     public string Status { get; set; } = ReservationStatuses.Draft;
     public string? ServiceType { get; set; } = ServiceTypes.Flight;

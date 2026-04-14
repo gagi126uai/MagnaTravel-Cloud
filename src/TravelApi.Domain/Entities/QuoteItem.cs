@@ -23,6 +23,9 @@ public class QuoteItem : IHasPublicId
     public int? SupplierId { get; set; }
     public Supplier? Supplier { get; set; }
     
+    public int? RateId { get; set; }
+    public Rate? Rate { get; set; }
+    
     public int Quantity { get; set; } = 1;
     
     [Column(TypeName = "decimal(18,2)")]

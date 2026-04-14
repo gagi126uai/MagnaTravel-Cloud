@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -420,6 +420,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(r => r.SupplierId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(r => r.Rate)
+                  .WithMany()
+                  .HasForeignKey(r => r.RateId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Payment
@@ -479,6 +484,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // FlightSegment -> Rate (Tarifario)
+        modelBuilder.Entity<FlightSegment>()
+            .HasOne(f => f.Rate)
+            .WithMany()
+            .HasForeignKey(f => f.RateId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         // Invoice
         modelBuilder.Entity<Invoice>(entity =>
         {
@@ -508,17 +520,38 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(h => h.ReservaId).HasColumnName("TravelFileId");
         });
 
+        // HotelBooking -> Rate (Tarifario)
+        modelBuilder.Entity<HotelBooking>()
+            .HasOne(h => h.Rate)
+            .WithMany()
+            .HasForeignKey(h => h.RateId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         // TransferBooking
         modelBuilder.Entity<TransferBooking>(entity =>
         {
             entity.Property(t => t.ReservaId).HasColumnName("TravelFileId");
         });
 
+        // TransferBooking -> Rate (Tarifario)
+        modelBuilder.Entity<TransferBooking>()
+            .HasOne(t => t.Rate)
+            .WithMany()
+            .HasForeignKey(t => t.RateId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         // PackageBooking
         modelBuilder.Entity<PackageBooking>(entity =>
         {
             entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
         });
+
+        // PackageBooking -> Rate (Tarifario)
+        modelBuilder.Entity<PackageBooking>()
+            .HasOne(p => p.Rate)
+            .WithMany()
+            .HasForeignKey(p => p.RateId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<CatalogPackage>(entity =>
         {
@@ -615,6 +648,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(q => q.Lead)
                   .WithMany(l => l.Quotes)
                   .HasForeignKey(q => q.LeadId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<QuoteItem>(entity =>
+        {
+            entity.HasOne(qi => qi.Rate)
+                  .WithMany()
+                  .HasForeignKey(qi => qi.RateId)
                   .OnDelete(DeleteBehavior.SetNull);
         });
 

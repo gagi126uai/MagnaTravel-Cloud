@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -148,6 +148,7 @@ public class QuotesController : ControllerBase
             ServiceType = request.ServiceType,
             Description = request.Description,
             SupplierId = await ResolveOptionalIdAsync<Supplier>(request.SupplierPublicId, cancellationToken),
+            RateId = await ResolveOptionalIdAsync<Rate>(request.RateId, cancellationToken),
             Quantity = request.Quantity,
             UnitCost = request.UnitCost,
             UnitPrice = request.UnitPrice,
@@ -254,6 +255,7 @@ public class QuotesController : ControllerBase
                     Description = item.Description,
                     SupplierPublicId = item.Supplier?.PublicId,
                     SupplierName = item.Supplier?.Name,
+                    RatePublicId = item.Rate?.PublicId,
                     Quantity = item.Quantity,
                     UnitCost = item.UnitCost,
                     UnitPrice = item.UnitPrice,
@@ -269,3 +271,4 @@ public class QuotesController : ControllerBase
 }
 
 public record StatusUpdateRequest(string Status);
+

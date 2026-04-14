@@ -83,6 +83,7 @@ public class QuoteItemDto
     public decimal MarkupPercent { get; set; }
     public decimal TotalCost { get; set; }
     public decimal TotalPrice { get; set; }
+    public Guid? RatePublicId { get; set; }
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; }
 }
@@ -146,5 +147,6 @@ public class UpsertQuoteItemRequest
     public decimal UnitCost { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal MarkupPercent { get; set; }
+    public string? RateId { get; set; }
     public string? Notes { get; set; }
 }
