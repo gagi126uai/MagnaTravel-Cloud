@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
@@ -131,43 +131,56 @@ public class ReservaService : IReservaService
 
     public async Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId)
     {
-        await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-        int? payerId = null;
+        var strategy = _context.Database.CreateExecutionStrategy();
 
-        if (!string.IsNullOrWhiteSpace(request.PayerId))
+        return await strategy.ExecuteAsync(async () =>
         {
-            payerId = await _context.Customers
-                .AsNoTracking()
-                .ResolveInternalIdAsync(request.PayerId, CancellationToken.None);
-
-            if (!payerId.HasValue)
+            await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            try
             {
-                throw new KeyNotFoundException("Cliente no encontrado");
+                int? payerId = null;
+
+                if (!string.IsNullOrWhiteSpace(request.PayerId))
+                {
+                    payerId = await _context.Customers
+                        .AsNoTracking()
+                        .ResolveInternalIdAsync(request.PayerId, CancellationToken.None);
+
+                    if (!payerId.HasValue)
+                    {
+                        throw new KeyNotFoundException("Cliente no encontrado");
+                    }
+                }
+
+                var numeroReserva = await GenerateNumeroReservaAsync(CancellationToken.None);
+                
+                var fileName = !string.IsNullOrWhiteSpace(request.Name) 
+                    ? request.Name 
+                    : $"Reserva {numeroReserva}";
+
+                var file = new Reserva
+                {
+                    Name = fileName,
+                    NumeroReserva = numeroReserva,
+                    PayerId = payerId,
+                    ResponsibleUserId = createdByUserId,
+                    StartDate = request.StartDate,
+                    Description = request.Description,
+                    Status = EstadoReserva.Reserved
+                };
+                
+                _context.Reservas.Add(file);
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+                
+                return file;
             }
-        }
-
-        var numeroReserva = await GenerateNumeroReservaAsync(CancellationToken.None);
-        
-        var fileName = !string.IsNullOrWhiteSpace(request.Name) 
-            ? request.Name 
-            : $"Reserva {numeroReserva}";
-
-        var file = new Reserva
-        {
-            Name = fileName,
-            NumeroReserva = numeroReserva,
-            PayerId = payerId,
-            ResponsibleUserId = createdByUserId,
-            StartDate = request.StartDate,
-            Description = request.Description,
-            Status = EstadoReserva.Reserved
-        };
-        
-        _context.Reservas.Add(file);
-        await _context.SaveChangesAsync();
-        await transaction.CommitAsync();
-        
-        return file;
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request, CancellationToken ct = default)
@@ -503,48 +516,53 @@ public class ReservaService : IReservaService
 
     public async Task DeleteReservaAsync(int id)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync();
-        try
+        var strategy = _context.Database.CreateExecutionStrategy();
+
+        await strategy.ExecuteAsync(async () =>
         {
-            var file = await _context.Reservas
-                .Include(f => f.Payments)
-                .Include(f => f.Servicios)
-                .Include(f => f.Passengers)
-                .Include(f => f.FlightSegments)
-                .Include(f => f.HotelBookings)
-                .Include(f => f.TransferBookings)
-                .Include(f => f.PackageBookings)
-                .FirstOrDefaultAsync(f => f.Id == id);
-
-            if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-
-            if (file.Status != EstadoReserva.Reserved && file.Status != EstadoReserva.Budget)
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            try
             {
-                throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado.");
-            }
+                var file = await _context.Reservas
+                    .Include(f => f.Payments)
+                    .Include(f => f.Servicios)
+                    .Include(f => f.Passengers)
+                    .Include(f => f.FlightSegments)
+                    .Include(f => f.HotelBookings)
+                    .Include(f => f.TransferBookings)
+                    .Include(f => f.PackageBookings)
+                    .FirstOrDefaultAsync(f => f.Id == id);
 
-            if (file.Payments.Any())
+                if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+
+                if (file.Status != EstadoReserva.Reserved && file.Status != EstadoReserva.Budget)
+                {
+                    throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado.");
+                }
+
+                if (file.Payments.Any())
+                {
+                    throw new InvalidOperationException("No se puede eliminar una Reserva con pagos registrados. Elimine los pagos primero.");
+                }
+
+                if (file.Servicios.Any()) _context.Servicios.RemoveRange(file.Servicios);
+                if (file.Passengers.Any()) _context.Passengers.RemoveRange(file.Passengers);
+                if (file.FlightSegments.Any()) _context.FlightSegments.RemoveRange(file.FlightSegments);
+                if (file.HotelBookings.Any()) _context.HotelBookings.RemoveRange(file.HotelBookings);
+                if (file.TransferBookings.Any()) _context.TransferBookings.RemoveRange(file.TransferBookings);
+                if (file.PackageBookings.Any()) _context.PackageBookings.RemoveRange(file.PackageBookings);
+
+                _context.Reservas.Remove(file);
+                
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
             {
-                throw new InvalidOperationException("No se puede eliminar una Reserva con pagos registrados. Elimine los pagos primero.");
+                await transaction.RollbackAsync();
+                throw;
             }
-
-            if (file.Servicios.Any()) _context.Servicios.RemoveRange(file.Servicios);
-            if (file.Passengers.Any()) _context.Passengers.RemoveRange(file.Passengers);
-            if (file.FlightSegments.Any()) _context.FlightSegments.RemoveRange(file.FlightSegments);
-            if (file.HotelBookings.Any()) _context.HotelBookings.RemoveRange(file.HotelBookings);
-            if (file.TransferBookings.Any()) _context.TransferBookings.RemoveRange(file.TransferBookings);
-            if (file.PackageBookings.Any()) _context.PackageBookings.RemoveRange(file.PackageBookings);
-
-            _context.Reservas.Remove(file);
-            
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-        }
-        catch (Exception)
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        });
     }
 
     public async Task UpdateBalanceAsync(int reservaId)
