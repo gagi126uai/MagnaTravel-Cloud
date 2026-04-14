@@ -23,7 +23,7 @@ const calculateNights = (checkIn, checkOut) => {
 };
 
 // ================== BUSCADOR DE TARIFAS ==================
-function RateSelector({ serviceType, supplierId, onSelect, suppliers, disabled }) {
+function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
     const [rates, setRates] = useState([]);
     const [search, setSearch] = useState("");
     const [loading, setLoading] = useState(false);
@@ -37,6 +37,7 @@ function RateSelector({ serviceType, supplierId, onSelect, suppliers, disabled }
         setLoading(true);
         try {
             const params = new URLSearchParams();
+            // Normalize service type for backend (remove accents if any, though we'll pass values from SERVICE_TYPES)
             params.append("serviceType", serviceType);
             params.append("supplierId", supplierId);
             if (search) params.append("query", search);
@@ -50,61 +51,76 @@ function RateSelector({ serviceType, supplierId, onSelect, suppliers, disabled }
     }, [serviceType, supplierId, search]);
 
     useEffect(() => {
-        if (showDropdown) searchRates();
-    }, [showDropdown, searchRates]);
+        if (showDropdown && supplierId) searchRates();
+    }, [showDropdown, supplierId, searchRates]);
 
     return (
         <div className="relative">
-            <label className={labelClass}>Vincular Tarifario (Opcional)</label>
+            <label className={labelClass}>Vincular Tarifario</label>
             <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input
                     type="text"
-                    className={`${inputClass} pl-10`}
-                    placeholder="Buscar tarifa por nombre, destino..."
+                    className={`${inputClass} pl-10 border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/20`}
+                    placeholder={`Buscar en tarifario de ${serviceType}...`}
                     value={search}
                     onChange={(e) => {
                         setSearch(e.target.value);
                         setShowDropdown(true);
                     }}
                     onFocus={() => setShowDropdown(true)}
-                    disabled={disabled}
+                    disabled={disabled || !supplierId}
                 />
+                {loading && (
+                    <div className="absolute right-3 top-2.5">
+                        <RefreshCw className="h-4 w-4 text-indigo-500 animate-spin" />
+                    </div>
+                )}
             </div>
 
-            {showDropdown && rates.length > 0 && (
-                <div className="absolute z-30 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg max-h-60 overflow-y-auto">
-                    {rates.map((rate) => {
-                        const isExpired = rate.validUntil && new Date(rate.validUntil) < new Date();
-                        return (
-                            <button
-                                key={rate.id}
-                                type="button"
-                                onClick={() => {
-                                    onSelect(rate);
-                                    setSearch(rate.productName);
-                                    setShowDropdown(false);
-                                }}
-                                className={`w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors
-                                    ${isExpired ? "bg-red-50 dark:bg-red-900/10 cursor-not-allowed opacity-60" : "hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer"}`}
-                            >
-                                <div className="flex justify-between items-start">
-                                    <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
-                                    {isExpired && (
-                                        <span className="ml-2 px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 ring-1 ring-red-500/20">
-                                            VENCIDA
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1 mt-1">
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">Costo: ${rate.netCost}</span>
-                                        <span className="text-indigo-600 dark:text-indigo-400 font-medium">Venta: ${rate.salePrice}</span>
+            {showDropdown && supplierId && (
+                <div className="absolute z-30 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg max-h-68 overflow-y-auto overflow-x-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                    {rates.length === 0 ? (
+                        <div className="p-4 text-center text-sm text-slate-500">
+                            {loading ? "Buscando tarifas..." : "No se encontraron tarifas para este proveedor."}
+                        </div>
+                    ) : (
+                        rates.map((rate) => {
+                            const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
+                            return (
+                                <button
+                                    key={rate.publicId}
+                                    type="button"
+                                    onClick={() => {
+                                        onSelect(rate);
+                                        setSearch(rate.productName || rate.hotelName || "");
+                                        setShowDropdown(false);
+                                    }}
+                                    className={`w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors
+                                        ${isExpired ? "opacity-60 cursor-not-allowed bg-slate-50 dark:bg-slate-900/50" : "hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer"}`}
+                                    disabled={isExpired}
+                                >
+                                    <div className="flex justify-between items-start mb-1">
+                                        <div className="font-bold text-slate-900 dark:text-white truncate">
+                                            {rate.serviceType === "Hotel" ? rate.hotelName : rate.productName}
+                                        </div>
+                                        {isExpired && (
+                                            <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700">VENCIDO</span>
+                                        )}
                                     </div>
-                                </div>
-                            </button>
-                        );
-                    })}
+                                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                        {rate.city && <span>📍 {rate.city}</span>}
+                                        {rate.roomType && <span>🛏️ {rate.roomType}</span>}
+                                        {rate.airline && <span>✈️ {rate.airline}</span>}
+                                        <div className="flex items-center gap-2 font-mono">
+                                            <span className="text-emerald-600 font-bold">NET: ${rate.netCost}</span>
+                                            <span className="text-indigo-600 font-bold">VTA: ${rate.salePrice}</span>
+                                        </div>
+                                    </div>
+                                </button>
+                            );
+                        })
+                    )}
                 </div>
             )}
         </div>
@@ -124,7 +140,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     </select>
                 </div>
             </div>
-            <RateSelector serviceType="Aéreo" supplierId={form.supplierId} onSelect={onRateSelect} suppliers={suppliers} disabled={disabled} />
+            <RateSelector serviceType={form.serviceType || "Aereo"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div>
                     <label className={labelClass}>Origen</label>
@@ -159,7 +175,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     </select>
                 </div>
             </div>
-            <RateSelector serviceType="Hotel" supplierId={form.supplierId} onSelect={onRateSelect} suppliers={suppliers} disabled={disabled} />
+            <RateSelector serviceType={form.serviceType || "Hotel"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Nombre Hotel</label>
@@ -206,7 +222,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     </select>
                 </div>
             </div>
-            <RateSelector serviceType="Traslado" supplierId={form.supplierId} onSelect={onRateSelect} suppliers={suppliers} disabled={disabled} />
+            <RateSelector serviceType={form.serviceType || "Traslado"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Pick-up</label>
@@ -241,7 +257,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     </select>
                 </div>
             </div>
-            <RateSelector serviceType="Paquete" supplierId={form.supplierId} onSelect={onRateSelect} suppliers={suppliers} disabled={disabled} />
+            <RateSelector serviceType={form.serviceType || "Paquete"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
             <div className="grid grid-cols-1 gap-4">
                 <div>
                     <label className={labelClass}>Nombre del Paquete</label>
@@ -402,12 +418,32 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
     const handleRateSelect = (rate) => {
         setSelectedRate(rate);
-        setForm(prev => ({ 
-            ...prev, 
-            rateId: rate.publicId?.toString() || "",
-            netCost: rate.netCost,
-            salePrice: rate.salePrice
-        }));
+        setForm(prev => {
+            const newForm = { 
+                ...prev, 
+                rateId: rate.publicId?.toString() || "",
+                netCost: rate.netCost,
+                salePrice: rate.salePrice,
+                description: rate.description || prev.description || ""
+            };
+
+            // Auto-populate based on service type
+            if (serviceType === "Hotel") {
+                newForm.hotelName = rate.hotelName || rate.productName;
+                newForm.city = rate.city || prev.city;
+            } else if (serviceType === "Paquete") {
+                newForm.packageName = rate.productName;
+            } else if (serviceType === "Aereo") {
+                newForm.origin = rate.origin || prev.origin;
+                newForm.destination = rate.destination || prev.destination;
+                newForm.airline = rate.airline || prev.airline;
+            } else if (serviceType === "Traslado") {
+                newForm.pickupLocation = rate.pickupLocation || prev.pickupLocation;
+                newForm.dropoffLocation = rate.dropoffLocation || prev.dropoffLocation;
+            }
+
+            return newForm;
+        });
     };
 
     const applyCommission = () => {
@@ -478,7 +514,14 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
                 <div className="flex border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
                     {SERVICE_TYPES.map(({ value, label, icon: Icon, color }) => (
-                        <button key={value} type="button" onClick={() => !serviceToEdit && setServiceType(value)} disabled={!!serviceToEdit}
+                        <button key={value} type="button" 
+                            onClick={() => {
+                                if (!serviceToEdit) {
+                                    setServiceType(value);
+                                    setForm(prev => ({ ...prev, serviceType: value }));
+                                }
+                            }} 
+                            disabled={!!serviceToEdit}
                             className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-all ${serviceType === value ? `border-b-3 border-${color}-500 text-${color}-600 bg-white dark:bg-slate-900` : "text-slate-500"}`}>
                             <Icon className="h-4 w-4" /> <span className="hidden sm:inline">{label}</span>
                         </button>
