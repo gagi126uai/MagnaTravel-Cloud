@@ -15,6 +15,8 @@ public class BookingService : IBookingService
     private readonly IRepository<HotelBooking> _hotelRepo;
     private readonly IRepository<PackageBooking> _packageRepo;
     private readonly IRepository<TransferBooking> _transferRepo;
+    private readonly IRepository<Reserva> _fileRepo;
+    private readonly IRepository<Supplier> _supplierRepo;
     private readonly IReservaService _reservaService;
     private readonly AppDbContext _db;
     private readonly IMapper _mapper;
