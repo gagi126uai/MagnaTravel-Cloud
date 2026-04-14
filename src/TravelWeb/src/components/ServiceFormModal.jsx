@@ -176,6 +176,30 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                 </div>
             </div>
             <RateSelector serviceType={form.serviceType || "Hotel"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className={labelClass}>Tipo Habitación *</label>
+                    <select className={inputClass} value={form.roomType || ""} onChange={e => setForm({ ...form, roomType: e.target.value })} required disabled={disabled}>
+                        <option value="">Seleccionar...</option>
+                        <option value="Single">Single</option>
+                        <option value="Doble">Doble</option>
+                        <option value="Triple">Triple</option>
+                        <option value="Cuádruple">Cuádruple</option>
+                        <option value="Suite">Suite</option>
+                    </select>
+                </div>
+                <div>
+                    <label className={labelClass}>Régimen *</label>
+                    <select className={inputClass} value={form.mealPlan || ""} onChange={e => setForm({ ...form, mealPlan: e.target.value })} required disabled={disabled}>
+                        <option value="">Seleccionar...</option>
+                        <option value="Solo Alojamiento">Solo Alojamiento</option>
+                        <option value="Desayuno">Desayuno</option>
+                        <option value="Media Pensión">Media Pensión</option>
+                        <option value="Pensión Completa">Pensión Completa</option>
+                        <option value="All Inclusive">All Inclusive</option>
+                    </select>
+                </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label className={labelClass}>Nombre Hotel</label>
@@ -253,7 +277,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     <label className={labelClass}>Proveedor *</label>
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required disabled={disabled}>
                         <option value="">Seleccionar proveedor...</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
+                        {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
                     </select>
                 </div>
             </div>
@@ -325,7 +349,20 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
 // ================== MODAL PRINCIPAL ==================
 export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaStatus, suppliers, onSuccess, initialServiceType, serviceToEdit }) {
     const [serviceType, setServiceType] = useState(initialServiceType || "Aereo");
-    const [form, setForm] = useState({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1, checkIn: "", checkOut: "" });
+    const [form, setForm] = useState({ 
+        supplierId: "", 
+        netCost: 0, 
+        salePrice: 0, 
+        unitNetCost: 0, 
+        unitSalePrice: 0, 
+        rooms: 1, 
+        adults: 2, 
+        children: 0, 
+        roomType: "Doble", 
+        mealPlan: "Desayuno", 
+        checkIn: "", 
+        checkOut: "" 
+    });
     const [selectedRate, setSelectedRate] = useState(null); 
     const [currentRateInSystem, setCurrentRateInSystem] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -355,6 +392,20 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     useEffect(() => {
         if (form.supplierId) fetchCommission();
     }, [fetchCommission, form.supplierId]);
+
+    useEffect(() => {
+        if (serviceType === "Hotel") {
+            const nights = calculateNights(form.checkIn, form.checkOut);
+            const qty = (nights || 1) * (form.rooms || 1);
+            if (form.unitNetCost > 0 || form.unitSalePrice > 0) {
+                setForm(prev => ({
+                    ...prev,
+                    netCost: Math.round(prev.unitNetCost * qty * 100) / 100,
+                    salePrice: Math.round(prev.unitSalePrice * qty * 100) / 100
+                }));
+            }
+        }
+    }, [form.checkIn, form.checkOut, form.rooms, form.unitNetCost, form.unitSalePrice, serviceType]);
 
     useEffect(() => {
         const checkPriceSync = async (rateId) => {
@@ -387,7 +438,19 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 if (serviceToEdit.ratePublicId) checkPriceSync(serviceToEdit.ratePublicId);
             } else {
                 setServiceType(initialServiceType || "Aereo");
-                setForm({ supplierId: "", netCost: 0, salePrice: 0, rooms: 1, status: initialServiceType === 'Aereo' ? 'HL' : 'Pendiente' });
+                setForm({ 
+                    supplierId: "", 
+                    netCost: 0, 
+                    salePrice: 0, 
+                    unitNetCost: 0, 
+                    unitSalePrice: 0, 
+                    rooms: 1, 
+                    adults: 2, 
+                    children: 0, 
+                    roomType: "Doble", 
+                    mealPlan: "Desayuno", 
+                    status: initialServiceType === 'Aereo' ? 'HL' : 'Pendiente' 
+                });
                 setCurrentRateInSystem(null);
             }
             setSelectedRate(null);
@@ -410,8 +473,9 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         }
         setForm(prev => ({
             ...prev,
-            netCost: currentRateInSystem.netCost * multiplier,
-            salePrice: currentRateInSystem.salePrice * multiplier
+            unitNetCost: currentRateInSystem.netCost,
+            unitSalePrice: currentRateInSystem.salePrice,
+            // netCost and salePrice will be updated by the useEffect
         }));
         showSuccess("Precios actualizados según tarifario.");
     };
@@ -422,15 +486,23 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             const newForm = { 
                 ...prev, 
                 rateId: rate.publicId?.toString() || "",
-                netCost: rate.netCost,
-                salePrice: rate.salePrice,
+                unitNetCost: rate.netCost,
+                unitSalePrice: rate.salePrice,
                 description: rate.description || prev.description || ""
             };
+
+            // If it's NOT a hotel, we don't use unit prices (yet), so we just set the total
+            if (serviceType !== "Hotel") {
+                newForm.netCost = rate.netCost;
+                newForm.salePrice = rate.salePrice;
+            }
 
             // Auto-populate based on service type
             if (serviceType === "Hotel") {
                 newForm.hotelName = rate.hotelName || rate.productName;
                 newForm.city = rate.city || prev.city;
+                if (rate.roomType) newForm.roomType = rate.roomType;
+                if (rate.mealPlan) newForm.mealPlan = rate.mealPlan;
             } else if (serviceType === "Paquete") {
                 newForm.packageName = rate.productName;
             } else if (serviceType === "Aereo") {
