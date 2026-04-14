@@ -132,7 +132,7 @@ export function useReservaDetail(reservaId, navigate) {
         reserva.hotelBookings?.forEach(h => services.push({ ...h, _type: 'Hotel', date: h.checkIn, name: h.hotelName }));
         reserva.transferBookings?.forEach(t => services.push({ ...t, _type: 'Transfer', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
         reserva.packageBookings?.forEach(p => services.push({ ...p, _type: 'Package', date: p.startDate, name: p.packageName }));
-        reserva.reservations?.forEach(r => services.push({ ...r, _type: r.serviceType || 'Generic', date: r.departureDate, name: r.description }));
+        reserva.servicios?.forEach(r => services.push({ ...r, _type: r.serviceType || 'Generic', date: r.departureDate, name: r.description }));
         return services.sort((a, b) => new Date(a.date) - new Date(b.date));
     }, [reserva]);
 

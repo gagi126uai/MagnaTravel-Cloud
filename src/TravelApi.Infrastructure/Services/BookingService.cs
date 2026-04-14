@@ -15,8 +15,7 @@ public class BookingService : IBookingService
     private readonly IRepository<HotelBooking> _hotelRepo;
     private readonly IRepository<PackageBooking> _packageRepo;
     private readonly IRepository<TransferBooking> _transferRepo;
-    private readonly IRepository<Reserva> _fileRepo;
-    private readonly IRepository<Supplier> _supplierRepo;
+    private readonly IReservaService _reservaService;
     private readonly AppDbContext _db;
     private readonly IMapper _mapper;
 
@@ -27,6 +26,7 @@ public class BookingService : IBookingService
         IRepository<TransferBooking> transferRepo,
         IRepository<Reserva> fileRepo,
         IRepository<Supplier> supplierRepo,
+        IReservaService reservaService,
         AppDbContext db,
         IMapper mapper)
     {
@@ -36,6 +36,7 @@ public class BookingService : IBookingService
         _transferRepo = transferRepo;
         _fileRepo = fileRepo;
         _supplierRepo = supplierRepo;
+        _reservaService = reservaService;
         _db = db;
         _mapper = mapper;
     }
@@ -105,6 +106,7 @@ public class BookingService : IBookingService
             }
         }
 
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<FlightSegmentDto>(flight);
     }
 
@@ -158,6 +160,7 @@ public class BookingService : IBookingService
         }
 
         await _flightRepo.UpdateAsync(flight, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<FlightSegmentDto>(flight);
     }
 
@@ -179,6 +182,7 @@ public class BookingService : IBookingService
         }
 
         await _flightRepo.DeleteAsync(flight, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
     #endregion
@@ -235,6 +239,7 @@ public class BookingService : IBookingService
             }
         }
 
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
@@ -287,6 +292,7 @@ public class BookingService : IBookingService
         }
 
         await _hotelRepo.UpdateAsync(hotel, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
@@ -308,6 +314,7 @@ public class BookingService : IBookingService
         }
 
         await _hotelRepo.DeleteAsync(hotel, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
     #endregion
@@ -357,6 +364,7 @@ public class BookingService : IBookingService
             }
         }
 
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<PackageBookingDto>(package);
     }
 
@@ -409,6 +417,7 @@ public class BookingService : IBookingService
         }
 
         await _packageRepo.UpdateAsync(package, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<PackageBookingDto>(package);
     }
 
@@ -430,6 +439,7 @@ public class BookingService : IBookingService
         }
 
         await _packageRepo.DeleteAsync(package, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
     #endregion
@@ -479,6 +489,7 @@ public class BookingService : IBookingService
             }
         }
 
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<TransferBookingDto>(transfer);
     }
 
@@ -531,6 +542,7 @@ public class BookingService : IBookingService
         }
 
         await _transferRepo.UpdateAsync(transfer, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<TransferBookingDto>(transfer);
     }
 
@@ -552,6 +564,7 @@ public class BookingService : IBookingService
         }
 
         await _transferRepo.DeleteAsync(transfer, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
     private async Task EnsureNoPaymentsAsync(int reservaId, CancellationToken ct)
