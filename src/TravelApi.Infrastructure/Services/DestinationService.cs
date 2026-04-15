@@ -468,7 +468,7 @@ public class DestinationService : IDestinationService
                 destination.Departures.Add(departure);
             }
 
-            departure.StartDate = request.StartDate;
+            departure.StartDate = NormalizeUtc(request.StartDate);
             departure.Nights = request.Nights;
             departure.TransportLabel = RequireTrimmed(request.TransportLabel, "El transporte es obligatorio.");
             departure.HotelName = RequireTrimmed(request.HotelName, "El hotel es obligatorio.");
@@ -498,6 +498,16 @@ public class DestinationService : IDestinationService
         {
             throw new InvalidOperationException("La tarifa debe ser mayor a cero.");
         }
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
     }
 
     private async Task<DestinationListItemDto> MapAdminListItemAsync(Destination destination, CancellationToken ct)

@@ -209,6 +209,17 @@ export default function PackagesPage() {
     );
   }
 
+  function upsertCountry(updatedCountry) {
+    setCountries((current) => {
+      const exists = current.some((country) => country.publicId === updatedCountry.publicId);
+      const nextCountries = exists
+        ? current.map((country) => (country.publicId === updatedCountry.publicId ? updatedCountry : country))
+        : [...current, updatedCountry];
+
+      return [...nextCountries].sort((left, right) => left.name.localeCompare(right.name, "es", { sensitivity: "base" }));
+    });
+  }
+
   function applyDestinationUpdate(updatedDestination) {
     setDestinations((current) => {
       const nextDestinations = current.map((item) =>
@@ -262,12 +273,16 @@ export default function PackagesPage() {
 
     setCountrySaving(true);
     try {
+      const isCreating = !countryForm.publicId;
       const payload = { name: countryForm.name.trim() };
       const saved = countryForm.publicId
         ? await api.put(`/countries/${countryForm.publicId}`, payload)
         : await api.post("/countries", payload);
 
-      await loadCountries();
+      upsertCountry(saved);
+      if (isCreating) {
+        setCountrySearch("");
+      }
       syncSelectedCountry(saved.publicId);
       closeCountryModal();
       showSuccess(countryForm.publicId ? "Pais actualizado." : "Pais creado.");

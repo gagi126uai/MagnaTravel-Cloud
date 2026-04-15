@@ -95,6 +95,48 @@ public class DestinationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_ShouldNormalizeUnspecifiedDepartureDatesToUtc()
+    {
+        await using var context = CreateContext();
+        var country = BuildCountry();
+        var destination = BuildPublishedReadyDestination(country);
+
+        context.Countries.Add(country);
+        context.Destinations.Add(destination);
+        await context.SaveChangesAsync();
+
+        var service = CreateDestinationService(context);
+        var request = new DestinationUpsertRequest(
+            country.PublicId,
+            destination.Name,
+            destination.Title,
+            destination.Tagline,
+            destination.DisplayOrder,
+            destination.GeneralInfo,
+            new[]
+            {
+                new DestinationDepartureUpsertRequest(
+                    destination.Departures.Single().PublicId,
+                    new DateTime(2026, 7, 18),
+                    destination.Departures.Single().Nights,
+                    destination.Departures.Single().TransportLabel,
+                    destination.Departures.Single().HotelName,
+                    destination.Departures.Single().MealPlan,
+                    destination.Departures.Single().RoomBase,
+                    destination.Departures.Single().Currency,
+                    destination.Departures.Single().SalePrice,
+                    destination.Departures.Single().IsPrimary,
+                    destination.Departures.Single().IsActive)
+            },
+            destination.Slug);
+
+        var updated = await service.UpdateAsync(destination.Id, request, CancellationToken.None);
+
+        Assert.NotNull(updated);
+        Assert.Equal(DateTimeKind.Utc, updated!.Departures.Single().StartDate.Kind);
+    }
+
+    [Fact]
     public async Task GetPublicPackageBySlugAsync_ShouldReturnOnlyPublishedActiveDepartures()
     {
         await using var context = CreateContext();
