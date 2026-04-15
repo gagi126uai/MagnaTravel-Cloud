@@ -209,6 +209,34 @@ export default function PackagesPage() {
     );
   }
 
+  function applyDestinationUpdate(updatedDestination) {
+    setDestinations((current) => {
+      const nextDestinations = current.map((item) =>
+        item.publicId === updatedDestination.publicId ? updatedDestination : item
+      );
+
+      setCountries((currentCountries) =>
+        currentCountries.map((country) => {
+          if (country.publicId !== updatedDestination.countryPublicId) {
+            return country;
+          }
+
+          const totalDestinations = nextDestinations.length;
+          const publishedDestinations = nextDestinations.filter((item) => item.isPublished).length;
+
+          return {
+            ...country,
+            totalDestinations,
+            publishedDestinations,
+            draftDestinations: Math.max(totalDestinations - publishedDestinations, 0),
+          };
+        })
+      );
+
+      return nextDestinations;
+    });
+  }
+
   function openCreateCountryModal() {
     setCountryForm(emptyCountryForm);
     setCountryModalOpen(true);
@@ -338,9 +366,7 @@ export default function PackagesPage() {
 
     try {
       const updated = await api.patch(`/destinations/${destination.publicId}/publish`);
-      setDestinations((current) =>
-        current.map((item) => (item.publicId === updated.publicId ? updated : item))
-      );
+      applyDestinationUpdate(updated);
       showSuccess("El destino ya esta visible en el sitio.");
     } catch (error) {
       showError(error.message || "No pudimos mostrar el destino en el sitio.");
@@ -406,9 +432,7 @@ export default function PackagesPage() {
 
     try {
       const updated = await api.patch(`/destinations/${destination.publicId}/unpublish`);
-      setDestinations((current) =>
-        current.map((item) => (item.publicId === updated.publicId ? updated : item))
-      );
+      applyDestinationUpdate(updated);
       showSuccess("El destino dejo de mostrarse en el sitio.");
     } catch (error) {
       showError(error.message || "No pudimos retirar el destino del sitio.");

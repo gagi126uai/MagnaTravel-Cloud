@@ -27,15 +27,18 @@ public class DestinationService : IDestinationService
     private readonly AppDbContext _db;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<DestinationService> _logger;
+    private readonly ICatalogCacheInvalidator _catalogCacheInvalidator;
 
     public DestinationService(
         AppDbContext db,
         IWebHostEnvironment environment,
-        ILogger<DestinationService> logger)
+        ILogger<DestinationService> logger,
+        ICatalogCacheInvalidator catalogCacheInvalidator)
     {
         _db = db;
         _environment = environment;
         _logger = logger;
+        _catalogCacheInvalidator = catalogCacheInvalidator;
     }
 
     public async Task<IReadOnlyList<DestinationListItemDto>> GetDestinationsByCountryIdAsync(int countryId, CancellationToken ct)
@@ -79,6 +82,7 @@ public class DestinationService : IDestinationService
 
         _db.Destinations.Add(destination);
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
 
         return await MapAdminDetailAsync(destination, ct);
     }
@@ -108,6 +112,7 @@ public class DestinationService : IDestinationService
         }
 
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
         return await MapAdminDetailAsync(destination, ct);
     }
 
@@ -130,6 +135,7 @@ public class DestinationService : IDestinationService
         destination.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
         return await MapAdminDetailAsync(destination, ct);
     }
 
@@ -146,6 +152,7 @@ public class DestinationService : IDestinationService
         destination.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
         return await MapAdminDetailAsync(destination, ct);
     }
 
@@ -215,6 +222,7 @@ public class DestinationService : IDestinationService
         destination.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
         return await MapAdminDetailAsync(destination, ct);
     }
 

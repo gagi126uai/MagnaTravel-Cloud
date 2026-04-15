@@ -11,10 +11,14 @@ public class CountryService : ICountryService
 {
     private static readonly Regex SlugCleanupRegex = new("[^a-z0-9]+", RegexOptions.Compiled);
     private readonly AppDbContext _db;
+    private readonly ICatalogCacheInvalidator _catalogCacheInvalidator;
 
-    public CountryService(AppDbContext db)
+    public CountryService(
+        AppDbContext db,
+        ICatalogCacheInvalidator catalogCacheInvalidator)
     {
         _db = db;
+        _catalogCacheInvalidator = catalogCacheInvalidator;
     }
 
     public async Task<IReadOnlyList<CountryListItemDto>> GetCountriesAsync(string? search, CancellationToken ct)
@@ -62,6 +66,7 @@ public class CountryService : ICountryService
 
         _db.Countries.Add(country);
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
 
         return MapCountryDetail(country);
     }
@@ -79,6 +84,7 @@ public class CountryService : ICountryService
 
         await ApplyRequestAsync(country, request, ct);
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
         return MapCountryDetail(country);
     }
 
@@ -97,6 +103,7 @@ public class CountryService : ICountryService
 
         country.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
         return MapCountryDetail(country);
     }
 
@@ -112,6 +119,7 @@ public class CountryService : ICountryService
         country.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+        await _catalogCacheInvalidator.InvalidateAsync(ct);
         return MapCountryDetail(country);
     }
 

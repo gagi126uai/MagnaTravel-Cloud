@@ -140,7 +140,7 @@ export default function DestinationEditorPage() {
     }
 
     return { label: "En preparacion", tone: "amber" };
-  }, [form.canPublish, form.isPublished]);
+  }, [form.canPublish, form.isCountryPublished, form.isPublished]);
 
   const backPath = form.countryPublicId ? `/packages?country=${form.countryPublicId}` : "/packages";
 

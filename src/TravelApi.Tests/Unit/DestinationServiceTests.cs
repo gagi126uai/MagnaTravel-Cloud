@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
+using TravelApi.Application.Interfaces;
 using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -20,6 +21,7 @@ public class DestinationServiceTests : IDisposable
     private readonly string _contentRootPath;
     private readonly Mock<IWebHostEnvironment> _environmentMock = new();
     private readonly Mock<ILogger<DestinationService>> _loggerMock = new();
+    private readonly Mock<ICatalogCacheInvalidator> _catalogCacheInvalidatorMock = new();
 
     public DestinationServiceTests()
     {
@@ -50,6 +52,46 @@ public class DestinationServiceTests : IDisposable
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.PublishAsync(destination.Id, CancellationToken.None));
 
         Assert.Contains("imagen principal", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PublishAsync_ShouldInvalidateCatalogCache()
+    {
+        await using var context = CreateContext();
+        var country = BuildCountry();
+        var destination = BuildPublishedReadyDestination(country);
+        destination.IsPublished = false;
+        destination.PublishedAt = null;
+
+        context.Countries.Add(country);
+        context.Destinations.Add(destination);
+        await context.SaveChangesAsync();
+
+        var service = CreateDestinationService(context);
+        await service.PublishAsync(destination.Id, CancellationToken.None);
+
+        _catalogCacheInvalidatorMock.Verify(
+            invalidator => invalidator.InvalidateAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task CountryPublishAsync_ShouldInvalidateCatalogCache()
+    {
+        await using var context = CreateContext();
+        var country = BuildCountry();
+        country.IsPublished = false;
+        country.PublishedAt = null;
+
+        context.Countries.Add(country);
+        await context.SaveChangesAsync();
+
+        var service = new CountryService(context, _catalogCacheInvalidatorMock.Object);
+        await service.PublishAsync(country.Id, CancellationToken.None);
+
+        _catalogCacheInvalidatorMock.Verify(
+            invalidator => invalidator.InvalidateAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -170,7 +212,7 @@ public class DestinationServiceTests : IDisposable
         context.Destinations.AddRange(firstDestination, secondDestination);
         await context.SaveChangesAsync();
 
-        var service = new CountryService(context);
+        var service = new CountryService(context, _catalogCacheInvalidatorMock.Object);
         var result = await service.GetPublicCountryBySlugAsync(country.Slug, CancellationToken.None);
 
         Assert.NotNull(result);
@@ -198,7 +240,11 @@ public class DestinationServiceTests : IDisposable
 
     private DestinationService CreateDestinationService(AppDbContext context)
     {
-        return new DestinationService(context, _environmentMock.Object, _loggerMock.Object);
+        return new DestinationService(
+            context,
+            _environmentMock.Object,
+            _loggerMock.Object,
+            _catalogCacheInvalidatorMock.Object);
     }
 
     private static Country BuildCountry(string name = "Republica Dominicana", string slug = "republica-dominicana")
