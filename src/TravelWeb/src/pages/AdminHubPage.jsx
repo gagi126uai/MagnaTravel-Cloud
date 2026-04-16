@@ -41,31 +41,6 @@ import RolesPermissionsTab from "../components/RolesPermissionsTab";
 import AuditPage from "./AuditPage";
 import { getPublicId } from "../lib/publicIds";
 
-const FormField = ({ label, icon: Icon, value, onChange, placeholder, type = "text", sub }) => (
-  <div className="space-y-2">
-    <div className="flex justify-between items-end">
-      <label className="text-sm font-bold tracking-tight text-slate-700 dark:text-slate-300 ml-1">
-        {label}
-      </label>
-      {sub && <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase">{sub}</span>}
-    </div>
-    <div className="relative group">
-      {Icon && (
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 transition-colors group-focus-within:text-indigo-600">
-          <Icon className="h-5 w-5 text-slate-400" />
-        </div>
-      )}
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={`w-full h-13 ${Icon ? 'pl-12' : 'px-5'} pr-5 rounded-2xl bg-white dark:bg-slate-950 border-2 border-slate-100 dark:border-slate-800 text-sm font-medium transition-all focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 placeholder:text-slate-400`}
-      />
-    </div>
-  </div>
-);
-
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
   { value: "Aereo", label: "Aéreo" },
