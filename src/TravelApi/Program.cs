@@ -71,6 +71,7 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
+builder.Services.AddSignalR();
 
 builder.Services.AddExceptionHandler<TravelApi.Middleware.GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
