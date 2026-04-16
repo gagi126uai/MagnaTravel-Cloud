@@ -46,16 +46,31 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                         <tr key={`${svc._type}-${getPublicId(svc)}`} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
                                             <td className="py-4 align-middle whitespace-nowrap pr-4">
                                                 <div className="flex items-center">
-                                                    {svc._type === 'Flight' && <Plane className="w-4 h-4 text-slate-400 mr-2" />}
-                                                    {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-slate-400 mr-2" />}
-                                                    {svc._type === 'Transfer' && <Car className="w-4 h-4 text-slate-400 mr-2" />}
-                                                    {svc._type === 'Package' && <Package className="w-4 h-4 text-slate-400 mr-2" />}
-                                                    <span className="text-sm font-medium text-gray-700 dark:text-slate-300">{svc._type}</span>
+                                                    {(svc._type === 'Aereo' || svc._type === 'Flight') && <Plane className="w-4 h-4 text-sky-500 mr-2" />}
+                                                    {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-amber-500 mr-2" />}
+                                                    {(svc._type === 'Traslado' || svc._type === 'Transfer') && <Car className="w-4 h-4 text-emerald-500 mr-2" />}
+                                                    {(svc._type === 'Paquete' || svc._type === 'Package') && <Package className="w-4 h-4 text-violet-500 mr-2" />}
+                                                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{svc._type}</span>
                                                 </div>
                                             </td>
                                             <td className="py-4 align-middle">
-                                                <div className="text-sm font-medium text-gray-900 dark:text-white line-clamp-1">{svc.name}</div>
-                                                {svc.confirmationNumber && <div className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5"><ShieldCheck className="w-3 h-3" /> Conf: {svc.confirmationNumber}</div>}
+                                                <div className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-1">{svc.name}</div>
+                                                <div className="flex flex-wrap gap-2 mt-1">
+                                                    {svc.pnr && (
+                                                        <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded font-mono font-bold">PNR: {svc.pnr}</span>
+                                                    )}
+                                                    {svc.confirmationNumber && (
+                                                        <span className="text-[10px] bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1 font-medium">
+                                                            <ShieldCheck className="w-3 h-3" /> {svc.confirmationNumber}
+                                                        </span>
+                                                    )}
+                                                    {(svc._type === 'Aereo' || svc._type === 'Flight') && svc.origin && (
+                                                        <span className="text-[10px] text-slate-400">{svc.origin} ➔ {svc.destination}</span>
+                                                    )}
+                                                    {(svc._type === 'Traslado' || svc._type === 'Transfer') && svc.pickupLocation && (
+                                                        <span className="text-[10px] text-slate-400">{svc.pickupLocation} ➔ {svc.dropoffLocation}</span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap text-sm text-gray-600 dark:text-slate-400">
                                                 {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
@@ -100,10 +115,10 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                 <div key={`${svc._type}-${getPublicId(svc)}`} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
                                     <div className="flex justify-between mb-2">
                                         <div className="flex items-center gap-2">
-                                            {svc._type === 'Flight' && <Plane className="w-4 h-4 text-blue-500" />}
-                                            {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-emerald-500" />}
-                                            {svc._type === 'Transfer' && <Car className="w-4 h-4 text-amber-500" />}
-                                            {svc._type === 'Package' && <Package className="w-4 h-4 text-purple-500" />}
+                                            {(svc._type === 'Aereo' || svc._type === 'Flight') && <Plane className="w-4 h-4 text-sky-500" />}
+                                            {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-amber-500" />}
+                                            {(svc._type === 'Traslado' || svc._type === 'Transfer') && <Car className="w-4 h-4 text-emerald-500" />}
+                                            {(svc._type === 'Paquete' || svc._type === 'Package') && <Package className="w-4 h-4 text-violet-500" />}
                                             <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">{svc._type}</span>
                                         </div>
                                         <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${

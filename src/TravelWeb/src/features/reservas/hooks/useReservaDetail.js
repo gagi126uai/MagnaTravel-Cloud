@@ -94,12 +94,16 @@ export function useReservaDetail(reservaId, navigate) {
         try {
             let endpoint = "";
             const servicePublicId = getPublicId(service);
-            if (service._type === 'Flight') endpoint = `/reservas/${reservaId}/flights/${servicePublicId}`;
-            else if (service._type === 'Hotel') endpoint = `/reservas/${reservaId}/hotels/${servicePublicId}`;
-            else if (service._type === 'Transfer') endpoint = `/reservas/${reservaId}/transfers/${servicePublicId}`;
-            else if (service._type === 'Package') endpoint = `/reservas/${reservaId}/packages/${servicePublicId}`;
-
-            if (!endpoint) return;
+            const typeKey = service._type; // Expected: Aereo, Hotel, Traslado, Paquete
+            
+            if (typeKey === 'Aereo' || typeKey === 'Flight') endpoint = `/reservas/${reservaId}/flights/${servicePublicId}`;
+            else if (typeKey === 'Hotel') endpoint = `/reservas/${reservaId}/hotels/${servicePublicId}`;
+            else if (typeKey === 'Traslado' || typeKey === 'Transfer') endpoint = `/reservas/${reservaId}/transfers/${servicePublicId}`;
+            else if (typeKey === 'Paquete' || typeKey === 'Package') endpoint = `/reservas/${reservaId}/packages/${servicePublicId}`;
+            else {
+                // Fallback for generic services or unidentified types
+                endpoint = `/reservas/${reservaId}/services/${servicePublicId}`;
+            }
 
             await api.delete(endpoint);
             await fetchReserva();
@@ -128,11 +132,21 @@ export function useReservaDetail(reservaId, navigate) {
     const allServices = useMemo(() => {
         if (!reserva) return [];
         const services = [];
-        reserva.flightSegments?.forEach(f => services.push({ ...f, _type: f.sourceKind || 'Flight', date: f.departureTime, name: `${f.airlineName || ''} ${f.flightNumber || ''}`.trim() }));
-        reserva.hotelBookings?.forEach(h => services.push({ ...h, _type: h.sourceKind || 'Hotel', date: h.checkIn, name: h.hotelName }));
-        reserva.transferBookings?.forEach(t => services.push({ ...t, _type: t.sourceKind || 'Transfer', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
-        reserva.packageBookings?.forEach(p => services.push({ ...p, _type: p.sourceKind || 'Package', date: p.startDate, name: p.packageName }));
-        reserva.servicios?.forEach(r => services.push({ ...r, _type: r.sourceKind || r.serviceType || 'Generic', date: r.departureDate, name: r.description }));
+        reserva.flightSegments?.forEach(f => services.push({ ...f, _type: 'Aereo', date: f.departureTime, name: `${f.airlineName || ''} ${f.flightNumber || ''}`.trim() }));
+        reserva.hotelBookings?.forEach(h => services.push({ ...h, _type: 'Hotel', date: h.checkIn, name: h.hotelName }));
+        reserva.transferBookings?.forEach(t => services.push({ ...t, _type: 'Traslado', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
+        reserva.packageBookings?.forEach(p => services.push({ ...p, _type: 'Paquete', date: p.startDate, name: p.packageName }));
+        reserva.servicios?.forEach(r => {
+            let mappedType = 'Generic';
+            const rawType = (r.sourceKind || r.serviceType || '').toLowerCase();
+            if (rawType.includes('aer') || rawType.includes('vuelo')) mappedType = 'Aereo';
+            else if (rawType.includes('hot') || rawType.includes('aloj')) mappedType = 'Hotel';
+            else if (rawType.includes('tras') || rawType.includes('tran')) mappedType = 'Traslado';
+            else if (rawType.includes('paq')) mappedType = 'Paquete';
+            
+            services.push({ ...r, _type: mappedType, date: r.departureDate, name: r.description });
+        });
+
         return services.sort((a, b) => new Date(a.date) - new Date(b.date));
     }, [reserva]);
 

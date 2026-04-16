@@ -245,7 +245,9 @@ public class ReservaService : IReservaService
             .Include(r => r.Reserva)
             .FirstOrDefaultAsync(r => r.Id == serviceId);
 
+
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
+
 
         int? supplierId = null;
         if (!string.IsNullOrWhiteSpace(request.SupplierId))
@@ -280,6 +282,80 @@ public class ReservaService : IReservaService
     }
 
     public async Task RemoveServiceAsync(int serviceId, CancellationToken ct = default)
+    {
+        // 1. Try generic service
+        var service = await _context.Servicios.FindAsync(new object[] { serviceId }, ct);
+        if (service != null)
+        {
+            await EnsureNoPaymentsAsync(service.ReservaId ?? 0, ct);
+            _context.Servicios.Remove(service);
+            var resId = service.ReservaId;
+            await _context.SaveChangesAsync(ct);
+            if (resId.HasValue) await UpdateBalanceAsync(resId.Value);
+            return;
+        }
+
+        // 2. Try Flight
+        var flight = await _context.FlightSegments.FindAsync(new object[] { serviceId }, ct);
+        if (flight != null)
+        {
+            await EnsureNoPaymentsAsync(flight.ReservaId, ct);
+            _context.FlightSegments.Remove(flight);
+            var resId = flight.ReservaId;
+            await _context.SaveChangesAsync(ct);
+            await UpdateBalanceAsync(resId);
+            return;
+        }
+
+        // 3. Try Hotel
+        var hotel = await _context.HotelBookings.FindAsync(new object[] { serviceId }, ct);
+        if (hotel != null)
+        {
+            await EnsureNoPaymentsAsync(hotel.ReservaId, ct);
+            _context.HotelBookings.Remove(hotel);
+            var resId = hotel.ReservaId;
+            await _context.SaveChangesAsync(ct);
+            await UpdateBalanceAsync(resId);
+            return;
+        }
+
+        // 4. Try Transfer
+        var transfer = await _context.TransferBookings.FindAsync(new object[] { serviceId }, ct);
+        if (transfer != null)
+        {
+            await EnsureNoPaymentsAsync(transfer.ReservaId, ct);
+            _context.TransferBookings.Remove(transfer);
+            var resId = transfer.ReservaId;
+            await _context.SaveChangesAsync(ct);
+            await UpdateBalanceAsync(resId);
+            return;
+        }
+
+        // 5. Try Package
+        var package = await _context.PackageBookings.FindAsync(new object[] { serviceId }, ct);
+        if (package != null)
+        {
+            await EnsureNoPaymentsAsync(package.ReservaId, ct);
+            _context.PackageBookings.Remove(package);
+            var resId = package.ReservaId;
+            await _context.SaveChangesAsync(ct);
+            await UpdateBalanceAsync(resId);
+            return;
+        }
+
+        throw new KeyNotFoundException("Servicio no encontrado en ninguna categoría.");
+    }
+
+    private async Task EnsureNoPaymentsAsync(int reservaId, CancellationToken ct)
+    {
+        if (reservaId == 0) return;
+        var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
+        if (hasPayments)
+            throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con pagos realizados.");
+    }
+
+    public async Task RemoveServiceAsync_OldVersion(int serviceId, CancellationToken ct = default)
+
     {
         var service = await _context.Servicios
             .Include(r => r.Reserva)
