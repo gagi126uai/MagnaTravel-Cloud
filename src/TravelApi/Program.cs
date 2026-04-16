@@ -349,6 +349,9 @@ builder.Services.AddScoped<IBookingService, BookingService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<ITimelineService, TimelineService>();
 builder.Services.AddScoped<EntityReferenceResolver>();
+builder.Services.AddScoped<ISensitiveDataProtector, SensitiveDataProtector>();
+builder.Services.AddScoped<IAttachmentService, AttachmentService>();
+builder.Services.AddScoped<ICatalogPackageService, CatalogPackageService>();
 builder.Services.AddHostedService<LogStreamingService>();
 builder.Services.AddHostedService<BotLogMonitorService>();
 
