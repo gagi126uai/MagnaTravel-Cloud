@@ -321,6 +321,7 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<IAfipService, AfipService>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
