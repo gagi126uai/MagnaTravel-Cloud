@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { apiRequest, api } from "../api";
 import { showError, showInfo, showSuccess, showConfirm } from "../alerts";
 import { isAdmin } from "../auth";
@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import AfipSettingsTab from "../components/AfipSettingsTab";
 import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
@@ -56,18 +57,20 @@ const serviceTypes = [
 const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-opacity animate-in fade-in">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900 animate-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h3>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-md transition-all animate-in fade-in duration-300">
+      <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
+        <div className="relative flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-8 py-5 dark:border-slate-800 dark:bg-slate-900/50">
+          <div>
+            <h3 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{title}</h3>
+          </div>
           <button
             onClick={onClose}
-            className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+            className="group rounded-full p-2.5 text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
-            <X className="h-5 w-5" />
+            <X className="h-5 w-5 transition-transform group-hover:rotate-90" />
           </button>
         </div>
-        <div className="p-6 max-h-[80vh] overflow-y-auto">
+        <div className="p-8 max-h-[85vh] overflow-y-auto custom-scrollbar">
           {children}
         </div>
       </div>
@@ -75,15 +78,27 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   );
 };
 
-const MsgInput = ({ label, sub, value, onChange }) => (
-  <div className="space-y-1.5">
-    <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</label>
-    <p className="text-[11px] text-slate-500 font-medium">{sub}</p>
-    <textarea
-      className="w-full rounded-xl border-slate-200 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-emerald-500 focus:border-emerald-500 min-h-[80px] p-3 shadow-sm"
-      value={value}
-      onChange={e => onChange(e.target.value)}
-    />
+const FormField = ({ label, sub, value, onChange, placeholder, type = "text", icon: Icon, disabled = false }) => (
+  <div className="space-y-2">
+    <div className="flex items-center justify-between">
+      <label className="text-sm font-bold tracking-tight text-slate-700 dark:text-slate-300">{label}</label>
+      {sub && <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{sub}</span>}
+    </div>
+    <div className="relative group">
+      {Icon && (
+        <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-indigo-500">
+          <Icon className="h-4.5 w-4.5" strokeWidth={2.25} />
+        </div>
+      )}
+      <Input
+        type={type}
+        disabled={disabled}
+        className={`h-12 ${Icon ? 'pl-11' : 'pl-4'} bg-slate-50/50 border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-2xl transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 placeholder:text-slate-400`}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
   </div>
 );
 
@@ -589,54 +604,67 @@ export default function AdminHubPage() {
         onClose={() => setModalType(null)}
         title={modalType === 'create' ? "Nuevo Usuario" : "Editar Usuario"}
       >
-        <div className="space-y-4">
-          <MsgInput
+        <div className="space-y-6">
+          <FormField
             label="Nombre Completo"
+            icon={User}
+            placeholder="Ej: Juan Pérez"
             value={modalType === 'create' ? createForm.fullName : editForm.fullName}
             onChange={(val) => modalType === 'create' ? setCreateForm({ ...createForm, fullName: val }) : setEditForm({ ...editForm, fullName: val })}
           />
-          <MsgInput
-            label="Email"
+          <FormField
+            label="Correo Electrónico"
+            icon={Mail}
+            type="email"
+            placeholder="usuario@agencia.com"
             value={modalType === 'create' ? createForm.email : editForm.email}
             onChange={(val) => modalType === 'create' ? setCreateForm({ ...createForm, email: val }) : setEditForm({ ...editForm, email: val })}
           />
           {modalType === 'create' && (
-            <MsgInput
+            <FormField
               label="Contraseña"
               type="password"
+              icon={Key}
+              placeholder="Mínimo 8 caracteres..."
               value={createForm.password}
               onChange={(val) => setCreateForm({ ...createForm, password: val })}
             />
           )}
-          <div className="space-y-1.5">
-            <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Rol</label>
-            <select
-              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm"
-              value={modalType === 'create' ? createForm.role : editForm.role}
-              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, role: e.target.value }) : setEditForm({ ...editForm, role: e.target.value })}
-            >
-              <option value="Colaborador">Colaborador</option>
-              <option value="Vendedor">Vendedor</option>
-              <option value="Admin">Admin</option>
-            </select>
+          <div className="space-y-2">
+            <label className="text-sm font-bold tracking-tight text-slate-700 dark:text-slate-300">Rol de Acceso</label>
+            <div className="relative">
+              <Shield className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-slate-400" />
+              <select
+                className="w-full h-12 pl-11 pr-4 rounded-2xl border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 appearance-none transition-all"
+                value={modalType === 'create' ? createForm.role : editForm.role}
+                onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, role: e.target.value }) : setEditForm({ ...editForm, role: e.target.value })}
+              >
+                <option value="Colaborador">Colaborador (Ventas)</option>
+                <option value="Vendedor">Vendedor (Solo sus reservas)</option>
+                <option value="Admin">Administrador (Control Total)</option>
+              </select>
+              <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-slate-400 pointer-events-none" />
+            </div>
           </div>
           {modalType === 'edit' && (
-            <div className="flex items-center gap-2 mt-2">
-              <input
-                type="checkbox"
-                id="isActive"
-                checked={editForm.isActive}
-                onChange={(e) => setEditForm({...editForm, isActive: e.target.checked})}
-                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              <label htmlFor="isActive" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                Usuario Activo
+            <div className="flex items-center gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+              <div className="relative flex items-center">
+                <input
+                  type="checkbox"
+                  id="isActive"
+                  checked={editForm.isActive}
+                  onChange={(e) => setEditForm({...editForm, isActive: e.target.checked})}
+                  className="h-5 w-5 rounded-lg border-slate-300 text-indigo-600 focus:ring-indigo-500 transition-all cursor-pointer"
+                />
+              </div>
+              <label htmlFor="isActive" className="text-sm font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                El usuario puede acceder al sistema
               </label>
             </div>
           )}
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="outline" onClick={() => setModalType(null)}>Cancelar</Button>
-            <Button onClick={modalType === 'create' ? handleCreateUser : handleEditUser}>
+          <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setModalType(null)} className="rounded-xl h-12 sm:w-32">Cancelar</Button>
+            <Button onClick={modalType === 'create' ? handleCreateUser : handleEditUser} className="rounded-xl h-12 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20 sm:min-w-[140px]">
               {modalType === 'create' ? "Crear Usuario" : "Guardar Cambios"}
             </Button>
           </div>
@@ -649,24 +677,31 @@ export default function AdminHubPage() {
         onClose={() => setModalType(null)}
         title="Cambiar Contraseña"
       >
-        <div className="space-y-4">
-          <div className="rounded-lg bg-amber-50 p-4 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-800/30">
-            <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">Estás a punto de forzar el cambio de contraseña para {selectedUser?.fullName}.</p>
+        <div className="space-y-6">
+          <div className="flex items-start gap-4 p-5 rounded-2xl bg-amber-50/50 border border-amber-200/50 dark:bg-amber-900/10 dark:border-amber-900/20">
+            <div className="mt-1 flex-shrink-0">
+              <ShieldAlert className="h-5 w-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-sm text-amber-800 dark:text-amber-200 font-semibold leading-relaxed">
+                Seguridad: <span className="font-normal">Estás forzando el cambio de contraseña para</span> {selectedUser?.fullName}.
+              </p>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Nueva Contraseña</label>
-            <input
-              type="password"
-              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-amber-500 focus:border-amber-500"
-              value={passwordForm.newPassword}
-              onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-              placeholder="Mínimo 8 caracteres, números y letras..."
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="outline" onClick={() => setModalType(null)}>Cancelar</Button>
-            <Button onClick={handlePasswordReset} className="bg-amber-600 hover:bg-amber-700 text-white border-none">
-              Guardar Contraseña
+          
+          <FormField
+            label="Nueva Contraseña"
+            type="password"
+            icon={Key}
+            placeholder="Mayúsculas, minúsculas y números..."
+            value={passwordForm.newPassword}
+            onChange={e => setPasswordForm({ ...passwordForm, newPassword: e })}
+          />
+
+          <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setModalType(null)} className="rounded-xl h-12 sm:w-32">Cancelar</Button>
+            <Button onClick={handlePasswordReset} className="rounded-xl h-12 bg-amber-600 hover:bg-amber-700 text-white shadow-lg shadow-amber-500/20 border-none font-bold min-w-[160px]">
+              Actualizar Contraseña
             </Button>
           </div>
         </div>
@@ -729,16 +764,20 @@ export default function AdminHubPage() {
             </div>
           </div>
           
-          <MsgInput
+          <FormField
             label="Descripción Interna"
+            icon={FileText}
+            placeholder="Ej: Acuerdo especial temporada 2025"
             value={commissionForm.description}
             onChange={(val) => setCommissionForm({ ...commissionForm, description: val })}
-            sub="Opcional. Ej: Acuerdo primavera 2025."
+            sub="OPCIONAL"
           />
 
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="outline" onClick={() => setShowCommissionModal(false)}>Cancelar</Button>
-            <Button onClick={saveCommissionRule}>Guardar Regla</Button>
+          <div className="flex flex-col gap-3 pt-6 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setShowCommissionModal(false)} className="rounded-xl h-12 sm:w-32">Cancelar</Button>
+            <Button onClick={saveCommissionRule} className="rounded-xl h-12 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20 sm:min-w-[140px]">
+              Guardar Regla
+            </Button>
           </div>
         </div>
       </Modal>
