@@ -128,11 +128,11 @@ export function useReservaDetail(reservaId, navigate) {
     const allServices = useMemo(() => {
         if (!reserva) return [];
         const services = [];
-        reserva.flightSegments?.forEach(f => services.push({ ...f, _type: 'Flight', date: f.departureTime, name: `${f.airlineName} ${f.flightNumber}` }));
-        reserva.hotelBookings?.forEach(h => services.push({ ...h, _type: 'Hotel', date: h.checkIn, name: h.hotelName }));
-        reserva.transferBookings?.forEach(t => services.push({ ...t, _type: 'Transfer', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
-        reserva.packageBookings?.forEach(p => services.push({ ...p, _type: 'Package', date: p.startDate, name: p.packageName }));
-        reserva.servicios?.forEach(r => services.push({ ...r, _type: r.serviceType || 'Generic', date: r.departureDate, name: r.description }));
+        reserva.flightSegments?.forEach(f => services.push({ ...f, _type: f.sourceKind || 'Flight', date: f.departureTime, name: `${f.airlineName || ''} ${f.flightNumber || ''}`.trim() }));
+        reserva.hotelBookings?.forEach(h => services.push({ ...h, _type: h.sourceKind || 'Hotel', date: h.checkIn, name: h.hotelName }));
+        reserva.transferBookings?.forEach(t => services.push({ ...t, _type: t.sourceKind || 'Transfer', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
+        reserva.packageBookings?.forEach(p => services.push({ ...p, _type: p.sourceKind || 'Package', date: p.startDate, name: p.packageName }));
+        reserva.servicios?.forEach(r => services.push({ ...r, _type: r.sourceKind || r.serviceType || 'Generic', date: r.departureDate, name: r.description }));
         return services.sort((a, b) => new Date(a.date) - new Date(b.date));
     }, [reserva]);
 

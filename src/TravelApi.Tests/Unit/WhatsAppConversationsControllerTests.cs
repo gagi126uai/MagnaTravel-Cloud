@@ -17,6 +17,7 @@ public class WhatsAppConversationsControllerTests
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(x => x.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         return new AppDbContext(options);
@@ -75,7 +76,7 @@ public class WhatsAppConversationsControllerTests
 
         await db.SaveChangesAsync();
 
-        var controller = new WhatsAppConversationsController(db);
+        var controller = new WhatsAppConversationsController(db, new EntityReferenceResolver(db));
         var result = await controller.GetConversations(CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
@@ -93,6 +94,7 @@ public class WhatsAppConversationsControllerTests
 
         var lead = new Lead
         {
+            PublicId = Guid.NewGuid(),
             FullName = "Gaston Albornoz",
             Phone = "+5493364185078",
             Status = LeadStatus.Contacted,
@@ -120,14 +122,13 @@ public class WhatsAppConversationsControllerTests
         db.Leads.Add(lead);
         await db.SaveChangesAsync();
 
-        var controller = new WhatsAppConversationsController(db);
-        var result = await controller.GetConversationDetail("lead", lead.Id, CancellationToken.None);
+        var controller = new WhatsAppConversationsController(db, new EntityReferenceResolver(db));
+        var result = await controller.GetConversationDetail("lead", lead.PublicId.ToString(), CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
         var detail = Assert.IsType<TravelApi.Application.DTOs.WhatsAppConversationDetailDto>(ok.Value);
 
         Assert.Equal("lead", detail.ConversationType);
-        Assert.Equal(lead.Id, detail.LeadId);
         Assert.Equal(4, detail.Messages.Count);
         Assert.Equal("client", detail.Messages[0].Sender);
         Assert.Equal("bot", detail.Messages[1].Sender);

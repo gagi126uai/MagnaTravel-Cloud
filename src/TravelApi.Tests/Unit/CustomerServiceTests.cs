@@ -19,6 +19,7 @@ namespace TravelApi.Tests.Unit
         {
             _dbOptions = new DbContextOptionsBuilder<AppDbContext>()
                 .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+                .ConfigureWarnings(x => x.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
                 .Options;
         }
 
@@ -52,12 +53,12 @@ namespace TravelApi.Tests.Unit
             var service = new CustomerService(context);
 
             // Act
-            var activeOnly = await service.GetCustomersAsync(false, CancellationToken.None);
-            var all = await service.GetCustomersAsync(true, CancellationToken.None);
+            var activeOnly = await service.GetCustomersAsync(new TravelApi.Application.DTOs.CustomerListQuery { IncludeInactive = false }, CancellationToken.None);
+            var all = await service.GetCustomersAsync(new TravelApi.Application.DTOs.CustomerListQuery { IncludeInactive = true }, CancellationToken.None);
 
             // Assert
-            Assert.Single(activeOnly);
-            Assert.Equal(2, all.Count());
+            Assert.Single(activeOnly.Items);
+            Assert.Equal(2, all.TotalCount);
         }
 
         [Fact]

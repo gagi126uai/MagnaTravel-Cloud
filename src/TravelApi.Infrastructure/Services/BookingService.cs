@@ -18,6 +18,7 @@ public class BookingService : IBookingService
     private readonly IRepository<Reserva> _fileRepo;
     private readonly IRepository<Supplier> _supplierRepo;
     private readonly IReservaService _reservaService;
+    private readonly ISupplierService _supplierService;
     private readonly AppDbContext _db;
     private readonly IMapper _mapper;
 
@@ -29,6 +30,7 @@ public class BookingService : IBookingService
         IRepository<Reserva> fileRepo,
         IRepository<Supplier> supplierRepo,
         IReservaService reservaService,
+        ISupplierService supplierService,
         AppDbContext db,
         IMapper mapper)
     {
@@ -39,6 +41,7 @@ public class BookingService : IBookingService
         _fileRepo = fileRepo;
         _supplierRepo = supplierRepo;
         _reservaService = reservaService;
+        _supplierService = supplierService;
         _db = db;
         _mapper = mapper;
     }
@@ -100,12 +103,7 @@ public class BookingService : IBookingService
 
         if (flight.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(flight.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += flight.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
 
         await _reservaService.UpdateBalanceAsync(reservaId);
@@ -132,33 +130,12 @@ public class BookingService : IBookingService
 
         if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(flight.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += (flight.NetCost - oldNetCost);
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
         else if (oldSupplierId != flight.SupplierId)
         {
-            if (oldSupplierId > 0)
-            {
-                var oldSupplier = await _supplierRepo.GetByIdAsync(oldSupplierId, ct);
-                if (oldSupplier != null)
-                {
-                    oldSupplier.CurrentBalance -= oldNetCost;
-                    await _supplierRepo.UpdateAsync(oldSupplier, ct);
-                }
-            }
-            if (flight.SupplierId > 0)
-            {
-                var newSupplier = await _supplierRepo.GetByIdAsync(flight.SupplierId, ct);
-                if (newSupplier != null)
-                {
-                    newSupplier.CurrentBalance += flight.NetCost;
-                    await _supplierRepo.UpdateAsync(newSupplier, ct);
-                }
-            }
+            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
+            if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
 
         await _flightRepo.UpdateAsync(flight, ct);
@@ -175,12 +152,7 @@ public class BookingService : IBookingService
 
         if (flight.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(flight.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance -= flight.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
 
         await _flightRepo.DeleteAsync(flight, ct);
@@ -233,12 +205,7 @@ public class BookingService : IBookingService
 
         if (hotel.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(hotel.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += hotel.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
 
         await _reservaService.UpdateBalanceAsync(reservaId);
@@ -264,33 +231,12 @@ public class BookingService : IBookingService
 
         if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(hotel.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += (hotel.NetCost - oldNetCost);
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
         else if (oldSupplierId != hotel.SupplierId)
         {
-            if (oldSupplierId > 0)
-            {
-                var oldSupplier = await _supplierRepo.GetByIdAsync(oldSupplierId, ct);
-                if (oldSupplier != null)
-                {
-                    oldSupplier.CurrentBalance -= oldNetCost;
-                    await _supplierRepo.UpdateAsync(oldSupplier, ct);
-                }
-            }
-            if (hotel.SupplierId > 0)
-            {
-                var newSupplier = await _supplierRepo.GetByIdAsync(hotel.SupplierId, ct);
-                if (newSupplier != null)
-                {
-                    newSupplier.CurrentBalance += hotel.NetCost;
-                    await _supplierRepo.UpdateAsync(newSupplier, ct);
-                }
-            }
+            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
+            if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
 
         await _hotelRepo.UpdateAsync(hotel, ct);
@@ -307,12 +253,7 @@ public class BookingService : IBookingService
 
         if (hotel.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(hotel.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance -= hotel.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
 
         await _hotelRepo.DeleteAsync(hotel, ct);
@@ -358,12 +299,7 @@ public class BookingService : IBookingService
 
         if (package.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(package.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += package.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
 
         await _reservaService.UpdateBalanceAsync(reservaId);
@@ -389,33 +325,12 @@ public class BookingService : IBookingService
 
         if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(package.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += (package.NetCost - oldNetCost);
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
         else if (oldSupplierId != package.SupplierId)
         {
-            if (oldSupplierId > 0)
-            {
-                var oldSupplier = await _supplierRepo.GetByIdAsync(oldSupplierId, ct);
-                if (oldSupplier != null)
-                {
-                    oldSupplier.CurrentBalance -= oldNetCost;
-                    await _supplierRepo.UpdateAsync(oldSupplier, ct);
-                }
-            }
-            if (package.SupplierId > 0)
-            {
-                var newSupplier = await _supplierRepo.GetByIdAsync(package.SupplierId, ct);
-                if (newSupplier != null)
-                {
-                    newSupplier.CurrentBalance += package.NetCost;
-                    await _supplierRepo.UpdateAsync(newSupplier, ct);
-                }
-            }
+            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
+            if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
 
         await _packageRepo.UpdateAsync(package, ct);
@@ -432,12 +347,7 @@ public class BookingService : IBookingService
 
         if (package.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(package.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance -= package.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
 
         await _packageRepo.DeleteAsync(package, ct);
@@ -483,12 +393,7 @@ public class BookingService : IBookingService
 
         if (transfer.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(transfer.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += transfer.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
 
         await _reservaService.UpdateBalanceAsync(reservaId);
@@ -514,33 +419,12 @@ public class BookingService : IBookingService
 
         if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(transfer.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance += (transfer.NetCost - oldNetCost);
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
         else if (oldSupplierId != transfer.SupplierId)
         {
-            if (oldSupplierId > 0)
-            {
-                var oldSupplier = await _supplierRepo.GetByIdAsync(oldSupplierId, ct);
-                if (oldSupplier != null)
-                {
-                    oldSupplier.CurrentBalance -= oldNetCost;
-                    await _supplierRepo.UpdateAsync(oldSupplier, ct);
-                }
-            }
-            if (transfer.SupplierId > 0)
-            {
-                var newSupplier = await _supplierRepo.GetByIdAsync(transfer.SupplierId, ct);
-                if (newSupplier != null)
-                {
-                    newSupplier.CurrentBalance += transfer.NetCost;
-                    await _supplierRepo.UpdateAsync(newSupplier, ct);
-                }
-            }
+            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
+            if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
 
         await _transferRepo.UpdateAsync(transfer, ct);
@@ -557,12 +441,7 @@ public class BookingService : IBookingService
 
         if (transfer.SupplierId > 0)
         {
-            var supplier = await _supplierRepo.GetByIdAsync(transfer.SupplierId, ct);
-            if (supplier != null)
-            {
-                supplier.CurrentBalance -= transfer.NetCost;
-                await _supplierRepo.UpdateAsync(supplier, ct);
-            }
+            await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
 
         await _transferRepo.DeleteAsync(transfer, ct);

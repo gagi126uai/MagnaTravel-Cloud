@@ -12,6 +12,7 @@ public interface ISupplierService
     Task DeleteSupplierAsync(int id, CancellationToken cancellationToken);
     Task ForceDeleteSupplierAsync(int id, CancellationToken cancellationToken);
     Task RecalculateAllBalancesAsync(CancellationToken cancellationToken);
+    Task UpdateBalanceAsync(int id, CancellationToken cancellationToken);
     Task<SupplierAccountOverviewDto> GetSupplierAccountOverviewAsync(int id, CancellationToken cancellationToken);
     Task<PagedResponse<SupplierAccountServiceListItemDto>> GetSupplierAccountServicesAsync(int id, SupplierAccountServicesQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<SupplierPaymentDto>> GetSupplierAccountPaymentsAsync(int id, SupplierAccountPaymentsQuery query, CancellationToken cancellationToken);

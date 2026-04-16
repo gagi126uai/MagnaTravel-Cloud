@@ -24,4 +24,7 @@ public class ServicioReservaDto
     
     public Guid? RatePublicId { get; set; }
     public Guid? ReservaPublicId { get; set; }
+    
+    public string SourceKind { get; set; } = "Generic";
+    public string WorkflowStatus { get; set; } = "Solicitado";
 }

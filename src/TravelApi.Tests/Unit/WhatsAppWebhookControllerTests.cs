@@ -25,6 +25,7 @@ public class WhatsAppWebhookControllerTests
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(x => x.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         return new AppDbContext(options);
@@ -48,7 +49,8 @@ public class WhatsAppWebhookControllerTests
             db,
             config,
             NullLogger<WebhooksController>.Instance,
-            new Mock<IHttpClientFactory>().Object);
+            new Mock<IHttpClientFactory>().Object,
+            new EntityReferenceResolver(db));
 
         controller.ControllerContext = new ControllerContext
         {
@@ -93,7 +95,7 @@ public class WhatsAppWebhookControllerTests
         await using var db = CreateDbContext();
         db.Leads.Add(new Lead
         {
-            FullName = "Nuevo contacto WhatsApp (+5493364185078)",
+            FullName = "Consulta por WhatsApp (+5493364185078)",
             Phone = "+5493364185078",
             Source = "WhatsApp",
             Status = LeadStatus.New,

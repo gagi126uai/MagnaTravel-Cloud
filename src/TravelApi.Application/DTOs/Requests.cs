@@ -7,7 +7,9 @@ public record CreateFlightRequest(
     string Origin, string? OriginCity, string Destination, string? DestinationCity,
     DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, string? PNR,
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado",
+    string? ConfirmationNumber = null
 );
 
 public record UpdateFlightRequest(
@@ -16,7 +18,9 @@ public record UpdateFlightRequest(
     DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, 
     string? TicketNumber, string? PNR,
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado",
+    string? ConfirmationNumber = null
 );
 
 public record CreateHotelRequest(
@@ -24,7 +28,8 @@ public record CreateHotelRequest(
     DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
     int Adults, int Children, int Rooms, string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado"
 );
 
 public record UpdateHotelRequest(
@@ -32,7 +37,8 @@ public record UpdateHotelRequest(
     DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
     int Adults, int Children, int Rooms, string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado"
 );
 
 public record CreateTransferRequest(
@@ -40,7 +46,9 @@ public record CreateTransferRequest(
     DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado",
+    string? ConfirmationNumber = null
 );
 
 public record UpdateTransferRequest(
@@ -49,7 +57,8 @@ public record UpdateTransferRequest(
     bool IsRoundTrip, DateTime? ReturnDateTime,
     string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado"
 );
 
 public record CreatePackageRequest(
@@ -58,7 +67,9 @@ public record CreatePackageRequest(
     bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
     int Adults, int Children, string? Itinerary,
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado",
+    string? ConfirmationNumber = null
 );
 
 public record UpdatePackageRequest(
@@ -67,5 +78,6 @@ public record UpdatePackageRequest(
     bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
     int Adults, int Children, string? Itinerary, string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
-    string? RateId = null
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado"
 );

@@ -23,6 +23,7 @@ public class FinanceReadModelTests
     {
         _dbOptions = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(x => x.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options;
     }
 
@@ -79,7 +80,7 @@ public class FinanceReadModelTests
                 UpcomingUnpaidReservationAlertDays = 7
             });
 
-        var service = new PaymentService(context, Mock.Of<IMapper>(), settingsMock.Object);
+        var service = new PaymentService(context, null!, Mock.Of<IMapper>(), settingsMock.Object);
 
         var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
 
@@ -126,7 +127,7 @@ public class FinanceReadModelTests
         });
         await context.SaveChangesAsync();
 
-        var service = new TreasuryService(context);
+        var service = new TreasuryService(context, null!);
 
         var summary = await service.GetCashSummaryAsync(CancellationToken.None);
 
@@ -175,6 +176,7 @@ public class FinanceReadModelTests
 
         var service = new InvoiceService(
             context,
+            null!, // EntityReferenceResolver
             Mock.Of<IAfipService>(),
             Mock.Of<IInvoicePdfService>(),
             Mock.Of<IMapper>(),
@@ -183,18 +185,18 @@ public class FinanceReadModelTests
             settingsMock.Object,
             BuildUserManager());
 
-        var worklist = await service.GetInvoicingWorklistAsync(CancellationToken.None);
+        var worklist = await service.GetInvoicingWorklistAsync(new TravelApi.Application.DTOs.InvoicingWorklistQuery { Status = "all" }, CancellationToken.None);
 
         Assert.Collection(
-            worklist,
+            worklist.Items,
             ready =>
             {
-                Assert.Equal(1, ready.ReservaId);
+                Assert.Equal("F-2026-2001", ready.NumeroReserva);
                 Assert.Equal("ready", ready.FiscalStatus);
             },
             blocked =>
             {
-                Assert.Equal(2, blocked.ReservaId);
+                Assert.Equal("F-2026-2002", blocked.NumeroReserva);
                 Assert.Equal("override", blocked.FiscalStatus);
                 Assert.True(blocked.RequiresOverride);
             });

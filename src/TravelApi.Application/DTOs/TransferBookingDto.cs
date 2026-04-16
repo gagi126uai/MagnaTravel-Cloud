@@ -18,4 +18,6 @@ public class TransferBookingDto
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
     public bool IsPriceSynced { get; set; } = true;
+    public string SourceKind { get; set; } = "Transfer";
+    public string WorkflowStatus { get; set; } = "Solicitado";
 }

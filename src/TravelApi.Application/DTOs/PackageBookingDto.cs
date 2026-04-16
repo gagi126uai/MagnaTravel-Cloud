@@ -16,4 +16,6 @@ public class PackageBookingDto
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
     public bool IsPriceSynced { get; set; } = true;
+    public string SourceKind { get; set; } = "Package";
+    public string WorkflowStatus { get; set; } = "Solicitado";
 }

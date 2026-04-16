@@ -18,6 +18,7 @@ public class ReservasController : ControllerBase
     private readonly IReservaService _reservaService;
     private readonly IVoucherService _voucherService;
     private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
+    private readonly ITimelineService _timelineService;
     private readonly EntityReferenceResolver _entityReferenceResolver;
     private readonly ILogger<ReservasController> _logger;
 
@@ -25,12 +26,14 @@ public class ReservasController : ControllerBase
         IReservaService reservaService,
         IVoucherService voucherService,
         IWhatsAppDeliveryService whatsAppDeliveryService,
+        ITimelineService timelineService,
         EntityReferenceResolver entityReferenceResolver,
         ILogger<ReservasController> logger)
     {
         _reservaService = reservaService;
         _voucherService = voucherService;
         _whatsAppDeliveryService = whatsAppDeliveryService;
+        _timelineService = timelineService;
         _entityReferenceResolver = entityReferenceResolver;
         _logger = logger;
     }
@@ -75,6 +78,30 @@ public class ReservasController : ControllerBase
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener la reserva.");
+        }
+    }
+
+    [HttpGet("{publicIdOrLegacyId}/timeline")]
+    public async Task<IActionResult> GetReservaTimeline(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try 
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
+            var timeline = await _timelineService.GetTimelineAsync(id, cancellationToken);
+            return Ok(timeline);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error getting timeline for reserva {ReservaId}", publicIdOrLegacyId);
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el historial.");
         }
     }
 

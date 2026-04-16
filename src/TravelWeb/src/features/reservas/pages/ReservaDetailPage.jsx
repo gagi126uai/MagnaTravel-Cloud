@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, FileText, History, Paperclip, Users } from "lucide-react";
-import AuditTimeline from "../../../components/AuditTimeline";
+import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import PassengerFormModal from "../../../components/PassengerFormModal";
 import PaymentModal from "../../../components/PaymentModal";
@@ -245,7 +245,7 @@ export default function ReservaDetailPage() {
             />
           ) : null}
 
-          {activeTab === "history" ? <AuditTimeline entityName="Reserva" entityId={publicId} /> : null}
+          {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}
           {activeTab === "attachments" ? <ReservaAttachmentsTab reservaId={publicId} /> : null}
           {activeTab === "voucher" ? <ReservaVoucherTab reservaId={publicId} /> : null}
 

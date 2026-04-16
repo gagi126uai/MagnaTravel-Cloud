@@ -61,8 +61,12 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                                 {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap">
-                                                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${svc.status === 'Confirmed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
-                                                    {svc.status || 'Pnd'}
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                                                    svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 
+                                                    svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
+                                                    'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                                }`}>
+                                                    {svc.workflowStatus || 'Solicitado'}
                                                 </span>
                                             </td>
                                             {admin && (
@@ -102,8 +106,12 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                             {svc._type === 'Package' && <Package className="w-4 h-4 text-purple-500" />}
                                             <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">{svc._type}</span>
                                         </div>
-                                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${svc.status === 'Confirmed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' : 'bg-amber-100 text-amber-700'}`}>
-                                            {svc.status || 'Pnd'}
+                                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+                                            svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' : 
+                                            svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30' :
+                                            'bg-amber-100 text-amber-700 dark:bg-amber-900/30'
+                                        }`}>
+                                            {svc.workflowStatus || 'Solicitado'}
                                         </span>
                                     </div>
                                     <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>

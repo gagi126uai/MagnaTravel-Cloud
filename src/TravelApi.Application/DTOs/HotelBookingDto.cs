@@ -21,4 +21,6 @@ public class HotelBookingDto
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
     public bool IsPriceSynced { get; set; } = true;
+    public string SourceKind { get; set; } = "Hotel";
+    public string WorkflowStatus { get; set; } = "Solicitado";
 }

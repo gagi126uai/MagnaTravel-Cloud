@@ -164,6 +164,15 @@ public class SupplierService : ISupplierService
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task UpdateBalanceAsync(int id, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
+        if (supplier == null) return;
+        
+        supplier.CurrentBalance = await CalculateSupplierDebt(id, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<SupplierAccountOverviewDto> GetSupplierAccountOverviewAsync(int id, CancellationToken cancellationToken)
     {
         var supplier = await _dbContext.Suppliers
@@ -192,7 +201,9 @@ public class SupplierService : ISupplierService
         var servicesQuery = BuildSupplierServicesQuery(id);
         var paymentsQuery = BuildSupplierPaymentsQuery(id);
 
-        var totalPurchases = await servicesQuery.SumAsync(item => (decimal?)item.NetCost, cancellationToken) ?? 0m;
+        var totalPurchases = await servicesQuery
+            .Where(item => item.Status == "Confirmado" || item.Status == "Emitido" || item.Status == "HK" || item.Status == "TK" || item.Status == "KK" || item.Status == "KL")
+            .SumAsync(item => (decimal?)item.NetCost, cancellationToken) ?? 0m;
         var totalPaid = await paymentsQuery.SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0m;
         var serviceCount = await servicesQuery.CountAsync(cancellationToken);
         var paymentCount = await paymentsQuery.CountAsync(cancellationToken);
@@ -569,6 +580,7 @@ public class SupplierService : ISupplierService
     private async Task<decimal> CalculateSupplierDebt(int supplierId, CancellationToken cancellationToken)
     {
         var totalPurchases = await BuildSupplierServicesQuery(supplierId)
+            .Where(item => item.Status == "Confirmado" || item.Status == "Emitido" || item.Status == "HK" || item.Status == "TK" || item.Status == "KK" || item.Status == "KL")
             .SumAsync(item => (decimal?)item.NetCost, cancellationToken) ?? 0m;
 
         var totalPaid = await _dbContext.SupplierPayments

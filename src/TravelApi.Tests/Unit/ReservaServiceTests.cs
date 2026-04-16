@@ -22,6 +22,7 @@ public class ReservaServiceTests
     {
         _dbOptions = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(x => x.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options;
         _mapperMock = new Mock<IMapper>();
         _settingsServiceMock = new Mock<IOperationalFinanceSettingsService>();
@@ -34,11 +35,14 @@ public class ReservaServiceTests
     public async Task CreateReservaAsync_ShouldCreateReserva_WithCorrectInitialValues()
     {
         using var context = new AppDbContext(_dbOptions);
+        context.Customers.Add(new Customer { Id = 1, PublicId = Guid.Parse("00000000-0000-0000-0000-000000000001"), FullName = "Test" });
+        await context.SaveChangesAsync();
+
         var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
         var request = new CreateReservaRequest
         {
             Name = "Test Trip",
-            PayerId = 1,
+            PayerId = "00000000-0000-0000-0000-000000000001",
             StartDate = DateTime.UtcNow.AddDays(10),
             Description = "Testing reserve creation"
         };
@@ -47,7 +51,7 @@ public class ReservaServiceTests
 
         Assert.NotNull(result);
         Assert.Equal("Test Trip", result.Name);
-        Assert.Equal(EstadoReserva.Reserved, result.Status);
+        Assert.Equal(EstadoReserva.Budget, result.Status);
         Assert.StartsWith($"F-{DateTime.Now.Year}-", result.NumeroReserva);
         Assert.Equal(1, await context.Reservas.CountAsync());
     }

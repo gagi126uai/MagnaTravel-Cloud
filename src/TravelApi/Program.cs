@@ -341,17 +341,6 @@ builder.Services.AddScoped<ICountryService, CountryService>();
 builder.Services.AddScoped<IDestinationService, DestinationService>();
 builder.Services.AddScoped<ICatalogCacheInvalidator, CatalogCacheInvalidator>();
 builder.Services.AddScoped<IUserService, UserService>();
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IBookingService, BookingService>();
-builder.Services.AddScoped<IAttachmentService, AttachmentService>();
-builder.Services.AddScoped<IAuditService, AuditService>();
-builder.Services.AddScoped<INotificationService, NotificationService>();
-builder.Services.AddScoped<EntityReferenceResolver>();
-builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
-builder.Services.AddSingleton<ISensitiveDataProtector, SensitiveDataProtector>();
-
-builder.Services.AddSignalR();
-builder.Services.AddHttpClient();
 builder.Services.AddHostedService<LogStreamingService>();
 builder.Services.AddHostedService<BotLogMonitorService>();
 

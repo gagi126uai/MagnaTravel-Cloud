@@ -139,6 +139,14 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                         {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
                     </select>
                 </div>
+                <div>
+                    <label className={labelClass}>Estado *</label>
+                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={e => setForm({ ...form, workflowStatus: e.target.value })} required disabled={disabled}>
+                        <option value="Solicitado">Solicitado</option>
+                        <option value="Confirmado">Confirmado</option>
+                        <option value="Cancelado">Cancelado</option>
+                    </select>
+                </div>
             </div>
             <RateSelector serviceType={form.serviceType || "Aereo"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -172,6 +180,14 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required disabled={disabled}>
                         <option value="">Seleccionar proveedor...</option>
                         {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className={labelClass}>Estado *</label>
+                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={e => setForm({ ...form, workflowStatus: e.target.value })} required disabled={disabled}>
+                        <option value="Solicitado">Solicitado</option>
+                        <option value="Confirmado">Confirmado</option>
+                        <option value="Cancelado">Cancelado</option>
                     </select>
                 </div>
             </div>
@@ -245,6 +261,14 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                         {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
                     </select>
                 </div>
+                <div>
+                    <label className={labelClass}>Estado *</label>
+                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={e => setForm({ ...form, workflowStatus: e.target.value })} required disabled={disabled}>
+                        <option value="Solicitado">Solicitado</option>
+                        <option value="Confirmado">Confirmado</option>
+                        <option value="Cancelado">Cancelado</option>
+                    </select>
+                </div>
             </div>
             <RateSelector serviceType={form.serviceType || "Traslado"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
             <div className="grid grid-cols-2 gap-4">
@@ -278,6 +302,14 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     <select className={inputClass} value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} required disabled={disabled}>
                         <option value="">Seleccionar proveedor...</option>
                         {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className={labelClass}>Estado *</label>
+                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={e => setForm({ ...form, workflowStatus: e.target.value })} required disabled={disabled}>
+                        <option value="Solicitado">Solicitado</option>
+                        <option value="Confirmado">Confirmado</option>
+                        <option value="Cancelado">Cancelado</option>
                     </select>
                 </div>
             </div>
@@ -361,7 +393,8 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         roomType: "Doble", 
         mealPlan: "Desayuno", 
         checkIn: "", 
-        checkOut: "" 
+        checkOut: "",
+        workflowStatus: "Solicitado"
     });
     const [selectedRate, setSelectedRate] = useState(null); 
     const [currentRateInSystem, setCurrentRateInSystem] = useState(null);
@@ -433,6 +466,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     pickupTime: serviceToEdit.pickupDateTime ? new Date(serviceToEdit.pickupDateTime).toLocaleTimeString('en-GB').slice(0, 5) : "",
                     returnDate: serviceToEdit.returnDateTime?.split('T')[0],
                     returnTime: serviceToEdit.returnDateTime ? new Date(serviceToEdit.returnDateTime).toLocaleTimeString('en-GB').slice(0, 5) : "",
+                    workflowStatus: serviceToEdit.workflowStatus || "Solicitado"
                 };
                 setForm(formattedForm);
                 if (serviceToEdit.ratePublicId) checkPriceSync(serviceToEdit.ratePublicId);
@@ -449,7 +483,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     children: 0, 
                     roomType: "Doble", 
                     mealPlan: "Desayuno", 
-                    status: initialServiceType === 'Aereo' ? 'HL' : 'Pendiente' 
+                    workflowStatus: "Solicitado" 
                 });
                 setCurrentRateInSystem(null);
             }

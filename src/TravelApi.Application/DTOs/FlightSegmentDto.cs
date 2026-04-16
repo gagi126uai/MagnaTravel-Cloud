@@ -18,4 +18,6 @@ public class FlightSegmentDto
     public string? PNR { get; set; }
     public decimal NetCost { get; set; }
     public bool IsPriceSynced { get; set; } = true;
+    public string SourceKind { get; set; } = "Flight";
+    public string WorkflowStatus { get; set; } = "Solicitado";
 }

@@ -581,18 +581,18 @@ public class ReservaService : IReservaService
         if (file == null) return;
 
         var totalSale = 
-            (file.FlightSegments?.Sum(f => f.SalePrice) ?? 0) +
-            (file.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
-            (file.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
-            (file.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
-            (file.Servicios?.Sum(r => r.SalePrice) ?? 0);
+            (file.FlightSegments?.Where(f => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.SalePrice) ?? 0) +
+            (file.HotelBookings?.Where(h => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.SalePrice) ?? 0) +
+            (file.TransferBookings?.Where(t => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.SalePrice) ?? 0) +
+            (file.PackageBookings?.Where(p => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.SalePrice) ?? 0) +
+            (file.Servicios?.Where(r => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.SalePrice) ?? 0);
 
         var totalCost = 
-            (file.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
-            (file.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
-            (file.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
-            (file.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
-            (file.Servicios?.Sum(r => r.NetCost) ?? 0);
+            (file.FlightSegments?.Where(f => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.NetCost) ?? 0) +
+            (file.HotelBookings?.Where(h => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.NetCost) ?? 0) +
+            (file.TransferBookings?.Where(t => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.NetCost) ?? 0) +
+            (file.PackageBookings?.Where(p => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.NetCost) ?? 0) +
+            (file.Servicios?.Where(r => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.NetCost) ?? 0);
 
         var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => p.Amount) ?? 0;
 
