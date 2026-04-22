@@ -22,4 +22,12 @@
     <Compile Include="..\TravelApi\Controllers\AttachmentsController.cs" Link="Controllers\AttachmentsController.cs" />
     <Compile Include="..\TravelApi\Errors\DatabaseExceptionClassifier.cs" Link="Errors\DatabaseExceptionClassifier.cs" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Minio.AspNetCore" Version="6.0.1" />
+  </ItemGroup>
 </Project>

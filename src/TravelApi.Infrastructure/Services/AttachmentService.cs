@@ -1,8 +1,9 @@
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.StaticFiles;
+using Minio;
+using Minio.DataModel.Args;
+using Minio.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -30,19 +31,22 @@ public class AttachmentService : IAttachmentService
 
     private readonly IRepository<ReservaAttachment> _attachmentRepo;
     private readonly IRepository<Reserva> _reservaRepo;
-    private readonly IWebHostEnvironment _env;
+    private readonly IMinioClient _minioClient;
     private readonly ILogger<AttachmentService> _logger;
+    private readonly string _bucketName;
 
     public AttachmentService(
         IRepository<ReservaAttachment> attachmentRepo,
         IRepository<Reserva> reservaRepo,
-        IWebHostEnvironment env,
+        IMinioClient minioClient,
+        IConfiguration config,
         ILogger<AttachmentService> logger)
     {
         _attachmentRepo = attachmentRepo;
         _reservaRepo = reservaRepo;
-        _env = env;
+        _minioClient = minioClient;
         _logger = logger;
+        _bucketName = config["Minio:BucketName"] ?? "reservations";
     }
 
     public async Task<IEnumerable<AttachmentDto>> GetAttachmentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
@@ -116,23 +120,30 @@ public class AttachmentService : IAttachmentService
             throw new InvalidOperationException("La firma del archivo no coincide con el tipo permitido.");
         }
 
-        var uploadsFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Files", DateTime.UtcNow.Year.ToString());
-        if (!Directory.Exists(uploadsFolder)) Directory.CreateDirectory(uploadsFolder);
+        var objectName = $"{DateTime.UtcNow.Year}/{Guid.NewGuid()}{extension}";
 
-        var storedFileName = $"{Guid.NewGuid()}{extension}";
-        var filePath = Path.Combine(uploadsFolder, storedFileName);
-
-        buffer.Position = 0;
-        await using (var stream = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        try
         {
-            await buffer.CopyToAsync(stream, ct);
+            buffer.Position = 0;
+            var putObjectArgs = new PutObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(objectName)
+                .WithStreamData(buffer)
+                .WithObjectSize(buffer.Length)
+                .WithContentType(normalizedContentType);
+            await _minioClient.PutObjectAsync(putObjectArgs, ct);
+        }
+        catch (MinioException e)
+        {
+            _logger.LogError(e, "Error uploading file to MinIO.");
+            throw new InvalidOperationException("Falló la subida del adjunto al almacenamiento remoto.");
         }
 
         var attachment = new ReservaAttachment
         {
             ReservaId = reservaId,
             FileName = safeFileName,
-            StoredFileName = Path.Combine(DateTime.UtcNow.Year.ToString(), storedFileName),
+            StoredFileName = objectName,
             ContentType = normalizedContentType,
             FileSize = buffer.Length,
             UploadedBy = uploadedBy,
@@ -163,13 +174,22 @@ public class AttachmentService : IAttachmentService
         var attachment = await _attachmentRepo.GetByIdAsync(id, ct);
         if (attachment == null) throw new KeyNotFoundException("Attachment not found.");
 
-        var uploadsFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Files");
-        var filePath = GetSafeFilePath(uploadsFolder, attachment.StoredFileName);
-
-        if (!File.Exists(filePath)) throw new FileNotFoundException("File not found on server.");
-
-        var bytes = await File.ReadAllBytesAsync(filePath, ct);
-        return (bytes, "application/octet-stream", attachment.FileName);
+        try
+        {
+            using var memoryStream = new MemoryStream();
+            var args = new GetObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(attachment.StoredFileName.Replace('\\', '/'))
+                .WithCallbackStream(stream => stream.CopyTo(memoryStream));
+            await _minioClient.GetObjectAsync(args, ct);
+            
+            return (memoryStream.ToArray(), attachment.ContentType ?? "application/octet-stream", attachment.FileName);
+        }
+        catch (MinioException e)
+        {
+            _logger.LogError(e, "Error downloading file from MinIO.");
+            throw new FileNotFoundException("File not found on remote storage.");
+        }
     }
 
     public async Task DeleteAttachmentAsync(string attachmentPublicIdOrLegacyId, CancellationToken ct)
@@ -187,16 +207,14 @@ public class AttachmentService : IAttachmentService
 
         try
         {
-            var uploadsFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Files");
-            var filePath = GetSafeFilePath(uploadsFolder, attachment.StoredFileName);
-            if (File.Exists(filePath))
-            {
-                File.Delete(filePath);
-            }
+            var removeObjectArgs = new RemoveObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(attachment.StoredFileName.Replace('\\', '/'));
+            await _minioClient.RemoveObjectAsync(removeObjectArgs, ct);
         }
-        catch (Exception ex)
+        catch (MinioException ex)
         {
-            _logger.LogError(ex, "Error deleting file from disk: {FilePath}", attachment.StoredFileName);
+            _logger.LogError(ex, "Error deleting file from MinIO: {FilePath}", attachment.StoredFileName);
         }
     }
 
@@ -264,13 +282,5 @@ public class AttachmentService : IAttachmentService
         };
     }
 
-    private static string GetSafeFilePath(string baseFolder, string storedFileName)
-    {
-        var fullPath = Path.GetFullPath(Path.Combine(baseFolder, storedFileName));
-        if (!fullPath.StartsWith(Path.GetFullPath(baseFolder), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Ruta de archivo inválida.");
-        }
-        return fullPath;
-    }
+
 }

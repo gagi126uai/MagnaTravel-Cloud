@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using MassTransit;
+using Minio.AspNetCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -37,6 +39,9 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.File("logs/log-.txt", rollingInterval: RollingInterval.Day, outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
     .WriteTo.Sink(new SignalRSink())
     .CreateLogger();
+
+
+
 
 try
 {
@@ -418,6 +423,13 @@ else
     builder.Services.AddScoped<IAttachmentService, AttachmentService>();
 }
 
+builder.Services.AddMinio(options =>
+{
+    options.Endpoint = builder.Configuration["Minio:Endpoint"] ?? "localhost:9000";
+    options.AccessKey = builder.Configuration["Minio:AccessKey"] ?? "minioadmin";
+    options.SecretKey = builder.Configuration["Minio:SecretKey"] ?? "minioadmin";
+});
+
 // Load allowed origins from configuration (appsettings.json or ENV)
 var allowedOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
 
@@ -683,3 +695,4 @@ finally
 }
 
 public partial class Program { }
+

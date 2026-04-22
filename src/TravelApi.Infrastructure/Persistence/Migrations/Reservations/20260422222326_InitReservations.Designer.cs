@@ -2,25 +2,28 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.Reservations
 {
-    [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [DbContext(typeof(ReservationsDbContext))]
+    [Migration("20260422222326_InitReservations")]
+    partial class InitReservations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
+                .HasDefaultSchema("reservas")
                 .HasAnnotation("ProductVersion", "8.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
-            NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pgcrypto");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.InboxState", b =>
@@ -67,7 +70,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Delivered");
 
-                    b.ToTable("InboxState");
+                    b.ToTable("InboxState", "reservas");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxMessage", b =>
@@ -158,7 +161,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("InboxMessageId", "InboxConsumerId", "SequenceNumber")
                         .IsUnique();
 
-                    b.ToTable("OutboxMessage");
+                    b.ToTable("OutboxMessage", "reservas");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxState", b =>
@@ -188,276 +191,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Created");
 
-                    b.ToTable("OutboxState");
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ConcurrencyStamp")
-                        .IsConcurrencyToken()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Name")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.Property<string>("NormalizedName")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("NormalizedName")
-                        .IsUnique()
-                        .HasDatabaseName("RoleNameIndex");
-
-                    b.ToTable("AspNetRoles", (string)null);
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("ClaimType")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ClaimValue")
-                        .HasColumnType("text");
-
-                    b.Property<string>("RoleId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RoleId");
-
-                    b.ToTable("AspNetRoleClaims", (string)null);
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<string>", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("ClaimType")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ClaimValue")
-                        .HasColumnType("text");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("AspNetUserClaims", (string)null);
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
-                {
-                    b.Property<string>("LoginProvider")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProviderKey")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProviderDisplayName")
-                        .HasColumnType("text");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("LoginProvider", "ProviderKey");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("AspNetUserLogins", (string)null);
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserRole<string>", b =>
-                {
-                    b.Property<string>("UserId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("RoleId")
-                        .HasColumnType("text");
-
-                    b.HasKey("UserId", "RoleId");
-
-                    b.HasIndex("RoleId");
-
-                    b.ToTable("AspNetUserRoles", (string)null);
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserToken<string>", b =>
-                {
-                    b.Property<string>("UserId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("LoginProvider")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Name")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Value")
-                        .HasColumnType("text");
-
-                    b.HasKey("UserId", "LoginProvider", "Name");
-
-                    b.ToTable("AspNetUserTokens", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.AfipSettings", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<byte[]>("CertificateData")
-                        .HasColumnType("bytea");
-
-                    b.Property<string>("CertificatePassword")
-                        .HasColumnType("text");
-
-                    b.Property<string>("CertificatePath")
-                        .HasColumnType("text");
-
-                    b.Property<long>("Cuit")
-                        .HasColumnType("bigint");
-
-                    b.Property<bool>("IsProduction")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("PadronSign")
-                        .HasColumnType("text");
-
-                    b.Property<string>("PadronToken")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("PadronTokenExpiration")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<byte[]>("ProdCertificateData")
-                        .HasColumnType("bytea");
-
-                    b.Property<string>("ProdCertificatePassword")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProdCertificatePath")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProdPadronSign")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProdPadronToken")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("ProdPadronTokenExpiration")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ProdSign")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProdToken")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("ProdTokenExpiration")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("PuntoDeVenta")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Sign")
-                        .HasColumnType("text");
-
-                    b.Property<string>("TaxCondition")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("Token")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("TokenExpiration")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("AfipSettings");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.AgencySettings", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime?>("ActivityStartDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Address")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("AgencyName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)");
-
-                    b.Property<decimal>("DefaultCommissionPercent")
-                        .HasColumnType("decimal(5,2)");
-
-                    b.Property<string>("Email")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("LegalName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Phone")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("TaxCondition")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("TaxId")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("AgencySettings");
+                    b.ToTable("OutboxState", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ApplicationUser", b =>
@@ -469,12 +203,10 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<string>("ConcurrencyStamp")
-                        .IsConcurrencyToken()
                         .HasColumnType("text");
 
                     b.Property<string>("Email")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
+                        .HasColumnType("text");
 
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
@@ -493,12 +225,10 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("NormalizedEmail")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
+                        .HasColumnType("text");
 
                     b.Property<string>("NormalizedUserName")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
+                        .HasColumnType("text");
 
                     b.Property<string>("PasswordHash")
                         .HasColumnType("text");
@@ -516,381 +246,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<string>("UserName")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("NormalizedEmail")
-                        .HasDatabaseName("EmailIndex");
-
-                    b.HasIndex("NormalizedUserName")
-                        .IsUnique()
-                        .HasDatabaseName("UserNameIndex");
-
-                    b.ToTable("AspNetUsers", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.AuditLog", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Action")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<string>("Changes")
-                        .HasColumnType("text");
-
-                    b.Property<string>("EntityId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("EntityName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime>("Timestamp")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("UserName")
                         .HasColumnType("text");
 
                     b.HasKey("Id");
 
-                    b.ToTable("AuditLogs");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.BnaExchangeRateSnapshot", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("EuroSeller")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<DateTime>("FetchedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("PublishedDate")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<string>("PublishedTime")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)");
-
-                    b.Property<decimal>("RealSeller")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<string>("Source")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<decimal>("UsdSeller")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("BnaExchangeRateSnapshots", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.BusinessSequence", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("DocumentType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<long>("LastValue")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Year")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentType", "Year")
-                        .IsUnique();
-
-                    b.ToTable("BusinessSequences", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackage", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("CountryName")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("CountrySlug")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Destination")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<int>("DestinationOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("GeneralInfo")
-                        .HasMaxLength(8000)
-                        .HasColumnType("character varying(8000)");
-
-                    b.Property<string>("HeroImageContentType")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("HeroImageFileName")
-                        .HasMaxLength(260)
-                        .HasColumnType("character varying(260)");
-
-                    b.Property<long?>("HeroImageFileSize")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("HeroImageStoredFileName")
-                        .HasMaxLength(260)
-                        .HasColumnType("character varying(260)");
-
-                    b.Property<bool>("IsPublished")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("PublishedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Slug")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Tagline")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("Slug")
-                        .IsUnique();
-
-                    b.HasIndex("CountrySlug", "Destination");
-
-                    b.HasIndex("IsPublished", "Slug");
-
-                    b.HasIndex("IsPublished", "CountrySlug", "DestinationOrder");
-
-                    b.ToTable("CatalogPackages", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackageDeparture", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CatalogPackageId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)");
-
-                    b.Property<string>("HotelName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsPrimary")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("MealPlan")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<int>("Nights")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("RoomBase")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<decimal>("SalePrice")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateTime>("StartDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("TransportLabel")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("CatalogPackageId", "StartDate");
-
-                    b.ToTable("CatalogPackageDepartures", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.CommissionRule", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("CommissionPercent")
-                        .HasColumnType("decimal(5,2)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("Priority")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ServiceType")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<int?>("SupplierId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SupplierId");
-
-                    b.ToTable("CommissionRules");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.Country", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsPublished")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(true);
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("PublishedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Slug")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("Slug")
-                        .IsUnique();
-
-                    b.HasIndex("IsPublished", "Slug");
-
-                    b.ToTable("Countries", (string)null);
+                    b.ToTable("ApplicationUser", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Customer", b =>
@@ -902,8 +262,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<string>("Address")
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -915,17 +274,14 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric");
 
                     b.Property<string>("DocumentNumber")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Email")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasColumnType("text");
 
                     b.Property<string>("FullName")
                         .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -953,165 +309,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("IsActive", "FullName");
-
-                    b.ToTable("Customers");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.Destination", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CountryId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("DisplayOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("GeneralInfo")
-                        .HasMaxLength(8000)
-                        .HasColumnType("character varying(8000)");
-
-                    b.Property<string>("HeroImageContentType")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("HeroImageFileName")
-                        .HasMaxLength(260)
-                        .HasColumnType("character varying(260)");
-
-                    b.Property<long?>("HeroImageFileSize")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("HeroImageStoredFileName")
-                        .HasMaxLength(260)
-                        .HasColumnType("character varying(260)");
-
-                    b.Property<bool>("IsPublished")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("PublishedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Slug")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Tagline")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("Slug")
-                        .IsUnique();
-
-                    b.HasIndex("CountryId", "DisplayOrder");
-
-                    b.HasIndex("CountryId", "Name");
-
-                    b.HasIndex("IsPublished", "CountryId", "DisplayOrder");
-
-                    b.ToTable("Destinations", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.DestinationDeparture", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)");
-
-                    b.Property<int>("DestinationId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("HotelName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsPrimary")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("MealPlan")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<int>("Nights")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("RoomBase")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<decimal>("SalePrice")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateTime>("StartDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("TransportLabel")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("DestinationId", "StartDate");
-
-                    b.ToTable("DestinationDepartures", (string)null);
+                    b.ToTable("Customer", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.FlightSegment", b =>
@@ -1197,15 +395,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("SalePrice")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<int?>("ServicioReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("ReservationId");
+                        .HasColumnType("integer");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1224,9 +420,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
@@ -1235,7 +428,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("FlightSegments");
+                    b.ToTable("FlightSegments", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.HotelBooking", b =>
@@ -1308,8 +501,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<string>("RoomType")
                         .IsRequired()
@@ -1335,16 +527,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("HotelBookings");
+                    b.ToTable("HotelBookings", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Invoice", b =>
@@ -1368,19 +557,16 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("text");
 
                     b.Property<string>("ForceReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
+                        .HasColumnType("text");
 
                     b.Property<DateTime?>("ForcedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ForcedByUserId")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasColumnType("text");
 
                     b.Property<string>("ForcedByUserName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasColumnType("text");
 
                     b.Property<decimal>("ImporteIva")
                         .HasColumnType("decimal(18,2)");
@@ -1401,7 +587,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<decimal>("OutstandingBalanceAtIssuance")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<Guid>("PublicId")
@@ -1411,8 +596,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int?>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<string>("Resultado")
                         .HasColumnType("text");
@@ -1428,16 +612,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CreatedAt");
-
                     b.HasIndex("OriginalInvoiceId");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
 
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("Invoices");
+                    b.ToTable("Invoice", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.InvoiceItem", b =>
@@ -1475,7 +654,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("InvoiceId");
 
-                    b.ToTable("InvoiceItem", (string)null);
+                    b.ToTable("InvoiceItem", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.InvoiceTribute", b =>
@@ -1510,7 +689,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("InvoiceId");
 
-                    b.ToTable("InvoiceTribute", (string)null);
+                    b.ToTable("InvoiceTribute", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Lead", b =>
@@ -1588,10 +767,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ConvertedCustomerId");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.ToTable("Leads");
+                    b.ToTable("Lead", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.LeadActivity", b =>
@@ -1629,10 +805,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("LeadId");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.ToTable("LeadActivities");
+                    b.ToTable("LeadActivity", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ManualCashMovement", b =>
@@ -1644,7 +817,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<decimal>("Amount")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("Category")
@@ -1696,96 +868,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OccurredAt");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("RelatedReservaId");
 
                     b.HasIndex("RelatedSupplierId");
 
-                    b.ToTable("ManualCashMovements");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.Notification", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsDismissed")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsRead")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Message")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Priority")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int?>("RelatedEntityId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("RelatedEntityType")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Notifications");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.OperationalFinanceSettings", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("AfipInvoiceControlMode")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("EnableUpcomingUnpaidReservationNotifications")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("RequireFullPaymentForOperativeStatus")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("RequireFullPaymentForVoucher")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("UpcomingUnpaidReservationAlertDays")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("OperationalFinanceSettings");
+                    b.ToTable("ManualCashMovement", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.PackageBooking", b =>
@@ -1861,8 +948,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("SalePrice")
                         .HasColumnType("decimal(18,2)");
@@ -1880,16 +966,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("PackageBookings");
+                    b.ToTable("PackageBookings", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Passenger", b =>
@@ -1942,17 +1025,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<int>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("Passengers");
+                    b.ToTable("Passengers", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Payment", b =>
@@ -1967,7 +1046,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<decimal>("Amount")
-                        .HasPrecision(12, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("DeletedAt")
@@ -1975,16 +1053,14 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("EntryType")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
                     b.Property<string>("Method")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Notes")
                         .HasColumnType("text");
@@ -2005,26 +1081,18 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int?>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<int?>("ServicioReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("ReservationId");
+                        .HasColumnType("integer");
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
                     b.HasIndex("OriginalPaymentId");
-
-                    b.HasIndex("PaidAt");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
 
                     b.HasIndex("RelatedInvoiceId");
 
@@ -2032,7 +1100,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ServicioReservaId");
 
-                    b.ToTable("Payments");
+                    b.ToTable("Payments", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.PaymentReceipt", b =>
@@ -2044,7 +1112,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<decimal>("Amount")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("IssuedAt")
@@ -2077,12 +1144,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("PaymentId")
                         .IsUnique();
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("PaymentReceipts");
+                    b.ToTable("PaymentReceipts", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Quote", b =>
@@ -2103,8 +1167,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int?>("ConvertedReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("ConvertedFileId");
+                        .HasColumnType("integer");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -2171,10 +1234,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("LeadId");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.ToTable("Quotes");
+                    b.ToTable("Quote", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.QuoteItem", b =>
@@ -2228,16 +1288,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("QuoteId");
 
                     b.HasIndex("RateId");
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("QuoteItems");
+                    b.ToTable("QuoteItem", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Rate", b =>
@@ -2412,12 +1469,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("Rates");
+                    b.ToTable("Rate", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.RefreshToken", b =>
@@ -2464,12 +1518,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
+                    b.HasIndex("UserId");
 
-                    b.HasIndex("UserId", "ExpiresAt");
-
-                    b.ToTable("RefreshTokens", (string)null);
+                    b.ToTable("RefreshToken", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Reserva", b =>
@@ -2503,8 +1554,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<string>("NumeroReserva")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("FileNumber");
+                        .HasColumnType("character varying(50)");
 
                     b.Property<int?>("PayerId")
                         .HasColumnType("integer");
@@ -2544,9 +1594,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("NumeroReserva")
-                        .IsUnique();
-
                     b.HasIndex("PayerId");
 
                     b.HasIndex("PublicId")
@@ -2556,11 +1603,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SourceLeadId");
 
-                    b.HasIndex("SourceQuoteId");
-
-                    b.HasIndex("Status", "StartDate", "CreatedAt");
-
-                    b.ToTable("TravelFiles", (string)null);
+                    b.ToTable("Reservaciones", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ReservaAttachment", b =>
@@ -2599,38 +1642,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("ReservaAttachments", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.RolePermission", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Permission")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("RoleName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RoleName", "Permission")
-                        .IsUnique();
-
-                    b.ToTable("RolePermissions", (string)null);
+                    b.ToTable("ReservaAttachments", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ServicioReserva", b =>
@@ -2642,7 +1656,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<decimal>("Commission")
-                        .HasPrecision(12, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("ConfirmationNumber")
@@ -2661,7 +1674,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("text");
 
                     b.Property<decimal>("NetCost")
-                        .HasPrecision(12, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("ProductType")
@@ -2674,14 +1686,12 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int?>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<DateTime?>("ReturnDate")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<decimal>("SalePrice")
-                        .HasPrecision(12, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("ServiceDetailsJson")
@@ -2692,26 +1702,20 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasColumnType("text");
 
                     b.Property<int?>("SupplierId")
                         .HasColumnType("integer");
 
                     b.Property<string>("SupplierName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasColumnType("text");
 
                     b.Property<decimal>("Tax")
-                        .HasPrecision(12, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("CustomerId");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
 
                     b.HasIndex("RateId");
 
@@ -2719,7 +1723,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("Reservations", (string)null);
+                    b.ToTable("ServiciosReserva", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Supplier", b =>
@@ -2773,65 +1777,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.ToTable("Suppliers");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierPayment", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("Amount")
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Method")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Notes")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("PaidAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Reference")
-                        .HasColumnType("text");
-
-                    b.Property<int?>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
-
-                    b.Property<int?>("ServicioReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("ReservationId");
-
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("ReservaId");
-
-                    b.HasIndex("ServicioReservaId");
-
-                    b.HasIndex("SupplierId");
-
-                    b.ToTable("SupplierPayments");
+                    b.ToTable("Supplier", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.TransferBooking", b =>
@@ -2889,8 +1835,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int>("ReservaId")
-                        .HasColumnType("integer")
-                        .HasColumnName("TravelFileId");
+                        .HasColumnType("integer");
 
                     b.Property<DateTime?>("ReturnDateTime")
                         .HasColumnType("timestamp with time zone");
@@ -2913,67 +1858,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
                     b.HasIndex("RateId");
 
                     b.HasIndex("ReservaId");
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("TransferBookings");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.WhatsAppBotConfig", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("AgentRequestMessage")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("AskDatesMessage")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("AskInterestMessage")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("AskTravelersMessage")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("DuplicateMessage")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("ThanksMessage")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("WelcomeMessage")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("WhatsAppBotConfigs");
+                    b.ToTable("TransferBookings", "reservas");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.WhatsAppDelivery", b =>
@@ -3049,7 +1940,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("WhatsAppDeliveries", (string)null);
+                    b.ToTable("WhatsAppDelivery", "reservas");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxMessage", b =>
@@ -3064,105 +1955,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasPrincipalKey("MessageId", "ConsumerId");
                 });
 
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
-                {
-                    b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
-                        .WithMany()
-                        .HasForeignKey("RoleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<string>", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserRole<string>", b =>
-                {
-                    b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
-                        .WithMany()
-                        .HasForeignKey("RoleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("TravelApi.Domain.Entities.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserToken<string>", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackageDeparture", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.CatalogPackage", "CatalogPackage")
-                        .WithMany("Departures")
-                        .HasForeignKey("CatalogPackageId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CatalogPackage");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.CommissionRule", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.Supplier", "Supplier")
-                        .WithMany()
-                        .HasForeignKey("SupplierId");
-
-                    b.Navigation("Supplier");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.Destination", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.Country", "Country")
-                        .WithMany("Destinations")
-                        .HasForeignKey("CountryId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Country");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.DestinationDeparture", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.Destination", "Destination")
-                        .WithMany("Departures")
-                        .HasForeignKey("DestinationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Destination");
-                });
-
             modelBuilder.Entity("TravelApi.Domain.Entities.FlightSegment", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
                         .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RateId");
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("FlightSegments")
@@ -3193,8 +1990,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
                         .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RateId");
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("HotelBookings")
@@ -3276,13 +2072,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "RelatedReserva")
                         .WithMany("ManualCashMovements")
-                        .HasForeignKey("RelatedReservaId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RelatedReservaId");
 
                     b.HasOne("TravelApi.Domain.Entities.Supplier", "RelatedSupplier")
                         .WithMany()
-                        .HasForeignKey("RelatedSupplierId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RelatedSupplierId");
 
                     b.Navigation("RelatedReserva");
 
@@ -3293,8 +2087,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
                         .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RateId");
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("PackageBookings")
@@ -3330,23 +2123,19 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TravelApi.Domain.Entities.Payment", "OriginalPayment")
                         .WithMany("Reversals")
-                        .HasForeignKey("OriginalPaymentId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("OriginalPaymentId");
 
                     b.HasOne("TravelApi.Domain.Entities.Invoice", "RelatedInvoice")
                         .WithMany()
-                        .HasForeignKey("RelatedInvoiceId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RelatedInvoiceId");
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("Payments")
-                        .HasForeignKey("ReservaId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .HasForeignKey("ReservaId");
 
                     b.HasOne("TravelApi.Domain.Entities.ServicioReserva", "ServicioReserva")
                         .WithMany("Payments")
-                        .HasForeignKey("ServicioReservaId")
-                        .OnDelete(DeleteBehavior.Cascade);
+                        .HasForeignKey("ServicioReservaId");
 
                     b.Navigation("OriginalPayment");
 
@@ -3362,13 +2151,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasOne("TravelApi.Domain.Entities.Payment", "Payment")
                         .WithOne("Receipt")
                         .HasForeignKey("TravelApi.Domain.Entities.PaymentReceipt", "PaymentId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany()
                         .HasForeignKey("ReservaId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Payment");
@@ -3388,8 +2177,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasOne("TravelApi.Domain.Entities.Lead", "Lead")
                         .WithMany("Quotes")
-                        .HasForeignKey("LeadId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("LeadId");
 
                     b.Navigation("ConvertedReserva");
 
@@ -3408,8 +2196,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
                         .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RateId");
 
                     b.HasOne("TravelApi.Domain.Entities.Supplier", "Supplier")
                         .WithMany()
@@ -3446,31 +2233,21 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TravelApi.Domain.Entities.Customer", "Payer")
                         .WithMany("Reservas")
-                        .HasForeignKey("PayerId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .HasForeignKey("PayerId");
 
                     b.HasOne("TravelApi.Domain.Entities.ApplicationUser", "ResponsibleUser")
                         .WithMany()
-                        .HasForeignKey("ResponsibleUserId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("ResponsibleUserId");
 
                     b.HasOne("TravelApi.Domain.Entities.Lead", "SourceLead")
                         .WithMany()
-                        .HasForeignKey("SourceLeadId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("TravelApi.Domain.Entities.Quote", "SourceQuote")
-                        .WithMany()
-                        .HasForeignKey("SourceQuoteId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("SourceLeadId");
 
                     b.Navigation("Payer");
 
                     b.Navigation("ResponsibleUser");
 
                     b.Navigation("SourceLead");
-
-                    b.Navigation("SourceQuote");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ReservaAttachment", b =>
@@ -3488,24 +2265,19 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TravelApi.Domain.Entities.Customer", "Customer")
                         .WithMany("Reservations")
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .HasForeignKey("CustomerId");
 
                     b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
                         .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RateId");
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("Servicios")
-                        .HasForeignKey("ReservaId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_Reservations_TravelFiles_TravelFileId");
+                        .HasForeignKey("ReservaId");
 
                     b.HasOne("TravelApi.Domain.Entities.Supplier", "Supplier")
                         .WithMany()
-                        .HasForeignKey("SupplierId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .HasForeignKey("SupplierId");
 
                     b.Navigation("Customer");
 
@@ -3516,35 +2288,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("Supplier");
                 });
 
-            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierPayment", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
-                        .WithMany()
-                        .HasForeignKey("ReservaId");
-
-                    b.HasOne("TravelApi.Domain.Entities.ServicioReserva", "ServicioReserva")
-                        .WithMany()
-                        .HasForeignKey("ServicioReservaId");
-
-                    b.HasOne("TravelApi.Domain.Entities.Supplier", "Supplier")
-                        .WithMany()
-                        .HasForeignKey("SupplierId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Reserva");
-
-                    b.Navigation("ServicioReserva");
-
-                    b.Navigation("Supplier");
-                });
-
             modelBuilder.Entity("TravelApi.Domain.Entities.TransferBooking", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
                         .WithMany()
-                        .HasForeignKey("RateId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("RateId");
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("TransferBookings")
@@ -3569,8 +2317,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TravelApi.Domain.Entities.Customer", "Customer")
                         .WithMany()
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("CustomerId");
 
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
                         .WithMany("WhatsAppDeliveries")
@@ -3588,26 +2335,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("RefreshTokens");
                 });
 
-            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackage", b =>
-                {
-                    b.Navigation("Departures");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.Country", b =>
-                {
-                    b.Navigation("Destinations");
-                });
-
             modelBuilder.Entity("TravelApi.Domain.Entities.Customer", b =>
                 {
                     b.Navigation("Reservas");
 
                     b.Navigation("Reservations");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.Destination", b =>
-                {
-                    b.Navigation("Departures");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Invoice", b =>

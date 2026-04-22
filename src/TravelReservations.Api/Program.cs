@@ -13,6 +13,9 @@ using TravelApi.Infrastructure.Services;
 
 using System.Threading.RateLimiting;
 
+using MassTransit;
+using Minio.AspNetCore;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers()
@@ -25,13 +28,36 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddAutoMapper(typeof(Program), typeof(TravelApi.Application.Mappings.MappingProfile));
 builder.Services.AddEndpointsApiExplorer();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddDbContext<ReservationsDbContext>(options =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
     options.UseNpgsql(connectionString, o =>
     {
         o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
         o.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
+    });
+});
+
+builder.Services.AddMassTransit(x =>
+{
+    x.AddEntityFrameworkOutbox<ReservationsDbContext>(o =>
+    {
+        o.UsePostgres();
+        o.UseBusOutbox();
+    });
+
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        var host = builder.Configuration["RABBITMQ_HOST"] ?? "localhost";
+        var user = builder.Configuration["RABBITMQ_USER"] ?? "guest";
+        var pass = builder.Configuration["RABBITMQ_PASSWORD"] ?? "guest";
+
+        cfg.Host(host, "/", h => {
+            h.Username(user);
+            h.Password(pass);
+        });
+
+        cfg.ConfigureEndpoints(context);
     });
 });
 
@@ -53,7 +79,7 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("uploads", _ => RateLimitPartition.GetNoLimiter("reservations-service-uploads"));
 });
 
-builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+builder.Services.AddScoped(typeof(IRepository<>), typeof(ReservationsRepository<>));
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<IEntityReferenceResolver, EntityReferenceResolver>();
 builder.Services.AddScoped<IOperationalFinanceSettingsService, OperationalFinanceSettingsService>();
@@ -69,11 +95,36 @@ builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IWhatsAppDeliveryService, WhatsAppDeliveryService>();
 
+builder.Services.AddMinio(options =>
+{
+    options.Endpoint = builder.Configuration["Minio:Endpoint"] ?? "localhost:9000";
+    options.AccessKey = builder.Configuration["Minio:AccessKey"] ?? "minioadmin";
+    options.SecretKey = builder.Configuration["Minio:SecretKey"] ?? "minioadmin";
+});
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var minio = scope.ServiceProvider.GetRequiredService<Minio.IMinioClient>();
+    var bucketName = builder.Configuration["Minio:BucketName"] ?? "reservations";
+    try
+    {
+        bool found = await minio.BucketExistsAsync(new Minio.DataModel.Args.BucketExistsArgs().WithBucket(bucketName));
+        if (!found)
+        {
+            await minio.MakeBucketAsync(new Minio.DataModel.Args.MakeBucketArgs().WithBucket(bucketName));
+        }
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Failed to initialize MinIO bucket on startup. It might be unavailable.");
+    }
+}
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<ReservationsDbContext>();
     await db.Database.MigrateAsync();
 }
 
@@ -82,7 +133,7 @@ app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "reservations" })).AllowAnonymous();
-app.MapGet("/health/ready", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (ReservationsDbContext dbContext, CancellationToken cancellationToken) =>
 {
     if (!await dbContext.Database.CanConnectAsync(cancellationToken))
     {
@@ -151,3 +202,4 @@ internal sealed class InternalServiceAuthenticationHandler : AuthenticationHandl
         return Task.FromResult(AuthenticateResult.Success(ticket));
     }
 }
+
