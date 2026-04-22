@@ -2,11 +2,12 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using TravelApi.Application.Contracts.Files;
+using TravelApi.Application.Contracts.Reservations;
+using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Errors;
-using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -19,7 +20,6 @@ public class ReservasController : ControllerBase
     private readonly IVoucherService _voucherService;
     private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
     private readonly ITimelineService _timelineService;
-    private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly ILogger<ReservasController> _logger;
 
     public ReservasController(
@@ -27,14 +27,12 @@ public class ReservasController : ControllerBase
         IVoucherService voucherService,
         IWhatsAppDeliveryService whatsAppDeliveryService,
         ITimelineService timelineService,
-        IEntityReferenceResolver entityReferenceResolver,
         ILogger<ReservasController> logger)
     {
         _reservaService = reservaService;
         _voucherService = voucherService;
         _whatsAppDeliveryService = whatsAppDeliveryService;
         _timelineService = timelineService;
-        _entityReferenceResolver = entityReferenceResolver;
         _logger = logger;
     }
 
@@ -53,17 +51,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudieron obtener las reservas.");
         }
     }
 
     [HttpGet("{publicIdOrLegacyId}")]
-    public async Task<IActionResult> GetReserva(string publicIdOrLegacyId)
+    public async Task<IActionResult> GetReserva(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
-        try 
+        try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.GetReservaByIdAsync(id);
+            var dto = await _reservaService.GetReservaByIdAsync(publicIdOrLegacyId, cancellationToken);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -77,6 +75,7 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener la reserva.");
         }
     }
@@ -84,10 +83,9 @@ public class ReservasController : ControllerBase
     [HttpGet("{publicIdOrLegacyId}/timeline")]
     public async Task<IActionResult> GetReservaTimeline(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
-        try 
+        try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
-            var timeline = await _timelineService.GetTimelineAsync(id, cancellationToken);
+            var timeline = await _timelineService.GetTimelineAsync(publicIdOrLegacyId, cancellationToken);
             return Ok(timeline);
         }
         catch (KeyNotFoundException)
@@ -101,19 +99,19 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el historial.");
         }
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateReserva(CreateReservaRequest request)
+    public async Task<IActionResult> CreateReserva(CreateReservaRequest request, CancellationToken cancellationToken)
     {
-        try 
+        try
         {
             var createdByUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            var reserva = await _reservaService.CreateReservaAsync(request, createdByUserId);
-            var dto = await _reservaService.GetReservaByIdAsync(reserva.Id);
-            return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId = reserva.PublicId }, dto);
+            var reserva = await _reservaService.CreateReservaAsync(request, createdByUserId, cancellationToken);
+            return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId = reserva.PublicId }, reserva);
         }
         catch (Exception ex)
         {
@@ -122,21 +120,23 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear la reserva.");
         }
     }
 
     [HttpPost("{publicIdOrLegacyId}/services")]
-    public async Task<IActionResult> AddService(string publicIdOrLegacyId, AddServiceRequest request)
+    public async Task<IActionResult> AddService(string publicIdOrLegacyId, AddServiceRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var (servicio, warning) = await _reservaService.AddServiceAsync(id, request);
-            if (warning != null)
-                return Ok(new { servicio, Warning = warning });
-                
-            return Ok(servicio);
+            var result = await _reservaService.AddServiceAsync(publicIdOrLegacyId, request, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(result.Warning))
+            {
+                return Ok(new { servicio = result.Servicio, result.Warning });
+            }
+
+            return Ok(result.Servicio);
         }
         catch (KeyNotFoundException)
         {
@@ -153,17 +153,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo agregar el servicio.");
         }
     }
 
     [HttpPut("services/{servicePublicIdOrLegacyId}")]
-    public async Task<IActionResult> UpdateService(string servicePublicIdOrLegacyId, AddServiceRequest request)
+    public async Task<IActionResult> UpdateService(string servicePublicIdOrLegacyId, AddServiceRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var serviceId = await _entityReferenceResolver.ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, HttpContext.RequestAborted);
-            var service = await _reservaService.UpdateServiceAsync(serviceId, request);
+            var service = await _reservaService.UpdateServiceAsync(servicePublicIdOrLegacyId, request, cancellationToken);
             return Ok(service);
         }
         catch (KeyNotFoundException)
@@ -181,17 +181,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el servicio.");
         }
     }
 
     [HttpDelete("services/{servicePublicIdOrLegacyId}")]
-    public async Task<IActionResult> RemoveService(string servicePublicIdOrLegacyId)
+    public async Task<IActionResult> RemoveService(string servicePublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
-            var serviceId = await _entityReferenceResolver.ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, HttpContext.RequestAborted);
-            await _reservaService.RemoveServiceAsync(serviceId);
+            await _reservaService.RemoveServiceAsync(servicePublicIdOrLegacyId, cancellationToken);
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -205,26 +205,24 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el servicio.");
         }
     }
 
-    // ==================== PASAJEROS ====================
     [HttpGet("{publicIdOrLegacyId}/passengers")]
-    public async Task<ActionResult> GetPassengers(string publicIdOrLegacyId)
+    public async Task<ActionResult> GetPassengers(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
-        var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-        var passengers = await _reservaService.GetPassengersAsync(id);
+        var passengers = await _reservaService.GetPassengersAsync(publicIdOrLegacyId, cancellationToken);
         return Ok(passengers);
     }
 
     [HttpPost("{publicIdOrLegacyId}/passengers")]
-    public async Task<ActionResult> AddPassenger(string publicIdOrLegacyId, PassengerUpsertRequest passenger)
+    public async Task<ActionResult> AddPassenger(string publicIdOrLegacyId, PassengerUpsertRequest passenger, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.AddPassengerAsync(id, MapPassenger(passenger));
+            var dto = await _reservaService.AddPassengerAsync(publicIdOrLegacyId, passenger, cancellationToken);
             return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId }, dto);
         }
         catch (KeyNotFoundException)
@@ -242,17 +240,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo agregar el pasajero.");
         }
     }
 
     [HttpPut("passengers/{passengerPublicIdOrLegacyId}")]
-    public async Task<ActionResult> UpdatePassenger(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated)
+    public async Task<ActionResult> UpdatePassenger(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated, CancellationToken cancellationToken)
     {
         try
         {
-            var passengerId = await _entityReferenceResolver.ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.UpdatePassengerAsync(passengerId, MapPassenger(updated));
+            var dto = await _reservaService.UpdatePassengerAsync(passengerPublicIdOrLegacyId, updated, cancellationToken);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -270,17 +268,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el pasajero.");
         }
     }
 
     [HttpDelete("passengers/{passengerPublicIdOrLegacyId}")]
-    public async Task<IActionResult> RemovePassenger(string passengerPublicIdOrLegacyId)
+    public async Task<IActionResult> RemovePassenger(string passengerPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
-            var passengerId = await _entityReferenceResolver.ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, HttpContext.RequestAborted);
-            await _reservaService.RemovePassengerAsync(passengerId);
+            await _reservaService.RemovePassengerAsync(passengerPublicIdOrLegacyId, cancellationToken);
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -294,26 +292,24 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el pasajero.");
         }
     }
 
-    // ==================== PAGOS ====================
     [HttpGet("{publicIdOrLegacyId}/payments")]
-    public async Task<ActionResult> GetReservaPayments(string publicIdOrLegacyId)
+    public async Task<ActionResult> GetReservaPayments(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
-        var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-        var payments = await _reservaService.GetReservaPaymentsAsync(id);
+        var payments = await _reservaService.GetReservaPaymentsAsync(publicIdOrLegacyId, cancellationToken);
         return Ok(payments);
     }
 
     [HttpPost("{publicIdOrLegacyId}/payments")]
-    public async Task<ActionResult> AddPayment(string publicIdOrLegacyId, PaymentUpsertRequest payment)
+    public async Task<ActionResult> AddPayment(string publicIdOrLegacyId, ReservationPaymentUpsertRequest payment, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.AddPaymentAsync(id, MapPayment(payment));
+            var dto = await _reservaService.AddPaymentAsync(publicIdOrLegacyId, payment, cancellationToken);
             return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId }, dto);
         }
         catch (KeyNotFoundException)
@@ -331,18 +327,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo registrar el pago.");
         }
     }
 
     [HttpPut("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
-    public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, PaymentUpsertRequest updatedPayment)
+    public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, ReservationPaymentUpsertRequest updatedPayment, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var paymentId = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, HttpContext.RequestAborted);
-            var dto = await _reservaService.UpdatePaymentAsync(id, paymentId, MapPayment(updatedPayment));
+            var dto = await _reservaService.UpdatePaymentAsync(publicIdOrLegacyId, paymentPublicIdOrLegacyId, updatedPayment, cancellationToken);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -360,18 +355,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el pago.");
         }
     }
 
     [HttpDelete("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
-    public async Task<IActionResult> DeletePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId)
+    public async Task<IActionResult> DeletePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var paymentId = await _entityReferenceResolver.ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, HttpContext.RequestAborted);
-            await _reservaService.DeletePaymentAsync(id, paymentId);
+            await _reservaService.DeletePaymentAsync(publicIdOrLegacyId, paymentPublicIdOrLegacyId, cancellationToken);
             return Ok();
         }
         catch (KeyNotFoundException)
@@ -389,22 +383,22 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el pago.");
         }
     }
 
-    // ==================== ESTADOS ====================
     [HttpPut("{publicIdOrLegacyId}/status")]
-    public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] UpdateStatusDto request)
+    public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] StatusUpdateRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var reserva = await _reservaService.UpdateStatusAsync(id, request.Status);
+            var reserva = await _reservaService.UpdateStatusAsync(publicIdOrLegacyId, request.Status, cancellationToken);
             if (request.Status == EstadoReserva.Operational)
             {
-                await _whatsAppDeliveryService.PrepareVoucherDraftAsync(id, HttpContext.RequestAborted);
+                await _whatsAppDeliveryService.PrepareVoucherDraftAsync(publicIdOrLegacyId, cancellationToken);
             }
+
             return Ok(reserva);
         }
         catch (KeyNotFoundException)
@@ -417,7 +411,7 @@ public class ReservasController : ControllerBase
         }
         catch (InvalidOperationException)
         {
-             return BadRequest(new { message = "No se pudo actualizar el estado de la reserva." });
+            return BadRequest(new { message = "No se pudo actualizar el estado de la reserva." });
         }
         catch (Exception ex)
         {
@@ -426,17 +420,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el estado de la reserva.");
         }
     }
 
     [HttpPut("{publicIdOrLegacyId}/archive")]
-    public async Task<IActionResult> ArchiveReserva(string publicIdOrLegacyId)
+    public async Task<IActionResult> ArchiveReserva(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            var reserva = await _reservaService.ArchiveReservaAsync(id);
+            var reserva = await _reservaService.ArchiveReservaAsync(publicIdOrLegacyId, cancellationToken);
             return Ok(reserva);
         }
         catch (KeyNotFoundException)
@@ -450,17 +444,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo archivar la reserva.");
         }
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]
-    public async Task<IActionResult> DeleteReserva(string publicIdOrLegacyId)
+    public async Task<IActionResult> DeleteReserva(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, HttpContext.RequestAborted);
-            await _reservaService.DeleteReservaAsync(id);
+            await _reservaService.DeleteReservaAsync(publicIdOrLegacyId, cancellationToken);
             return Ok();
         }
         catch (KeyNotFoundException)
@@ -478,18 +472,17 @@ public class ReservasController : ControllerBase
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
+
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar la reserva.");
         }
     }
 
-    // ==================== VOUCHER ====================
     [HttpGet("{publicIdOrLegacyId}/voucher")]
     public async Task<IActionResult> GenerateVoucher(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
-            var htmlBytes = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
+            var htmlBytes = await _voucherService.GenerateVoucherHtmlAsync(publicIdOrLegacyId, cancellationToken);
             return File(htmlBytes, "text/html", $"voucher-{publicIdOrLegacyId}.html");
         }
         catch (KeyNotFoundException)
@@ -508,8 +501,7 @@ public class ReservasController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
-            var htmlBytes = await _voucherService.GenerateVoucherHtmlAsync(id, cancellationToken);
+            var htmlBytes = await _voucherService.GenerateVoucherHtmlAsync(publicIdOrLegacyId, cancellationToken);
             var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
             return Ok(new { html });
         }
@@ -529,8 +521,7 @@ public class ReservasController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
-            var pdf = await _voucherService.GenerateVoucherPdfAsync(id, cancellationToken);
+            var pdf = await _voucherService.GenerateVoucherPdfAsync(publicIdOrLegacyId, cancellationToken);
             return File(pdf, "application/pdf", $"voucher-{publicIdOrLegacyId}.pdf");
         }
         catch (KeyNotFoundException)
@@ -552,9 +543,8 @@ public class ReservasController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var preview = await _whatsAppDeliveryService.UpdateReservaWhatsAppContactAsync(
-                id,
+                publicIdOrLegacyId,
                 request.WhatsAppPhoneOverride,
                 cancellationToken);
             return Ok(preview);
@@ -575,8 +565,7 @@ public class ReservasController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
-            var preview = await _whatsAppDeliveryService.GetVoucherPreviewAsync(id, cancellationToken);
+            var preview = await _whatsAppDeliveryService.GetVoucherPreviewAsync(publicIdOrLegacyId, cancellationToken);
             return Ok(preview);
         }
         catch (KeyNotFoundException)
@@ -598,9 +587,8 @@ public class ReservasController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
             var performedBy = User.Identity?.Name ?? "Agente";
-            var delivery = await _whatsAppDeliveryService.SendVoucherAsync(id, request.Caption, performedBy, cancellationToken);
+            var delivery = await _whatsAppDeliveryService.SendVoucherAsync(publicIdOrLegacyId, request.Caption, performedBy, cancellationToken);
             return Ok(delivery);
         }
         catch (KeyNotFoundException)
@@ -623,8 +611,7 @@ public class ReservasController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
-            var history = await _whatsAppDeliveryService.GetHistoryAsync(id, cancellationToken);
+            var history = await _whatsAppDeliveryService.GetHistoryAsync(publicIdOrLegacyId, cancellationToken);
             return Ok(history);
         }
         catch (Exception ex)
@@ -633,50 +620,4 @@ public class ReservasController : ControllerBase
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el historial de WhatsApp.");
         }
     }
-
-    private static Passenger MapPassenger(PassengerUpsertRequest passenger)
-    {
-        return new Passenger
-        {
-            FullName = passenger.FullName,
-            DocumentType = passenger.DocumentType,
-            DocumentNumber = passenger.DocumentNumber,
-            BirthDate = passenger.BirthDate,
-            Nationality = passenger.Nationality,
-            Phone = passenger.Phone,
-            Email = passenger.Email,
-            Gender = passenger.Gender,
-            Notes = passenger.Notes
-        };
-    }
-
-    private static Payment MapPayment(PaymentUpsertRequest payment)
-    {
-        return new Payment
-        {
-            Amount = payment.Amount,
-            PaidAt = payment.PaidAt,
-            Method = payment.Method,
-            Reference = payment.Reference,
-            Notes = payment.Notes
-        };
-    }
 }
-
-public record UpdateStatusDto(string Status);
-public record PassengerUpsertRequest(
-    string FullName,
-    string? DocumentType,
-    string? DocumentNumber,
-    DateTime? BirthDate,
-    string? Nationality,
-    string? Phone,
-    string? Email,
-    string? Gender,
-    string? Notes);
-public record PaymentUpsertRequest(
-    decimal Amount,
-    DateTime PaidAt,
-    string Method,
-    string? Reference,
-    string? Notes);

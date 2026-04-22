@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -19,6 +20,12 @@ public class TimelineService : ITimelineService
     public TimelineService(AppDbContext context)
     {
         _context = context;
+    }
+
+    public async Task<List<TimelineEventDto>> GetTimelineAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, cancellationToken);
+        return await GetTimelineAsync(reservaId, cancellationToken);
     }
 
     public async Task<List<TimelineEventDto>> GetTimelineAsync(int reservaId, CancellationToken cancellationToken)
@@ -98,6 +105,21 @@ public class TimelineService : ITimelineService
         }
 
         return events;
+    }
+
+    private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
+        where TEntity : class, IHasPublicId
+    {
+        var resolved = await _context.Set<TEntity>()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(publicIdOrLegacyId, cancellationToken);
+
+        if (!resolved.HasValue && int.TryParse(publicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException($"{typeof(TEntity).Name} no encontrado.");
     }
 
     private static string NormalizeEntityName(string technicalName)

@@ -1,19 +1,19 @@
+using TravelApi.Application.Contracts.Leads;
 using TravelApi.Application.DTOs;
-using TravelApi.Domain.Entities;
 
 namespace TravelApi.Application.Interfaces;
 
 public interface ILeadService
 {
     Task<PagedResponse<LeadSummaryDto>> GetAllAsync(LeadListQuery query, CancellationToken cancellationToken);
-    Task<Lead?> GetByIdAsync(int id, CancellationToken cancellationToken);
-    Task<Lead> CreateAsync(Lead lead, CancellationToken cancellationToken);
-    Task<Lead> UpdateAsync(int id, Lead updated, CancellationToken cancellationToken);
-    Task DeleteAsync(int id, CancellationToken cancellationToken);
-    Task<Lead> UpdateStatusAsync(int id, string status, CancellationToken cancellationToken);
-    Task<LeadActivity> AddActivityAsync(int leadId, LeadActivity activity, CancellationToken cancellationToken);
-    Task<int> ConvertToCustomerAsync(int leadId, CancellationToken cancellationToken);
-    Task<Quote> CreateQuoteDraftAsync(int leadId, CancellationToken cancellationToken);
-    Task<LeadJourneyDto> GetJourneyAsync(int leadId, CancellationToken cancellationToken);
+    Task<LeadDetailDto?> GetByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<LeadDetailDto> CreateAsync(LeadUpsertRequest request, CancellationToken cancellationToken);
+    Task<LeadDetailDto> UpdateAsync(string publicIdOrLegacyId, LeadUpsertRequest updated, CancellationToken cancellationToken);
+    Task DeleteAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<LeadDetailDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken cancellationToken);
+    Task<LeadActivityDto> AddActivityAsync(string publicIdOrLegacyId, LeadActivityUpsertRequest activity, string? createdBy, CancellationToken cancellationToken);
+    Task<LeadConversionResultDto> ConvertToCustomerAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<QuoteDraftResultDto> CreateQuoteDraftAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<LeadJourneyDto> GetJourneyAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
     Task<object> GetPipelineAsync(CancellationToken cancellationToken);
 }

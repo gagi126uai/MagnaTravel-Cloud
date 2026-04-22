@@ -65,7 +65,28 @@ public class BookingService : IBookingService
         return await _db.Set<Rate>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == rateId.Value, ct);
     }
 
+    private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken ct)
+        where TEntity : class, IHasPublicId
+    {
+        var resolved = await _db.Set<TEntity>()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(publicIdOrLegacyId, ct);
+
+        if (!resolved.HasValue && int.TryParse(publicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException($"{typeof(TEntity).Name} no encontrado");
+    }
+
     #region Flights
+
+    public async Task<IEnumerable<FlightSegmentDto>> GetFlightsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await GetFlightsAsync(reservaId, ct);
+    }
 
     public async Task<IEnumerable<FlightSegmentDto>> GetFlightsAsync(int reservaId, CancellationToken ct)
     {
@@ -75,6 +96,12 @@ public class BookingService : IBookingService
             .OrderBy(f => f.DepartureTime)
             .ProjectTo<FlightSegmentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+    }
+
+    public async Task<FlightSegmentDto> CreateFlightAsync(string reservaPublicIdOrLegacyId, CreateFlightRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await CreateFlightAsync(reservaId, req, ct);
     }
 
     public async Task<FlightSegmentDto> CreateFlightAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
@@ -110,6 +137,13 @@ public class BookingService : IBookingService
         return _mapper.Map<FlightSegmentDto>(flight);
     }
 
+    public async Task<FlightSegmentDto> UpdateFlightAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateFlightRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        return await UpdateFlightAsync(reservaId, flightId, req, ct);
+    }
+
     public async Task<FlightSegmentDto> UpdateFlightAsync(int reservaId, int id, UpdateFlightRequest req, CancellationToken ct)
     {
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
@@ -143,6 +177,13 @@ public class BookingService : IBookingService
         return _mapper.Map<FlightSegmentDto>(flight);
     }
 
+    public async Task DeleteFlightAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        await DeleteFlightAsync(reservaId, flightId, ct);
+    }
+
     public async Task DeleteFlightAsync(int reservaId, int id, CancellationToken ct)
     {
         var flight = await _flightRepo.GetByIdAsync(id, ct);
@@ -163,6 +204,12 @@ public class BookingService : IBookingService
 
     #region Hotels
 
+    public async Task<IEnumerable<HotelBookingDto>> GetHotelsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await GetHotelsAsync(reservaId, ct);
+    }
+
     public async Task<IEnumerable<HotelBookingDto>> GetHotelsAsync(int reservaId, CancellationToken ct)
     {
         return await _hotelRepo.Query()
@@ -173,11 +220,24 @@ public class BookingService : IBookingService
             .ToListAsync(ct);
     }
 
+    public async Task<HotelBookingDto> GetHotelByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        return await GetHotelByIdAsync(reservaId, hotelId, ct);
+    }
+
     public async Task<HotelBookingDto> GetHotelByIdAsync(int reservaId, int id, CancellationToken ct)
     {
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
         return _mapper.Map<HotelBookingDto>(hotel);
+    }
+
+    public async Task<HotelBookingDto> CreateHotelAsync(string reservaPublicIdOrLegacyId, CreateHotelRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await CreateHotelAsync(reservaId, req, ct);
     }
 
     public async Task<HotelBookingDto> CreateHotelAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
@@ -212,6 +272,13 @@ public class BookingService : IBookingService
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
+    public async Task<HotelBookingDto> UpdateHotelAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateHotelRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        return await UpdateHotelAsync(reservaId, hotelId, req, ct);
+    }
+
     public async Task<HotelBookingDto> UpdateHotelAsync(int reservaId, int id, UpdateHotelRequest req, CancellationToken ct)
     {
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
@@ -244,6 +311,13 @@ public class BookingService : IBookingService
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
+    public async Task DeleteHotelAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        await DeleteHotelAsync(reservaId, hotelId, ct);
+    }
+
     public async Task DeleteHotelAsync(int reservaId, int id, CancellationToken ct)
     {
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
@@ -264,6 +338,12 @@ public class BookingService : IBookingService
 
     #region Packages
 
+    public async Task<IEnumerable<PackageBookingDto>> GetPackagesAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await GetPackagesAsync(reservaId, ct);
+    }
+
     public async Task<IEnumerable<PackageBookingDto>> GetPackagesAsync(int reservaId, CancellationToken ct)
     {
         return await _packageRepo.Query()
@@ -272,6 +352,12 @@ public class BookingService : IBookingService
             .OrderBy(p => p.CreatedAt)
             .ProjectTo<PackageBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+    }
+
+    public async Task<PackageBookingDto> CreatePackageAsync(string reservaPublicIdOrLegacyId, CreatePackageRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await CreatePackageAsync(reservaId, req, ct);
     }
 
     public async Task<PackageBookingDto> CreatePackageAsync(int reservaId, CreatePackageRequest req, CancellationToken ct)
@@ -306,6 +392,13 @@ public class BookingService : IBookingService
         return _mapper.Map<PackageBookingDto>(package);
     }
 
+    public async Task<PackageBookingDto> UpdatePackageAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdatePackageRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        return await UpdatePackageAsync(reservaId, packageId, req, ct);
+    }
+
     public async Task<PackageBookingDto> UpdatePackageAsync(int reservaId, int id, UpdatePackageRequest req, CancellationToken ct)
     {
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
@@ -338,6 +431,13 @@ public class BookingService : IBookingService
         return _mapper.Map<PackageBookingDto>(package);
     }
 
+    public async Task DeletePackageAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        await DeletePackageAsync(reservaId, packageId, ct);
+    }
+
     public async Task DeletePackageAsync(int reservaId, int id, CancellationToken ct)
     {
         var package = await _packageRepo.GetByIdAsync(id, ct);
@@ -358,6 +458,12 @@ public class BookingService : IBookingService
 
     #region Transfers
 
+    public async Task<IEnumerable<TransferBookingDto>> GetTransfersAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await GetTransfersAsync(reservaId, ct);
+    }
+
     public async Task<IEnumerable<TransferBookingDto>> GetTransfersAsync(int reservaId, CancellationToken ct)
     {
         return await _transferRepo.Query()
@@ -366,6 +472,12 @@ public class BookingService : IBookingService
             .OrderBy(t => t.PickupDateTime)
             .ProjectTo<TransferBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+    }
+
+    public async Task<TransferBookingDto> CreateTransferAsync(string reservaPublicIdOrLegacyId, CreateTransferRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await CreateTransferAsync(reservaId, req, ct);
     }
 
     public async Task<TransferBookingDto> CreateTransferAsync(int reservaId, CreateTransferRequest req, CancellationToken ct)
@@ -400,6 +512,13 @@ public class BookingService : IBookingService
         return _mapper.Map<TransferBookingDto>(transfer);
     }
 
+    public async Task<TransferBookingDto> UpdateTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateTransferRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        return await UpdateTransferAsync(reservaId, transferId, req, ct);
+    }
+
     public async Task<TransferBookingDto> UpdateTransferAsync(int reservaId, int id, UpdateTransferRequest req, CancellationToken ct)
     {
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
@@ -430,6 +549,13 @@ public class BookingService : IBookingService
         await _transferRepo.UpdateAsync(transfer, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<TransferBookingDto>(transfer);
+    }
+
+    public async Task DeleteTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        await DeleteTransferAsync(reservaId, transferId, ct);
     }
 
     public async Task DeleteTransferAsync(int reservaId, int id, CancellationToken ct)

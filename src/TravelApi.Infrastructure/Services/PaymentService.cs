@@ -155,6 +155,12 @@ public class PaymentService : IPaymentService
             .ToPagedResponseAsync(query, cancellationToken);
     }
 
+    public async Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, cancellationToken);
+        return await GetPaymentsForReservaAsync(reservaId, cancellationToken);
+    }
+
     public async Task<PagedResponse<FinanceHistoryItemDto>> GetHistoryAsync(FinanceHistoryQuery query, CancellationToken cancellationToken)
     {
         var normalizedSearch = query.Search?.Trim().ToLowerInvariant();
@@ -305,6 +311,12 @@ public class PaymentService : IPaymentService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<PaymentReceiptDto> IssueReceiptAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
+        return await IssueReceiptAsync(paymentId, cancellationToken);
+    }
+
     public async Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken)
     {
         var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(request.ReservaId, cancellationToken);
@@ -371,6 +383,12 @@ public class PaymentService : IPaymentService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return _mapper.Map<PaymentReceiptDto>(receipt);
+    }
+
+    public async Task<byte[]> GetReceiptPdfAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
+        return await GetReceiptPdfAsync(paymentId, cancellationToken);
     }
 
     public async Task<byte[]> GetReceiptPdfAsync(int paymentId, CancellationToken cancellationToken)
@@ -469,6 +487,27 @@ public class PaymentService : IPaymentService
             await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
 
         return payment.PublicId;
+    }
+
+    public async Task<Guid> RestorePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
+        return await RestorePaymentAsync(paymentId, cancellationToken);
+    }
+
+    private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
+        where TEntity : class, IHasPublicId
+    {
+        var resolved = await _dbContext.Set<TEntity>()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(publicIdOrLegacyId, cancellationToken);
+
+        if (!resolved.HasValue && int.TryParse(publicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException($"{typeof(TEntity).Name} no encontrado.");
     }
 
     private async Task<string> GenerateReceiptNumberAsync(CancellationToken cancellationToken)

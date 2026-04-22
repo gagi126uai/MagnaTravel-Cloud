@@ -2,8 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.Interfaces;
-using TravelApi.Domain.Entities;
-using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -14,21 +12,18 @@ public class AttachmentsController : ControllerBase
 {
     private readonly IAttachmentService _attachmentService;
     private readonly ILogger<AttachmentsController> _logger;
-    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public AttachmentsController(IAttachmentService attachmentService, ILogger<AttachmentsController> logger, IEntityReferenceResolver entityReferenceResolver)
+    public AttachmentsController(IAttachmentService attachmentService, ILogger<AttachmentsController> logger)
     {
         _attachmentService = attachmentService;
         _logger = logger;
-        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet("reserva/{reservaPublicIdOrLegacyId}")]
     public async Task<ActionResult> GetAttachments(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
-        var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, cancellationToken);
-        _logger.LogInformation("Getting attachments for ReservaId: {ReservaId}", reservaId);
-        var attachments = await _attachmentService.GetAttachmentsAsync(reservaId, cancellationToken);
+        _logger.LogInformation("Getting attachments for Reserva {ReservaId}", reservaPublicIdOrLegacyId);
+        var attachments = await _attachmentService.GetAttachmentsAsync(reservaPublicIdOrLegacyId, cancellationToken);
         return Ok(attachments);
     }
 
@@ -37,19 +32,20 @@ public class AttachmentsController : ControllerBase
     public async Task<ActionResult> UploadAttachment(string reservaPublicIdOrLegacyId, IFormFile file, CancellationToken cancellationToken)
     {
         if (file == null || file.Length == 0)
+        {
             return BadRequest("No file uploaded.");
+        }
 
         try
         {
-            var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, cancellationToken);
             var uploadedBy = User.Identity?.Name ?? "System";
             using var stream = file.OpenReadStream();
             var attachment = await _attachmentService.UploadAttachmentAsync(
-                reservaId, 
-                stream, 
-                file.FileName, 
-                file.ContentType, 
-                uploadedBy, 
+                reservaPublicIdOrLegacyId,
+                stream,
+                file.FileName,
+                file.ContentType,
+                uploadedBy,
                 cancellationToken);
             return Ok(attachment);
         }
@@ -72,8 +68,7 @@ public class AttachmentsController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<ReservaAttachment>(publicIdOrLegacyId, cancellationToken);
-            var (bytes, contentType, fileName) = await _attachmentService.DownloadAttachmentAsync(id, cancellationToken);
+            var (bytes, contentType, fileName) = await _attachmentService.DownloadAttachmentAsync(publicIdOrLegacyId, cancellationToken);
             return File(bytes, contentType, fileName);
         }
         catch (KeyNotFoundException)
@@ -92,8 +87,7 @@ public class AttachmentsController : ControllerBase
     {
         try
         {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<ReservaAttachment>(publicIdOrLegacyId, cancellationToken);
-            await _attachmentService.DeleteAttachmentAsync(id, cancellationToken);
+            await _attachmentService.DeleteAttachmentAsync(publicIdOrLegacyId, cancellationToken);
             return NoContent();
         }
         catch (KeyNotFoundException)

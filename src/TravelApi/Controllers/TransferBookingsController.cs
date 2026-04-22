@@ -2,8 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
-using TravelApi.Domain.Entities;
-using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -13,20 +11,16 @@ namespace TravelApi.Controllers;
 public class TransferBookingsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
-    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public TransferBookingsController(IBookingService bookingService, IEntityReferenceResolver entityReferenceResolver)
+    public TransferBookingsController(IBookingService bookingService)
     {
         _bookingService = bookingService;
-        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
-        var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-        var transfers = await _bookingService.GetTransfersAsync(resolvedReservaId, ct);
-        return Ok(transfers);
+        return Ok(await _bookingService.GetTransfersAsync(reservaId, ct));
     }
 
     [HttpPost]
@@ -35,15 +29,13 @@ public class TransferBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var transfer = await _bookingService.CreateTransferAsync(resolvedReservaId, req, ct);
-            return Ok(transfer);
+            return Ok(await _bookingService.CreateTransferAsync(reservaId, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el traslado.");
         }
@@ -55,16 +47,13 @@ public class TransferBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedTransferId = await _entityReferenceResolver.ResolveRequiredIdAsync<TransferBooking>(id, ct);
-            var transfer = await _bookingService.UpdateTransferAsync(resolvedReservaId, resolvedTransferId, req, ct);
-            return Ok(transfer);
+            return Ok(await _bookingService.UpdateTransferAsync(reservaId, id, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el traslado.");
         }
@@ -76,20 +65,16 @@ public class TransferBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedTransferId = await _entityReferenceResolver.ResolveRequiredIdAsync<TransferBooking>(id, ct);
-            await _bookingService.DeleteTransferAsync(resolvedReservaId, resolvedTransferId, ct);
+            await _bookingService.DeleteTransferAsync(reservaId, id, ct);
             return Ok();
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el traslado.");
         }
     }
 }
-
-

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.Contracts.Leads;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -48,12 +49,14 @@ public class WhatsAppWebhookService : IWhatsAppWebhookService
 
             if (!string.IsNullOrWhiteSpace(dto.Transcript))
             {
-                await _leadService.AddActivityAsync(existingLead.Id, new LeadActivity
-                {
-                    Type = "WhatsApp",
-                    Description = $"Nueva conversacion con bot:\n{SanitizeMessageContent(dto.Transcript)}",
-                    CreatedBy = "WhatsApp Bot"
-                }, cancellationToken);
+                await _leadService.AddActivityAsync(
+                    existingLead.PublicId.ToString(),
+                    new LeadActivityUpsertRequest(
+                        "WhatsApp",
+                        $"Nueva conversacion con bot:\n{SanitizeMessageContent(dto.Transcript)}",
+                        "WhatsApp Bot"),
+                    "WhatsApp Bot",
+                    cancellationToken);
             }
 
             return new WhatsAppLeadWebhookResult
@@ -63,28 +66,30 @@ public class WhatsAppWebhookService : IWhatsAppWebhookService
             };
         }
 
-        var lead = new Lead
-        {
-            FullName = dto.Name.Trim(),
-            Phone = dto.Phone.Trim(),
-            Source = "WhatsApp",
-            InterestedIn = dto.Interest?.Trim(),
-            TravelDates = dto.Dates?.Trim(),
-            Travelers = dto.Travelers?.Trim(),
-            Status = LeadStatus.New,
-            Notes = "Lead capturado por WhatsApp Bot."
-        };
-
-        var created = await _leadService.CreateAsync(lead, cancellationToken);
+        var created = await _leadService.CreateAsync(new LeadUpsertRequest(
+            dto.Name.Trim(),
+            null,
+            dto.Phone.Trim(),
+            "WhatsApp",
+            dto.Interest?.Trim(),
+            dto.Dates?.Trim(),
+            dto.Travelers?.Trim(),
+            0m,
+            "Lead capturado por WhatsApp Bot.",
+            null,
+            null,
+            null), cancellationToken);
 
         if (!string.IsNullOrWhiteSpace(dto.Transcript))
         {
-            await _leadService.AddActivityAsync(created.Id, new LeadActivity
-            {
-                Type = "WhatsApp",
-                Description = $"Conversacion capturada por bot:\n{SanitizeMessageContent(dto.Transcript)}",
-                CreatedBy = "WhatsApp Bot"
-            }, cancellationToken);
+            await _leadService.AddActivityAsync(
+                created.PublicId.ToString(),
+                new LeadActivityUpsertRequest(
+                    "WhatsApp",
+                    $"Conversacion capturada por bot:\n{SanitizeMessageContent(dto.Transcript)}",
+                    "WhatsApp Bot"),
+                "WhatsApp Bot",
+                cancellationToken);
         }
 
         return new WhatsAppLeadWebhookResult
@@ -141,23 +146,31 @@ public class WhatsAppWebhookService : IWhatsAppWebhookService
                 };
             }
 
-            lead = new Lead
-            {
-                FullName = $"{WhatsAppPlaceholderPrefix} ({dto.Phone})",
-                Phone = dto.Phone,
-                Source = "WhatsApp",
-                Status = LeadStatus.New,
-                Notes = "Lead creado automaticamente al recibir un mensaje sin proceso de bot completado."
-            };
-            lead = await _leadService.CreateAsync(lead, cancellationToken);
+            var createdLead = await _leadService.CreateAsync(new LeadUpsertRequest(
+                $"{WhatsAppPlaceholderPrefix} ({dto.Phone})",
+                null,
+                dto.Phone,
+                "WhatsApp",
+                null,
+                null,
+                null,
+                0m,
+                "Lead creado automaticamente al recibir un mensaje sin proceso de bot completado.",
+                null,
+                null,
+                null), cancellationToken);
+
+            lead = await _db.Leads.FirstAsync(item => item.PublicId == createdLead.PublicId, cancellationToken);
         }
 
-        await _leadService.AddActivityAsync(lead.Id, new LeadActivity
-        {
-            Type = "WhatsApp",
-            Description = SanitizeMessageContent(dto.Message, 1000),
-            CreatedBy = dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"
-        }, cancellationToken);
+        await _leadService.AddActivityAsync(
+            lead.PublicId.ToString(),
+            new LeadActivityUpsertRequest(
+                "WhatsApp",
+                SanitizeMessageContent(dto.Message, 1000),
+                dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"),
+            dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM",
+            cancellationToken);
 
         return new WhatsAppIncomingMessageResult
         {

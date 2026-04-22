@@ -2,8 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
-using TravelApi.Domain.Entities;
-using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -13,20 +11,16 @@ namespace TravelApi.Controllers;
 public class PackageBookingsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
-    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public PackageBookingsController(IBookingService bookingService, IEntityReferenceResolver entityReferenceResolver)
+    public PackageBookingsController(IBookingService bookingService)
     {
         _bookingService = bookingService;
-        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
-        var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-        var packages = await _bookingService.GetPackagesAsync(resolvedReservaId, ct);
-        return Ok(packages);
+        return Ok(await _bookingService.GetPackagesAsync(reservaId, ct));
     }
 
     [HttpPost]
@@ -35,15 +29,13 @@ public class PackageBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var package = await _bookingService.CreatePackageAsync(resolvedReservaId, req, ct);
-            return Ok(package);
+            return Ok(await _bookingService.CreatePackageAsync(reservaId, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el paquete.");
         }
@@ -55,16 +47,13 @@ public class PackageBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedPackageId = await _entityReferenceResolver.ResolveRequiredIdAsync<PackageBooking>(id, ct);
-            var package = await _bookingService.UpdatePackageAsync(resolvedReservaId, resolvedPackageId, req, ct);
-            return Ok(package);
+            return Ok(await _bookingService.UpdatePackageAsync(reservaId, id, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el paquete.");
         }
@@ -76,20 +65,16 @@ public class PackageBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedPackageId = await _entityReferenceResolver.ResolveRequiredIdAsync<PackageBooking>(id, ct);
-            await _bookingService.DeletePackageAsync(resolvedReservaId, resolvedPackageId, ct);
+            await _bookingService.DeletePackageAsync(reservaId, id, ct);
             return Ok();
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
-             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el paquete.");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el paquete.");
         }
     }
 }
-
-

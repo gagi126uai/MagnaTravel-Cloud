@@ -22,6 +22,12 @@ public class VoucherService : IVoucherService
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
+    public async Task<byte[]> GenerateVoucherHtmlAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        return await GenerateVoucherHtmlAsync(reservaId, cancellationToken);
+    }
+
     public async Task<byte[]> GenerateVoucherHtmlAsync(int reservaId, CancellationToken cancellationToken)
     {
         var (reserva, agency) = await LoadVoucherDataAsync(reservaId, cancellationToken);
@@ -73,6 +79,12 @@ public class VoucherService : IVoucherService
         return Encoding.UTF8.GetBytes(html.ToString());
     }
 
+    public async Task<byte[]> GenerateVoucherPdfAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        return await GenerateVoucherPdfAsync(reservaId, cancellationToken);
+    }
+
     public async Task<byte[]> GenerateVoucherPdfAsync(int reservaId, CancellationToken cancellationToken)
     {
         var (reserva, agency) = await LoadVoucherDataAsync(reservaId, cancellationToken);
@@ -105,6 +117,20 @@ public class VoucherService : IVoucherService
         });
 
         return document.GeneratePdf();
+    }
+
+    private async Task<int> ResolveReservaIdAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var resolved = await _db.Reservas
+            .AsNoTracking()
+            .ResolveInternalIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+
+        if (!resolved.HasValue && int.TryParse(reservaPublicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException("Reserva no encontrada.");
     }
 
     private async Task<(Reserva Reserva, AgencySettings? Agency)> LoadVoucherDataAsync(int reservaId, CancellationToken cancellationToken)

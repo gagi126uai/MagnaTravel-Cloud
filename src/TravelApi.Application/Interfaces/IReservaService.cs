@@ -1,32 +1,31 @@
-﻿using TravelApi.Application.Contracts.Files;
+using TravelApi.Application.Contracts.Files;
+using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
-using TravelApi.Domain.Entities;
 
 namespace TravelApi.Application.Interfaces;
 
 public interface IReservaService
 {
     Task<ReservaListPageDto> GetReservasAsync(ReservaListQuery query, CancellationToken cancellationToken);
-    Task<ReservaDto> GetReservaByIdAsync(int id);
-    Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId);
-    
-    Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request, CancellationToken ct = default);
-    Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request, CancellationToken ct = default);
-    Task RemoveServiceAsync(int serviceId, CancellationToken ct = default);
+    Task<ReservaDto> GetReservaByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<ReservaDto> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId, CancellationToken cancellationToken);
 
-    Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId);
-    Task<PassengerDto> AddPassengerAsync(int reservaId, Passenger passenger);
-    Task<PassengerDto> UpdatePassengerAsync(int passengerId, Passenger updated);
-    Task RemovePassengerAsync(int passengerId);
+    Task<ReservationServiceMutationResult> AddServiceAsync(string reservaPublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default);
+    Task<ServicioReservaDto> UpdateServiceAsync(string servicePublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default);
+    Task RemoveServiceAsync(string servicePublicIdOrLegacyId, CancellationToken ct = default);
 
-    Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(int reservaId);
-    Task<PaymentDto> AddPaymentAsync(int reservaId, Payment payment);
-    Task<PaymentDto> UpdatePaymentAsync(int reservaId, int paymentId, Payment updatedPayment);
-    Task DeletePaymentAsync(int reservaId, int paymentId);
+    Task<IEnumerable<PassengerDto>> GetPassengersAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default);
+    Task<PassengerDto> AddPassengerAsync(string reservaPublicIdOrLegacyId, PassengerUpsertRequest passenger, CancellationToken ct = default);
+    Task<PassengerDto> UpdatePassengerAsync(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated, CancellationToken ct = default);
+    Task RemovePassengerAsync(string passengerPublicIdOrLegacyId, CancellationToken ct = default);
 
-    Task<Reserva> UpdateStatusAsync(int id, string status);
+    Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default);
+    Task<PaymentDto> AddPaymentAsync(string reservaPublicIdOrLegacyId, ReservationPaymentUpsertRequest payment, CancellationToken ct = default);
+    Task<PaymentDto> UpdatePaymentAsync(string reservaPublicIdOrLegacyId, string paymentPublicIdOrLegacyId, ReservationPaymentUpsertRequest updatedPayment, CancellationToken ct = default);
+    Task DeletePaymentAsync(string reservaPublicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken ct = default);
+
+    Task<ReservaDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken ct = default);
     Task UpdateBalanceAsync(int reservaId);
-    Task<Reserva> ArchiveReservaAsync(int id);
-    Task DeleteReservaAsync(int id);
+    Task<ReservaDto> ArchiveReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);
+    Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);
 }
-

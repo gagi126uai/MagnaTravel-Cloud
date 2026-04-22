@@ -2,8 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
-using TravelApi.Domain.Entities;
-using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -13,20 +11,16 @@ namespace TravelApi.Controllers;
 public class FlightSegmentsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
-    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public FlightSegmentsController(IBookingService bookingService, IEntityReferenceResolver entityReferenceResolver)
+    public FlightSegmentsController(IBookingService bookingService)
     {
         _bookingService = bookingService;
-        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
-        var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-        var flights = await _bookingService.GetFlightsAsync(resolvedReservaId, ct);
-        return Ok(flights);
+        return Ok(await _bookingService.GetFlightsAsync(reservaId, ct));
     }
 
     [HttpPost]
@@ -35,17 +29,15 @@ public class FlightSegmentsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var flight = await _bookingService.CreateFlightAsync(resolvedReservaId, req, ct);
-            return Ok(flight);
+            return Ok(await _bookingService.CreateFlightAsync(reservaId, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
-             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el vuelo.");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el vuelo.");
         }
     }
 
@@ -55,16 +47,13 @@ public class FlightSegmentsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedFlightId = await _entityReferenceResolver.ResolveRequiredIdAsync<FlightSegment>(id, ct);
-            var flight = await _bookingService.UpdateFlightAsync(resolvedReservaId, resolvedFlightId, req, ct);
-            return Ok(flight);
+            return Ok(await _bookingService.UpdateFlightAsync(reservaId, id, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el vuelo.");
         }
@@ -76,20 +65,16 @@ public class FlightSegmentsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedFlightId = await _entityReferenceResolver.ResolveRequiredIdAsync<FlightSegment>(id, ct);
-            await _bookingService.DeleteFlightAsync(resolvedReservaId, resolvedFlightId, ct);
+            await _bookingService.DeleteFlightAsync(reservaId, id, ct);
             return Ok();
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el vuelo.");
         }
     }
 }
-
-

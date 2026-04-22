@@ -2,8 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
-using TravelApi.Domain.Entities;
-using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
@@ -13,20 +11,16 @@ namespace TravelApi.Controllers;
 public class HotelBookingsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
-    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public HotelBookingsController(IBookingService bookingService, IEntityReferenceResolver entityReferenceResolver)
+    public HotelBookingsController(IBookingService bookingService)
     {
         _bookingService = bookingService;
-        _entityReferenceResolver = entityReferenceResolver;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
-        var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-        var hotels = await _bookingService.GetHotelsAsync(resolvedReservaId, ct);
-        return Ok(hotels);
+        return Ok(await _bookingService.GetHotelsAsync(reservaId, ct));
     }
 
     [HttpGet("{id}")]
@@ -34,10 +28,7 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedHotelId = await _entityReferenceResolver.ResolveRequiredIdAsync<HotelBooking>(id, ct);
-            var hotel = await _bookingService.GetHotelByIdAsync(resolvedReservaId, resolvedHotelId, ct);
-            return Ok(hotel);
+            return Ok(await _bookingService.GetHotelByIdAsync(reservaId, id, ct));
         }
         catch (KeyNotFoundException)
         {
@@ -51,15 +42,13 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var hotel = await _bookingService.CreateHotelAsync(resolvedReservaId, req, ct);
-            return Ok(hotel);
+            return Ok(await _bookingService.CreateHotelAsync(reservaId, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear la reserva de hotel.");
         }
@@ -71,16 +60,13 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedHotelId = await _entityReferenceResolver.ResolveRequiredIdAsync<HotelBooking>(id, ct);
-            var hotel = await _bookingService.UpdateHotelAsync(resolvedReservaId, resolvedHotelId, req, ct);
-            return Ok(hotel);
+            return Ok(await _bookingService.UpdateHotelAsync(reservaId, id, req, ct));
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar la reserva de hotel.");
         }
@@ -92,20 +78,16 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            var resolvedReservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(reservaId, ct);
-            var resolvedHotelId = await _entityReferenceResolver.ResolveRequiredIdAsync<HotelBooking>(id, ct);
-            await _bookingService.DeleteHotelAsync(resolvedReservaId, resolvedHotelId, ct);
+            await _bookingService.DeleteHotelAsync(reservaId, id, ct);
             return Ok();
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
         }
-        catch (Exception ex)
+        catch
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar la reserva de hotel.");
         }
     }
 }
-
-

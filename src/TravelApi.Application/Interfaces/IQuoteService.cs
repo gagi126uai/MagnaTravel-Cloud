@@ -1,17 +1,17 @@
-using TravelApi.Domain.Entities;
+using TravelApi.Application.DTOs;
 
 namespace TravelApi.Application.Interfaces;
 
 public interface IQuoteService
 {
-    Task<List<Quote>> GetAllAsync(CancellationToken cancellationToken);
-    Task<Quote?> GetByIdAsync(int id, CancellationToken cancellationToken);
-    Task<Quote> CreateAsync(Quote quote, CancellationToken cancellationToken);
-    Task<Quote> UpdateAsync(int id, Quote updated, CancellationToken cancellationToken);
-    Task DeleteAsync(int id, CancellationToken cancellationToken);
-    Task<Quote> AddItemAsync(int quoteId, QuoteItem item, CancellationToken cancellationToken);
-    Task RemoveItemAsync(int quoteId, int itemId, CancellationToken cancellationToken);
-    Task<Quote> UpdateStatusAsync(int id, string status, CancellationToken cancellationToken);
-    Task<int> ConvertToFileAsync(int quoteId, CancellationToken cancellationToken);
+    Task<List<QuoteSummaryDto>> GetAllAsync(CancellationToken cancellationToken);
+    Task<QuoteDetailDto?> GetByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<QuoteDetailDto> CreateAsync(UpsertQuoteRequest request, CancellationToken cancellationToken);
+    Task<QuoteDetailDto> UpdateAsync(string publicIdOrLegacyId, UpsertQuoteRequest updated, CancellationToken cancellationToken);
+    Task DeleteAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<QuoteDetailDto> AddItemAsync(string quotePublicIdOrLegacyId, UpsertQuoteItemRequest item, CancellationToken cancellationToken);
+    Task RemoveItemAsync(string quotePublicIdOrLegacyId, string itemPublicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<QuoteDetailDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken cancellationToken);
+    Task<QuoteConversionResultDto> ConvertToFileAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
     Task RecalculateTotalsAsync(int quoteId, CancellationToken cancellationToken);
 }

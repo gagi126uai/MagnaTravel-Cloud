@@ -8,12 +8,12 @@ public interface IPaymentService
     Task<PagedResponse<CollectionWorkItemDto>> GetCollectionsWorklistAsync(CollectionWorklistQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<PaymentDto>> GetAllPaymentsAsync(PaymentsListQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<FinanceHistoryItemDto>> GetHistoryAsync(FinanceHistoryQuery query, CancellationToken cancellationToken);
-    Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken);
+    Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken);
     Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);
-    Task<PaymentReceiptDto> IssueReceiptAsync(int paymentId, CancellationToken cancellationToken);
-    Task<byte[]> GetReceiptPdfAsync(int paymentId, CancellationToken cancellationToken);
+    Task<PaymentReceiptDto> IssueReceiptAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<byte[]> GetReceiptPdfAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
     Task<IEnumerable<object>> GetDeletedPaymentsAsync(CancellationToken cancellationToken);
-    Task<Guid> RestorePaymentAsync(int id, CancellationToken cancellationToken);
+    Task<Guid> RestorePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
 }
 
 public class CreatePaymentRequest

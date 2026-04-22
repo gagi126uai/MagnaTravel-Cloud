@@ -2,6 +2,6 @@ namespace TravelApi.Application.Interfaces;
 
 public interface IVoucherService
 {
-    Task<byte[]> GenerateVoucherHtmlAsync(int reservaId, CancellationToken cancellationToken);
-    Task<byte[]> GenerateVoucherPdfAsync(int reservaId, CancellationToken cancellationToken);
+    Task<byte[]> GenerateVoucherHtmlAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken);
+    Task<byte[]> GenerateVoucherPdfAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken);
 }

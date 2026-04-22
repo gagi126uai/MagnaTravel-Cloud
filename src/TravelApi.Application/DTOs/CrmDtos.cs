@@ -51,6 +51,11 @@ public class QuoteDraftResultDto
     public Guid LeadPublicId { get; set; }
 }
 
+public class QuoteConversionResultDto
+{
+    public Guid ReservaPublicId { get; set; }
+}
+
 public class CustomerReferenceDto
 {
     public Guid PublicId { get; set; }

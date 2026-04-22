@@ -4,5 +4,5 @@ namespace TravelApi.Application.Interfaces;
 
 public interface ITimelineService
 {
-    Task<List<TimelineEventDto>> GetTimelineAsync(int reservaId, CancellationToken cancellationToken);
+    Task<List<TimelineEventDto>> GetTimelineAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken);
 }

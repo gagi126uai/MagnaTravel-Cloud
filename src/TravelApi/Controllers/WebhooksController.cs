@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Application.Contracts.Leads;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
@@ -149,8 +150,7 @@ public class WebhooksController : ControllerBase
         [FromBody] SendMessageRequest request,
         CancellationToken cancellationToken)
     {
-        var leadId = await _entityReferenceResolver.ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
-        var lead = await _leadService.GetByIdAsync(leadId, cancellationToken);
+        var lead = await _leadService.GetByIdAsync(publicIdOrLegacyId, cancellationToken);
         if (lead == null)
         {
             return NotFound(new { message = "Lead no encontrado." });
@@ -194,12 +194,11 @@ public class WebhooksController : ControllerBase
             }
 
             var userName = User.Identity?.Name ?? "Agente";
-            await _leadService.AddActivityAsync(leadId, new LeadActivity
-            {
-                Type = "WhatsApp",
-                Description = request.Message.Trim(),
-                CreatedBy = userName
-            }, cancellationToken);
+            await _leadService.AddActivityAsync(
+                publicIdOrLegacyId,
+                new LeadActivityUpsertRequest("WhatsApp", request.Message.Trim(), userName),
+                userName,
+                cancellationToken);
 
             _logger.LogInformation("WhatsApp enviado a {Phone} por {User}", lead.Phone, userName);
             return Ok(new { message = "Mensaje enviado exitosamente." });

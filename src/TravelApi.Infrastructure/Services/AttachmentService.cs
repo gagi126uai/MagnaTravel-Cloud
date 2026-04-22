@@ -45,6 +45,12 @@ public class AttachmentService : IAttachmentService
         _logger = logger;
     }
 
+    public async Task<IEnumerable<AttachmentDto>> GetAttachmentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, ct);
+        return await GetAttachmentsAsync(reservaId, ct);
+    }
+
     public async Task<IEnumerable<AttachmentDto>> GetAttachmentsAsync(int reservaId, CancellationToken ct)
     {
         return await _attachmentRepo.Query()
@@ -60,6 +66,12 @@ public class AttachmentService : IAttachmentService
                 UploadedAt = a.UploadedAt
             })
             .ToListAsync(ct);
+    }
+
+    public async Task<AttachmentDto> UploadAttachmentAsync(string reservaPublicIdOrLegacyId, Stream fileStream, string fileName, string contentType, string uploadedBy, CancellationToken ct)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, ct);
+        return await UploadAttachmentAsync(reservaId, fileStream, fileName, contentType, uploadedBy, ct);
     }
 
     public async Task<AttachmentDto> UploadAttachmentAsync(int reservaId, Stream fileStream, string fileName, string contentType, string uploadedBy, CancellationToken ct)
@@ -140,6 +152,12 @@ public class AttachmentService : IAttachmentService
         };
     }
 
+    public async Task<(byte[] Bytes, string ContentType, string FileName)> DownloadAttachmentAsync(string attachmentPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var attachmentId = await ResolveAttachmentIdAsync(attachmentPublicIdOrLegacyId, ct);
+        return await DownloadAttachmentAsync(attachmentId, ct);
+    }
+
     public async Task<(byte[] Bytes, string ContentType, string FileName)> DownloadAttachmentAsync(int id, CancellationToken ct)
     {
         var attachment = await _attachmentRepo.GetByIdAsync(id, ct);
@@ -152,6 +170,12 @@ public class AttachmentService : IAttachmentService
 
         var bytes = await File.ReadAllBytesAsync(filePath, ct);
         return (bytes, "application/octet-stream", attachment.FileName);
+    }
+
+    public async Task DeleteAttachmentAsync(string attachmentPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var attachmentId = await ResolveAttachmentIdAsync(attachmentPublicIdOrLegacyId, ct);
+        await DeleteAttachmentAsync(attachmentId, ct);
     }
 
     public async Task DeleteAttachmentAsync(int id, CancellationToken ct)
@@ -174,6 +198,34 @@ public class AttachmentService : IAttachmentService
         {
             _logger.LogError(ex, "Error deleting file from disk: {FilePath}", attachment.StoredFileName);
         }
+    }
+
+    private async Task<int> ResolveReservaIdAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var resolved = await _reservaRepo.Query()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(reservaPublicIdOrLegacyId, ct);
+
+        if (!resolved.HasValue && int.TryParse(reservaPublicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException("Reserva not found.");
+    }
+
+    private async Task<int> ResolveAttachmentIdAsync(string attachmentPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var resolved = await _attachmentRepo.Query()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(attachmentPublicIdOrLegacyId, ct);
+
+        if (!resolved.HasValue && int.TryParse(attachmentPublicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException("Attachment not found.");
     }
 
     private static string SanitizeOriginalFileName(string fileName)

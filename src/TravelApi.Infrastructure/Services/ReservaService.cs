@@ -3,6 +3,7 @@ using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
 using TravelApi.Application.Contracts.Files;
+using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -24,6 +25,113 @@ public class ReservaService : IReservaService
         _context = context;
         _mapper = mapper;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
+    }
+
+    public async Task<ReservaDto> GetReservaByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
+        return await GetReservaByIdAsync(id);
+    }
+
+    public async Task<ReservaDto> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId, CancellationToken cancellationToken)
+    {
+        var reserva = await CreateReservaAsync(request, createdByUserId);
+        return await GetReservaByIdAsync(reserva.Id);
+    }
+
+    public async Task<ReservationServiceMutationResult> AddServiceAsync(string reservaPublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var (reservation, warning) = await AddServiceAsync(reservaId, request, ct);
+
+        return new ReservationServiceMutationResult
+        {
+            Servicio = _mapper.Map<ServicioReservaDto>(reservation),
+            Warning = warning
+        };
+    }
+
+    public async Task<ServicioReservaDto> UpdateServiceAsync(string servicePublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default)
+    {
+        var serviceId = await ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, ct);
+        var service = await UpdateServiceAsync(serviceId, request, ct);
+        return _mapper.Map<ServicioReservaDto>(service);
+    }
+
+    public async Task RemoveServiceAsync(string servicePublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var serviceId = await ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, ct);
+        await RemoveServiceAsync(serviceId, ct);
+    }
+
+    public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await GetPassengersAsync(reservaId);
+    }
+
+    public async Task<PassengerDto> AddPassengerAsync(string reservaPublicIdOrLegacyId, PassengerUpsertRequest passenger, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await AddPassengerAsync(reservaId, MapPassenger(passenger));
+    }
+
+    public async Task<PassengerDto> UpdatePassengerAsync(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated, CancellationToken ct = default)
+    {
+        var passengerId = await ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, ct);
+        return await UpdatePassengerAsync(passengerId, MapPassenger(updated));
+    }
+
+    public async Task RemovePassengerAsync(string passengerPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var passengerId = await ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, ct);
+        await RemovePassengerAsync(passengerId);
+    }
+
+    public async Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await GetReservaPaymentsAsync(reservaId);
+    }
+
+    public async Task<PaymentDto> AddPaymentAsync(string reservaPublicIdOrLegacyId, ReservationPaymentUpsertRequest payment, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await AddPaymentAsync(reservaId, MapPayment(payment));
+    }
+
+    public async Task<PaymentDto> UpdatePaymentAsync(string reservaPublicIdOrLegacyId, string paymentPublicIdOrLegacyId, ReservationPaymentUpsertRequest updatedPayment, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, ct);
+        return await UpdatePaymentAsync(reservaId, paymentId, MapPayment(updatedPayment));
+    }
+
+    public async Task DeletePaymentAsync(string reservaPublicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, ct);
+        await DeletePaymentAsync(reservaId, paymentId);
+    }
+
+    public async Task<ReservaDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        await UpdateStatusAsync(id, status);
+        return await GetReservaByIdAsync(id);
+    }
+
+    public async Task<ReservaDto> ArchiveReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        await ArchiveReservaAsync(id);
+        return await GetReservaByIdAsync(id);
+    }
+
+    public async Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        await DeleteReservaAsync(id);
     }
 
     public async Task<ReservaListPageDto> GetReservasAsync(ReservaListQuery query, CancellationToken cancellationToken)
@@ -99,6 +207,49 @@ public class ReservaService : IReservaService
         }
 
         return ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
+    }
+
+    private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
+        where TEntity : class, IHasPublicId
+    {
+        var resolved = await _context.Set<TEntity>()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(publicIdOrLegacyId, cancellationToken);
+
+        if (!resolved.HasValue && int.TryParse(publicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException($"{typeof(TEntity).Name} no encontrado");
+    }
+
+    private static Passenger MapPassenger(PassengerUpsertRequest passenger)
+    {
+        return new Passenger
+        {
+            FullName = passenger.FullName,
+            DocumentType = passenger.DocumentType,
+            DocumentNumber = passenger.DocumentNumber,
+            BirthDate = passenger.BirthDate,
+            Nationality = passenger.Nationality,
+            Phone = passenger.Phone,
+            Email = passenger.Email,
+            Gender = passenger.Gender,
+            Notes = passenger.Notes
+        };
+    }
+
+    private static Payment MapPayment(ReservationPaymentUpsertRequest payment)
+    {
+        return new Payment
+        {
+            Amount = payment.Amount,
+            PaidAt = payment.PaidAt,
+            Method = payment.Method,
+            Reference = payment.Reference,
+            Notes = payment.Notes
+        };
     }
 
     public async Task<ReservaDto> GetReservaByIdAsync(int id)

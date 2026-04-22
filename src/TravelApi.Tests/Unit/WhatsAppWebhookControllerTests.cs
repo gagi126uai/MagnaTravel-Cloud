@@ -65,7 +65,7 @@ public class WhatsAppWebhookControllerTests
     public async Task WhatsAppMessage_WithSkipLeadAutoCreation_DoesNotCreateLead()
     {
         await using var db = CreateDbContext();
-        var leadService = new LeadService(db);
+        var leadService = new LeadService(db, new EntityReferenceResolver(db));
         var deliveryMock = new Mock<IWhatsAppDeliveryService>();
         deliveryMock
             .Setup(service => service.TryHandleIncomingOperationalMessageAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -103,7 +103,7 @@ public class WhatsAppWebhookControllerTests
         });
         await db.SaveChangesAsync();
 
-        var leadService = new LeadService(db);
+        var leadService = new LeadService(db, new EntityReferenceResolver(db));
         var deliveryMock = new Mock<IWhatsAppDeliveryService>();
         var controller = CreateController(db, leadService, deliveryMock);
 

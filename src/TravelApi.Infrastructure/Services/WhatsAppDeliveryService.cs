@@ -41,6 +41,12 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
     }
 
+    public async Task PrepareVoucherDraftAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        await PrepareVoucherDraftAsync(reservaId, cancellationToken);
+    }
+
     public async Task PrepareVoucherDraftAsync(int reservaId, CancellationToken cancellationToken)
     {
         var reserva = await GetReservaForWhatsAppAsync(reservaId, cancellationToken);
@@ -91,6 +97,12 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
         await _db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<WhatsAppVoucherPreviewResponse> GetVoucherPreviewAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        return await GetVoucherPreviewAsync(reservaId, cancellationToken);
+    }
+
     public async Task<WhatsAppVoucherPreviewResponse> GetVoucherPreviewAsync(int reservaId, CancellationToken cancellationToken)
     {
         var reserva = await GetReservaForWhatsAppAsync(reservaId, cancellationToken);
@@ -118,6 +130,12 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
         return response;
     }
 
+    public async Task<WhatsAppVoucherPreviewResponse> UpdateReservaWhatsAppContactAsync(string reservaPublicIdOrLegacyId, string? phoneOverride, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        return await UpdateReservaWhatsAppContactAsync(reservaId, phoneOverride, cancellationToken);
+    }
+
     public async Task<WhatsAppVoucherPreviewResponse> UpdateReservaWhatsAppContactAsync(int reservaId, string? phoneOverride, CancellationToken cancellationToken)
     {
         var reserva = await _db.Reservas
@@ -130,6 +148,12 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
         return await GetVoucherPreviewAsync(reservaId, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<WhatsAppDeliveryDto>> GetHistoryAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        return await GetHistoryAsync(reservaId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<WhatsAppDeliveryDto>> GetHistoryAsync(int reservaId, CancellationToken cancellationToken)
     {
         var items = await _db.WhatsAppDeliveries
@@ -138,6 +162,12 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
             .ToListAsync(cancellationToken);
 
         return items.Select(_mapper.Map<WhatsAppDeliveryDto>).ToList();
+    }
+
+    public async Task<WhatsAppDeliveryDto> SendVoucherAsync(string reservaPublicIdOrLegacyId, string? caption, string performedBy, CancellationToken cancellationToken)
+    {
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        return await SendVoucherAsync(reservaId, caption, performedBy, cancellationToken);
     }
 
     public async Task<WhatsAppDeliveryDto> SendVoucherAsync(int reservaId, string? caption, string performedBy, CancellationToken cancellationToken)
@@ -181,7 +211,7 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
         draft.SentBy = performedBy;
         draft.Error = null;
 
-        var pdfBytes = await _voucherService.GenerateVoucherPdfAsync(reservaId, cancellationToken);
+        var pdfBytes = await _voucherService.GenerateVoucherPdfAsync(reserva.PublicId.ToString(), cancellationToken);
 
         try
         {
@@ -300,6 +330,20 @@ public class WhatsAppDeliveryService : IWhatsAppDeliveryService
             .Include(r => r.SourceLead)
             .FirstOrDefaultAsync(r => r.Id == reservaId, cancellationToken)
             ?? throw new KeyNotFoundException("Reserva no encontrada.");
+    }
+
+    private async Task<int> ResolveReservaIdAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var resolved = await _db.Reservas
+            .AsNoTracking()
+            .ResolveInternalIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+
+        if (!resolved.HasValue && int.TryParse(reservaPublicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException("Reserva no encontrada.");
     }
 
     private async Task<WhatsAppDelivery?> GetPendingVoucherDraftAsync(int reservaId, CancellationToken cancellationToken)

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.Contracts.Leads;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -9,10 +10,94 @@ namespace TravelApi.Infrastructure.Services;
 public class LeadService : ILeadService
 {
     private readonly AppDbContext _db;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public LeadService(AppDbContext db)
+    public LeadService(AppDbContext db, IEntityReferenceResolver entityReferenceResolver)
     {
         _db = db;
+        _entityReferenceResolver = entityReferenceResolver;
+    }
+
+    public async Task<LeadDetailDto?> GetByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        var lead = await GetByIdAsync(id, cancellationToken);
+        return lead == null ? null : MapLeadDetail(lead);
+    }
+
+    public async Task<LeadDetailDto> CreateAsync(LeadUpsertRequest request, CancellationToken cancellationToken)
+    {
+        var lead = await CreateAsync(MapLeadFromRequest(request), cancellationToken);
+        var detail = await GetByIdAsync(lead.Id, cancellationToken) ?? lead;
+        return MapLeadDetail(detail);
+    }
+
+    public async Task<LeadDetailDto> UpdateAsync(string publicIdOrLegacyId, LeadUpsertRequest updated, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        var lead = await UpdateAsync(id, MapLeadFromRequest(updated), cancellationToken);
+        var detail = await GetByIdAsync(lead.Id, cancellationToken) ?? lead;
+        return MapLeadDetail(detail);
+    }
+
+    public async Task DeleteAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        await DeleteAsync(id, cancellationToken);
+    }
+
+    public async Task<LeadDetailDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        var lead = await UpdateStatusAsync(id, status, cancellationToken);
+        var detail = await GetByIdAsync(lead.Id, cancellationToken) ?? lead;
+        return MapLeadDetail(detail);
+    }
+
+    public async Task<LeadActivityDto> AddActivityAsync(string publicIdOrLegacyId, LeadActivityUpsertRequest activity, string? createdBy, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        var created = await AddActivityAsync(id, new LeadActivity
+        {
+            Type = activity.Type,
+            Description = activity.Description,
+            CreatedBy = createdBy
+        }, cancellationToken);
+
+        return MapLeadActivity(created);
+    }
+
+    public async Task<LeadConversionResultDto> ConvertToCustomerAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        var customerId = await ConvertToCustomerAsync(id, cancellationToken);
+        var customerPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Customer>(customerId, cancellationToken);
+
+        return new LeadConversionResultDto
+        {
+            CustomerPublicId = customerPublicId ?? Guid.Empty
+        };
+    }
+
+    public async Task<QuoteDraftResultDto> CreateQuoteDraftAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        var quote = await CreateQuoteDraftAsync(id, cancellationToken);
+        var leadPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Lead>(id, cancellationToken);
+
+        return new QuoteDraftResultDto
+        {
+            QuotePublicId = quote.PublicId,
+            QuoteNumber = quote.QuoteNumber,
+            CustomerPublicId = quote.Customer?.PublicId,
+            LeadPublicId = leadPublicId ?? Guid.Empty
+        };
+    }
+
+    public async Task<LeadJourneyDto> GetJourneyAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
+        return await GetJourneyAsync(id, cancellationToken);
     }
 
     public async Task<PagedResponse<LeadSummaryDto>> GetAllAsync(LeadListQuery query, CancellationToken cancellationToken)
@@ -279,6 +364,114 @@ public class LeadService : ILeadService
             ConversionRate = leads.Count > 0
                 ? Math.Round((decimal)leads.Count(l => l.Status == LeadStatus.Won) / leads.Count * 100, 1)
                 : 0
+        };
+    }
+
+    private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
+        where TEntity : class, IHasPublicId
+    {
+        var resolved = await _db.Set<TEntity>()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(publicIdOrLegacyId, cancellationToken);
+
+        if (!resolved.HasValue && int.TryParse(publicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException($"{typeof(TEntity).Name} no encontrado.");
+    }
+
+    private static LeadSummaryDto MapLeadSummary(Lead lead)
+    {
+        return new LeadSummaryDto
+        {
+            PublicId = lead.PublicId,
+            FullName = lead.FullName,
+            Email = lead.Email,
+            Phone = lead.Phone,
+            Status = lead.Status,
+            Source = lead.Source,
+            InterestedIn = lead.InterestedIn,
+            TravelDates = lead.TravelDates,
+            Travelers = lead.Travelers,
+            EstimatedBudget = lead.EstimatedBudget,
+            Notes = lead.Notes,
+            AssignedToUserId = lead.AssignedToUserId,
+            AssignedToName = lead.AssignedToName,
+            NextFollowUp = lead.NextFollowUp,
+            CreatedAt = lead.CreatedAt,
+            ClosedAt = lead.ClosedAt,
+            ConvertedCustomerPublicId = lead.ConvertedCustomer?.PublicId,
+            ConvertedCustomerName = lead.ConvertedCustomer?.FullName,
+            ActivitiesCount = lead.Activities?.Count ?? 0,
+            LastActivity = lead.Activities?
+                .OrderByDescending(activity => activity.CreatedAt)
+                .FirstOrDefault()?
+                .Description
+        };
+    }
+
+    private static LeadDetailDto MapLeadDetail(Lead lead)
+    {
+        var summary = MapLeadSummary(lead);
+        return new LeadDetailDto
+        {
+            PublicId = summary.PublicId,
+            FullName = summary.FullName,
+            Email = summary.Email,
+            Phone = summary.Phone,
+            Status = summary.Status,
+            Source = summary.Source,
+            InterestedIn = summary.InterestedIn,
+            TravelDates = summary.TravelDates,
+            Travelers = summary.Travelers,
+            EstimatedBudget = summary.EstimatedBudget,
+            Notes = summary.Notes,
+            AssignedToUserId = summary.AssignedToUserId,
+            AssignedToName = summary.AssignedToName,
+            NextFollowUp = summary.NextFollowUp,
+            CreatedAt = summary.CreatedAt,
+            ClosedAt = summary.ClosedAt,
+            ConvertedCustomerPublicId = summary.ConvertedCustomerPublicId,
+            ConvertedCustomerName = summary.ConvertedCustomerName,
+            ActivitiesCount = summary.ActivitiesCount,
+            LastActivity = summary.LastActivity,
+            Activities = lead.Activities?
+                .OrderByDescending(activity => activity.CreatedAt)
+                .Select(MapLeadActivity)
+                .ToList() ?? new List<LeadActivityDto>()
+        };
+    }
+
+    private static LeadActivityDto MapLeadActivity(LeadActivity activity)
+    {
+        return new LeadActivityDto
+        {
+            PublicId = activity.PublicId,
+            Type = activity.Type,
+            Description = activity.Description,
+            CreatedBy = activity.CreatedBy,
+            CreatedAt = activity.CreatedAt
+        };
+    }
+
+    private static Lead MapLeadFromRequest(LeadUpsertRequest request)
+    {
+        return new Lead
+        {
+            FullName = request.FullName,
+            Email = request.Email,
+            Phone = request.Phone,
+            Source = request.Source,
+            InterestedIn = request.InterestedIn,
+            TravelDates = request.TravelDates,
+            Travelers = request.Travelers,
+            EstimatedBudget = request.EstimatedBudget,
+            Notes = request.Notes,
+            AssignedToUserId = request.AssignedToUserId,
+            AssignedToName = request.AssignedToName,
+            NextFollowUp = request.NextFollowUp
         };
     }
 

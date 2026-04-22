@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -8,13 +9,83 @@ namespace TravelApi.Infrastructure.Services;
 public class QuoteService : IQuoteService
 {
     private readonly AppDbContext _db;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public QuoteService(AppDbContext db)
+    public QuoteService(AppDbContext db, IEntityReferenceResolver entityReferenceResolver)
     {
         _db = db;
+        _entityReferenceResolver = entityReferenceResolver;
     }
 
-    public async Task<List<Quote>> GetAllAsync(CancellationToken cancellationToken)
+    public async Task<List<QuoteSummaryDto>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        var quotes = await GetAllEntitiesAsync(cancellationToken);
+        return quotes.Select(MapQuoteSummary).ToList();
+    }
+
+    public async Task<QuoteDetailDto?> GetByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
+        var quote = await GetByIdAsync(id, cancellationToken);
+        return quote == null ? null : MapQuoteDetail(quote);
+    }
+
+    public async Task<QuoteDetailDto> CreateAsync(UpsertQuoteRequest request, CancellationToken cancellationToken)
+    {
+        var quote = await CreateAsync(await BuildQuoteEntityAsync(request, cancellationToken), cancellationToken);
+        var detail = await GetByIdAsync(quote.Id, cancellationToken) ?? quote;
+        return MapQuoteDetail(detail);
+    }
+
+    public async Task<QuoteDetailDto> UpdateAsync(string publicIdOrLegacyId, UpsertQuoteRequest updated, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
+        var quote = await UpdateAsync(id, await BuildQuoteEntityAsync(updated, cancellationToken), cancellationToken);
+        var detail = await GetByIdAsync(quote.Id, cancellationToken) ?? quote;
+        return MapQuoteDetail(detail);
+    }
+
+    public async Task DeleteAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
+        await DeleteAsync(id, cancellationToken);
+    }
+
+    public async Task<QuoteDetailDto> AddItemAsync(string quotePublicIdOrLegacyId, UpsertQuoteItemRequest item, CancellationToken cancellationToken)
+    {
+        var quoteId = await ResolveRequiredIdAsync<Quote>(quotePublicIdOrLegacyId, cancellationToken);
+        var quote = await AddItemAsync(quoteId, await BuildQuoteItemEntityAsync(item, cancellationToken), cancellationToken);
+        return MapQuoteDetail(quote);
+    }
+
+    public async Task RemoveItemAsync(string quotePublicIdOrLegacyId, string itemPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var quoteId = await ResolveRequiredIdAsync<Quote>(quotePublicIdOrLegacyId, cancellationToken);
+        var itemId = await ResolveRequiredIdAsync<QuoteItem>(itemPublicIdOrLegacyId, cancellationToken);
+        await RemoveItemAsync(quoteId, itemId, cancellationToken);
+    }
+
+    public async Task<QuoteDetailDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
+        var quote = await UpdateStatusAsync(id, status, cancellationToken);
+        var detail = await GetByIdAsync(quote.Id, cancellationToken) ?? quote;
+        return MapQuoteDetail(detail);
+    }
+
+    public async Task<QuoteConversionResultDto> ConvertToFileAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
+        var reservaId = await ConvertToFileAsync(id, cancellationToken);
+        var reservaPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Reserva>(reservaId, cancellationToken);
+
+        return new QuoteConversionResultDto
+        {
+            ReservaPublicId = reservaPublicId ?? Guid.Empty
+        };
+    }
+
+    public async Task<List<Quote>> GetAllEntitiesAsync(CancellationToken cancellationToken)
     {
         return await _db.Quotes
             .Include(q => q.Customer)
@@ -357,6 +428,163 @@ public class QuoteService : IQuoteService
         quote.GrossMargin = quote.TotalSale - quote.TotalCost;
 
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
+        where TEntity : class, IHasPublicId
+    {
+        var resolved = await _db.Set<TEntity>()
+            .AsNoTracking()
+            .ResolveInternalIdAsync(publicIdOrLegacyId, cancellationToken);
+
+        if (!resolved.HasValue && int.TryParse(publicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException($"{typeof(TEntity).Name} no encontrado.");
+    }
+
+    private async Task<Quote> BuildQuoteEntityAsync(UpsertQuoteRequest request, CancellationToken cancellationToken)
+    {
+        return new Quote
+        {
+            Title = request.Title,
+            Description = request.Description,
+            CustomerId = await ResolveOptionalIdAsync<Customer>(request.CustomerPublicId, cancellationToken),
+            LeadId = await ResolveOptionalIdAsync<Lead>(request.LeadPublicId, cancellationToken),
+            ValidUntil = request.ValidUntil,
+            TravelStartDate = request.TravelStartDate,
+            TravelEndDate = request.TravelEndDate,
+            Destination = request.Destination,
+            Adults = request.Adults,
+            Children = request.Children,
+            Notes = request.Notes
+        };
+    }
+
+    private async Task<QuoteItem> BuildQuoteItemEntityAsync(UpsertQuoteItemRequest request, CancellationToken cancellationToken)
+    {
+        return new QuoteItem
+        {
+            ServiceType = request.ServiceType,
+            Description = request.Description,
+            SupplierId = await ResolveOptionalIdAsync<Supplier>(request.SupplierPublicId, cancellationToken),
+            RateId = await ResolveOptionalIdAsync<Rate>(request.RateId, cancellationToken),
+            Quantity = request.Quantity,
+            UnitCost = request.UnitCost,
+            UnitPrice = request.UnitPrice,
+            MarkupPercent = request.MarkupPercent,
+            Notes = request.Notes
+        };
+    }
+
+    private async Task<int?> ResolveOptionalIdAsync<TEntity>(string? publicIdOrLegacyId, CancellationToken cancellationToken)
+        where TEntity : class, IHasPublicId
+    {
+        if (string.IsNullOrWhiteSpace(publicIdOrLegacyId))
+        {
+            return null;
+        }
+
+        return await ResolveRequiredIdAsync<TEntity>(publicIdOrLegacyId, cancellationToken);
+    }
+
+    private static QuoteSummaryDto MapQuoteSummary(Quote quote)
+    {
+        return new QuoteSummaryDto
+        {
+            PublicId = quote.PublicId,
+            QuoteNumber = quote.QuoteNumber,
+            Title = quote.Title,
+            Description = quote.Description,
+            Status = quote.Status,
+            CustomerPublicId = quote.Customer?.PublicId,
+            CustomerName = quote.Customer?.FullName,
+            LeadPublicId = quote.Lead?.PublicId,
+            LeadName = quote.Lead?.FullName,
+            ConvertedReservaPublicId = quote.ConvertedReserva?.PublicId,
+            ConvertedReservaNumeroReserva = quote.ConvertedReserva?.NumeroReserva,
+            CreatedAt = quote.CreatedAt,
+            ValidUntil = quote.ValidUntil,
+            AcceptedAt = quote.AcceptedAt,
+            TravelStartDate = quote.TravelStartDate,
+            TravelEndDate = quote.TravelEndDate,
+            Destination = quote.Destination,
+            Adults = quote.Adults,
+            Children = quote.Children,
+            TotalCost = quote.TotalCost,
+            TotalSale = quote.TotalSale,
+            GrossMargin = quote.GrossMargin,
+            Notes = quote.Notes
+        };
+    }
+
+    private static QuoteDetailDto MapQuoteDetail(Quote quote)
+    {
+        var summary = MapQuoteSummary(quote);
+        return new QuoteDetailDto
+        {
+            PublicId = summary.PublicId,
+            QuoteNumber = summary.QuoteNumber,
+            Title = summary.Title,
+            Description = summary.Description,
+            Status = summary.Status,
+            CustomerPublicId = summary.CustomerPublicId,
+            CustomerName = summary.CustomerName,
+            LeadPublicId = summary.LeadPublicId,
+            LeadName = summary.LeadName,
+            ConvertedReservaPublicId = summary.ConvertedReservaPublicId,
+            ConvertedReservaNumeroReserva = summary.ConvertedReservaNumeroReserva,
+            CreatedAt = summary.CreatedAt,
+            ValidUntil = summary.ValidUntil,
+            AcceptedAt = summary.AcceptedAt,
+            TravelStartDate = summary.TravelStartDate,
+            TravelEndDate = summary.TravelEndDate,
+            Destination = summary.Destination,
+            Adults = summary.Adults,
+            Children = summary.Children,
+            TotalCost = summary.TotalCost,
+            TotalSale = summary.TotalSale,
+            GrossMargin = summary.GrossMargin,
+            Notes = summary.Notes,
+            Customer = quote.Customer == null ? null : new CustomerReferenceDto
+            {
+                PublicId = quote.Customer.PublicId,
+                FullName = quote.Customer.FullName
+            },
+            Lead = quote.Lead == null ? null : new LeadReferenceDto
+            {
+                PublicId = quote.Lead.PublicId,
+                FullName = quote.Lead.FullName
+            },
+            ConvertedReserva = quote.ConvertedReserva == null ? null : new ReservaReferenceDto
+            {
+                PublicId = quote.ConvertedReserva.PublicId,
+                NumeroReserva = quote.ConvertedReserva.NumeroReserva,
+                Name = quote.ConvertedReserva.Name
+            },
+            Items = quote.Items
+                .OrderByDescending(item => item.CreatedAt)
+                .Select(item => new QuoteItemDto
+                {
+                    PublicId = item.PublicId,
+                    ServiceType = item.ServiceType,
+                    Description = item.Description,
+                    SupplierPublicId = item.Supplier?.PublicId,
+                    SupplierName = item.Supplier?.Name,
+                    RatePublicId = item.Rate?.PublicId,
+                    Quantity = item.Quantity,
+                    UnitCost = item.UnitCost,
+                    UnitPrice = item.UnitPrice,
+                    MarkupPercent = item.MarkupPercent,
+                    TotalCost = item.TotalCost,
+                    TotalPrice = item.TotalPrice,
+                    Notes = item.Notes,
+                    CreatedAt = item.CreatedAt
+                })
+                .ToList()
+        };
     }
 
     private async Task<int?> ResolveCustomerFromLeadAsync(int? customerId, int? leadId, CancellationToken cancellationToken)
