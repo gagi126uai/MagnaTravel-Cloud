@@ -46,6 +46,7 @@ services:
       WhatsApp__WebhookSecret: ${WHATSAPP_WEBHOOK_SECRET:?WHATSAPP_WEBHOOK_SECRET is required}
       WhatsApp__BotUrl: http://whatsapp-bot:3001
       Services__Reservations__BaseUrl: http://reservas-service:8080
+      Services__Reservations__InternalToken: ${RESERVATIONS_INTERNAL_TOKEN:-CHANGE_THIS_SECRET}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
