@@ -38,8 +38,17 @@ builder.Services.AddDbContext<ReservationsDbContext>(options =>
     });
 });
 
-// Registrar para que los servicios que dependen de AppDbContext obtengan este contexto
-builder.Services.AddScoped<AppDbContext>(sp => sp.GetRequiredService<ReservationsDbContext>());
+// Los servicios de negocio (ReservaService, etc.) dependen de AppDbContext.
+// Registramos AppDbContext apuntando a la misma base de datos.
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    options.UseNpgsql(connectionString, o =>
+    {
+        o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+        o.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
+    });
+});
 
 builder.Services.AddMassTransit(x =>
 {

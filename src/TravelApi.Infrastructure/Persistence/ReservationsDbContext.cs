@@ -1,62 +1,46 @@
 using MassTransit;
-using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Infrastructure.Persistence;
 
-public class ReservationsDbContext : AppDbContext
+public class ReservationsDbContext : DbContext
 {
-    public ReservationsDbContext(DbContextOptions<ReservationsDbContext> options, IHttpContextAccessor? httpContextAccessor = null)
-        : base(ChangeOptionsType(options), httpContextAccessor)
+    public ReservationsDbContext(DbContextOptions<ReservationsDbContext> options)
+        : base(options)
     {
     }
 
-    private static DbContextOptions<AppDbContext> ChangeOptionsType(DbContextOptions<ReservationsDbContext> options)
-    {
-        // En EF Core, podemos crear un nuevo builder a partir de las opciones existentes para cambiar el tipo genérico
-        return new DbContextOptionsBuilder<AppDbContext>(options).Options;
-    }
+    public DbSet<Reserva> Reservaciones { get; set; } = null!;
+    public DbSet<ReservaAttachment> ReservaAttachments { get; set; } = null!;
+    public DbSet<Passenger> Passengers { get; set; } = null!;
+    public DbSet<ServicioReserva> ServiciosReserva { get; set; } = null!;
+    public DbSet<FlightSegment> FlightSegments { get; set; } = null!;
+    public DbSet<HotelBooking> HotelBookings { get; set; } = null!;
+    public DbSet<TransferBooking> TransferBookings { get; set; } = null!;
+    public DbSet<PackageBooking> PackageBookings { get; set; } = null!;
+    public DbSet<Payment> Payments { get; set; } = null!;
+    public DbSet<PaymentReceipt> PaymentReceipts { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-        
-        // Mapeo EXPLÍCITO de las entidades que pertenecen a este microservicio
-        // El resto (Customers, Suppliers, Users) se quedarán en el esquema 'public' heredado de AppDbContext
-        
-        var reservationEntities = new[]
-        {
-            typeof(Reserva),
-            typeof(ReservaAttachment),
-            typeof(Passenger),
-            typeof(ServicioReserva),
-            typeof(FlightSegment),
-            typeof(HotelBooking),
-            typeof(TransferBooking),
-            typeof(PackageBooking),
-            typeof(Payment),
-            typeof(PaymentReceipt)
-        };
 
-        foreach (var type in reservationEntities)
-        {
-            var entity = modelBuilder.Entity(type);
-            var tableName = entity.Metadata.GetTableName() ?? type.Name;
-            entity.ToTable(tableName, "reservas");
-        }
+        modelBuilder.AddInboxStateEntity();
+        modelBuilder.AddOutboxMessageEntity();
+        modelBuilder.AddOutboxStateEntity();
 
-        // Añadir Inbox/Outbox de MassTransit a este contexto (también en schema reservas)
-        modelBuilder.AddInboxStateEntity().ToTable("InboxState", "reservas");
-        modelBuilder.AddOutboxMessageEntity().ToTable("OutboxMessage", "reservas");
-        modelBuilder.AddOutboxStateEntity().ToTable("OutboxState", "reservas");
-
-        // Configuraciones específicas de Reservas
         modelBuilder.Entity<Reserva>()
             .HasIndex(r => r.PublicId)
             .IsUnique();
 
         modelBuilder.Entity<Reserva>().Ignore(r => r.SourceQuote);
+
+        modelBuilder.Entity<Reserva>()
+            .HasMany(r => r.Passengers)
+            .WithOne(p => p.Reserva)
+            .HasForeignKey(p => p.ReservaId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Payment>()
             .Property(p => p.Amount)
