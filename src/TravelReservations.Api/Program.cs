@@ -109,9 +109,9 @@ builder.Services.AddScoped<IWhatsAppDeliveryService, WhatsAppDeliveryService>();
 
 builder.Services.AddMinio(options =>
 {
-    options.Endpoint = builder.Configuration["Minio:Endpoint"] ?? "localhost:9000";
-    options.AccessKey = builder.Configuration["Minio:AccessKey"] ?? "minioadmin";
-    options.SecretKey = builder.Configuration["Minio:SecretKey"] ?? "minioadmin";
+    options.Endpoint = builder.Configuration["Minio:Endpoint"] ?? builder.Configuration["MINIO_ENDPOINT"] ?? "minio:9000";
+    options.AccessKey = builder.Configuration["Minio:AccessKey"] ?? builder.Configuration["MINIO_ACCESS_KEY"] ?? "minioadmin";
+    options.SecretKey = builder.Configuration["Minio:SecretKey"] ?? builder.Configuration["MINIO_SECRET_KEY"] ?? "minioadmin";
 });
 
 var app = builder.Build();

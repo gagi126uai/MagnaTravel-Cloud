@@ -219,14 +219,50 @@ public class AfipService : IAfipService
         }
         catch (System.Security.Cryptography.CryptographicException ex)
         {
-            _logger.LogError(ex, "AFIP data protection keys are invalid/expired. Clearing sensitive fields from memory to prevent blocking the UI.");
+            _logger.LogError(ex, 
+                "AFIP encryption key mismatch detected. Auto-repairing: clearing corrupted encrypted fields from the database. " +
+                "The admin must re-upload the AFIP certificate and password from the Settings page.");
+
+            // Auto-repair: persist the cleanup to the database so it doesn't fail on every request
+            try
+            {
+                var tracked = await _context.AfipSettings.FirstOrDefaultAsync();
+                if (tracked != null)
+                {
+                    tracked.Token = null;
+                    tracked.Sign = null;
+                    tracked.TokenExpiration = null;
+                    tracked.CertificateData = null;
+                    tracked.CertificatePassword = null;
+                    tracked.PadronToken = null;
+                    tracked.PadronSign = null;
+                    tracked.PadronTokenExpiration = null;
+
+                    tracked.ProdToken = null;
+                    tracked.ProdSign = null;
+                    tracked.ProdTokenExpiration = null;
+                    tracked.ProdCertificateData = null;
+                    tracked.ProdCertificatePassword = null;
+                    tracked.ProdPadronToken = null;
+                    tracked.ProdPadronSign = null;
+                    tracked.ProdPadronTokenExpiration = null;
+
+                    await _context.SaveChangesAsync();
+                    _logger.LogWarning("AFIP auto-repair complete. Corrupted encrypted fields have been cleared from the database.");
+                }
+            }
+            catch (Exception repairEx)
+            {
+                _logger.LogError(repairEx, "AFIP auto-repair failed to persist cleanup to database.");
+            }
+
+            // Return clean settings so the UI shows "no certificate" instead of crashing
             settings.Token = null;
             settings.Sign = null;
             settings.CertificateData = null;
             settings.CertificatePassword = null;
             settings.PadronToken = null;
             settings.PadronSign = null;
-            
             settings.ProdToken = null;
             settings.ProdSign = null;
             settings.ProdCertificateData = null;
