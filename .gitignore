@@ -31,3 +31,5 @@ restore_*_diag.txt
 tests_build_output*.txt
 tests_corecompile.txt
 !.gitignore
+
+.env
