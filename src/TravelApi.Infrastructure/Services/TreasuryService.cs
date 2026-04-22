@@ -9,9 +9,9 @@ namespace TravelApi.Infrastructure.Services;
 public class TreasuryService : ITreasuryService
 {
     private readonly AppDbContext _dbContext;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public TreasuryService(AppDbContext dbContext, EntityReferenceResolver entityReferenceResolver)
+    public TreasuryService(AppDbContext dbContext, IEntityReferenceResolver entityReferenceResolver)
     {
         _dbContext = dbContext;
         _entityReferenceResolver = entityReferenceResolver;

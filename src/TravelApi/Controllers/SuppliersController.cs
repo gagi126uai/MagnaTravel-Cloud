@@ -14,9 +14,9 @@ namespace TravelApi.Controllers;
 public class SuppliersController : ControllerBase
 {
     private readonly ISupplierService _supplierService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public SuppliersController(ISupplierService supplierService, EntityReferenceResolver entityReferenceResolver)
+    public SuppliersController(ISupplierService supplierService, IEntityReferenceResolver entityReferenceResolver)
     {
         _supplierService = supplierService;
         _entityReferenceResolver = entityReferenceResolver;

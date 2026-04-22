@@ -15,7 +15,7 @@ namespace TravelApi.Infrastructure.Services;
 public class InvoiceService : IInvoiceService
 {
     private readonly AppDbContext _context;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly IAfipService _afipService;
     private readonly IInvoicePdfService _pdfService;
     private readonly IMapper _mapper;
@@ -31,7 +31,7 @@ public class InvoiceService : IInvoiceService
 
     public InvoiceService(
         AppDbContext context, 
-        EntityReferenceResolver entityReferenceResolver,
+        IEntityReferenceResolver entityReferenceResolver,
         IAfipService afipService, 
         IInvoicePdfService pdfService,
         IMapper mapper,

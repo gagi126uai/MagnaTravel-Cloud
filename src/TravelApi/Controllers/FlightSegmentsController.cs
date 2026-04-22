@@ -13,9 +13,9 @@ namespace TravelApi.Controllers;
 public class FlightSegmentsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public FlightSegmentsController(IBookingService bookingService, EntityReferenceResolver entityReferenceResolver)
+    public FlightSegmentsController(IBookingService bookingService, IEntityReferenceResolver entityReferenceResolver)
     {
         _bookingService = bookingService;
         _entityReferenceResolver = entityReferenceResolver;

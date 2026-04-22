@@ -14,9 +14,9 @@ public class AttachmentsController : ControllerBase
 {
     private readonly IAttachmentService _attachmentService;
     private readonly ILogger<AttachmentsController> _logger;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public AttachmentsController(IAttachmentService attachmentService, ILogger<AttachmentsController> logger, EntityReferenceResolver entityReferenceResolver)
+    public AttachmentsController(IAttachmentService attachmentService, ILogger<AttachmentsController> logger, IEntityReferenceResolver entityReferenceResolver)
     {
         _attachmentService = attachmentService;
         _logger = logger;

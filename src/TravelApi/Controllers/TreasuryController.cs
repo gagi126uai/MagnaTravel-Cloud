@@ -16,9 +16,9 @@ namespace TravelApi.Controllers;
 public class TreasuryController : ControllerBase
 {
     private readonly ITreasuryService _treasuryService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public TreasuryController(ITreasuryService treasuryService, EntityReferenceResolver entityReferenceResolver)
+    public TreasuryController(ITreasuryService treasuryService, IEntityReferenceResolver entityReferenceResolver)
     {
         _treasuryService = treasuryService;
         _entityReferenceResolver = entityReferenceResolver;

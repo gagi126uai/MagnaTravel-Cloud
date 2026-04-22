@@ -43,10 +43,10 @@ public class WhatsAppWebhookControllerTests
             })
             .Build();
 
+        var webhookService = new WhatsAppWebhookService(leadService, deliveryMock.Object, db);
         var controller = new WebhooksController(
             leadService,
-            deliveryMock.Object,
-            db,
+            webhookService,
             config,
             NullLogger<WebhooksController>.Instance,
             new Mock<IHttpClientFactory>().Object,

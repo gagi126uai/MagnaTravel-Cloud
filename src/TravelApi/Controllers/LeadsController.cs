@@ -14,9 +14,9 @@ namespace TravelApi.Controllers;
 public class LeadsController : ControllerBase
 {
     private readonly ILeadService _leadService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public LeadsController(ILeadService leadService, EntityReferenceResolver entityReferenceResolver)
+    public LeadsController(ILeadService leadService, IEntityReferenceResolver entityReferenceResolver)
     {
         _leadService = leadService;
         _entityReferenceResolver = entityReferenceResolver;

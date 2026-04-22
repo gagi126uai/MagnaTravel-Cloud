@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Controllers;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services;
 using Xunit;
 
 namespace TravelApi.Tests.Unit;
@@ -76,7 +77,8 @@ public class WhatsAppConversationsControllerTests
 
         await db.SaveChangesAsync();
 
-        var controller = new WhatsAppConversationsController(db, new EntityReferenceResolver(db));
+        var conversationService = new WhatsAppConversationService(db, new EntityReferenceResolver(db));
+        var controller = new WhatsAppConversationsController(conversationService);
         var result = await controller.GetConversations(CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
@@ -122,7 +124,8 @@ public class WhatsAppConversationsControllerTests
         db.Leads.Add(lead);
         await db.SaveChangesAsync();
 
-        var controller = new WhatsAppConversationsController(db, new EntityReferenceResolver(db));
+        var conversationService = new WhatsAppConversationService(db, new EntityReferenceResolver(db));
+        var controller = new WhatsAppConversationsController(conversationService);
         var result = await controller.GetConversationDetail("lead", lead.PublicId.ToString(), CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);

@@ -1,13 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TravelApi.Application.DTOs;
-using TravelApi.Application.Interfaces;
-using TravelApi.Domain.Entities;
-using TravelApi.Infrastructure.Persistence;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Cryptography;
 using System.Text;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -16,25 +14,22 @@ namespace TravelApi.Controllers;
 public class WebhooksController : ControllerBase
 {
     private readonly ILeadService _leadService;
-    private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
-    private readonly AppDbContext _db;
+    private readonly IWhatsAppWebhookService _whatsAppWebhookService;
     private readonly IConfiguration _config;
     private readonly ILogger<WebhooksController> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
     public WebhooksController(
         ILeadService leadService,
-        IWhatsAppDeliveryService whatsAppDeliveryService,
-        AppDbContext db,
+        IWhatsAppWebhookService whatsAppWebhookService,
         IConfiguration config,
         ILogger<WebhooksController> logger,
         IHttpClientFactory httpClientFactory,
-        EntityReferenceResolver entityReferenceResolver)
+        IEntityReferenceResolver entityReferenceResolver)
     {
         _leadService = leadService;
-        _whatsAppDeliveryService = whatsAppDeliveryService;
-        _db = db;
+        _whatsAppWebhookService = whatsAppWebhookService;
         _config = config;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
@@ -62,55 +57,6 @@ public class WebhooksController : ControllerBase
             Encoding.UTF8.GetBytes(provided));
     }
 
-    private static string NormalizePhone(string phone) => phone.Replace("+", "").Trim();
-
-    private const string WhatsAppPlaceholderPrefix = "Consulta por WhatsApp";
-
-    private static bool IsPlaceholderLeadName(string? name) =>
-        string.IsNullOrWhiteSpace(name) ||
-        name.StartsWith(WhatsAppPlaceholderPrefix, StringComparison.OrdinalIgnoreCase);
-
-    private static bool LeadNeedsQualification(Lead lead) =>
-        IsPlaceholderLeadName(lead.FullName) ||
-        string.IsNullOrWhiteSpace(lead.InterestedIn) ||
-        string.IsNullOrWhiteSpace(lead.TravelDates) ||
-        string.IsNullOrWhiteSpace(lead.Travelers);
-
-    private static string SanitizeMessageContent(string? value, int maxLength = 2000)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        var cleaned = new string(value.Where(ch => !char.IsControl(ch) || ch == '\r' || ch == '\n' || ch == '\t').ToArray()).Trim();
-        return cleaned.Length <= maxLength ? cleaned : cleaned[..maxLength];
-    }
-
-    private static void MergeStructuredWhatsAppCapture(Lead lead, WhatsAppWebhookDto dto)
-    {
-        if (!string.IsNullOrWhiteSpace(dto.Name) && IsPlaceholderLeadName(lead.FullName))
-            lead.FullName = dto.Name.Trim();
-
-        if (string.IsNullOrWhiteSpace(lead.Phone) && !string.IsNullOrWhiteSpace(dto.Phone))
-            lead.Phone = dto.Phone.Trim();
-
-        if (string.IsNullOrWhiteSpace(lead.Source))
-            lead.Source = "WhatsApp";
-
-        if (!string.IsNullOrWhiteSpace(dto.Interest))
-            lead.InterestedIn = dto.Interest.Trim();
-
-        if (!string.IsNullOrWhiteSpace(dto.Dates))
-            lead.TravelDates = dto.Dates.Trim();
-
-        if (!string.IsNullOrWhiteSpace(dto.Travelers))
-            lead.Travelers = dto.Travelers.Trim();
-
-        if (string.IsNullOrWhiteSpace(lead.Notes))
-            lead.Notes = "Lead capturado por WhatsApp Bot.";
-    }
-
     [HttpPost("whatsapp")]
     [EnableRateLimiting("webhooks")]
     public async Task<ActionResult> WhatsAppLead(
@@ -123,72 +69,33 @@ public class WebhooksController : ControllerBase
             return Unauthorized(new { message = "Secret invalido." });
         }
 
-        if (string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Phone))
-            return BadRequest(new { message = "Nombre y telefono son obligatorios." });
-
-        var phoneToSearch = NormalizePhone(dto.Phone);
-        var existingLead = await _db.Leads
-            .Where(l => (l.Phone == dto.Phone || l.Phone == phoneToSearch) && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (existingLead != null)
+        try
         {
-            MergeStructuredWhatsAppCapture(existingLead, dto);
-            await _db.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Lead WhatsApp enriquecido: {Phone} -> Lead #{Id}", dto.Phone, existingLead.Id);
-
-            if (!string.IsNullOrWhiteSpace(dto.Transcript))
+            var result = await _whatsAppWebhookService.ProcessLeadCaptureAsync(dto, cancellationToken);
+            if (result.Created)
             {
-                await _leadService.AddActivityAsync(existingLead.Id, new LeadActivity
+                _logger.LogInformation("Nuevo lead WhatsApp: {Name} ({Phone})", result.Name, result.Phone);
+                return StatusCode(201, new
                 {
-                    Type = "WhatsApp",
-                    Description = $"Nueva conversacion con bot:\n{SanitizeMessageContent(dto.Transcript)}",
-                    CreatedBy = "WhatsApp Bot"
-                }, cancellationToken);
+                    message = "Lead creado exitosamente.",
+                    leadPublicId = result.LeadPublicId,
+                    name = result.Name,
+                    phone = result.Phone
+                });
             }
 
+            _logger.LogInformation("Lead WhatsApp enriquecido: {Phone}", dto.Phone);
             return Ok(new
             {
                 message = "Lead actualizado exitosamente.",
-                leadPublicId = existingLead.PublicId,
+                leadPublicId = result.LeadPublicId,
                 updated = true
             });
         }
-
-        var lead = new Lead
+        catch (ArgumentException)
         {
-            FullName = dto.Name.Trim(),
-            Phone = dto.Phone.Trim(),
-            Source = "WhatsApp",
-            InterestedIn = dto.Interest?.Trim(),
-            TravelDates = dto.Dates?.Trim(),
-            Travelers = dto.Travelers?.Trim(),
-            Status = LeadStatus.New,
-            Notes = "Lead capturado por WhatsApp Bot."
-        };
-
-        var created = await _leadService.CreateAsync(lead, cancellationToken);
-
-        if (!string.IsNullOrWhiteSpace(dto.Transcript))
-        {
-            await _leadService.AddActivityAsync(created.Id, new LeadActivity
-            {
-                Type = "WhatsApp",
-                Description = $"Conversacion capturada por bot:\n{SanitizeMessageContent(dto.Transcript)}",
-                CreatedBy = "WhatsApp Bot"
-            }, cancellationToken);
+            return BadRequest(new { message = "Nombre y telefono son obligatorios." });
         }
-
-        _logger.LogInformation("Nuevo lead WhatsApp: #{Id} - {Name} ({Phone})", created.Id, created.FullName, created.Phone);
-
-        return StatusCode(201, new
-        {
-            message = "Lead creado exitosamente.",
-            leadPublicId = created.PublicId,
-            name = created.FullName,
-            phone = created.Phone
-        });
     }
 
     [HttpPost("whatsapp/message")]
@@ -198,65 +105,40 @@ public class WebhooksController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (!ValidateSecret())
-            return Unauthorized(new { message = "Secret invalido." });
-
-        if (string.IsNullOrWhiteSpace(dto.Phone) || string.IsNullOrWhiteSpace(dto.Message))
-            return BadRequest(new { message = "Phone y message son obligatorios." });
-
-        if (dto.Sender == "Cliente")
         {
-            var handledOperationally = await _whatsAppDeliveryService.TryHandleIncomingOperationalMessageAsync(
-                dto.Phone,
-                dto.Message,
-                cancellationToken);
-
-            if (handledOperationally)
-                return Ok(new { handledBy = "operational" });
+            return Unauthorized(new { message = "Secret invalido." });
         }
 
-        var phoneToSearch = NormalizePhone(dto.Phone);
-        var lead = await _db.Leads
-            .Where(l => (l.Phone == dto.Phone || l.Phone == phoneToSearch) && l.Status != LeadStatus.Won && l.Status != LeadStatus.Lost)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (lead == null)
+        try
         {
-            if (dto.SkipLeadAutoCreation)
+            var result = await _whatsAppWebhookService.ProcessIncomingMessageAsync(dto, cancellationToken);
+            if (result.HandledBy == "operational")
+            {
+                return Ok(new { handledBy = result.HandledBy });
+            }
+
+            if (result.HandledBy == "none")
             {
                 return Ok(new
                 {
-                    handledBy = "none",
-                    autoCreated = false,
-                    allowBotCapture = true
+                    handledBy = result.HandledBy,
+                    autoCreated = result.AutoCreated,
+                    allowBotCapture = result.AllowBotCapture
                 });
             }
 
-            _logger.LogInformation("Auto-creando lead para mensaje entrante de: {Phone}", dto.Phone);
-            lead = new Lead
+            return Ok(new
             {
-                FullName = $"{WhatsAppPlaceholderPrefix} ({dto.Phone})",
-                Phone = dto.Phone,
-                Source = "WhatsApp",
-                Status = LeadStatus.New,
-                Notes = "Lead creado automaticamente al recibir un mensaje sin proceso de bot completado."
-            };
-            lead = await _leadService.CreateAsync(lead, cancellationToken);
+                handledBy = result.HandledBy,
+                leadPublicId = result.LeadPublicId,
+                autoCreated = result.AutoCreated,
+                allowBotCapture = result.AllowBotCapture
+            });
         }
-
-        await _leadService.AddActivityAsync(lead.Id, new LeadActivity
+        catch (ArgumentException)
         {
-            Type = "WhatsApp",
-            Description = SanitizeMessageContent(dto.Message, 1000),
-            CreatedBy = dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"
-        }, cancellationToken);
-
-        return Ok(new
-        {
-            handledBy = "lead",
-            leadPublicId = lead.PublicId,
-            autoCreated = lead.FullName.StartsWith(WhatsAppPlaceholderPrefix, StringComparison.OrdinalIgnoreCase),
-            allowBotCapture = LeadNeedsQualification(lead)
-        });
+            return BadRequest(new { message = "Phone y message son obligatorios." });
+        }
     }
 
     [HttpPost("/api/leads/{publicIdOrLegacyId}/whatsapp-message")]
@@ -269,13 +151,20 @@ public class WebhooksController : ControllerBase
     {
         var leadId = await _entityReferenceResolver.ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
         var lead = await _leadService.GetByIdAsync(leadId, cancellationToken);
-        if (lead == null) return NotFound(new { message = "Lead no encontrado." });
+        if (lead == null)
+        {
+            return NotFound(new { message = "Lead no encontrado." });
+        }
 
         if (string.IsNullOrWhiteSpace(lead.Phone))
+        {
             return BadRequest(new { message = "El lead no tiene telefono." });
+        }
 
         if (string.IsNullOrWhiteSpace(request.Message))
+        {
             return BadRequest(new { message = "El mensaje es obligatorio." });
+        }
 
         var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
         var secret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
@@ -308,7 +197,7 @@ public class WebhooksController : ControllerBase
             await _leadService.AddActivityAsync(leadId, new LeadActivity
             {
                 Type = "WhatsApp",
-                Description = SanitizeMessageContent(request.Message, 1000),
+                Description = request.Message.Trim(),
                 CreatedBy = userName
             }, cancellationToken);
 
@@ -364,7 +253,11 @@ public class WebhooksController : ControllerBase
             client.DefaultRequestHeaders.Add("X-Webhook-Secret", secret);
             var response = await client.PostAsync($"{botUrl}/reload", null);
 
-            if (response.IsSuccessStatusCode) return Ok(new { success = true });
+            if (response.IsSuccessStatusCode)
+            {
+                return Ok(new { success = true });
+            }
+
             return StatusCode((int)response.StatusCode, "Error al notificar al bot");
         }
         catch (Exception ex)
@@ -387,7 +280,11 @@ public class WebhooksController : ControllerBase
             client.DefaultRequestHeaders.Add("X-Webhook-Secret", secret);
             var response = await client.PostAsync($"{botUrl}/logout", null);
 
-            if (response.IsSuccessStatusCode) return Ok(new { success = true });
+            if (response.IsSuccessStatusCode)
+            {
+                return Ok(new { success = true });
+            }
+
             return StatusCode((int)response.StatusCode, "Error al cerrar sesion del bot");
         }
         catch (Exception ex)

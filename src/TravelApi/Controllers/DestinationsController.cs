@@ -14,11 +14,11 @@ namespace TravelApi.Controllers;
 public class DestinationsController : ControllerBase
 {
     private readonly IDestinationService _destinationService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
     public DestinationsController(
         IDestinationService destinationService,
-        EntityReferenceResolver entityReferenceResolver)
+        IEntityReferenceResolver entityReferenceResolver)
     {
         _destinationService = destinationService;
         _entityReferenceResolver = entityReferenceResolver;

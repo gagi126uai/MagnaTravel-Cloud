@@ -17,9 +17,9 @@ namespace TravelApi.Controllers;
 public class InvoicesController : ControllerBase
 {
     private readonly IInvoiceService _invoiceService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public InvoicesController(IInvoiceService invoiceService, EntityReferenceResolver entityReferenceResolver)
+    public InvoicesController(IInvoiceService invoiceService, IEntityReferenceResolver entityReferenceResolver)
     {
         _invoiceService = invoiceService;
         _entityReferenceResolver = entityReferenceResolver;

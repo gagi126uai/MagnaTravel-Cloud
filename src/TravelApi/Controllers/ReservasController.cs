@@ -19,7 +19,7 @@ public class ReservasController : ControllerBase
     private readonly IVoucherService _voucherService;
     private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
     private readonly ITimelineService _timelineService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly ILogger<ReservasController> _logger;
 
     public ReservasController(
@@ -27,7 +27,7 @@ public class ReservasController : ControllerBase
         IVoucherService voucherService,
         IWhatsAppDeliveryService whatsAppDeliveryService,
         ITimelineService timelineService,
-        EntityReferenceResolver entityReferenceResolver,
+        IEntityReferenceResolver entityReferenceResolver,
         ILogger<ReservasController> logger)
     {
         _reservaService = reservaService;

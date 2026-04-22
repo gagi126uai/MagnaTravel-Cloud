@@ -38,12 +38,12 @@ public class AuditLogsController : ControllerBase
     };
 
     private readonly IAuditService _auditService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly UserManager<ApplicationUser> _userManager;
 
     public AuditLogsController(
         IAuditService auditService,
-        EntityReferenceResolver entityReferenceResolver,
+        IEntityReferenceResolver entityReferenceResolver,
         UserManager<ApplicationUser> userManager)
     {
         _auditService = auditService;

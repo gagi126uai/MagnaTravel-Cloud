@@ -14,7 +14,7 @@ namespace TravelApi.Infrastructure.Services;
 public class PaymentService : IPaymentService
 {
     private readonly AppDbContext _dbContext;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly IMapper _mapper;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
@@ -26,7 +26,7 @@ public class PaymentService : IPaymentService
 
     public PaymentService(
         AppDbContext dbContext,
-        EntityReferenceResolver entityReferenceResolver,
+        IEntityReferenceResolver entityReferenceResolver,
         IMapper mapper,
         IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {

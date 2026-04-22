@@ -13,9 +13,9 @@ namespace TravelApi.Controllers;
 public class QuotesController : ControllerBase
 {
     private readonly IQuoteService _quoteService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public QuotesController(IQuoteService quoteService, EntityReferenceResolver entityReferenceResolver)
+    public QuotesController(IQuoteService quoteService, IEntityReferenceResolver entityReferenceResolver)
     {
         _quoteService = quoteService;
         _entityReferenceResolver = entityReferenceResolver;

@@ -14,12 +14,12 @@ public class CountriesController : ControllerBase
 {
     private readonly ICountryService _countryService;
     private readonly IDestinationService _destinationService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
     public CountriesController(
         ICountryService countryService,
         IDestinationService destinationService,
-        EntityReferenceResolver entityReferenceResolver)
+        IEntityReferenceResolver entityReferenceResolver)
     {
         _countryService = countryService;
         _destinationService = destinationService;

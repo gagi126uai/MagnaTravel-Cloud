@@ -1,0 +1,231 @@
+using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
+
+namespace TravelApi.Infrastructure.Services;
+
+public class WhatsAppWebhookService : IWhatsAppWebhookService
+{
+    private const string WhatsAppPlaceholderPrefix = "Consulta por WhatsApp";
+
+    private readonly ILeadService _leadService;
+    private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
+    private readonly AppDbContext _db;
+
+    public WhatsAppWebhookService(
+        ILeadService leadService,
+        IWhatsAppDeliveryService whatsAppDeliveryService,
+        AppDbContext db)
+    {
+        _leadService = leadService;
+        _whatsAppDeliveryService = whatsAppDeliveryService;
+        _db = db;
+    }
+
+    public async Task<WhatsAppLeadWebhookResult> ProcessLeadCaptureAsync(
+        WhatsAppWebhookDto dto,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Phone))
+        {
+            throw new ArgumentException("Nombre y telefono son obligatorios.");
+        }
+
+        var phoneToSearch = NormalizePhone(dto.Phone);
+        var existingLead = await _db.Leads
+            .Where(lead =>
+                (lead.Phone == dto.Phone || lead.Phone == phoneToSearch) &&
+                lead.Status != LeadStatus.Won &&
+                lead.Status != LeadStatus.Lost)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (existingLead is not null)
+        {
+            MergeStructuredWhatsAppCapture(existingLead, dto);
+            await _db.SaveChangesAsync(cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(dto.Transcript))
+            {
+                await _leadService.AddActivityAsync(existingLead.Id, new LeadActivity
+                {
+                    Type = "WhatsApp",
+                    Description = $"Nueva conversacion con bot:\n{SanitizeMessageContent(dto.Transcript)}",
+                    CreatedBy = "WhatsApp Bot"
+                }, cancellationToken);
+            }
+
+            return new WhatsAppLeadWebhookResult
+            {
+                Created = false,
+                LeadPublicId = existingLead.PublicId
+            };
+        }
+
+        var lead = new Lead
+        {
+            FullName = dto.Name.Trim(),
+            Phone = dto.Phone.Trim(),
+            Source = "WhatsApp",
+            InterestedIn = dto.Interest?.Trim(),
+            TravelDates = dto.Dates?.Trim(),
+            Travelers = dto.Travelers?.Trim(),
+            Status = LeadStatus.New,
+            Notes = "Lead capturado por WhatsApp Bot."
+        };
+
+        var created = await _leadService.CreateAsync(lead, cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(dto.Transcript))
+        {
+            await _leadService.AddActivityAsync(created.Id, new LeadActivity
+            {
+                Type = "WhatsApp",
+                Description = $"Conversacion capturada por bot:\n{SanitizeMessageContent(dto.Transcript)}",
+                CreatedBy = "WhatsApp Bot"
+            }, cancellationToken);
+        }
+
+        return new WhatsAppLeadWebhookResult
+        {
+            Created = true,
+            LeadPublicId = created.PublicId,
+            Name = created.FullName,
+            Phone = created.Phone
+        };
+    }
+
+    public async Task<WhatsAppIncomingMessageResult> ProcessIncomingMessageAsync(
+        WhatsAppMessageDto dto,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Phone) || string.IsNullOrWhiteSpace(dto.Message))
+        {
+            throw new ArgumentException("Phone y message son obligatorios.");
+        }
+
+        if (dto.Sender == "Cliente")
+        {
+            var handledOperationally = await _whatsAppDeliveryService.TryHandleIncomingOperationalMessageAsync(
+                dto.Phone,
+                dto.Message,
+                cancellationToken);
+
+            if (handledOperationally)
+            {
+                return new WhatsAppIncomingMessageResult
+                {
+                    HandledBy = "operational"
+                };
+            }
+        }
+
+        var phoneToSearch = NormalizePhone(dto.Phone);
+        var lead = await _db.Leads
+            .Where(item =>
+                (item.Phone == dto.Phone || item.Phone == phoneToSearch) &&
+                item.Status != LeadStatus.Won &&
+                item.Status != LeadStatus.Lost)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (lead is null)
+        {
+            if (dto.SkipLeadAutoCreation)
+            {
+                return new WhatsAppIncomingMessageResult
+                {
+                    HandledBy = "none",
+                    AutoCreated = false,
+                    AllowBotCapture = true
+                };
+            }
+
+            lead = new Lead
+            {
+                FullName = $"{WhatsAppPlaceholderPrefix} ({dto.Phone})",
+                Phone = dto.Phone,
+                Source = "WhatsApp",
+                Status = LeadStatus.New,
+                Notes = "Lead creado automaticamente al recibir un mensaje sin proceso de bot completado."
+            };
+            lead = await _leadService.CreateAsync(lead, cancellationToken);
+        }
+
+        await _leadService.AddActivityAsync(lead.Id, new LeadActivity
+        {
+            Type = "WhatsApp",
+            Description = SanitizeMessageContent(dto.Message, 1000),
+            CreatedBy = dto.Sender == "Cliente" ? $"WhatsApp ({lead.FullName})" : "Agente CRM"
+        }, cancellationToken);
+
+        return new WhatsAppIncomingMessageResult
+        {
+            HandledBy = "lead",
+            LeadPublicId = lead.PublicId,
+            AutoCreated = lead.FullName.StartsWith(WhatsAppPlaceholderPrefix, StringComparison.OrdinalIgnoreCase),
+            AllowBotCapture = LeadNeedsQualification(lead)
+        };
+    }
+
+    private static string NormalizePhone(string phone) => phone.Replace("+", "").Trim();
+
+    private static bool IsPlaceholderLeadName(string? name) =>
+        string.IsNullOrWhiteSpace(name) ||
+        name.StartsWith(WhatsAppPlaceholderPrefix, StringComparison.OrdinalIgnoreCase);
+
+    private static bool LeadNeedsQualification(Lead lead) =>
+        IsPlaceholderLeadName(lead.FullName) ||
+        string.IsNullOrWhiteSpace(lead.InterestedIn) ||
+        string.IsNullOrWhiteSpace(lead.TravelDates) ||
+        string.IsNullOrWhiteSpace(lead.Travelers);
+
+    private static string SanitizeMessageContent(string? value, int maxLength = 2000)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var cleaned = new string(value.Where(ch => !char.IsControl(ch) || ch == '\r' || ch == '\n' || ch == '\t').ToArray()).Trim();
+        return cleaned.Length <= maxLength ? cleaned : cleaned[..maxLength];
+    }
+
+    private static void MergeStructuredWhatsAppCapture(Lead lead, WhatsAppWebhookDto dto)
+    {
+        if (!string.IsNullOrWhiteSpace(dto.Name) && IsPlaceholderLeadName(lead.FullName))
+        {
+            lead.FullName = dto.Name.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(lead.Phone) && !string.IsNullOrWhiteSpace(dto.Phone))
+        {
+            lead.Phone = dto.Phone.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(lead.Source))
+        {
+            lead.Source = "WhatsApp";
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.Interest))
+        {
+            lead.InterestedIn = dto.Interest.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.Dates))
+        {
+            lead.TravelDates = dto.Dates.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.Travelers))
+        {
+            lead.Travelers = dto.Travelers.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(lead.Notes))
+        {
+            lead.Notes = "Lead capturado por WhatsApp Bot.";
+        }
+    }
+}

@@ -1,10 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
-using TravelApi.Domain.Entities;
-using TravelApi.Infrastructure.Persistence;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
 
 namespace TravelApi.Controllers;
 
@@ -13,12 +12,12 @@ namespace TravelApi.Controllers;
 [Authorize(Roles = "Admin")]
 public class WhatsAppBotConfigController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IWhatsAppBotConfigService _botConfigService;
     private readonly IConfiguration _configuration;
 
-    public WhatsAppBotConfigController(AppDbContext db, IConfiguration configuration)
+    public WhatsAppBotConfigController(IWhatsAppBotConfigService botConfigService, IConfiguration configuration)
     {
-        _db = db;
+        _botConfigService = botConfigService;
         _configuration = configuration;
     }
 
@@ -31,56 +30,23 @@ public class WhatsAppBotConfigController : ControllerBase
             return Unauthorized();
         }
 
-        var config = await _db.WhatsAppBotConfigs.OrderBy(item => item.Id).FirstOrDefaultAsync() ?? new WhatsAppBotConfig();
-        var agency = await _db.AgencySettings.OrderBy(item => item.Id).FirstOrDefaultAsync() ?? new AgencySettings();
-        
-        return Ok(new {
-            config = new {
-                config.WelcomeMessage,
-                config.AskInterestMessage,
-                config.AskDatesMessage,
-                config.AskTravelersMessage,
-                config.ThanksMessage,
-                config.AgentRequestMessage,
-                config.DuplicateMessage
-            },
-            agencyName = agency.AgencyName
-        });
+        var environment = await _botConfigService.GetBotEnvironmentAsync(HttpContext.RequestAborted);
+        return Ok(environment);
     }
 
     [HttpGet]
-    public async Task<ActionResult<WhatsAppBotConfig>> GetConfig()
+    public async Task<ActionResult<WhatsAppBotConfigDto>> GetConfig(CancellationToken cancellationToken)
     {
-        var config = await _db.WhatsAppBotConfigs.OrderBy(item => item.Id).FirstOrDefaultAsync();
-        if (config == null)
-        {
-            config = new WhatsAppBotConfig();
-            _db.WhatsAppBotConfigs.Add(config);
-            await _db.SaveChangesAsync();
-        }
+        var config = await _botConfigService.GetConfigAsync(cancellationToken);
         return Ok(config);
     }
 
     [HttpPut]
-    public async Task<IActionResult> UpdateConfig(WhatsAppBotConfig updated)
+    public async Task<IActionResult> UpdateConfig(
+        UpdateWhatsAppBotConfigRequest updated,
+        CancellationToken cancellationToken)
     {
-        var config = await _db.WhatsAppBotConfigs.OrderBy(item => item.Id).FirstOrDefaultAsync();
-        if (config == null)
-        {
-            config = new WhatsAppBotConfig();
-            _db.WhatsAppBotConfigs.Add(config);
-        }
-
-        config.WelcomeMessage = updated.WelcomeMessage;
-        config.AskInterestMessage = updated.AskInterestMessage;
-        config.AskDatesMessage = updated.AskDatesMessage;
-        config.AskTravelersMessage = updated.AskTravelersMessage;
-        config.ThanksMessage = updated.ThanksMessage;
-        config.AgentRequestMessage = updated.AgentRequestMessage;
-        config.DuplicateMessage = updated.DuplicateMessage;
-        config.UpdatedAt = DateTime.UtcNow;
-
-        await _db.SaveChangesAsync();
+        await _botConfigService.UpdateConfigAsync(updated, cancellationToken);
         return NoContent();
     }
 

@@ -12,9 +12,9 @@ namespace TravelApi.Controllers;
 public class CommissionsController : ControllerBase
 {
     private readonly ICommissionService _commissionService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public CommissionsController(ICommissionService commissionService, EntityReferenceResolver entityReferenceResolver)
+    public CommissionsController(ICommissionService commissionService, IEntityReferenceResolver entityReferenceResolver)
     {
         _commissionService = commissionService;
         _entityReferenceResolver = entityReferenceResolver;

@@ -13,9 +13,9 @@ namespace TravelApi.Controllers;
 public class RatesController : ControllerBase
 {
     private readonly IRateService _rateService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public RatesController(IRateService rateService, EntityReferenceResolver entityReferenceResolver)
+    public RatesController(IRateService rateService, IEntityReferenceResolver entityReferenceResolver)
     {
         _rateService = rateService;
         _entityReferenceResolver = entityReferenceResolver;

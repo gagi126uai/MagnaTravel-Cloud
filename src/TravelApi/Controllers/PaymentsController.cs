@@ -14,9 +14,9 @@ namespace TravelApi.Controllers;
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
-    private readonly EntityReferenceResolver _entityReferenceResolver;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
 
-    public PaymentsController(IPaymentService paymentService, EntityReferenceResolver entityReferenceResolver)
+    public PaymentsController(IPaymentService paymentService, IEntityReferenceResolver entityReferenceResolver)
     {
         _paymentService = paymentService;
         _entityReferenceResolver = entityReferenceResolver;

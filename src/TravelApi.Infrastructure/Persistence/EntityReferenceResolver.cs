@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Infrastructure.Persistence;
 
-public class EntityReferenceResolver
+public class EntityReferenceResolver : IEntityReferenceResolver
 {
     private readonly AppDbContext _dbContext;
 
