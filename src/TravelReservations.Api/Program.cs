@@ -38,6 +38,9 @@ builder.Services.AddDbContext<ReservationsDbContext>(options =>
     });
 });
 
+// Registrar para que los servicios que dependen de AppDbContext obtengan este contexto
+builder.Services.AddScoped<AppDbContext>(sp => sp.GetRequiredService<ReservationsDbContext>());
+
 builder.Services.AddMassTransit(x =>
 {
     x.AddEntityFrameworkOutbox<ReservationsDbContext>(o =>
