@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Contracts.Reservations;
+using TravelApi.Application.Contracts.Shared;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 
 namespace TravelReservations.Api.Controllers;
@@ -64,10 +67,9 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}/status")]
-    public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] dynamic body, CancellationToken cancellationToken)
+    public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] StatusUpdateRequest request, CancellationToken cancellationToken)
     {
-        string status = body.status;
-        var result = await _reservaService.UpdateStatusAsync(publicIdOrLegacyId, status, cancellationToken);
+        var result = await _reservaService.UpdateStatusAsync(publicIdOrLegacyId, request.Status, cancellationToken);
         return Ok(result);
     }
 
