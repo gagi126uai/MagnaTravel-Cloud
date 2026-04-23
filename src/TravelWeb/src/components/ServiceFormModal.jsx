@@ -589,11 +589,17 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 payload.endDate = new Date(form.endDate).toISOString();
             }
 
-            if (method === "put") await api.put(endpoint, payload);
-            else await api.post(endpoint, payload);
+            const savedService = method === "put"
+                ? await api.put(endpoint, payload)
+                : await api.post(endpoint, payload);
 
             showSuccess("Servicio guardado");
-            onSuccess();
+            try {
+                await onSuccess?.({ service: savedService, serviceType, action: method, showLoading: false });
+            } catch (refreshError) {
+                console.error("Error refreshing reserva after saving service", refreshError);
+                showError("Servicio guardado, pero no se pudo actualizar la lista.");
+            }
             onClose();
         } catch (error) {
             showError(error.message || "Error al guardar");

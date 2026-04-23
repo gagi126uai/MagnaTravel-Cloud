@@ -11,20 +11,49 @@ export function useReservaDetail(reservaId, navigate) {
     const [loading, setLoading] = useState(true);
     const [suppliers, setSuppliers] = useState([]);
 
-    const fetchReserva = useCallback(async () => {
+    const fetchServiceCollections = useCallback(async () => {
+        if (!reservaId) return {};
+
+        const endpoints = [
+            ["flightSegments", `/reservas/${reservaId}/flights`],
+            ["hotelBookings", `/reservas/${reservaId}/hotels`],
+            ["transferBookings", `/reservas/${reservaId}/transfers`],
+            ["packageBookings", `/reservas/${reservaId}/packages`],
+        ];
+
+        const results = await Promise.allSettled(endpoints.map(([, endpoint]) => api.get(endpoint)));
+
+        return endpoints.reduce((collections, [key], index) => {
+            const result = results[index];
+            if (result.status === "fulfilled" && Array.isArray(result.value)) {
+                collections[key] = result.value;
+            }
+
+            return collections;
+        }, {});
+    }, [reservaId]);
+
+    const fetchReserva = useCallback(async ({ showLoading = true } = {}) => {
         if (!reservaId) return;
         try {
-            setLoading(true);
-            const res = await api.get(`/reservas/${reservaId}`);
-            setReserva(res);
+            if (showLoading) {
+                setLoading(true);
+            }
+            const [res, serviceCollections] = await Promise.all([
+                api.get(`/reservas/${reservaId}`),
+                fetchServiceCollections()
+            ]);
+            setReserva({ ...res, ...serviceCollections });
         } catch (error) {
             console.error(error);
             showError("Error al cargar la reserva: " + (error.response?.data?.Error || error.message || "Error desconocido"));
             setReserva(null);
         } finally {
-            setLoading(false);
+            if (showLoading) {
+                setLoading(false);
+            }
         }
-    }, [reservaId]);
+    }, [reservaId, fetchServiceCollections]);
 
     const fetchSuppliers = useCallback(async () => {
         try {
