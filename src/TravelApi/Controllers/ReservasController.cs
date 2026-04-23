@@ -186,6 +186,17 @@ public class ReservasController : ControllerBase
         }
     }
 
+    [HttpPut("{publicIdOrLegacyId}/services/{servicePublicIdOrLegacyId}")]
+    public Task<IActionResult> UpdateNestedService(
+        string publicIdOrLegacyId,
+        string servicePublicIdOrLegacyId,
+        AddServiceRequest request,
+        CancellationToken cancellationToken)
+    {
+        _ = publicIdOrLegacyId;
+        return UpdateService(servicePublicIdOrLegacyId, request, cancellationToken);
+    }
+
     [HttpDelete("services/{servicePublicIdOrLegacyId}")]
     public async Task<IActionResult> RemoveService(string servicePublicIdOrLegacyId, CancellationToken cancellationToken)
     {
@@ -208,6 +219,16 @@ public class ReservasController : ControllerBase
 
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el servicio.");
         }
+    }
+
+    [HttpDelete("{publicIdOrLegacyId}/services/{servicePublicIdOrLegacyId}")]
+    public Task<IActionResult> RemoveNestedService(
+        string publicIdOrLegacyId,
+        string servicePublicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        _ = publicIdOrLegacyId;
+        return RemoveService(servicePublicIdOrLegacyId, cancellationToken);
     }
 
     [HttpGet("{publicIdOrLegacyId}/passengers")]

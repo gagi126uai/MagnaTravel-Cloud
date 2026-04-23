@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
-import { getPublicId } from "../../../lib/publicIds";
+import {
+    findNormalizedService,
+    getServiceMutationEndpoint,
+    normalizeReservaServices
+} from "../lib/reservationServiceModel";
 
 /**
  * Hook to manage a single Reserva's details, including CRUD for services and passengers.
@@ -34,7 +38,7 @@ export function useReservaDetail(reservaId, navigate) {
     }, [reservaId]);
 
     const fetchReserva = useCallback(async ({ showLoading = true } = {}) => {
-        if (!reservaId) return;
+        if (!reservaId) return null;
         try {
             if (showLoading) {
                 setLoading(true);
@@ -43,11 +47,14 @@ export function useReservaDetail(reservaId, navigate) {
                 api.get(`/reservas/${reservaId}`),
                 fetchServiceCollections()
             ]);
-            setReserva({ ...res, ...serviceCollections });
+            const nextReserva = { ...res, ...serviceCollections };
+            setReserva(nextReserva);
+            return nextReserva;
         } catch (error) {
             console.error(error);
             showError("Error al cargar la reserva: " + (error.response?.data?.Error || error.message || "Error desconocido"));
             setReserva(null);
+            return null;
         } finally {
             if (showLoading) {
                 setLoading(false);
@@ -121,25 +128,23 @@ export function useReservaDetail(reservaId, navigate) {
 
     const handleDeleteService = async (service) => {
         try {
-            let endpoint = "";
-            const servicePublicId = getPublicId(service);
-            const typeKey = service._type; // Expected: Aereo, Hotel, Traslado, Paquete
-            
-            if (typeKey === 'Aereo' || typeKey === 'Flight') endpoint = `/reservas/${reservaId}/flights/${servicePublicId}`;
-            else if (typeKey === 'Hotel') endpoint = `/reservas/${reservaId}/hotels/${servicePublicId}`;
-            else if (typeKey === 'Traslado' || typeKey === 'Transfer') endpoint = `/reservas/${reservaId}/transfers/${servicePublicId}`;
-            else if (typeKey === 'Paquete' || typeKey === 'Package') endpoint = `/reservas/${reservaId}/packages/${servicePublicId}`;
-            else {
-                // Fallback for generic services or unidentified types
-                endpoint = `/reservas/${reservaId}/services/${servicePublicId}`;
-            }
+            const endpoint = getServiceMutationEndpoint(reservaId, service);
 
             await api.delete(endpoint);
-            await fetchReserva();
+            const updatedReserva = await fetchReserva({ showLoading: false });
+
+            if (!updatedReserva) {
+                throw new Error("Servicio eliminado, pero no se pudo validar la reserva actualizada.");
+            }
+
+            if (updatedReserva && findNormalizedService(updatedReserva, service)) {
+                throw new Error("El servicio sigue apareciendo en la reserva despues de eliminarlo.");
+            }
+
             showSuccess("Servicio eliminado");
             return true;
         } catch (error) {
-            const msg = error.response?.data?.message || error.response?.data || "Error al eliminar servicio";
+            const msg = error.response?.data?.message || error.response?.data || error.message || "Error al eliminar servicio";
             showError(typeof msg === 'string' ? msg : "Error al eliminar servicio");
             return false;
         }
@@ -159,24 +164,7 @@ export function useReservaDetail(reservaId, navigate) {
 
     // Memoized Helpers
     const allServices = useMemo(() => {
-        if (!reserva) return [];
-        const services = [];
-        reserva.flightSegments?.forEach(f => services.push({ ...f, _type: 'Aereo', date: f.departureTime, name: `${f.airlineName || ''} ${f.flightNumber || ''}`.trim() }));
-        reserva.hotelBookings?.forEach(h => services.push({ ...h, _type: 'Hotel', date: h.checkIn, name: h.hotelName }));
-        reserva.transferBookings?.forEach(t => services.push({ ...t, _type: 'Traslado', date: t.pickupDateTime, name: `${t.pickupLocation} > ${t.dropoffLocation}` }));
-        reserva.packageBookings?.forEach(p => services.push({ ...p, _type: 'Paquete', date: p.startDate, name: p.packageName }));
-        reserva.servicios?.forEach(r => {
-            let mappedType = 'Generic';
-            const rawType = (r.sourceKind || r.serviceType || '').toLowerCase();
-            if (rawType.includes('aer') || rawType.includes('vuelo')) mappedType = 'Aereo';
-            else if (rawType.includes('hot') || rawType.includes('aloj')) mappedType = 'Hotel';
-            else if (rawType.includes('tras') || rawType.includes('tran')) mappedType = 'Traslado';
-            else if (rawType.includes('paq')) mappedType = 'Paquete';
-            
-            services.push({ ...r, _type: mappedType, date: r.departureDate, name: r.description });
-        });
-
-        return services.sort((a, b) => new Date(a.date) - new Date(b.date));
+        return normalizeReservaServices(reserva);
     }, [reserva]);
 
     const hotelCapacity = useMemo(() => {

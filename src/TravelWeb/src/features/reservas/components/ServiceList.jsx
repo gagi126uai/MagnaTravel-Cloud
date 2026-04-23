@@ -1,7 +1,24 @@
 import React from 'react';
 import { Plus, Plane, Hotel, Car, Package, Edit2, Trash2, ShieldCheck } from "lucide-react";
 import { isAdmin } from "../../../auth";
-import { getPublicId } from "../../../lib/publicIds";
+import {
+    SERVICE_RECORD_KIND,
+    getReservationServicePublicId
+} from "../lib/reservationServiceModel";
+
+function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
+    if (service.recordKind === SERVICE_RECORD_KIND.FLIGHT) {
+        return <Plane className={`${className} text-sky-500`} />;
+    }
+    if (service.recordKind === SERVICE_RECORD_KIND.HOTEL) {
+        return <Hotel className={`${className} text-amber-500`} />;
+    }
+    if (service.recordKind === SERVICE_RECORD_KIND.TRANSFER) {
+        return <Car className={`${className} text-emerald-500`} />;
+    }
+
+    return <Package className={`${className} text-violet-500`} />;
+}
 
 export function ServiceList({ services, onAddService, onEditService, onDeleteService }) {
     const admin = isAdmin();
@@ -41,16 +58,21 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                             <tbody>
                                 {services.map((svc) => {
                                     const netCost = svc.netCost || 0;
+                                    const isGeneric = svc.recordKind === SERVICE_RECORD_KIND.GENERIC;
+                                    const displayType = svc.displayType || svc._type || 'Servicio';
+                                    const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
 
                                     return (
-                                        <tr key={`${svc._type}-${getPublicId(svc)}`} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                                        <tr key={serviceKey} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
                                             <td className="py-4 align-middle whitespace-nowrap pr-4">
                                                 <div className="flex items-center">
-                                                    {(svc._type === 'Aereo' || svc._type === 'Flight') && <Plane className="w-4 h-4 text-sky-500 mr-2" />}
-                                                    {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-amber-500 mr-2" />}
-                                                    {(svc._type === 'Traslado' || svc._type === 'Transfer') && <Car className="w-4 h-4 text-emerald-500 mr-2" />}
-                                                    {(svc._type === 'Paquete' || svc._type === 'Package') && <Package className="w-4 h-4 text-violet-500 mr-2" />}
-                                                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{svc._type}</span>
+                                                    <ServiceIcon service={svc} />
+                                                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{displayType}</span>
+                                                    {isGeneric && (
+                                                        <span className="ml-2 text-[9px] font-bold uppercase tracking-wider rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 px-2 py-0.5">
+                                                            Generico
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </td>
                                             <td className="py-4 align-middle">
@@ -64,10 +86,10 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                                                             <ShieldCheck className="w-3 h-3" /> {svc.confirmationNumber}
                                                         </span>
                                                     )}
-                                                    {(svc._type === 'Aereo' || svc._type === 'Flight') && svc.origin && (
+                                                    {svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && svc.origin && (
                                                         <span className="text-[10px] text-slate-400">{svc.origin} ➔ {svc.destination}</span>
                                                     )}
-                                                    {(svc._type === 'Traslado' || svc._type === 'Transfer') && svc.pickupLocation && (
+                                                    {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && svc.pickupLocation && (
                                                         <span className="text-[10px] text-slate-400">{svc.pickupLocation} ➔ {svc.dropoffLocation}</span>
                                                     )}
                                                 </div>
@@ -110,16 +132,21 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                     <div className="md:hidden space-y-4">
                         {services.map((svc) => {
                             const netCost = svc.netCost || 0;
+                            const isGeneric = svc.recordKind === SERVICE_RECORD_KIND.GENERIC;
+                            const displayType = svc.displayType || svc._type || 'Servicio';
+                            const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
 
                             return (
-                                <div key={`${svc._type}-${getPublicId(svc)}`} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                                <div key={serviceKey} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
                                     <div className="flex justify-between mb-2">
                                         <div className="flex items-center gap-2">
-                                            {(svc._type === 'Aereo' || svc._type === 'Flight') && <Plane className="w-4 h-4 text-sky-500" />}
-                                            {svc._type === 'Hotel' && <Hotel className="w-4 h-4 text-amber-500" />}
-                                            {(svc._type === 'Traslado' || svc._type === 'Transfer') && <Car className="w-4 h-4 text-emerald-500" />}
-                                            {(svc._type === 'Paquete' || svc._type === 'Package') && <Package className="w-4 h-4 text-violet-500" />}
-                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">{svc._type}</span>
+                                            <ServiceIcon service={svc} className="w-4 h-4" />
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">{displayType}</span>
+                                            {isGeneric && (
+                                                <span className="text-[9px] font-bold uppercase rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 px-2 py-0.5">
+                                                    Generico
+                                                </span>
+                                            )}
                                         </div>
                                         <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
                                             svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' : 

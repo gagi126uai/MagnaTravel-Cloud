@@ -2,7 +2,12 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { X, Plane, Hotel, Bus, Package, Search, Calculator, DollarSign, AlertCircle, RefreshCw } from "lucide-react";
-import { getPublicId } from "../lib/publicIds";
+import {
+    SERVICE_RECORD_KIND,
+    findNormalizedService,
+    getServiceCreateEndpoint,
+    getServiceMutationEndpoint
+} from "../features/reservas/lib/reservationServiceModel";
 
 const SERVICE_TYPES = [
     { value: "Aereo", label: "Aéreo", icon: Plane, color: "sky" },
@@ -21,6 +26,42 @@ const calculateNights = (checkIn, checkOut) => {
     const diff = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
     return diff > 0 ? diff : 0;
 };
+
+const formatDateForInput = (value) => {
+    if (!value) return "";
+    return value.split?.("T")?.[0] || "";
+};
+
+const toIsoDate = (value, fieldLabel) => {
+    if (!value) {
+        throw new Error(`Completa ${fieldLabel}.`);
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        throw new Error(`La fecha de ${fieldLabel} no es valida.`);
+    }
+
+    return date.toISOString();
+};
+
+const toOptionalIsoDate = (value) => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const buildGenericServicePayload = (form, serviceToEdit) => ({
+    serviceType: form.serviceType || serviceToEdit?.serviceType || serviceToEdit?.displayType || "Generico",
+    supplierId: form.supplierId || null,
+    description: form.description || form.name || form.serviceType || "Servicio",
+    confirmationNumber: form.confirmationNumber || null,
+    departureDate: toIsoDate(form.departureDate, "salida"),
+    returnDate: toOptionalIsoDate(form.returnDate),
+    salePrice: Number(form.salePrice) || 0,
+    netCost: Number(form.netCost) || 0,
+    rateId: form.rateId || form.ratePublicId || null,
+});
 
 // ================== BUSCADOR DE TARIFAS ==================
 function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
@@ -334,6 +375,70 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled }) {
     );
 }
 
+function GenericServiceForm({ form, setForm, suppliers, disabled }) {
+    const baseTypeOptions = [
+        ...SERVICE_TYPES.map(({ value, label }) => ({ value, label })),
+        { value: "Otro", label: "Otro" },
+    ];
+    const currentType = form.serviceType || "Otro";
+    const hasCurrentType = baseTypeOptions.some(option => option.value === currentType);
+    const typeOptions = hasCurrentType
+        ? baseTypeOptions
+        : [{ value: currentType, label: currentType }, ...baseTypeOptions];
+
+    return (
+        <div className="space-y-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                Este servicio es generico/legacy. El tipo se usa solo como etiqueta visual; la edicion se guarda por el endpoint generico.
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label className={labelClass}>Tipo visual *</label>
+                    <select
+                        className={inputClass}
+                        value={currentType}
+                        onChange={e => setForm({ ...form, serviceType: e.target.value })}
+                        required
+                        disabled={disabled}
+                    >
+                        {typeOptions.map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label className={labelClass}>Proveedor</label>
+                    <select className={inputClass} value={form.supplierId || ""} onChange={e => setForm({ ...form, supplierId: e.target.value })} disabled={disabled}>
+                        <option value="">Sin proveedor vinculado</option>
+                        {suppliers.map(s => <option key={s.id || s.publicId || s.PublicId} value={s.publicId || s.PublicId}>{s.name} {!s.isActive && '(Inactivo)'}</option>)}
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label className={labelClass}>Descripcion *</label>
+                <input className={inputClass} value={form.description || ""} onChange={e => setForm({ ...form, description: e.target.value })} required disabled={disabled} />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                    <label className={labelClass}>Salida *</label>
+                    <input type="date" className={inputClass} value={form.departureDate || ""} onChange={e => setForm({ ...form, departureDate: e.target.value })} required disabled={disabled} />
+                </div>
+                <div>
+                    <label className={labelClass}>Regreso</label>
+                    <input type="date" className={inputClass} value={form.returnDate || ""} onChange={e => setForm({ ...form, returnDate: e.target.value })} disabled={disabled} />
+                </div>
+                <div>
+                    <label className={labelClass}>Confirmacion</label>
+                    <input className={inputClass} value={form.confirmationNumber || ""} onChange={e => setForm({ ...form, confirmationNumber: e.target.value })} disabled={disabled} />
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // ================== FORMULARIO DE PRECIOS ==================
 function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled }) {
     const margin = (form.salePrice || 0) - (form.netCost || 0);
@@ -401,6 +506,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     const [loading, setLoading] = useState(false);
     const [commissionPercent, setCommissionPercent] = useState(10);
 
+    const isGenericEdit = serviceToEdit?.recordKind === SERVICE_RECORD_KIND.GENERIC;
     const isLocked = reservaStatus === "Operativo" || reservaStatus === "Cerrado";
 
     const sortedSuppliers = useMemo(() => {
@@ -452,19 +558,23 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
         if (isOpen) {
             if (serviceToEdit) {
-                setServiceType(serviceToEdit._type || serviceType);
+                const nextServiceType = isGenericEdit
+                    ? serviceToEdit.serviceType || serviceToEdit.displayType || "Generico"
+                    : serviceToEdit.displayType || serviceToEdit._type || serviceType;
+                setServiceType(nextServiceType);
                 const formattedForm = {
                     ...serviceToEdit,
+                    serviceType: nextServiceType,
                     supplierId: serviceToEdit.supplierPublicId?.toString() || serviceToEdit.supplierId?.toString() || "",
-                    departureDate: serviceToEdit.departureTime?.split('T')[0],
-                    arrivalDate: serviceToEdit.arrivalTime?.split('T')[0],
-                    checkIn: serviceToEdit.checkIn?.split('T')[0],
-                    checkOut: serviceToEdit.checkOut?.split('T')[0],
-                    startDate: serviceToEdit.startDate?.split('T')[0],
-                    endDate: serviceToEdit.endDate?.split('T')[0],
-                    pickupDate: serviceToEdit.pickupDateTime?.split('T')[0],
+                    departureDate: formatDateForInput(isGenericEdit ? serviceToEdit.departureDate || serviceToEdit.date : serviceToEdit.departureTime),
+                    arrivalDate: formatDateForInput(serviceToEdit.arrivalTime),
+                    checkIn: formatDateForInput(serviceToEdit.checkIn),
+                    checkOut: formatDateForInput(serviceToEdit.checkOut),
+                    startDate: formatDateForInput(serviceToEdit.startDate),
+                    endDate: formatDateForInput(serviceToEdit.endDate),
+                    pickupDate: formatDateForInput(serviceToEdit.pickupDateTime),
                     pickupTime: serviceToEdit.pickupDateTime ? new Date(serviceToEdit.pickupDateTime).toLocaleTimeString('en-GB').slice(0, 5) : "",
-                    returnDate: serviceToEdit.returnDateTime?.split('T')[0],
+                    returnDate: formatDateForInput(isGenericEdit ? serviceToEdit.returnDate : serviceToEdit.returnDateTime),
                     returnTime: serviceToEdit.returnDateTime ? new Date(serviceToEdit.returnDateTime).toLocaleTimeString('en-GB').slice(0, 5) : "",
                     workflowStatus: serviceToEdit.workflowStatus || "Solicitado"
                 };
@@ -489,7 +599,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             }
             setSelectedRate(null);
         }
-    }, [isOpen, initialServiceType, serviceToEdit]);
+    }, [isOpen, initialServiceType, isGenericEdit, serviceToEdit]);
 
     const isPriceDesynced = useMemo(() => {
         if (!currentRateInSystem || !serviceToEdit) return false;
@@ -562,44 +672,50 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         e.preventDefault();
         setLoading(true);
         try {
-            let endpoint = "";
-            let method = "post";
-            if (serviceType === "Aereo") endpoint = `/reservas/${reservaId}/flights`;
-            else if (serviceType === "Hotel") endpoint = `/reservas/${reservaId}/hotels`;
-            else if (serviceType === "Traslado") endpoint = `/reservas/${reservaId}/transfers`;
-            else if (serviceType === "Paquete") endpoint = `/reservas/${reservaId}/packages`;
+            const method = serviceToEdit ? "put" : "post";
+            const endpoint = serviceToEdit
+                ? getServiceMutationEndpoint(reservaId, serviceToEdit)
+                : getServiceCreateEndpoint(reservaId, serviceType);
 
-            if (serviceToEdit) {
-                endpoint += `/${getPublicId(serviceToEdit)}`;
-                method = "put";
-            }
-
-            const payload = { ...form };
-            if (serviceType === "Aereo") {
-                payload.departureTime = new Date(form.departureDate).toISOString();
-                payload.arrivalTime = new Date(form.arrivalDate).toISOString();
-            } else if (serviceType === "Hotel") {
-                payload.checkIn = new Date(form.checkIn).toISOString();
-                payload.checkOut = new Date(form.checkOut).toISOString();
-            } else if (serviceType === "Traslado") {
+            const payload = isGenericEdit ? buildGenericServicePayload(form, serviceToEdit) : { ...form };
+            if (!isGenericEdit && serviceType === "Aereo") {
+                payload.departureTime = toIsoDate(form.departureDate, "salida");
+                payload.arrivalTime = toIsoDate(form.arrivalDate, "regreso");
+            } else if (!isGenericEdit && serviceType === "Hotel") {
+                payload.checkIn = toIsoDate(form.checkIn, "check-in");
+                payload.checkOut = toIsoDate(form.checkOut, "check-out");
+            } else if (!isGenericEdit && serviceType === "Traslado") {
                 const pickupDT = form.pickupTime ? `${form.pickupDate}T${form.pickupTime}` : form.pickupDate;
-                payload.pickupDateTime = new Date(pickupDT).toISOString();
-            } else if (serviceType === "Paquete") {
-                payload.startDate = new Date(form.startDate).toISOString();
-                payload.endDate = new Date(form.endDate).toISOString();
+                payload.pickupDateTime = toIsoDate(pickupDT, "pick-up");
+            } else if (!isGenericEdit && serviceType === "Paquete") {
+                payload.startDate = toIsoDate(form.startDate, "inicio");
+                payload.endDate = toIsoDate(form.endDate, "fin");
             }
 
             const savedService = method === "put"
                 ? await api.put(endpoint, payload)
                 : await api.post(endpoint, payload);
 
-            showSuccess("Servicio guardado");
+            let updatedReserva = null;
             try {
-                await onSuccess?.({ service: savedService, serviceType, action: method, showLoading: false });
+                updatedReserva = await onSuccess?.({ service: savedService, serviceType, action: method, showLoading: false });
             } catch (refreshError) {
                 console.error("Error refreshing reserva after saving service", refreshError);
                 showError("Servicio guardado, pero no se pudo actualizar la lista.");
+                return;
             }
+
+            if (!updatedReserva) {
+                showError("Servicio guardado, pero no se pudo validar la reserva actualizada.");
+                return;
+            }
+
+            if (serviceToEdit && updatedReserva && !findNormalizedService(updatedReserva, serviceToEdit)) {
+                showError("Servicio guardado, pero no se ve reflejado en la reserva actualizada.");
+                return;
+            }
+
+            showSuccess("Servicio guardado");
             onClose();
         } catch (error) {
             showError(error.message || "Error al guardar");
@@ -609,7 +725,9 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     };
 
     if (!isOpen) return null;
-    const currentType = SERVICE_TYPES.find(t => t.value === serviceType);
+    const currentType = isGenericEdit
+        ? { icon: Package }
+        : SERVICE_TYPES.find(t => t.value === serviceType);
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
@@ -624,21 +742,27 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     </button>
                 </div>
 
-                <div className="flex border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-                    {SERVICE_TYPES.map(({ value, label, icon: Icon, color }) => (
-                        <button key={value} type="button" 
-                            onClick={() => {
-                                if (!serviceToEdit) {
-                                    setServiceType(value);
-                                    setForm(prev => ({ ...prev, serviceType: value }));
-                                }
-                            }} 
-                            disabled={!!serviceToEdit}
-                            className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-all ${serviceType === value ? `border-b-3 border-${color}-500 text-${color}-600 bg-white dark:bg-slate-900` : "text-slate-500"}`}>
-                            <Icon className="h-4 w-4" /> <span className="hidden sm:inline">{label}</span>
-                        </button>
-                    ))}
-                </div>
+                {isGenericEdit ? (
+                    <div className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+                        Editando servicio generico con etiqueta visual <b>{serviceType}</b>. No se usaran endpoints de hotel/vuelo/traslado/paquete.
+                    </div>
+                ) : (
+                    <div className="flex border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                        {SERVICE_TYPES.map(({ value, label, icon: Icon, color }) => (
+                            <button key={value} type="button"
+                                onClick={() => {
+                                    if (!serviceToEdit) {
+                                        setServiceType(value);
+                                        setForm(prev => ({ ...prev, serviceType: value }));
+                                    }
+                                }}
+                                disabled={!!serviceToEdit}
+                                className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-all ${serviceType === value ? `border-b-3 border-${color}-500 text-${color}-600 bg-white dark:bg-slate-900` : "text-slate-500"}`}>
+                                <Icon className="h-4 w-4" /> <span className="hidden sm:inline">{label}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
 
                 <form onSubmit={handleSubmit} className="p-4 space-y-4 overflow-y-auto max-h-[60vh]">
                     {isPriceDesynced && !isLocked && (
@@ -663,10 +787,11 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                         </div>
                     )}
 
-                    {serviceType === "Aereo" && <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
-                    {serviceType === "Hotel" && <HotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
-                    {serviceType === "Traslado" && <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
-                    {serviceType === "Paquete" && <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
+                    {isGenericEdit && <GenericServiceForm form={form} setForm={setForm} suppliers={sortedSuppliers} disabled={isLocked} />}
+                    {!isGenericEdit && serviceType === "Aereo" && <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
+                    {!isGenericEdit && serviceType === "Hotel" && <HotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
+                    {!isGenericEdit && serviceType === "Traslado" && <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
+                    {!isGenericEdit && serviceType === "Paquete" && <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />}
 
                     <PricingForm form={form} setForm={setForm} commissionPercent={commissionPercent} onRecalculate={applyCommission} disabled={isLocked} />
 
