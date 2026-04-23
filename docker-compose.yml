@@ -131,6 +131,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY:?SECURITY_ENCRYPTION_KEY is required}
       Services__Reservations__InternalToken: ${RESERVATIONS_INTERNAL_TOKEN:-CHANGE_THIS_SECRET}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
