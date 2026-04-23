@@ -7,10 +7,10 @@ namespace TravelApi.Infrastructure.Repositories;
 
 public class ReservationsRepository<T> : IRepository<T> where T : class
 {
-    private readonly ReservationsDbContext _db;
+    private readonly AppDbContext _db;
     private readonly DbSet<T> _dbSet;
 
-    public ReservationsRepository(ReservationsDbContext db)
+    public ReservationsRepository(AppDbContext db)
     {
         _db = db;
         _dbSet = db.Set<T>();
@@ -64,3 +64,4 @@ public class ReservationsRepository<T> : IRepository<T> where T : class
         return _dbSet.AsNoTracking();
     }
 }
+

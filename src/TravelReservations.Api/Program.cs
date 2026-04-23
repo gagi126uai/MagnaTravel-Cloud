@@ -28,15 +28,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddAutoMapper(typeof(Program), typeof(TravelApi.Application.Mappings.MappingProfile));
 builder.Services.AddEndpointsApiExplorer();
 
-builder.Services.AddDbContext<ReservationsDbContext>(options =>
-{
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    options.UseNpgsql(connectionString, o =>
-    {
-        o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-        o.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
-    });
-});
+// All DB access goes through AppDbContext — it has all correct table/column mappings.
 
 // Los servicios de negocio (ReservaService, etc.) dependen de AppDbContext.
 // Registramos AppDbContext apuntando a la misma base de datos.
@@ -52,7 +44,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddMassTransit(x =>
 {
-    x.AddEntityFrameworkOutbox<ReservationsDbContext>(o =>
+    x.AddEntityFrameworkOutbox<AppDbContext>(o =>
     {
         o.UsePostgres();
         o.UseBusOutbox();
@@ -136,12 +128,11 @@ using (var scope = app.Services.CreateScope())
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<ReservationsDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     // Do NOT run MigrateAsync() — the schema is managed by the monolith's AppDbContext migrations.
-    // Only verify connectivity. MassTransit outbox tables are created by AppDbContext migrations.
     if (!await db.Database.CanConnectAsync())
     {
-        app.Logger.LogCritical("ReservationsDbContext cannot connect to the database.");
+        app.Logger.LogCritical("Cannot connect to the database.");
     }
 }
 
@@ -150,7 +141,7 @@ app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "reservations" })).AllowAnonymous();
-app.MapGet("/health/ready", async (ReservationsDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     if (!await dbContext.Database.CanConnectAsync(cancellationToken))
     {
