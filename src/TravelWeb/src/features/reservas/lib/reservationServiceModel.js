@@ -23,6 +23,16 @@ const RECORD_KIND_ENDPOINTS = Object.freeze({
   [SERVICE_RECORD_KIND.PACKAGE]: "packages",
 });
 
+const SERVICE_TYPE_RECORD_KINDS = Object.freeze({
+  Aereo: SERVICE_RECORD_KIND.FLIGHT,
+  Flight: SERVICE_RECORD_KIND.FLIGHT,
+  Hotel: SERVICE_RECORD_KIND.HOTEL,
+  Traslado: SERVICE_RECORD_KIND.TRANSFER,
+  Transfer: SERVICE_RECORD_KIND.TRANSFER,
+  Paquete: SERVICE_RECORD_KIND.PACKAGE,
+  Package: SERVICE_RECORD_KIND.PACKAGE,
+});
+
 export const RECORD_KIND_DISPLAY_TYPE = Object.freeze({
   [SERVICE_RECORD_KIND.FLIGHT]: "Aereo",
   [SERVICE_RECORD_KIND.HOTEL]: "Hotel",
@@ -154,6 +164,10 @@ export function getServiceCreateEndpoint(reservaId, serviceType) {
   }
 
   return `/reservas/${reservaId}/${collection}`;
+}
+
+export function getRecordKindForServiceType(serviceType) {
+  return SERVICE_TYPE_RECORD_KINDS[serviceType] || SERVICE_RECORD_KIND.GENERIC;
 }
 
 export function getServiceMutationEndpoint(reservaId, service) {

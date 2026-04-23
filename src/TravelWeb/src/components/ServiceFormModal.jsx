@@ -5,6 +5,7 @@ import { X, Plane, Hotel, Bus, Package, Search, Calculator, DollarSign, AlertCir
 import {
     SERVICE_RECORD_KIND,
     findNormalizedService,
+    getRecordKindForServiceType,
     getServiceCreateEndpoint,
     getServiceMutationEndpoint
 } from "../features/reservas/lib/reservationServiceModel";
@@ -62,6 +63,8 @@ const buildGenericServicePayload = (form, serviceToEdit) => ({
     netCost: Number(form.netCost) || 0,
     rateId: form.rateId || form.ratePublicId || null,
 });
+
+const unwrapSavedService = (savedService) => savedService?.servicio || savedService?.service || savedService;
 
 // ================== BUSCADOR DE TARIFAS ==================
 function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
@@ -695,10 +698,21 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             const savedService = method === "put"
                 ? await api.put(endpoint, payload)
                 : await api.post(endpoint, payload);
+            const persistedService = unwrapSavedService(savedService);
+            const serviceToValidate = serviceToEdit || {
+                ...(persistedService || {}),
+                recordKind: getRecordKindForServiceType(serviceType),
+            };
 
             let updatedReserva = null;
             try {
-                updatedReserva = await onSuccess?.({ service: savedService, serviceType, action: method, showLoading: false });
+                updatedReserva = await onSuccess?.({
+                    service: persistedService,
+                    serviceType,
+                    action: method,
+                    showLoading: false,
+                    strictServices: true,
+                });
             } catch (refreshError) {
                 console.error("Error refreshing reserva after saving service", refreshError);
                 showError("Servicio guardado, pero no se pudo actualizar la lista.");
@@ -710,7 +724,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 return;
             }
 
-            if (serviceToEdit && updatedReserva && !findNormalizedService(updatedReserva, serviceToEdit)) {
+            if (!findNormalizedService(updatedReserva, serviceToValidate)) {
                 showError("Servicio guardado, pero no se ve reflejado en la reserva actualizada.");
                 return;
             }

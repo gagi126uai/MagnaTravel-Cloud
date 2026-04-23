@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   SERVICE_RECORD_KIND,
+  getRecordKindForServiceType,
   getServiceMutationEndpoint,
   normalizeReservaServices,
 } from "./reservationServiceModel.js";
@@ -60,4 +61,12 @@ test("record kinds generate the correct mutation endpoints", () => {
     [SERVICE_RECORD_KIND.PACKAGE]: "/reservas/reserva-1/packages/package-1",
     [SERVICE_RECORD_KIND.GENERIC]: "/reservas/services/generic-1",
   });
+});
+
+test("visual service types map to technical record kinds for create validation", () => {
+  assert.equal(getRecordKindForServiceType("Aereo"), SERVICE_RECORD_KIND.FLIGHT);
+  assert.equal(getRecordKindForServiceType("Hotel"), SERVICE_RECORD_KIND.HOTEL);
+  assert.equal(getRecordKindForServiceType("Traslado"), SERVICE_RECORD_KIND.TRANSFER);
+  assert.equal(getRecordKindForServiceType("Paquete"), SERVICE_RECORD_KIND.PACKAGE);
+  assert.equal(getRecordKindForServiceType("Otro"), SERVICE_RECORD_KIND.GENERIC);
 });

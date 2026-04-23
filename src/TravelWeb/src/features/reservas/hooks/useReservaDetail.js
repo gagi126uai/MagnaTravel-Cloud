@@ -15,7 +15,7 @@ export function useReservaDetail(reservaId, navigate) {
     const [loading, setLoading] = useState(true);
     const [suppliers, setSuppliers] = useState([]);
 
-    const fetchServiceCollections = useCallback(async () => {
+    const fetchServiceCollections = useCallback(async ({ strict = false } = {}) => {
         if (!reservaId) return {};
 
         const endpoints = [
@@ -25,7 +25,20 @@ export function useReservaDetail(reservaId, navigate) {
             ["packageBookings", `/reservas/${reservaId}/packages`],
         ];
 
-        const results = await Promise.allSettled(endpoints.map(([, endpoint]) => api.get(endpoint)));
+        const results = await Promise.allSettled(
+            endpoints.map(([, endpoint]) => api.get(endpoint, { cache: "no-store" }))
+        );
+
+        if (strict) {
+            const failed = results
+                .map((result, index) => ({ result, endpoint: endpoints[index][1] }))
+                .find(({ result }) => result.status === "rejected" || !Array.isArray(result.value));
+
+            if (failed) {
+                const reason = failed.result.reason?.message || "respuesta invalida";
+                throw new Error(`No se pudo refrescar ${failed.endpoint}: ${reason}`);
+            }
+        }
 
         return endpoints.reduce((collections, [key], index) => {
             const result = results[index];
@@ -37,15 +50,15 @@ export function useReservaDetail(reservaId, navigate) {
         }, {});
     }, [reservaId]);
 
-    const fetchReserva = useCallback(async ({ showLoading = true } = {}) => {
+    const fetchReserva = useCallback(async ({ showLoading = true, strictServices = false } = {}) => {
         if (!reservaId) return null;
         try {
             if (showLoading) {
                 setLoading(true);
             }
             const [res, serviceCollections] = await Promise.all([
-                api.get(`/reservas/${reservaId}`),
-                fetchServiceCollections()
+                api.get(`/reservas/${reservaId}`, { cache: "no-store" }),
+                fetchServiceCollections({ strict: strictServices })
             ]);
             const nextReserva = { ...res, ...serviceCollections };
             setReserva(nextReserva);
@@ -131,7 +144,7 @@ export function useReservaDetail(reservaId, navigate) {
             const endpoint = getServiceMutationEndpoint(reservaId, service);
 
             await api.delete(endpoint);
-            const updatedReserva = await fetchReserva({ showLoading: false });
+            const updatedReserva = await fetchReserva({ showLoading: false, strictServices: true });
 
             if (!updatedReserva) {
                 throw new Error("Servicio eliminado, pero no se pudo validar la reserva actualizada.");
