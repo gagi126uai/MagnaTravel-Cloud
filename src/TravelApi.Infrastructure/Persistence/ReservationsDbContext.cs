@@ -11,7 +11,7 @@ public class ReservationsDbContext : DbContext
     {
     }
 
-    public DbSet<Reserva> Reservaciones { get; set; } = null!;
+    public DbSet<Reserva> Reservas { get; set; } = null!;
     public DbSet<ReservaAttachment> ReservaAttachments { get; set; } = null!;
     public DbSet<Passenger> Passengers { get; set; } = null!;
     public DbSet<ServicioReserva> ServiciosReserva { get; set; } = null!;

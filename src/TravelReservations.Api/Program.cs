@@ -137,7 +137,12 @@ using (var scope = app.Services.CreateScope())
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ReservationsDbContext>();
-    await db.Database.MigrateAsync();
+    // Do NOT run MigrateAsync() — the schema is managed by the monolith's AppDbContext migrations.
+    // Only verify connectivity. MassTransit outbox tables are created by AppDbContext migrations.
+    if (!await db.Database.CanConnectAsync())
+    {
+        app.Logger.LogCritical("ReservationsDbContext cannot connect to the database.");
+    }
 }
 
 app.UseAuthentication();
