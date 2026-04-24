@@ -6,7 +6,9 @@ import {
     getReservationCollectionKeyForRecordKind,
     getReservaCollectionLabel,
     getServiceMutationEndpoint,
-    normalizeReservaServices
+    normalizeReservaServices,
+    getReservationCollectionKeyForServiceType,
+    getReservationServicePublicId
 } from "../lib/reservationServiceModel";
 
 const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
@@ -104,7 +106,7 @@ export function useReservaDetail(reservaId, navigate) {
         return { collections, errors, strictError, collectionKeys };
     }, [reservaId]);
 
-    const fetchReserva = useCallback(async ({ showLoading = true, collectionKeys, strictCollections = false } = {}) => {
+    const fetchReserva = useCallback(async ({ showLoading = true, collectionKeys, strictCollections = false, service, serviceType } = {}) => {
         if (!reservaId) return null;
         try {
             if (showLoading) {
@@ -134,6 +136,25 @@ export function useReservaDetail(reservaId, navigate) {
             });
 
             const nextReserva = { ...res, ...collections };
+
+            // Inject authoritative service data if provided (fixes RabbitMQ/Cache sync lag)
+            if (service && serviceType) {
+                const collectionKey = getReservationCollectionKeyForServiceType(serviceType);
+                if (collectionKey) {
+                    const currentCollection = nextReserva[collectionKey] || [];
+                    const serviceId = getReservationServicePublicId(service);
+                    const exists = currentCollection.some(s => getReservationServicePublicId(s) === serviceId);
+
+                    if (!exists) {
+                        nextReserva[collectionKey] = [...currentCollection, service];
+                    } else {
+                        nextReserva[collectionKey] = currentCollection.map(s =>
+                            getReservationServicePublicId(s) === serviceId ? service : s
+                        );
+                    }
+                }
+            }
+
             setReserva(nextReserva);
             return {
                 reserva: nextReserva,

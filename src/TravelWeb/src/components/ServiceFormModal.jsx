@@ -870,8 +870,8 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         setForm((prev) => ({ ...prev, salePrice: Math.round((cost + margin) * 100) / 100 }));
     };
 
-    const handleSubmit = async (event) => {
-        event.preventDefault();
+    const handleSubmit = async (e, shouldClose = true) => {
+        if (e) e.preventDefault();
         setLoading(true);
         try {
             const method = serviceToEdit ? "put" : "post";
@@ -902,14 +902,33 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 ? await api.put(endpoint, payload)
                 : await api.post(endpoint, payload);
             const persistedService = unwrapSavedService(savedService);
+            
             await onSuccess?.({
                 service: persistedService,
                 serviceType,
                 action: method,
                 showLoading: false,
             });
-            showSuccess("Servicio guardado");
-            onClose();
+
+            if (shouldClose) {
+                showSuccess("Servicio guardado");
+                onClose();
+            } else {
+                showSuccess(`Habitacion "${form.roomType || "Estandar"}" agregada correctamente.`);
+                // Reset variant-specific fields but keep hotel, dates and supplier
+                setForm(prev => ({
+                    ...prev,
+                    rateId: "",
+                    unitNetCost: 0,
+                    unitSalePrice: 0,
+                    netCost: 0,
+                    salePrice: 0,
+                    roomType: "",
+                    mealPlan: "",
+                    roomingAssignments: "",
+                    rooms: 1
+                }));
+            }
         } catch (error) {
             showError(error.message || "Error al guardar");
         } finally {
@@ -988,11 +1007,21 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     ) : null}
 
                     <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+                        {!serviceToEdit && serviceType === "Hotel" && form.rateId && (
+                            <button 
+                                type="button" 
+                                onClick={() => handleSubmit(null, false)} 
+                                disabled={loading}
+                                className="rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400"
+                            >
+                                Guardar y Agregar Otra Hab.
+                            </button>
+                        )}
                         <button type="button" onClick={onClose} className="rounded-xl px-5 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
                             Cancelar
                         </button>
-                        <button type="submit" disabled={loading} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm text-white disabled:opacity-50">
-                            {loading ? "Guardando..." : "Guardar Servicio"}
+                        <button type="submit" disabled={loading} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm text-white disabled:opacity-50 shadow-lg shadow-indigo-200 dark:shadow-none">
+                            {loading ? "Guardando..." : (serviceToEdit ? "Actualizar" : "Guardar Servicio")}
                         </button>
                     </div>
                 </form>
