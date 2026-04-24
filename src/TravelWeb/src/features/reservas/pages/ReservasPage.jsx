@@ -90,7 +90,7 @@ export default function ReservasPage() {
       <ReservaKPIs stats={stats} />
 
       <ListToolbar
-        className="p-2"
+        className="p-1.5"
         searchSlot={
           <div className="flex self-start overflow-x-auto scrollbar-hide rounded-lg bg-slate-100 p-1 dark:bg-slate-800 sm:self-auto">
             {tabs.map((tab) => (
@@ -118,7 +118,7 @@ export default function ReservasPage() {
           </div>
         }
         actionSlot={
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <div className="flex w-full flex-shrink-0 flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center">
             <div className="flex w-full items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto">
               <select
                 className="w-full rounded bg-transparent p-1.5 text-sm font-medium text-slate-700 focus:outline-none dark:text-slate-200 sm:w-[125px]"
@@ -151,23 +151,23 @@ export default function ReservasPage() {
                       {monthName}
                     </span>
                   </div>
-                  <button onClick={handleNextMonth} className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes siguiente">
+                  <button onClick={handleNextMonth} className="rounded p-0.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes siguiente">
                     <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
               )}
               {dateRange.preset === "custom" && (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 rounded-md bg-white p-0.5 dark:bg-slate-900">
                   <input
                     type="date"
-                    className="rounded border border-slate-200 bg-white p-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    className="w-[110px] bg-transparent text-[10px] font-medium text-slate-700 focus:outline-none dark:text-slate-200"
                     value={dateRange.from}
                     onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
                   />
-                  <span className="text-xs text-slate-500">-</span>
+                  <span className="text-[10px] text-slate-400">-</span>
                   <input
                     type="date"
-                    className="rounded border border-slate-200 bg-white p-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    className="w-[110px] bg-transparent text-[10px] font-medium text-slate-700 focus:outline-none dark:text-slate-200"
                     value={dateRange.to}
                     onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
                   />
@@ -175,7 +175,7 @@ export default function ReservasPage() {
               )}
             </div>
 
-            <div className="relative w-full sm:w-[180px] lg:w-[220px]">
+            <div className="relative w-full sm:w-[160px] lg:w-[200px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white"
