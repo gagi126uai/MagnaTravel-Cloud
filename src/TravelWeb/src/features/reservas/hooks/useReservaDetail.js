@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
+import { camelize } from "../../../lib/utils";
 import {
-    findNormalizedService,
     getReservationCollectionKeyForRecordKind,
     getReservaCollectionLabel,
     getServiceMutationEndpoint,
@@ -17,23 +17,6 @@ const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
     transferBookings: (reservaId) => `/reservas/${reservaId}/transfers`,
     packageBookings: (reservaId) => `/reservas/${reservaId}/packages`,
 });
-
-/**
- * Deeply converts object keys to camelCase to ensure consistency
- * regardless of backend naming policy (PascalCase vs camelCase).
- */
-function camelize(obj) {
-    if (Array.isArray(obj)) {
-        return obj.map(v => camelize(v));
-    } else if (obj !== null && obj.constructor === Object) {
-        return Object.keys(obj).reduce((result, key) => {
-            const camelKey = key.charAt(0).toLowerCase() + key.slice(1);
-            result[camelKey] = camelize(obj[key]);
-            return result;
-        }, {});
-    }
-    return obj;
-}
 
 function getApiErrorMessage(error, fallbackMessage) {
     if (typeof error?.payload === "string" && error.payload.trim()) {

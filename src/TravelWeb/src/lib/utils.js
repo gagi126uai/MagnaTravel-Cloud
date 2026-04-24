@@ -22,3 +22,22 @@ export function formatDate(date) {
         year: "numeric"
     });
 }
+
+/**
+ * Deeply converts object keys to camelCase to ensure consistency
+ * regardless of backend naming policy (PascalCase vs camelCase).
+ */
+export function camelize(obj) {
+    if (obj === null || obj === undefined) return obj;
+    
+    if (Array.isArray(obj)) {
+        return obj.map(v => camelize(v));
+    } else if (typeof obj === 'object' && obj.constructor === Object) {
+        return Object.keys(obj).reduce((result, key) => {
+            const camelKey = key.charAt(0).toLowerCase() + key.slice(1);
+            result[camelKey] = camelize(obj[key]);
+            return result;
+        }, {});
+    }
+    return obj;
+}

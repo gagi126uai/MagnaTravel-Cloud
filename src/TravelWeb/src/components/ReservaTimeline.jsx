@@ -3,6 +3,7 @@ import { api } from "../api";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Activity } from "lucide-react";
+import { camelize } from "../lib/utils";
 
 export default function ReservaTimeline({ reservaId }) {
     const [events, setEvents] = useState([]);
@@ -14,8 +15,8 @@ export default function ReservaTimeline({ reservaId }) {
         const fetchTimeline = async () => {
             try {
                 setLoading(true);
-                const res = await api.get(`/reservas/${reservaId}/timeline`);
-                setEvents(res || []);
+                const rawRes = await api.get(`/reservas/${reservaId}/timeline`);
+                setEvents(camelize(rawRes) || []);
             } catch (error) {
                 console.error("Error fetching timeline:", error);
             } finally {
