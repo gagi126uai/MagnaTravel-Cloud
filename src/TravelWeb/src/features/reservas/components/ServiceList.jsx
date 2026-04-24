@@ -64,9 +64,10 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                 <tr className="border-b border-slate-100 dark:border-slate-800">
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Tipo</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Descripción</th>
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha</th>
+                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha / Estancia</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
-                                    {admin && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Neto Cto</th>}
+                                    {admin && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Costo Neto</th>}
+                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Precio Venta</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Acciones</th>
                                 </tr>
                             </thead>
@@ -109,8 +110,15 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="py-4 align-middle whitespace-nowrap text-sm text-gray-600 dark:text-slate-400">
-                                                {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
+                                            <td className="py-4 align-middle whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
+                                                {svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ? (
+                                                    <div className="flex flex-col">
+                                                        <span>{new Date(svc.date || svc.startDate || svc.checkIn).toLocaleDateString('es-AR')}</span>
+                                                        <span className="text-[10px] opacity-60">al {new Date(svc.endDate || svc.checkOut).toLocaleDateString('es-AR')}</span>
+                                                    </div>
+                                                ) : (
+                                                    svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'
+                                                )}
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap">
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
@@ -123,9 +131,12 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                             </td>
                                             {admin && (
                                                 <td className="py-4 align-middle text-right text-xs text-slate-500 font-mono pr-4">
-                                                    ${netCost.toLocaleString()}
+                                                    ${netCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                 </td>
                                             )}
+                                            <td className="py-4 align-middle text-right text-xs font-bold text-slate-900 dark:text-white font-mono pr-4">
+                                                ${(svc.salePrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </td>
                                             <td className="py-4 align-middle text-right pr-4">
                                                 <div className="flex justify-end gap-1 transition-opacity">
                                                     <button onClick={() => onEditService(svc)} className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
@@ -174,8 +185,15 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                     <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>
                                     <div className="flex justify-between items-end">
                                         <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
-                                            <span>{svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}</span>
-                                            {admin && <span className="text-[9px] opacity-70">Neto: ${netCost.toLocaleString()}</span>}
+                                            <span>
+                                                {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
+                                                {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE) && 
+                                                    ` al ${new Date(svc.endDate || svc.checkOut).toLocaleDateString('es-AR')}`}
+                                            </span>
+                                            <div className="flex gap-2 items-center mt-1">
+                                                <span className="font-bold text-slate-900 dark:text-white">Venta: ${(svc.salePrice || 0).toLocaleString()}</span>
+                                                {admin && <span className="text-[9px] opacity-70">Costo: ${netCost.toLocaleString()}</span>}
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <button onClick={() => onEditService(svc)} className="p-2 text-slate-400 rounded-lg bg-slate-50 dark:bg-slate-800"><Edit2 className="w-3.5 h-3.5" /></button>
