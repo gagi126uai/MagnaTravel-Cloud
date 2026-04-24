@@ -45,6 +45,8 @@ export default function ReservasPage() {
     setPageSize,
     dateRange,
     setDateRange,
+    currentMonth,
+    setCurrentMonth,
     loadReservas,
     handleArchive,
     tabCounts,
@@ -60,6 +62,14 @@ export default function ReservasPage() {
       loadReservas();
     }
   };
+
+  const handlePrevMonth = () => {
+    setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+  };
+  const handleNextMonth = () => {
+    setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  };
+  const monthName = currentMonth ? currentMonth.toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : "";
 
   if (loading && reservas.length === 0) {
     return <FilesPageSkeleton />;
@@ -125,11 +135,28 @@ export default function ReservasPage() {
                   setDateRange({ from, to: "", preset });
                 }}
               >
+                <option value="month">Mes a Mes</option>
                 <option value="90days">Últimos 90 días</option>
                 <option value="365days">Último año</option>
                 <option value="all">Todas</option>
                 <option value="custom">Personalizado</option>
               </select>
+              {dateRange.preset === "month" && (
+                <div className="flex w-full items-center justify-between gap-1 rounded-lg bg-white p-1 dark:bg-slate-900 sm:w-auto sm:justify-center">
+                  <button onClick={handlePrevMonth} className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes anterior">
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <div className="flex items-center gap-1.5 px-1 sm:px-2">
+                    <Calendar className="h-3.5 w-3.5 text-indigo-500" />
+                    <span className="w-[110px] text-center text-xs font-medium capitalize text-slate-700 dark:text-slate-200">
+                      {monthName}
+                    </span>
+                  </div>
+                  <button onClick={handleNextMonth} className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes siguiente">
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
               {dateRange.preset === "custom" && (
                 <div className="flex items-center gap-1">
                   <input

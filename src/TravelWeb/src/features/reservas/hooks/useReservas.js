@@ -42,8 +42,10 @@ export function useReservas() {
   const [dateRange, setDateRange] = useState({
     from: defaultFrom.toISOString().split("T")[0],
     to: "", // vacío = hasta hoy
-    preset: "90days" // all, 90days, 365days, custom
+    preset: "90days" // all, 90days, 365days, custom, month
   });
+  
+  const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -56,7 +58,12 @@ export function useReservas() {
         view: viewFilter,
       });
 
-      if (dateRange.preset !== "all") {
+      if (dateRange.preset === "month") {
+        const from = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+        const to = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59, 59);
+        params.set("createdFrom", from.toISOString());
+        params.set("createdTo", to.toISOString());
+      } else if (dateRange.preset !== "all") {
         if (dateRange.from) {
           params.set("createdFrom", new Date(`${dateRange.from}T00:00:00Z`).toISOString());
         }
@@ -80,7 +87,7 @@ export function useReservas() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, pageSize, viewFilter, dateRange]);
+  }, [debouncedSearch, page, pageSize, viewFilter, dateRange, currentMonth]);
 
   useEffect(() => {
     loadReservas();
@@ -146,6 +153,8 @@ export function useReservas() {
     setPageSize,
     dateRange,
     setDateRange,
+    currentMonth,
+    setCurrentMonth,
     loadReservas,
     handleArchive,
     databaseUnavailable,
