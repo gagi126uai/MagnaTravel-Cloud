@@ -161,11 +161,22 @@ export function useReservaDetail(reservaId, navigate) {
                 if (collectionKey) {
                     const currentCollection = nextReserva[collectionKey] || [];
                     const serviceId = getReservationServicePublicId(service);
-                    const exists = currentCollection.some(s => getReservationServicePublicId(s) === serviceId);
+                    const prevService = currentCollection.find(s => getReservationServicePublicId(s) === serviceId);
 
-                    if (!exists) {
+                    if (!prevService) {
                         nextReserva[collectionKey] = [...currentCollection, service];
+                        // Add to totals
+                        nextReserva.totalSale = (nextReserva.totalSale || 0) + (service.salePrice || 0);
+                        nextReserva.totalCost = (nextReserva.totalCost || 0) + (service.netCost || 0);
+                        nextReserva.balance = (nextReserva.balance || 0) + (service.salePrice || 0);
                     } else {
+                        // Apply delta to totals
+                        const deltaSale = (service.salePrice || 0) - (prevService.salePrice || 0);
+                        const deltaCost = (service.netCost || 0) - (prevService.netCost || 0);
+                        nextReserva.totalSale = (nextReserva.totalSale || 0) + deltaSale;
+                        nextReserva.totalCost = (nextReserva.totalCost || 0) + deltaCost;
+                        nextReserva.balance = (nextReserva.balance || 0) + deltaSale;
+
                         nextReserva[collectionKey] = currentCollection.map(s =>
                             getReservationServicePublicId(s) === serviceId ? service : s
                         );
