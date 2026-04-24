@@ -137,4 +137,40 @@ public class PaymentsController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
         }
     }
+
+    [HttpPut("{publicIdOrLegacyId}")]
+    public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, UpdatePaymentRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _paymentService.UpdatePaymentAsync(publicIdOrLegacyId, request, cancellationToken);
+            return Ok(new { message = "Pago actualizado correctamente." });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    [HttpDelete("{publicIdOrLegacyId}")]
+    public async Task<ActionResult> DeletePayment(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _paymentService.DeletePaymentAsync(publicIdOrLegacyId, cancellationToken);
+            return Ok(new { message = "Pago eliminado correctamente." });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
 }

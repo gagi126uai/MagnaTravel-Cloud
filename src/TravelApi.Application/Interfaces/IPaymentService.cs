@@ -14,11 +14,20 @@ public interface IPaymentService
     Task<byte[]> GetReceiptPdfAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
     Task<IEnumerable<object>> GetDeletedPaymentsAsync(CancellationToken cancellationToken);
     Task<Guid> RestorePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
+    Task UpdatePaymentAsync(string paymentPublicIdOrLegacyId, UpdatePaymentRequest request, CancellationToken cancellationToken);
+    Task DeletePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
 }
 
 public class CreatePaymentRequest
 {
     public string ReservaId { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string Method { get; set; } = string.Empty;
+    public string? Reference { get; set; }
+    public string? Notes { get; set; }
+}
+public class UpdatePaymentRequest
+{
     public decimal Amount { get; set; }
     public string Method { get; set; } = string.Empty;
     public string? Reference { get; set; }

@@ -3,7 +3,7 @@ import { api } from "../api";
 import { DollarSign, X } from "lucide-react";
 import { showError, showSuccess } from "../alerts";
 
-export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, maxAmount }) {
+export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, maxAmount, paymentToEdit }) {
     const [amount, setAmount] = useState("");
     const [method, setMethod] = useState("Transferencia");
     const [notes, setNotes] = useState("");
@@ -11,12 +11,18 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
 
     useEffect(() => {
         if (isOpen) {
-            setAmount("");
-            setMethod("Transferencia");
-            setNotes("");
+            if (paymentToEdit) {
+                setAmount(paymentToEdit.amount?.toString() || "");
+                setMethod(paymentToEdit.method || "Transferencia");
+                setNotes(paymentToEdit.notes || "");
+            } else {
+                setAmount("");
+                setMethod("Transferencia");
+                setNotes("");
+            }
             setLoading(false);
         }
-    }, [isOpen]);
+    }, [isOpen, paymentToEdit]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -28,23 +34,34 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
                 return;
             }
 
-            if (maxAmount && parseFloat(amount) > maxAmount) {
-                showError(`El monto excede el saldo pendiente ($${maxAmount})`);
+            // If editing, the max amount should include the current payment amount
+            const currentMax = paymentToEdit ? (maxAmount + paymentToEdit.amount) : maxAmount;
+            if (currentMax && parseFloat(amount) > currentMax) {
+                showError(`El monto excede el saldo pendiente ($${currentMax.toLocaleString()})`);
                 return;
             }
 
-            await api.post(`/reservas/${reservaId}/payments`, {
-                amount: parseFloat(amount),
-                method,
-                notes
-            });
+            if (paymentToEdit) {
+                await api.put(`/payments/${paymentToEdit.publicId}`, {
+                    amount: parseFloat(amount),
+                    method,
+                    notes
+                });
+                showSuccess("Pago actualizado correctamente");
+            } else {
+                await api.post(`/reservas/${reservaId}/payments`, {
+                    amount: parseFloat(amount),
+                    method,
+                    notes
+                });
+                showSuccess("Pago registrado correctamente");
+            }
 
-            showSuccess("Pago registrado correctamente");
             onSuccess();
             onClose();
         } catch (error) {
             console.error(error);
-            showError(error.message || "Error al registrar pago");
+            showError(error.message || "Error al procesar el pago");
         } finally {
             setLoading(false);
         }
@@ -60,7 +77,7 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
                         <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg text-green-600 dark:text-green-400">
                             <DollarSign className="w-5 h-5" />
                         </div>
-                        Registrar Pago
+                        {paymentToEdit ? "Editar Pago" : "Registrar Pago"}
                     </h3>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300">
                         <X className="w-5 h-5" />
@@ -69,7 +86,7 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
 
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Monto a Cobrar</label>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Monto</label>
                         <div className="relative">
                             <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                                 <span className="text-gray-500 dark:text-slate-400 sm:text-sm">$</span>
@@ -82,7 +99,6 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
                                 placeholder="0.00"
                                 value={amount}
                                 onChange={e => setAmount(e.target.value)}
-                                max={maxAmount}
                             />
                         </div>
                         {maxAmount !== undefined && (
@@ -129,7 +145,7 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
                             disabled={loading || !amount}
                             className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:ring-4 focus:ring-green-300 dark:focus:ring-green-800 shadow-sm flex items-center gap-2 disabled:opacity-50"
                         >
-                            {loading ? "Procesando..." : "Confirmar Pago"}
+                            {loading ? "Procesando..." : paymentToEdit ? "Guardar Cambios" : "Confirmar Pago"}
                         </button>
                     </div>
                 </form>

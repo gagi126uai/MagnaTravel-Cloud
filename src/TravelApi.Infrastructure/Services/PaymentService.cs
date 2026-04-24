@@ -586,6 +586,43 @@ public class PaymentService : IPaymentService
         };
     }
 
+    public async Task UpdatePaymentAsync(string paymentPublicIdOrLegacyId, UpdatePaymentRequest request, CancellationToken cancellationToken)
+    {
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
+        var payment = await _dbContext.Payments.FindAsync(new object[] { paymentId }, cancellationToken);
+
+        if (payment == null)
+            throw new KeyNotFoundException("Pago no encontrado.");
+
+        payment.Amount = EconomicRulesHelper.RoundCurrency(request.Amount);
+        payment.Method = request.Method;
+        payment.Reference = request.Reference;
+        payment.Notes = request.Notes;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (payment.ReservaId.HasValue)
+            await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
+    }
+
+    public async Task DeletePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
+        var payment = await _dbContext.Payments.FindAsync(new object[] { paymentId }, cancellationToken);
+
+        if (payment == null)
+            throw new KeyNotFoundException("Pago no encontrado.");
+
+        // Soft delete
+        payment.IsDeleted = true;
+        payment.DeletedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (payment.ReservaId.HasValue)
+            await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
+    }
+
     private static IQueryable<CollectionWorkItemDto> ApplyCollectionWorkItemOrdering(
         IQueryable<CollectionWorkItemDto> query,
         CollectionWorklistQuery request)

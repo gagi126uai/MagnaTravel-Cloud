@@ -32,7 +32,10 @@ export function camelize(obj) {
     
     if (Array.isArray(obj)) {
         return obj.map(v => camelize(v));
-    } else if (typeof obj === 'object' && obj.constructor === Object) {
+    } else if (typeof obj === 'object') {
+        // Handle dates or other objects that shouldn't be camelized recursively
+        if (obj instanceof Date) return obj;
+        
         return Object.keys(obj).reduce((result, key) => {
             const camelKey = key.charAt(0).toLowerCase() + key.slice(1);
             result[camelKey] = camelize(obj[key]);

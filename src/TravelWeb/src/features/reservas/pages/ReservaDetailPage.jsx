@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, FileText, History, Paperclip, Users } from "lucide-react";
+import { Clock, CreditCard, FileText, History, Paperclip, Users, Trash2, Edit2 } from "lucide-react";
 import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import PassengerFormModal from "../../../components/PassengerFormModal";
@@ -49,6 +49,7 @@ export default function ReservaDetailPage() {
   const [showPassengerForm, setShowPassengerForm] = useState(false);
   const [editingPassenger, setEditingPassenger] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentToEdit, setPaymentToEdit] = useState(null);
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -84,6 +85,16 @@ export default function ReservaDetailPage() {
     allServices,
     hotelCapacity,
   } = useReservaDetail(publicId, navigate);
+
+  const handleDeletePayment = async (payment) => {
+    try {
+      await api.delete(`/payments/${payment.publicId}`);
+      showSuccess("Pago eliminado correctamente");
+      fetchReserva();
+    } catch (error) {
+      showError(error.message || "Error al eliminar pago");
+    }
+  };
 
   if (loading) {
     return <div className="animate-pulse p-8 text-center text-slate-500">Cargando reserva...</div>;
@@ -276,7 +287,10 @@ export default function ReservaDetailPage() {
 
               <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
                 <button
-                  onClick={() => setShowPaymentModal(true)}
+                  onClick={() => {
+                    setPaymentToEdit(null);
+                    setShowPaymentModal(true);
+                  }}
                   className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-700"
                 >
                   <CreditCard className="w-4 h-4" /> Registrar Cobranza
@@ -299,6 +313,7 @@ export default function ReservaDetailPage() {
                         <DataGridHeaderCell>Metodo</DataGridHeaderCell>
                         <DataGridHeaderCell>Notas</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
+                        <DataGridHeaderCell align="right">Acciones</DataGridHeaderCell>
                       </DataGridHeaderRow>
                     </DataGridHeader>
                     <DataGridBody>
@@ -314,6 +329,34 @@ export default function ReservaDetailPage() {
                             <DataGridCell>{payment.notes || "-"}</DataGridCell>
                             <DataGridCell align="right" className="font-black text-emerald-600">
                               {payment.amount?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
+                            </DataGridCell>
+                            <DataGridCell align="right">
+                              <div className="flex justify-end gap-1">
+                                <button
+                                  onClick={() => {
+                                    setPaymentToEdit(payment);
+                                    setShowPaymentModal(true);
+                                  }}
+                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                  title="Editar pago"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    askConfirmation({
+                                      title: "Eliminar pago?",
+                                      message: `Seguro que deseas eliminar el pago de ${payment.amount?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}?`,
+                                      type: "danger",
+                                      onConfirm: () => handleDeletePayment(payment),
+                                    })
+                                  }
+                                  className="p-1 text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                                  title="Eliminar pago"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </DataGridCell>
                           </DataGridRow>
                         ))
@@ -420,9 +463,13 @@ export default function ReservaDetailPage() {
 
       <PaymentModal
         isOpen={showPaymentModal}
-        onClose={() => setShowPaymentModal(false)}
+        onClose={() => {
+          setShowPaymentModal(false);
+          setPaymentToEdit(null);
+        }}
         reservaId={publicId}
         maxAmount={reserva?.balance}
+        paymentToEdit={paymentToEdit}
         onSuccess={() => fetchReserva()}
       />
 

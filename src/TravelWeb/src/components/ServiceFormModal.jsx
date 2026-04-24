@@ -873,6 +873,9 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     const handleSubmit = async (e, shouldClose = true) => {
         if (e) e.preventDefault();
         setLoading(true);
+
+        const isLegacyHotelEdit = serviceToEdit && serviceType === "Hotel" && !serviceToEdit.rateId;
+
         try {
             const method = serviceToEdit ? "put" : "post";
             const endpoint = serviceToEdit
