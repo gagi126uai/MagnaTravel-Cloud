@@ -41,6 +41,12 @@ public class PaymentServiceHttpProxy : ReservationsServiceHttpProxyBase, IPaymen
         => PutAsync<object, RestorePaymentResponse>($"api/payments/{paymentPublicIdOrLegacyId}/restore", new { }, cancellationToken)
             .ContinueWith(task => task.Result.PaymentPublicId, cancellationToken);
 
+    public Task UpdatePaymentAsync(string paymentPublicIdOrLegacyId, UpdatePaymentRequest request, CancellationToken cancellationToken)
+        => PutAsync($"api/payments/{paymentPublicIdOrLegacyId}", request, cancellationToken);
+
+    public Task DeletePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
+        => DeleteAsync($"api/payments/{paymentPublicIdOrLegacyId}", cancellationToken);
+
     private sealed class RestorePaymentResponse
     {
         public Guid PaymentPublicId { get; set; }
