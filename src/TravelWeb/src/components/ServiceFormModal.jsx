@@ -18,6 +18,9 @@ import {
     CalendarDays,
     Users,
     CheckCircle2,
+    Star,
+    ChevronDown,
+    ChevronUp,
 } from "lucide-react";
 import {
     SERVICE_RECORD_KIND,
@@ -259,23 +262,94 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
 }
 
 function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPax }) {
+    const [searchQuery, setSearchQuery] = useState(form.hotelName || "");
+    const [hotelGroups, setHotelGroups] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [showResults, setShowResults] = useState(false);
+    const [expandedHotel, setExpandedHotel] = useState(null);
+
+    const searchHotels = useCallback(async (query) => {
+        if (!query || query.length < 3) {
+            setHotelGroups([]);
+            return;
+        }
+        setLoading(true);
+        try {
+            const params = new URLSearchParams({
+                serviceType: "Hotel",
+                query: query,
+                supplierId: form.supplierId || "",
+            });
+            const data = await api.get(`/rates/search?${params}`);
+            
+            // Agrupar por hotel + ciudad
+            const groups = {};
+            data.forEach((rate) => {
+                const key = `${rate.hotelName || rate.productName}|${rate.city || ""}`;
+                if (!groups[key]) {
+                    groups[key] = {
+                        key,
+                        hotelName: rate.hotelName || rate.productName,
+                        city: rate.city,
+                        starRating: rate.starRating,
+                        supplierName: rate.supplierName,
+                        rates: [],
+                    };
+                }
+                groups[key].rates.push(rate);
+            });
+            setHotelGroups(Object.values(groups));
+            setShowResults(true);
+        } catch (error) {
+            console.error("Search error:", error);
+            setHotelGroups([]);
+        } finally {
+            setLoading(false);
+        }
+    }, [form.supplierId]);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (searchQuery && searchQuery !== form.hotelName) searchHotels(searchQuery);
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [searchQuery, searchHotels, form.hotelName]);
+
+    const handleSelectRate = (rate) => {
+        onRateSelect(rate);
+        setSearchQuery(rate.hotelName || rate.productName);
+        setShowResults(false);
+        setExpandedHotel(null);
+    };
+
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Proveedor *</label>
-                    <select className={inputClass} value={form.supplierId || ""} onChange={(event) => setForm({ ...form, supplierId: event.target.value })} required disabled={disabled}>
-                        <option value="">Seleccionar proveedor...</option>
+                    <label className={labelClass}>Proveedor (Opcional para busqueda)</label>
+                    <select 
+                        className={inputClass} 
+                        value={form.supplierId || ""} 
+                        onChange={(event) => setForm({ ...form, supplierId: event.target.value })} 
+                        disabled={disabled}
+                    >
+                        <option value="">Cualquier proveedor...</option>
                         {suppliers.map((supplier) => (
-                            <option key={supplier.id || supplier.publicId || supplier.PublicId} value={supplier.publicId || supplier.PublicId}>
-                                {supplier.name} {!supplier.isActive ? "(Inactivo)" : ""}
+                            <option key={supplier.publicId || supplier.PublicId} value={supplier.publicId || supplier.PublicId}>
+                                {supplier.name}
                             </option>
                         ))}
                     </select>
                 </div>
                 <div>
-                    <label className={labelClass}>Estado *</label>
-                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} required disabled={disabled}>
+                    <label className={labelClass}>Estado de Reserva</label>
+                    <select 
+                        className={inputClass} 
+                        value={form.workflowStatus || "Solicitado"} 
+                        onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} 
+                        required 
+                        disabled={disabled}
+                    >
                         <option value="Solicitado">Solicitado</option>
                         <option value="Confirmado">Confirmado</option>
                         <option value="Cancelado">Cancelado</option>
@@ -283,62 +357,130 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 </div>
             </div>
 
-            <RateSelector serviceType={form.serviceType || "Hotel"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
+            <div className="relative">
+                <label className={labelClass}>Buscar Hotel o Ciudad</label>
+                <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    <input
+                        type="text"
+                        className={`${inputClass} pl-10 border-indigo-200 bg-indigo-50/20 focus:bg-white`}
+                        placeholder="Escribe el nombre del hotel o destino..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onFocus={() => searchQuery.length >= 3 && setShowResults(true)}
+                        disabled={disabled}
+                    />
+                    {loading && <RefreshCw className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-indigo-500" />}
+                </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className={labelClass}>Tipo Habitacion *</label>
-                    <select className={inputClass} value={form.roomType || ""} onChange={(event) => setForm({ ...form, roomType: event.target.value })} required disabled={disabled}>
-                        <option value="">Seleccionar...</option>
-                        <option value="Single">Single</option>
-                        <option value="Doble">Doble</option>
-                        <option value="Triple">Triple</option>
-                        <option value="Cuadruple">Cuadruple</option>
-                        <option value="Suite">Suite</option>
-                    </select>
-                </div>
-                <div>
-                    <label className={labelClass}>Regimen *</label>
-                    <select className={inputClass} value={form.mealPlan || ""} onChange={(event) => setForm({ ...form, mealPlan: event.target.value })} required disabled={disabled}>
-                        <option value="">Seleccionar...</option>
-                        <option value="Solo Alojamiento">Solo Alojamiento</option>
-                        <option value="Desayuno">Desayuno</option>
-                        <option value="Media Pension">Media Pension</option>
-                        <option value="Pension Completa">Pension Completa</option>
-                        <option value="All Inclusive">All Inclusive</option>
-                    </select>
-                </div>
+                {showResults && hotelGroups.length > 0 && (
+                    <div className="absolute z-50 mt-1 max-h-[300px] w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+                        <div className="mb-2 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Resultados encontrados</div>
+                        {hotelGroups.map((group) => (
+                            <div key={group.key} className="mb-2 overflow-hidden rounded-xl border border-slate-100 dark:border-slate-700">
+                                <button
+                                    type="button"
+                                    onClick={() => setExpandedHotel(expandedHotel === group.key ? null : group.key)}
+                                    className="flex w-full items-center justify-between bg-slate-50/50 p-3 text-left hover:bg-indigo-50/50 dark:bg-slate-900/30 dark:hover:bg-indigo-900/20"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="rounded-lg bg-white p-2 shadow-sm dark:bg-slate-800">
+                                            <Building2 className="h-4 w-4 text-indigo-500" />
+                                        </div>
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900 dark:text-white">{group.hotelName}</div>
+                                            <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                                <MapPin className="h-3 w-3" />
+                                                {group.city}
+                                                {group.starRating && (
+                                                    <span className="flex items-center gap-0.5 text-amber-500">
+                                                        <Star className="h-3 w-3 fill-current" />
+                                                        {group.starRating}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {expandedHotel === group.key ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                                </button>
+                                
+                                {expandedHotel === group.key && (
+                                    <div className="divide-y divide-slate-100 bg-white dark:divide-slate-700 dark:bg-slate-800">
+                                        {group.rates.map((rate) => (
+                                            <button
+                                                key={rate.publicId}
+                                                type="button"
+                                                onClick={() => handleSelectRate(rate)}
+                                                className="flex w-full items-center justify-between p-3 text-left transition-colors hover:bg-emerald-50/50 dark:hover:bg-emerald-900/10"
+                                            >
+                                                <div className="flex-1">
+                                                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{rate.roomType || "Habitacion Estandar"}</div>
+                                                    <div className="text-[10px] text-slate-500">{rate.mealPlan || "Solo Alojamiento"} • {rate.supplierName}</div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="text-xs font-bold text-emerald-600">{formatMoney(rate.salePrice)}</div>
+                                                    <div className="text-[9px] text-slate-400">por noche/unidad</div>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                    <label className={labelClass}>Nombre Hotel</label>
-                    <input className={inputClass} value={form.hotelName || ""} onChange={(event) => setForm({ ...form, hotelName: event.target.value })} disabled={disabled} />
+            {form.rateId && (
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-4 dark:border-indigo-900/30 dark:bg-indigo-950/10">
+                    <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="rounded-xl bg-indigo-500 p-2.5 text-white shadow-lg shadow-indigo-200 dark:shadow-none">
+                                <CheckCircle2 className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <h4 className="text-sm font-bold text-slate-900 dark:text-white">{form.hotelName}</h4>
+                                <p className="text-xs text-slate-500">{form.roomType} • {form.mealPlan}</p>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <div className="text-sm font-black text-indigo-600 dark:text-indigo-400">{formatMoney(form.unitSalePrice)}</div>
+                            <div className="text-[10px] uppercase tracking-tighter text-slate-400">Precio Ref.</div>
+                        </div>
+                    </div>
                 </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4">
                 <div className="grid grid-cols-2 gap-2">
                     <div>
                         <label className={labelClass}>Check-In</label>
-                        <input type="date" className={inputClass} value={form.checkIn || ""} onChange={(event) => setForm({ ...form, checkIn: event.target.value })} disabled={disabled} />
+                        <div className="relative">
+                            <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                            <input type="date" className={`${inputClass} pl-10`} value={form.checkIn || ""} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} disabled={disabled} />
+                        </div>
                     </div>
                     <div>
                         <label className={labelClass}>Check-Out</label>
-                        <input type="date" className={inputClass} value={form.checkOut || ""} onChange={(event) => setForm({ ...form, checkOut: event.target.value })} disabled={disabled} />
+                        <div className="relative">
+                            <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                            <input type="date" className={`${inputClass} pl-10`} value={form.checkOut || ""} onChange={(e) => setForm({ ...form, checkOut: e.target.value })} disabled={disabled} />
+                        </div>
                     </div>
                 </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-                <div>
-                    <label className={labelClass}>Habitaciones</label>
-                    <input type="number" className={inputClass} value={form.rooms || 1} onChange={(event) => setForm({ ...form, rooms: parseInt(event.target.value, 10) || 1 })} disabled={disabled} />
-                </div>
-                <div>
-                    <label className={labelClass}>Adultos</label>
-                    <input type="number" className={inputClass} value={form.adults || 2} onChange={(event) => setForm({ ...form, adults: parseInt(event.target.value, 10) || 1 })} disabled={disabled} />
-                </div>
-                <div>
-                    <label className={labelClass}>Menores</label>
-                    <input type="number" className={inputClass} value={form.children || 0} onChange={(event) => setForm({ ...form, children: parseInt(event.target.value, 10) || 0 })} disabled={disabled} />
+                <div className="grid grid-cols-3 gap-2">
+                    <div>
+                        <label className={labelClass}>Hab.</label>
+                        <input type="number" className={inputClass} value={form.rooms || 1} onChange={(e) => setForm({ ...form, rooms: parseInt(e.target.value, 10) || 1 })} disabled={disabled} />
+                    </div>
+                    <div>
+                        <label className={labelClass}>Adt.</label>
+                        <input type="number" className={inputClass} value={form.adults || 2} onChange={(e) => setForm({ ...form, adults: parseInt(e.target.value, 10) || 1 })} disabled={disabled} />
+                    </div>
+                    <div>
+                        <label className={labelClass}>Chd.</label>
+                        <input type="number" className={inputClass} value={form.children || 0} onChange={(e) => setForm({ ...form, children: parseInt(e.target.value, 10) || 0 })} disabled={disabled} />
+                    </div>
                 </div>
             </div>
 
