@@ -17,7 +17,7 @@ export function ListToolbar({
         className
       )}
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between flex-wrap">
         {hasLead ? (
           <div className={cn("flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center", leadClassName)}>
             {searchSlot ? <div className="min-w-0 flex-1">{searchSlot}</div> : null}

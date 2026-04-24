@@ -117,73 +117,72 @@ export default function ReservasPage() {
             ))}
           </div>
         }
+        filterSlot={
+          <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50">
+            <select
+              className="w-full rounded bg-transparent p-1.5 text-xs font-bold text-slate-700 focus:outline-none dark:text-slate-200 sm:w-[120px]"
+              value={dateRange.preset}
+              onChange={(e) => {
+                const preset = e.target.value;
+                const today = new Date();
+                let from = "";
+                if (preset === "90days") {
+                  from = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+                } else if (preset === "365days") {
+                  from = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+                }
+                setDateRange({ from, to: "", preset });
+              }}
+            >
+              <option value="month">Mes a Mes</option>
+              <option value="90days">Últimos 90 días</option>
+              <option value="365days">Último año</option>
+              <option value="all">Todas</option>
+              <option value="custom">Personalizado</option>
+            </select>
+            {dateRange.preset === "month" && (
+              <div className="flex w-full items-center justify-center gap-0.5 rounded-lg bg-white p-0.5 dark:bg-slate-900 sm:w-auto">
+                <button onClick={handlePrevMonth} className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes anterior">
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <div className="flex items-center px-1">
+                  <span className="w-[90px] text-center text-[10px] font-black capitalize text-slate-700 dark:text-slate-200">
+                    {monthName}
+                  </span>
+                </div>
+                <button onClick={handleNextMonth} className="rounded p-0.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes siguiente">
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+            {dateRange.preset === "custom" && (
+              <div className="flex items-center gap-1 rounded-md bg-white p-0.5 dark:bg-slate-900">
+                <input
+                  type="date"
+                  className="w-[105px] bg-transparent text-[10px] font-bold text-slate-700 focus:outline-none dark:text-slate-200"
+                  value={dateRange.from}
+                  onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
+                />
+                <span className="text-[10px] text-slate-400">-</span>
+                <input
+                  type="date"
+                  className="w-[105px] bg-transparent text-[10px] font-bold text-slate-700 focus:outline-none dark:text-slate-200"
+                  value={dateRange.to}
+                  onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
+                />
+              </div>
+            )}
+          </div>
+        }
         actionSlot={
-          <div className="flex w-full flex-shrink-0 flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center">
-            <div className="flex w-full items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto">
-              <select
-                className="w-full rounded bg-transparent p-1.5 text-sm font-medium text-slate-700 focus:outline-none dark:text-slate-200 sm:w-[125px]"
-                value={dateRange.preset}
-                onChange={(e) => {
-                  const preset = e.target.value;
-                  const today = new Date();
-                  let from = "";
-                  if (preset === "90days") {
-                    from = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-                  } else if (preset === "365days") {
-                    from = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-                  }
-                  setDateRange({ from, to: "", preset });
-                }}
-              >
-                <option value="month">Mes a Mes</option>
-                <option value="90days">Últimos 90 días</option>
-                <option value="365days">Último año</option>
-                <option value="all">Todas</option>
-                <option value="custom">Personalizado</option>
-              </select>
-              {dateRange.preset === "month" && (
-                <div className="flex w-full items-center justify-center gap-0.5 rounded-lg bg-white p-0.5 dark:bg-slate-900 sm:w-auto">
-                  <button onClick={handlePrevMonth} className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes anterior">
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <div className="flex items-center px-1">
-                    <span className="w-[100px] text-center text-[11px] font-bold capitalize text-slate-700 dark:text-slate-200">
-                      {monthName}
-                    </span>
-                  </div>
-                  <button onClick={handleNextMonth} className="rounded p-0.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes siguiente">
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
-              {dateRange.preset === "custom" && (
-                <div className="flex items-center gap-1 rounded-md bg-white p-0.5 dark:bg-slate-900">
-                  <input
-                    type="date"
-                    className="w-[110px] bg-transparent text-[10px] font-medium text-slate-700 focus:outline-none dark:text-slate-200"
-                    value={dateRange.from}
-                    onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
-                  />
-                  <span className="text-[10px] text-slate-400">-</span>
-                  <input
-                    type="date"
-                    className="w-[110px] bg-transparent text-[10px] font-medium text-slate-700 focus:outline-none dark:text-slate-200"
-                    value={dateRange.to}
-                    onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="relative w-full sm:w-[160px] lg:w-[200px]">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white"
-                placeholder="Buscar reserva..."
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-              />
-            </div>
+          <div className="relative w-full sm:w-[150px] lg:w-[180px]">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-4 text-xs placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white"
+              placeholder="Buscar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
           </div>
         }
       />
