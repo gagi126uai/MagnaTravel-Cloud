@@ -26,6 +26,7 @@ import {
     getServiceCreateEndpoint,
     getServiceMutationEndpoint
 } from "../features/reservas/lib/reservationServiceModel";
+import RoomingPlanner from "./RoomingPlanner";
 
 const SERVICE_TYPES = [
     { value: "Aereo", label: "Aereo", icon: Plane, color: "sky" },
@@ -257,7 +258,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
     );
 }
 
-function LegacyHotelForm({ form, setForm, suppliers, onRateSelect, disabled }) {
+function LegacyHotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPax }) {
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -340,11 +341,20 @@ function LegacyHotelForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                     <input type="number" className={inputClass} value={form.children || 0} onChange={(event) => setForm({ ...form, children: parseInt(event.target.value, 10) || 0 })} disabled={disabled} />
                 </div>
             </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <RoomingPlanner
+                    rooms={form.rooms || 1}
+                    reservaPax={reservaPax}
+                    value={form.roomingAssignments}
+                    onChange={(val) => setForm({ ...form, roomingAssignments: val })}
+                />
+            </div>
         </div>
     );
 }
 
-function HotelExplorerForm({ form, setForm, disabled, isEditingLinkedHotel }) {
+function HotelExplorerForm({ form, setForm, disabled, isEditingLinkedHotel, reservaPax }) {
     const [hotelGroups, setHotelGroups] = useState([]);
     const [hotelSearch, setHotelSearch] = useState("");
     const [loadingHotels, setLoadingHotels] = useState(false);
@@ -751,6 +761,15 @@ function HotelExplorerForm({ form, setForm, disabled, isEditingLinkedHotel }) {
                         </div>
                     </div>
 
+                    <div className="pt-2">
+                        <RoomingPlanner
+                            rooms={form.rooms || 1}
+                            reservaPax={reservaPax}
+                            value={form.roomingAssignments}
+                            onChange={(val) => setForm({ ...form, roomingAssignments: val })}
+                        />
+                    </div>
+
                     <div className="grid grid-cols-1 gap-3">
                         <div>
                             <label className={labelClass}>Estado operativo</label>
@@ -1001,7 +1020,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
     );
 }
 
-export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaStatus, suppliers, onSuccess, initialServiceType, serviceToEdit }) {
+export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaStatus, suppliers, onSuccess, initialServiceType, serviceToEdit, reservaPax }) {
     const [serviceType, setServiceType] = useState(initialServiceType || "Aereo");
     const [form, setForm] = useState({
         supplierId: "",
@@ -1017,6 +1036,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         mealPlan: "",
         checkIn: "",
         checkOut: "",
+        roomingAssignments: "",
         workflowStatus: "Solicitado"
     });
     const [loading, setLoading] = useState(false);
@@ -1097,6 +1117,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 pickupTime: serviceToEdit.pickupDateTime ? new Date(serviceToEdit.pickupDateTime).toLocaleTimeString("en-GB").slice(0, 5) : "",
                 returnDate: formatDateForInput(isGenericEdit ? serviceToEdit.returnDate : serviceToEdit.returnDateTime),
                 returnTime: serviceToEdit.returnDateTime ? new Date(serviceToEdit.returnDateTime).toLocaleTimeString("en-GB").slice(0, 5) : "",
+                roomingAssignments: serviceToEdit.roomingAssignmentsJson || serviceToEdit.roomingAssignments || "",
                 workflowStatus: serviceToEdit.workflowStatus || "Solicitado"
             };
 
@@ -1126,9 +1147,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             mealPlan: "",
             checkIn: "",
             checkOut: "",
+            roomingAssignments: "",
             workflowStatus: "Solicitado"
         });
-    }, [initialServiceType, isGenericEdit, isOpen, serviceToEdit, serviceType]);
+    }, [initialServiceType, isGenericEdit, isOpen, serviceToEdit]);
 
     const handleRateSelect = (rate) => {
         setForm((prev) => {
@@ -1314,10 +1336,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     {isGenericEdit ? <GenericServiceForm form={form} setForm={setForm} suppliers={sortedSuppliers} disabled={isLocked} /> : null}
                     {!isGenericEdit && serviceType === "Aereo" ? <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} /> : null}
                     {!isGenericEdit && serviceType === "Hotel" && showHotelExplorer ? (
-                        <HotelExplorerForm form={form} setForm={setForm} disabled={isLocked} isEditingLinkedHotel={isLinkedHotelEdit} />
+                        <HotelExplorerForm form={form} setForm={setForm} disabled={isLocked} isEditingLinkedHotel={isLinkedHotelEdit} reservaPax={reservaPax} />
                     ) : null}
                     {!isGenericEdit && serviceType === "Hotel" && isLegacyHotelEdit ? (
-                        <LegacyHotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} />
+                        <LegacyHotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} reservaPax={reservaPax} />
                     ) : null}
                     {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} /> : null}
                     {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} /> : null}

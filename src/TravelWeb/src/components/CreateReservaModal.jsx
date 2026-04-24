@@ -56,14 +56,14 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
 
         setLoading(true);
         try {
-            await api.post("/reservas", {
+            const res = await api.post("/reservas", {
                 name: "", // Backend will auto-generate
                 payerId: formData.payerId || null,
                 startDate: formData.startDate ? new Date(formData.startDate).toISOString() : null,
                 status: formData.isBudget ? 'Presupuesto' : 'Reservado'
             });
             showSuccess("Reserva creada exitosamente");
-            onSuccess();
+            onSuccess(getPublicId(res));
             handleClose();
         } catch (error) {
             showError(error.message || "Error al crear la reserva");

@@ -28,6 +28,7 @@ public record CreateHotelRequest(
     DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
     int Adults, int Children, int Rooms, string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
+    string? RoomingAssignments = null,
     string? RateId = null,
     string WorkflowStatus = "Solicitado"
 );
@@ -37,6 +38,7 @@ public record UpdateHotelRequest(
     DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
     int Adults, int Children, int Rooms, string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
+    string? RoomingAssignments = null,
     string? RateId = null,
     string WorkflowStatus = "Solicitado"
 );

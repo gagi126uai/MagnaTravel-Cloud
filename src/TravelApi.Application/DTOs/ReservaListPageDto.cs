@@ -2,6 +2,7 @@ namespace TravelApi.Application.DTOs;
 
 public class ReservaListSummaryDto
 {
+    public int BudgetCount { get; set; }
     public int ActiveCount { get; set; }
     public int ReservedCount { get; set; }
     public int OperativeCount { get; set; }

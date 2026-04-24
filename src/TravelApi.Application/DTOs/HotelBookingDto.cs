@@ -20,7 +20,10 @@ public class HotelBookingDto
     public string? ConfirmationNumber { get; set; }
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
-    public bool IsPriceSynced { get; set; } = true;
+    /// <summary>"TariffAtBookingTime" if a Rate was applied; "Manual" otherwise.</summary>
+    public string SnapshotSource { get; set; } = "Manual";
     public string SourceKind { get; set; } = "Hotel";
     public string WorkflowStatus { get; set; } = "Solicitado";
+    public string? RoomingAssignments { get; set; }
 }
+

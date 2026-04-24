@@ -72,5 +72,8 @@ public class HotelBooking : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
     
+    // Planner de habitaciones: JSON con asignación de pasajeros por habitación
+    public string? RoomingAssignmentsJson { get; set; }
+    
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

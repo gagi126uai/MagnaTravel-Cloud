@@ -155,10 +155,10 @@ public class ReservaService : IReservaService
 
         var summary = new ReservaListSummaryDto
         {
+            BudgetCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Budget, cancellationToken),
             ActiveCount = await summaryBaseQuery.CountAsync(r =>
-                r.Status != EstadoReserva.Closed &&
-                r.Status != EstadoReserva.Cancelled &&
-                r.Status != "Archived",
+                r.Status == EstadoReserva.Reserved ||
+                r.Status == EstadoReserva.Operational,
                 cancellationToken),
             ReservedCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Reserved, cancellationToken),
             OperativeCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Operational, cancellationToken),
@@ -680,6 +680,13 @@ public class ReservaService : IReservaService
         var validStatuses = new[] { EstadoReserva.Budget, EstadoReserva.Reserved, EstadoReserva.Operational, EstadoReserva.Closed, EstadoReserva.Cancelled };
         if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no vÃ¡lido");
 
+        if (file.Status == EstadoReserva.Budget && status == EstadoReserva.Reserved)
+        {
+            var hasServices = await HasServicesAsync(id);
+            if (!hasServices)
+                throw new InvalidOperationException("No se puede confirmar la reserva porque no tiene ningun servicio cargado. Agrega al menos un servicio antes de reservar.");
+        }
+
         if (file.Status == EstadoReserva.Reserved && status == EstadoReserva.Budget)
         {
              var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted);
@@ -871,16 +878,17 @@ public class ReservaService : IReservaService
     {
         return (view ?? "active").Trim().ToLowerInvariant() switch
         {
+            "budget" => query.Where(r => r.Status == EstadoReserva.Budget),
             "reserved" => query.Where(r => r.Status == EstadoReserva.Reserved),
             "operative" => query.Where(r => r.Status == EstadoReserva.Operational),
             "closed" => query.Where(r =>
                 r.Status == EstadoReserva.Closed ||
                 r.Status == EstadoReserva.Cancelled),
             "archived" => query.Where(r => r.Status == "Archived"),
+            // "active" = Reservado + Operativo (Presupuesto tiene su propio tab)
             _ => query.Where(r =>
-                r.Status != EstadoReserva.Closed &&
-                r.Status != EstadoReserva.Cancelled &&
-                r.Status != "Archived")
+                r.Status == EstadoReserva.Reserved ||
+                r.Status == EstadoReserva.Operational)
         };
     }
 

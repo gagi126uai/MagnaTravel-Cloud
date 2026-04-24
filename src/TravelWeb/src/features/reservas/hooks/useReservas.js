@@ -15,6 +15,7 @@ const emptyPage = {
   hasPreviousPage: false,
   hasNextPage: false,
   summary: {
+    budgetCount: 0,
     activeCount: 0,
     reservedCount: 0,
     operativeCount: 0,
@@ -35,9 +36,14 @@ export function useReservas() {
   const [pageSize, setPageSize] = useState(25);
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
   
-  // Rango de fechas por defecto: Mes actual
+  // Filtro de período por defecto: Últimos 90 días
   const today = new Date();
-  const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  const defaultFrom = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000); // hace 90 días
+  const [dateRange, setDateRange] = useState({
+    from: defaultFrom.toISOString().split("T")[0],
+    to: "", // vacío = hasta hoy
+    preset: "90days" // all, 90days, 365days, custom
+  });
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
@@ -50,12 +56,14 @@ export function useReservas() {
         view: viewFilter,
       });
 
-      // Calcular fechas del mes seleccionado
-      const from = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
-      const to = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59, 59);
-      
-      params.set("createdFrom", from.toISOString());
-      params.set("createdTo", to.toISOString());
+      if (dateRange.preset !== "all") {
+        if (dateRange.from) {
+          params.set("createdFrom", new Date(`${dateRange.from}T00:00:00Z`).toISOString());
+        }
+        if (dateRange.to) {
+          params.set("createdTo", new Date(`${dateRange.to}T23:59:59Z`).toISOString());
+        }
+      }
 
       if (debouncedSearch.trim()) {
         params.set("search", debouncedSearch.trim());
@@ -72,7 +80,7 @@ export function useReservas() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, pageSize, viewFilter, currentMonth]);
+  }, [debouncedSearch, page, pageSize, viewFilter, dateRange]);
 
   useEffect(() => {
     loadReservas();
@@ -115,7 +123,7 @@ export function useReservas() {
       await loadReservas();
       return true;
     } catch (error) {
-      showError(error.response?.data?.message || error.response?.data || error.message || "Error al archivar");
+      showError(error.payload?.message || error.payload || error.message || "Error al archivar");
       return false;
     }
   };
@@ -136,18 +144,20 @@ export function useReservas() {
     hasPreviousPage: Boolean(reservasPage.hasPreviousPage),
     setPage,
     setPageSize,
-    currentMonth,
-    setCurrentMonth,
+    dateRange,
+    setDateRange,
     loadReservas,
     handleArchive,
     databaseUnavailable,
     tabCounts: {
+      budget: summary.budgetCount || 0,
       active: summary.activeCount || 0,
       reserved: summary.reservedCount || 0,
       operative: summary.operativeCount || 0,
       closed: summary.closedCount || 0,
     },
     stats: {
+      budgetCount: summary.budgetCount || 0,
       activeCount: summary.activeCount || 0,
       operativeCount: summary.operativeCount || 0,
       totalSaleActive: summary.totalSaleActive || 0,

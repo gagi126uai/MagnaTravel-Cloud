@@ -412,6 +412,7 @@ export default function ReservaDetailPage() {
         onClose={() => setShowServiceModal(false)}
         reservaId={publicId}
         reservaStatus={reserva?.status}
+        reservaPax={reserva?.pax || []}
         serviceToEdit={serviceToEdit}
         onSuccess={(options) => fetchReserva(options)}
         suppliers={suppliers}

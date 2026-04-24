@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 
@@ -16,6 +16,7 @@ import { ReservaTable } from "../components/ReservaTable";
 import { ReservaMobileList } from "../components/ReservaMobileList";
 
 const tabs = [
+  { value: "budget", label: "Presupuestos" },
   { value: "active", label: "Activas" },
   { value: "reserved", label: "Reservadas" },
   { value: "operative", label: "Operativas" },
@@ -42,8 +43,8 @@ export default function ReservasPage() {
     hasNextPage,
     setPage,
     setPageSize,
-    currentMonth,
-    setCurrentMonth,
+    dateRange,
+    setDateRange,
     loadReservas,
     handleArchive,
     tabCounts,
@@ -51,22 +52,18 @@ export default function ReservasPage() {
     databaseUnavailable,
   } = useReservas();
 
-  const refresh = () => {
+  const handleCreateSuccess = (publicId) => {
     setIsModalOpen(false);
-    loadReservas();
+    if (publicId) {
+      navigate(`/reservas/${publicId}`);
+    } else {
+      loadReservas();
+    }
   };
 
   if (loading && reservas.length === 0) {
     return <FilesPageSkeleton />;
   }
-
-  const handlePrevMonth = () => {
-    setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
-  };
-  const handleNextMonth = () => {
-    setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
-  };
-  const monthName = currentMonth.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
 
   return (
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
@@ -112,19 +109,44 @@ export default function ReservasPage() {
         }
         actionSlot={
           <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-            <div className="flex w-full items-center justify-between gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto sm:justify-center">
-              <button onClick={handlePrevMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-white hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes anterior">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <div className="flex items-center gap-1.5 px-1 sm:px-2">
-                <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                <span className="w-[110px] text-center text-sm font-medium capitalize text-slate-700 dark:text-slate-200">
-                  {monthName}
-                </span>
-              </div>
-              <button onClick={handleNextMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-white hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes siguiente">
-                <ChevronRight className="w-4 h-4" />
-              </button>
+            <div className="flex w-full items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto">
+              <select
+                className="w-full rounded bg-transparent p-1.5 text-sm font-medium text-slate-700 focus:outline-none dark:text-slate-200 sm:w-[140px]"
+                value={dateRange.preset}
+                onChange={(e) => {
+                  const preset = e.target.value;
+                  const today = new Date();
+                  let from = "";
+                  if (preset === "90days") {
+                    from = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+                  } else if (preset === "365days") {
+                    from = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+                  }
+                  setDateRange({ from, to: "", preset });
+                }}
+              >
+                <option value="90days">Últimos 90 días</option>
+                <option value="365days">Último año</option>
+                <option value="all">Todas</option>
+                <option value="custom">Personalizado</option>
+              </select>
+              {dateRange.preset === "custom" && (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="date"
+                    className="rounded border border-slate-200 bg-white p-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    value={dateRange.from}
+                    onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
+                  />
+                  <span className="text-xs text-slate-500">-</span>
+                  <input
+                    type="date"
+                    className="rounded border border-slate-200 bg-white p-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    value={dateRange.to}
+                    onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="relative w-full sm:max-w-[200px] md:max-w-[240px]">
@@ -172,7 +194,7 @@ export default function ReservasPage() {
       <CreateReservaModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSuccess={refresh}
+        onSuccess={handleCreateSuccess}
       />
     </div>
   );
