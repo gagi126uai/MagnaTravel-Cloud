@@ -118,7 +118,7 @@ export default function ReservasPage() {
           </div>
         }
         filterSlot={
-          <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50">
+          <div className="flex flex-shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50">
             <select
               className="w-full rounded bg-transparent p-1.5 text-xs font-bold text-slate-700 focus:outline-none dark:text-slate-200 sm:w-[120px]"
               value={dateRange.preset}
@@ -175,7 +175,7 @@ export default function ReservasPage() {
           </div>
         }
         actionSlot={
-          <div className="relative w-full sm:w-[150px] lg:w-[180px]">
+          <div className="relative w-full flex-shrink-0 sm:w-[150px] lg:w-[180px]">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
               className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-4 text-xs placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white"

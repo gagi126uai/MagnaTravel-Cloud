@@ -17,16 +17,25 @@ export function ListToolbar({
         className
       )}
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between flex-wrap">
-        {hasLead ? (
-          <div className={cn("flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center", leadClassName)}>
-            {searchSlot ? <div className="min-w-0 flex-1">{searchSlot}</div> : null}
-            {filterSlot ? <div className="flex flex-wrap items-center gap-2">{filterSlot}</div> : null}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        {searchSlot && (
+          <div className={cn("min-w-0 flex-1", leadClassName)}>
+            {searchSlot}
           </div>
-        ) : (
-          <div />
         )}
-        {actionSlot ? <div className={cn("flex flex-wrap items-center gap-2", actionClassName)}>{actionSlot}</div> : null}
+        
+        <div className="flex flex-wrap items-center gap-3">
+          {filterSlot && (
+            <div className="flex items-center gap-2">
+              {filterSlot}
+            </div>
+          )}
+          {actionSlot && (
+            <div className={cn("flex items-center gap-2", actionClassName)}>
+              {actionSlot}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
