@@ -440,7 +440,9 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                             </div>
                             <div>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white">{form.hotelName}</h4>
-                                <p className="text-xs text-slate-500">{form.roomType} • {form.mealPlan}</p>
+                                <p className="text-xs text-slate-500">
+                                    {form.roomType} • {form.mealPlan} • {calculateNights(form.checkIn, form.checkOut)} noches
+                                </p>
                             </div>
                         </div>
                         <div className="text-right">
@@ -865,9 +867,15 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     };
 
     const applyCommission = () => {
-        const cost = form.netCost || 0;
-        const margin = cost * (commissionPercent / 100);
-        setForm((prev) => ({ ...prev, salePrice: Math.round((cost + margin) * 100) / 100 }));
+        if (serviceType === "Hotel" && form.unitNetCost > 0) {
+            const cost = form.unitNetCost;
+            const margin = cost * (commissionPercent / 100);
+            setForm((prev) => ({ ...prev, unitSalePrice: Math.round((cost + margin) * 100) / 100 }));
+        } else {
+            const cost = form.netCost || 0;
+            const margin = cost * (commissionPercent / 100);
+            setForm((prev) => ({ ...prev, salePrice: Math.round((cost + margin) * 100) / 100 }));
+        }
     };
 
     const handleSubmit = async (e, shouldClose = true) => {

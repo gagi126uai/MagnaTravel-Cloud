@@ -30,20 +30,21 @@ public class TimelineService : ITimelineService
 
     public async Task<List<TimelineEventDto>> GetTimelineAsync(int reservaId, CancellationToken cancellationToken)
     {
-        var flightIds = await _context.FlightSegments.Where(x => x.ReservaId == reservaId).Select(x => x.Id.ToString()).ToListAsync(cancellationToken);
-        var hotelIds = await _context.HotelBookings.Where(x => x.ReservaId == reservaId).Select(x => x.Id.ToString()).ToListAsync(cancellationToken);
-        var packageIds = await _context.PackageBookings.Where(x => x.ReservaId == reservaId).Select(x => x.Id.ToString()).ToListAsync(cancellationToken);
-        var transferIds = await _context.TransferBookings.Where(x => x.ReservaId == reservaId).Select(x => x.Id.ToString()).ToListAsync(cancellationToken);
-        var serviceIds = await _context.Servicios.Where(x => x.ReservaId == reservaId).Select(x => x.Id.ToString()).ToListAsync(cancellationToken);
-        var paymentIds = await _context.Payments.Where(x => x.ReservaId == reservaId).Select(x => x.Id.ToString()).ToListAsync(cancellationToken);
-        var invoiceIds = await _context.Invoices.Where(x => x.ReservaId == reservaId).Select(x => x.Id.ToString()).ToListAsync(cancellationToken);
+        var flightIds = await _context.FlightSegments.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
+        var hotelIds = await _context.HotelBookings.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
+        var packageIds = await _context.PackageBookings.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
+        var transferIds = await _context.TransferBookings.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
+        var serviceIds = await _context.Servicios.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
+        var paymentIds = await _context.Payments.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
+        var invoiceIds = await _context.Invoices.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
 
         var rId = reservaId.ToString();
+        var rPublicId = await _context.Reservas.Where(x => x.Id == reservaId).Select(x => x.PublicId.ToString()).FirstOrDefaultAsync(cancellationToken);
 
         var logs = await _context.AuditLogs
             .AsNoTracking()
             .Where(a => 
-                (a.EntityName == "Reserva" && a.EntityId == rId) ||
+                (a.EntityName == "Reserva" && (a.EntityId == rId || a.EntityId == rPublicId)) ||
                 (a.EntityName == "FlightSegment" && flightIds.Contains(a.EntityId)) ||
                 (a.EntityName == "HotelBooking" && hotelIds.Contains(a.EntityId)) ||
                 (a.EntityName == "PackageBooking" && packageIds.Contains(a.EntityId)) ||
@@ -51,7 +52,7 @@ public class TimelineService : ITimelineService
                 (a.EntityName == "ServicioReserva" && serviceIds.Contains(a.EntityId)) ||
                 (a.EntityName == "Payment" && paymentIds.Contains(a.EntityId)) ||
                 (a.EntityName == "Invoice" && invoiceIds.Contains(a.EntityId)) ||
-                (a.EntityName == "ReservaAttachment" && a.Changes!.Contains($"\"ReservaId\":{{\"New\":{rId}}}")) // Fallback for attachments if they log FK
+                (a.EntityName == "ReservaAttachment" && a.Changes!.Contains($"\"ReservaId\":{{\"New\":{rId}}}"))
             )
             .OrderByDescending(a => a.Timestamp)
             .ToListAsync(cancellationToken);

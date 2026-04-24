@@ -85,7 +85,7 @@ export function useReservaDetail(reservaId, navigate) {
         collectionKeys.forEach((key, index) => {
             const result = results[index];
             if (result.status === "fulfilled" && Array.isArray(result.value)) {
-                collections[key] = result.value;
+                collections[key] = camelize(result.value);
                 return;
             }
 
