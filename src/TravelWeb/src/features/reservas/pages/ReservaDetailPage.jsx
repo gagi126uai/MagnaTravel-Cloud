@@ -74,6 +74,7 @@ export default function ReservaDetailPage() {
     reserva,
     loading,
     suppliers,
+    serviceCollectionErrors,
     fetchReserva,
     handleArchiveReserva,
     handleDeleteReserva,
@@ -204,6 +205,7 @@ export default function ReservaDetailPage() {
           {activeTab === "services" ? (
             <ServiceList
               services={allServices}
+              serviceCollectionErrors={serviceCollectionErrors}
               onAddService={() => {
                 setServiceToEdit(null);
                 setShowServiceModal(true);
@@ -247,7 +249,7 @@ export default function ReservaDetailPage() {
 
           {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}
           {activeTab === "attachments" ? <ReservaAttachmentsTab reservaId={publicId} /> : null}
-          {activeTab === "voucher" ? <ReservaVoucherTab reservaId={publicId} /> : null}
+          {activeTab === "voucher" ? <ReservaVoucherTab reservaId={publicId} reserva={reserva} /> : null}
 
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">
@@ -411,7 +413,7 @@ export default function ReservaDetailPage() {
         reservaId={publicId}
         reservaStatus={reserva?.status}
         serviceToEdit={serviceToEdit}
-        onSuccess={fetchReserva}
+        onSuccess={(options) => fetchReserva(options)}
         suppliers={suppliers}
       />
 
@@ -420,7 +422,7 @@ export default function ReservaDetailPage() {
         onClose={() => setShowPaymentModal(false)}
         reservaId={publicId}
         maxAmount={reserva?.balance}
-        onSuccess={fetchReserva}
+        onSuccess={() => fetchReserva()}
       />
 
       <PassengerFormModal
@@ -428,7 +430,7 @@ export default function ReservaDetailPage() {
         onClose={() => setShowPassengerForm(false)}
         reservaId={publicId}
         passengerToEdit={editingPassenger}
-        onSuccess={fetchReserva}
+        onSuccess={() => fetchReserva()}
       />
 
       <ConfirmModal

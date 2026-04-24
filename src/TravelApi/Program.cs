@@ -371,9 +371,16 @@ builder.Services.AddScoped<IWhatsAppDeliveryService, WhatsAppDeliveryService>();
 
 var reservationsServiceBaseUrl = builder.Configuration[$"{ReservationsServiceOptions.SectionName}:BaseUrl"];
 var reservationsProxyEnabled = !string.IsNullOrWhiteSpace(reservationsServiceBaseUrl);
+var reservationsInternalToken = builder.Configuration[$"{ReservationsServiceOptions.SectionName}:InternalToken"];
 
 if (reservationsProxyEnabled)
 {
+    if (IsPlaceholderSecret(reservationsInternalToken))
+    {
+        throw new InvalidOperationException(
+            "Reservations proxy startup blocked because Services:Reservations:InternalToken is missing or still uses a placeholder value.");
+    }
+
     builder.Services.AddTransient<ReservationsServiceAuthHandler>();
 
     builder.Services.AddHttpClient<ReservaServiceHttpProxy>(client =>

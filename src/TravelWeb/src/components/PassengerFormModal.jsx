@@ -48,8 +48,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             }
         } catch (error) {
             console.error(error);
-            const errorMsg = error.response?.data?.message || error.response?.data || "Servicio no disponible temporalmente";
-            showWarning(typeof errorMsg === 'string' ? errorMsg : "Error al consultar AFIP.", "Servicio AFIP");
+            showWarning(error.message || "Servicio no disponible temporalmente", "Servicio AFIP");
         } finally {
             setLoadingAfip(false);
         }
@@ -123,7 +122,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             onClose();
         } catch (error) {
             console.error(error);
-            showError("Error al guardar pasajero: " + (error.response?.data || error.message));
+            showError("Error al guardar pasajero: " + (error.message || "Error desconocido"));
         } finally {
             setLoading(false);
         }

@@ -44,7 +44,7 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
             onClose();
         } catch (error) {
             console.error(error);
-            showError(error.response?.data || "Error al registrar pago");
+            showError(error.message || "Error al registrar pago");
         } finally {
             setLoading(false);
         }

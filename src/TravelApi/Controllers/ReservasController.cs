@@ -426,13 +426,13 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            return BadRequest(new { message = "No se pudo actualizar el estado de la reserva." });
+            return BadRequest(new { message = ex.Message });
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo actualizar el estado de la reserva." });
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
@@ -458,6 +458,10 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error archiving reserva {ReservaId}", publicIdOrLegacyId);
@@ -482,9 +486,9 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo eliminar la reserva." });
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
@@ -510,6 +514,10 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error generating voucher for reserva {ReservaId}", publicIdOrLegacyId);
@@ -530,6 +538,10 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error generating voucher preview for reserva {ReservaId}", publicIdOrLegacyId);
@@ -548,6 +560,10 @@ public class ReservasController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
@@ -616,9 +632,9 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo enviar el voucher por WhatsApp." });
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {

@@ -21,6 +21,16 @@ internal static class EconomicRulesHelper
 
     public static string? GetVoucherBlockReason(Reserva reserva, OperationalFinanceSettings settings)
     {
+        if (string.Equals(reserva.Status, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase))
+            return "No se puede emitir el voucher mientras la reserva siga en Presupuesto.";
+
+        var isOperationallyConfirmed =
+            string.Equals(reserva.Status, EstadoReserva.Operational, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(reserva.Status, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase);
+
+        if (!isOperationallyConfirmed)
+            return "No se puede emitir el voucher hasta que la reserva este confirmada operativamente.";
+
         if (!settings.RequireFullPaymentForVoucher)
             return null;
 

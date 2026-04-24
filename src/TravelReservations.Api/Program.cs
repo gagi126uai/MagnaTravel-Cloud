@@ -18,6 +18,27 @@ using Minio.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+static bool IsPlaceholderSecret(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return true;
+    }
+
+    return value.Contains("CHANGE_THIS_SECRET", StringComparison.OrdinalIgnoreCase)
+        || value.Contains("travelpass", StringComparison.OrdinalIgnoreCase);
+}
+
+var internalReservationsToken =
+    builder.Configuration["Services:Reservations:InternalToken"] ??
+    builder.Configuration["InternalServiceAuth:Token"];
+
+if (IsPlaceholderSecret(internalReservationsToken))
+{
+    throw new InvalidOperationException(
+        "Reservations service startup blocked because the internal service token is missing or still uses a placeholder value.");
+}
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -178,6 +199,17 @@ internal sealed class InternalServiceAuthenticationHandler : AuthenticationHandl
 
         if (string.IsNullOrWhiteSpace(expectedToken) || !string.Equals(expectedToken, providedToken, StringComparison.Ordinal))
         {
+            var correlationId = Request.Headers["X-Correlation-Id"].FirstOrDefault() ?? Request.HttpContext.TraceIdentifier;
+            Logger.LogWarning(
+                "Rejected internal service request {Method} {Path}. CorrelationId: {CorrelationId}. Reason: {Reason}",
+                Request.Method,
+                Request.Path,
+                correlationId,
+                string.IsNullOrWhiteSpace(expectedToken)
+                    ? "expected token missing"
+                    : string.IsNullOrWhiteSpace(providedToken)
+                        ? "provided token missing"
+                        : "token mismatch");
             return Task.FromResult(AuthenticateResult.Fail("Invalid internal service token."));
         }
 

@@ -5,8 +5,6 @@ import { showError, showSuccess } from "../alerts";
 import { getPublicId } from "../lib/publicIds";
 
 export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
-    if (!isOpen) return null;
-
     const [bgOpacity, setBgOpacity] = useState("opacity-0");
     const [scale, setScale] = useState("scale-95 opacity-0");
 
@@ -22,13 +20,16 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
     const [searchTerm, setSearchTerm] = useState("");
 
     useEffect(() => {
-        // Animation entrance
-        setTimeout(() => {
+        if (!isOpen) return undefined;
+
+        const timeoutId = setTimeout(() => {
             setBgOpacity("opacity-100");
             setScale("scale-100 opacity-100");
         }, 10);
         loadCustomers();
-    }, []);
+
+        return () => clearTimeout(timeoutId);
+    }, [isOpen]);
 
     const loadCustomers = async () => {
         try {
@@ -65,7 +66,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
             onSuccess();
             handleClose();
         } catch (error) {
-            showError(error.response?.data?.message || "Error al crear la reserva");
+            showError(error.message || "Error al crear la reserva");
         } finally {
             setLoading(false);
         }
@@ -76,6 +77,8 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
         c.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         c.taxId?.includes(searchTerm)
     );
+
+    if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 text-slate-800 dark:text-slate-100">

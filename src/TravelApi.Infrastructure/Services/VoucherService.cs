@@ -31,6 +31,7 @@ public class VoucherService : IVoucherService
     public async Task<byte[]> GenerateVoucherHtmlAsync(int reservaId, CancellationToken cancellationToken)
     {
         var (reserva, agency) = await LoadVoucherDataAsync(reservaId, cancellationToken);
+        await EnsureVoucherCanBeGeneratedAsync(reserva, cancellationToken);
 
         var html = new StringBuilder();
         html.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'/>");
@@ -88,10 +89,7 @@ public class VoucherService : IVoucherService
     public async Task<byte[]> GenerateVoucherPdfAsync(int reservaId, CancellationToken cancellationToken)
     {
         var (reserva, agency) = await LoadVoucherDataAsync(reservaId, cancellationToken);
-        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
-        var blockReason = EconomicRulesHelper.GetVoucherBlockReason(reserva, settings);
-        if (!string.IsNullOrWhiteSpace(blockReason))
-            throw new InvalidOperationException(blockReason);
+        await EnsureVoucherCanBeGeneratedAsync(reserva, cancellationToken);
 
         var document = Document.Create(container =>
         {
@@ -147,6 +145,16 @@ public class VoucherService : IVoucherService
 
         var agency = await _db.AgencySettings.FirstOrDefaultAsync(cancellationToken);
         return (reserva, agency);
+    }
+
+    private async Task EnsureVoucherCanBeGeneratedAsync(Reserva reserva, CancellationToken cancellationToken)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        var blockReason = EconomicRulesHelper.GetVoucherBlockReason(reserva, settings);
+        if (!string.IsNullOrWhiteSpace(blockReason))
+        {
+            throw new InvalidOperationException(blockReason);
+        }
     }
 
     private static void ComposeHeader(IContainer container, Reserva reserva, AgencySettings? agency)

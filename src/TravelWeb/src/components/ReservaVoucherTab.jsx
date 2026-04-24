@@ -1,18 +1,39 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Printer, Download, Eye, Loader2, AlertCircle } from "lucide-react";
 import { api } from "../api";
 import { showError } from "../alerts";
 
-export function ReservaVoucherTab({ reservaId }) {
+function getVoucherErrorMessage(error, fallbackMessage) {
+    if (typeof error?.payload === "string" && error.payload.trim()) {
+        return error.payload;
+    }
+
+    if (error?.payload?.message) {
+        return error.payload.message;
+    }
+
+    if (error?.payload?.error) {
+        return error.payload.error;
+    }
+
+    return error?.message || fallbackMessage;
+}
+
+export function ReservaVoucherTab({ reservaId, reserva }) {
     const [html, setHtml] = useState("");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const voucherBlocked = reserva && reserva.canEmitVoucher === false;
+    const voucherBlockReason = reserva?.economicBlockReason || "El voucher todavia no esta habilitado para esta reserva.";
 
-    useEffect(() => {
-        fetchVoucherPreview();
-    }, [reservaId]);
+    const fetchVoucherPreview = useCallback(async () => {
+        if (!reservaId || voucherBlocked) {
+            setHtml("");
+            setError(voucherBlocked ? voucherBlockReason : null);
+            setLoading(false);
+            return;
+        }
 
-    const fetchVoucherPreview = async () => {
         try {
             setLoading(true);
             setError(null);
@@ -20,14 +41,24 @@ export function ReservaVoucherTab({ reservaId }) {
             setHtml(response.html);
         } catch (err) {
             console.error("Error fetching voucher preview:", err);
-            setError("No se pudo cargar la vista previa del voucher.");
-            showError("Error al cargar el voucher.");
+            const message = getVoucherErrorMessage(err, "No se pudo cargar la vista previa del voucher.");
+            setError(message);
+            showError(message);
         } finally {
             setLoading(false);
         }
-    };
+    }, [reservaId, voucherBlocked, voucherBlockReason]);
+
+    useEffect(() => {
+        fetchVoucherPreview();
+    }, [fetchVoucherPreview]);
 
     const handlePrint = () => {
+        if (voucherBlocked) {
+            showError(voucherBlockReason);
+            return;
+        }
+
         const iframe = document.getElementById('voucher-iframe');
         if (iframe) {
             iframe.contentWindow.focus();
@@ -40,9 +71,14 @@ export function ReservaVoucherTab({ reservaId }) {
     };
 
     const downloadPdfAsBlob = async () => {
+        if (voucherBlocked) {
+            showError(voucherBlockReason);
+            return;
+        }
+
         try {
             const response = await api.get(`/reservas/${reservaId}/voucher/pdf`, { responseType: 'blob' });
-            const url = window.URL.createObjectURL(new Blob([response]));
+            const url = window.URL.createObjectURL(response);
             const link = document.createElement('a');
             link.href = url;
             link.setAttribute('download', `voucher-${reservaId}.pdf`);
@@ -50,7 +86,7 @@ export function ReservaVoucherTab({ reservaId }) {
             link.click();
             link.remove();
         } catch (err) {
-            showError("No se pudo descargar el PDF.");
+            showError(getVoucherErrorMessage(err, "No se pudo descargar el PDF."));
         }
     };
 
@@ -67,13 +103,19 @@ export function ReservaVoucherTab({ reservaId }) {
         return (
             <div className="flex flex-col items-center justify-center py-20 text-rose-500 bg-rose-50 dark:bg-rose-950/20 rounded-2xl border border-rose-100 dark:border-rose-900/30">
                 <AlertCircle className="w-12 h-12 mb-4" />
-                <p className="font-bold text-lg">{error}</p>
-                <button 
-                    onClick={fetchVoucherPreview}
-                    className="mt-4 px-4 py-2 bg-rose-600 text-white rounded-xl hover:bg-rose-700 transition-colors shadow-sm"
-                >
-                    Reintentar
-                </button>
+                <p className="font-bold text-lg text-center max-w-2xl px-4">{error}</p>
+                {voucherBlocked ? (
+                    <p className="mt-3 text-sm text-rose-400 px-4 text-center">
+                        Estado actual: {reserva?.status || "Sin estado"}.
+                    </p>
+                ) : (
+                    <button
+                        onClick={fetchVoucherPreview}
+                        className="mt-4 px-4 py-2 bg-rose-600 text-white rounded-xl hover:bg-rose-700 transition-colors shadow-sm"
+                    >
+                        Reintentar
+                    </button>
+                )}
             </div>
         );
     }

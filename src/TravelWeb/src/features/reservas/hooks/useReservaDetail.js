@@ -3,9 +3,59 @@ import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import {
     findNormalizedService,
+    getReservationCollectionKeyForRecordKind,
+    getReservaCollectionLabel,
     getServiceMutationEndpoint,
     normalizeReservaServices
 } from "../lib/reservationServiceModel";
+
+const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
+    flightSegments: (reservaId) => `/reservas/${reservaId}/flights`,
+    hotelBookings: (reservaId) => `/reservas/${reservaId}/hotels`,
+    transferBookings: (reservaId) => `/reservas/${reservaId}/transfers`,
+    packageBookings: (reservaId) => `/reservas/${reservaId}/packages`,
+});
+
+function getApiErrorMessage(error, fallbackMessage) {
+    if (typeof error?.payload === "string" && error.payload.trim()) {
+        return error.payload;
+    }
+
+    if (error?.payload?.message) {
+        return error.payload.message;
+    }
+
+    if (error?.payload?.error) {
+        return error.payload.error;
+    }
+
+    if (error?.payload?.title) {
+        return error.payload.title;
+    }
+
+    return error?.message || fallbackMessage;
+}
+
+function removeServiceFromReservaSnapshot(reserva, service) {
+    if (!reserva || !service) {
+        return reserva;
+    }
+
+    const serviceId = service.publicId || service.PublicId || service.id || service.Id;
+    const collectionKey = getReservationCollectionKeyForRecordKind(service.recordKind);
+
+    if (!collectionKey || !Array.isArray(reserva[collectionKey])) {
+        return reserva;
+    }
+
+    return {
+        ...reserva,
+        [collectionKey]: reserva[collectionKey].filter((item) => {
+            const itemId = item.publicId || item.PublicId || item.id || item.Id;
+            return String(itemId || "") !== String(serviceId || "");
+        }),
+    };
+}
 
 /**
  * Hook to manage a single Reserva's details, including CRUD for services and passengers.
@@ -14,60 +64,91 @@ export function useReservaDetail(reservaId, navigate) {
     const [reserva, setReserva] = useState(null);
     const [loading, setLoading] = useState(true);
     const [suppliers, setSuppliers] = useState([]);
+    const [serviceCollectionErrors, setServiceCollectionErrors] = useState({});
 
-    const fetchServiceCollections = useCallback(async ({ strict = false } = {}) => {
+    const fetchServiceCollections = useCallback(async ({ keys, strict = false } = {}) => {
         if (!reservaId) return {};
 
-        const endpoints = [
-            ["flightSegments", `/reservas/${reservaId}/flights`],
-            ["hotelBookings", `/reservas/${reservaId}/hotels`],
-            ["transferBookings", `/reservas/${reservaId}/transfers`],
-            ["packageBookings", `/reservas/${reservaId}/packages`],
-        ];
+        const collectionKeys = (keys?.length ? keys : Object.keys(SERVICE_COLLECTION_ENDPOINTS))
+            .filter((key) => typeof SERVICE_COLLECTION_ENDPOINTS[key] === "function");
 
         const results = await Promise.allSettled(
-            endpoints.map(([, endpoint]) => api.get(endpoint, { cache: "no-store" }))
+            collectionKeys.map((key) => api.get(SERVICE_COLLECTION_ENDPOINTS[key](reservaId), { cache: "no-store" }))
         );
 
-        if (strict) {
-            const failed = results
-                .map((result, index) => ({ result, endpoint: endpoints[index][1] }))
-                .find(({ result }) => result.status === "rejected" || !Array.isArray(result.value));
+        const collections = {};
+        const errors = {};
+        let strictError = null;
 
-            if (failed) {
-                const reason = failed.result.reason?.message || "respuesta invalida";
-                throw new Error(`No se pudo refrescar ${failed.endpoint}: ${reason}`);
-            }
-        }
-
-        return endpoints.reduce((collections, [key], index) => {
+        collectionKeys.forEach((key, index) => {
             const result = results[index];
             if (result.status === "fulfilled" && Array.isArray(result.value)) {
                 collections[key] = result.value;
+                return;
             }
 
-            return collections;
-        }, {});
+            const message = result.status === "rejected"
+                ? getApiErrorMessage(result.reason, `No se pudo cargar ${getReservaCollectionLabel(key)}.`)
+                : `No se pudo cargar ${getReservaCollectionLabel(key)}.`;
+
+            errors[key] = message;
+            if (strict && !strictError) {
+                strictError = {
+                    key,
+                    label: getReservaCollectionLabel(key),
+                    message,
+                };
+            }
+        });
+
+        return { collections, errors, strictError, collectionKeys };
     }, [reservaId]);
 
-    const fetchReserva = useCallback(async ({ showLoading = true, strictServices = false } = {}) => {
+    const fetchReserva = useCallback(async ({ showLoading = true, collectionKeys, strictCollections = false } = {}) => {
         if (!reservaId) return null;
         try {
             if (showLoading) {
                 setLoading(true);
             }
-            const [res, serviceCollections] = await Promise.all([
-                api.get(`/reservas/${reservaId}`, { cache: "no-store" }),
-                fetchServiceCollections({ strict: strictServices })
-            ]);
-            const nextReserva = { ...res, ...serviceCollections };
+            const res = await api.get(`/reservas/${reservaId}`, { cache: "no-store" });
+            const {
+                collections,
+                errors,
+                strictError,
+                collectionKeys: refreshedCollectionKeys,
+            } = await fetchServiceCollections({
+                keys: collectionKeys,
+                strict: strictCollections,
+            });
+
+            setServiceCollectionErrors((currentErrors) => {
+                const nextErrors = collectionKeys?.length ? { ...currentErrors } : {};
+                (refreshedCollectionKeys || []).forEach((key) => {
+                    if (errors[key]) {
+                        nextErrors[key] = errors[key];
+                    } else {
+                        delete nextErrors[key];
+                    }
+                });
+                return nextErrors;
+            });
+
+            const nextReserva = { ...res, ...collections };
             setReserva(nextReserva);
-            return nextReserva;
+            return {
+                reserva: nextReserva,
+                serviceCollectionError: strictError,
+                collectionErrors: errors,
+            };
         } catch (error) {
             console.error(error);
-            showError("Error al cargar la reserva: " + (error.response?.data?.Error || error.message || "Error desconocido"));
+            showError("Error al cargar la reserva: " + getApiErrorMessage(error, "Error desconocido"));
             setReserva(null);
-            return null;
+            return {
+                reserva: null,
+                serviceCollectionError: null,
+                collectionErrors: {},
+            };
         } finally {
             if (showLoading) {
                 setLoading(false);
@@ -98,7 +179,7 @@ export function useReservaDetail(reservaId, navigate) {
             if (navigate) navigate("/reservas");
             return true;
         } catch (error) {
-            showError(error.response?.data?.message || error.response?.data || "Error al archivar la reserva");
+            showError(getApiErrorMessage(error, "Error al archivar la reserva"));
             return false;
         }
     };
@@ -110,7 +191,7 @@ export function useReservaDetail(reservaId, navigate) {
             if (navigate) navigate("/reservas");
             return true;
         } catch (error) {
-            showError(error.response?.data?.message || error.response?.data || "Error al eliminar");
+            showError(getApiErrorMessage(error, "Error al eliminar"));
             return false;
         }
     };
@@ -133,8 +214,7 @@ export function useReservaDetail(reservaId, navigate) {
             showSuccess(`Estado actualizado a ${newStatus}`);
             return true;
         } catch (error) {
-            const msg = error.response?.data?.message || error.response?.data || "Error al cambiar estado";
-            showError(typeof msg === 'string' ? msg : "Error al cambiar estado");
+            showError(getApiErrorMessage(error, "Error al cambiar estado"));
             return false;
         }
     };
@@ -142,9 +222,22 @@ export function useReservaDetail(reservaId, navigate) {
     const handleDeleteService = async (service) => {
         try {
             const endpoint = getServiceMutationEndpoint(reservaId, service);
+            const collectionKey = getReservationCollectionKeyForRecordKind(service?.recordKind);
+            const hasDedicatedCollection = Boolean(collectionKey && SERVICE_COLLECTION_ENDPOINTS[collectionKey]);
 
             await api.delete(endpoint);
-            const updatedReserva = await fetchReserva({ showLoading: false, strictServices: true });
+            const refreshResult = await fetchReserva({
+                showLoading: false,
+                collectionKeys: hasDedicatedCollection ? [collectionKey] : undefined,
+                strictCollections: hasDedicatedCollection,
+            });
+            const updatedReserva = refreshResult?.reserva || null;
+
+            if (refreshResult?.serviceCollectionError) {
+                setReserva((currentReserva) => removeServiceFromReservaSnapshot(currentReserva, service));
+                showSuccess("Servicio eliminado. Esa lista no se pudo refrescar en este momento.");
+                return true;
+            }
 
             if (!updatedReserva) {
                 throw new Error("Servicio eliminado, pero no se pudo validar la reserva actualizada.");
@@ -157,8 +250,7 @@ export function useReservaDetail(reservaId, navigate) {
             showSuccess("Servicio eliminado");
             return true;
         } catch (error) {
-            const msg = error.response?.data?.message || error.response?.data || error.message || "Error al eliminar servicio";
-            showError(typeof msg === 'string' ? msg : "Error al eliminar servicio");
+            showError(getApiErrorMessage(error, "Error al eliminar servicio"));
             return false;
         }
     };
@@ -170,7 +262,7 @@ export function useReservaDetail(reservaId, navigate) {
             showSuccess("Pasajero eliminado");
             return true;
         } catch (error) {
-            showError("Error al eliminar");
+            showError(getApiErrorMessage(error, "Error al eliminar"));
             return false;
         }
     };
@@ -197,6 +289,7 @@ export function useReservaDetail(reservaId, navigate) {
         reserva,
         loading,
         suppliers,
+        serviceCollectionErrors,
         fetchReserva,
         handleArchiveReserva,
         handleDeleteReserva,

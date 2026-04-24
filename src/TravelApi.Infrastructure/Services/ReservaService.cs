@@ -769,7 +769,7 @@ public class ReservaService : IReservaService
                     throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado.");
                 }
 
-                if (file.Payments.Any())
+                if (file.Payments.Any(payment => !payment.IsDeleted))
                 {
                     throw new InvalidOperationException("No se puede eliminar una Reserva con pagos registrados. Elimine los pagos primero.");
                 }
@@ -833,7 +833,7 @@ public class ReservaService : IReservaService
 
     private static void ApplyEconomicFlags(ReservaDto dto, OperationalFinanceSettings settings)
     {
-        var reserva = new Reserva { Balance = dto.Balance };
+        var reserva = new Reserva { Balance = dto.Balance, Status = dto.Status };
         dto.IsEconomicallySettled = EconomicRulesHelper.IsEconomicallySettled(reserva);
         dto.CanMoveToOperativo = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetOperativeBlockReason(reserva, settings));
         dto.CanEmitVoucher = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetVoucherBlockReason(reserva, settings));
@@ -844,7 +844,7 @@ public class ReservaService : IReservaService
 
     private static void ApplyEconomicFlags(ReservaListDto dto, OperationalFinanceSettings settings)
     {
-        var reserva = new Reserva { Balance = dto.Balance };
+        var reserva = new Reserva { Balance = dto.Balance, Status = dto.Status };
         dto.IsEconomicallySettled = EconomicRulesHelper.IsEconomicallySettled(reserva);
         dto.CanMoveToOperativo = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetOperativeBlockReason(reserva, settings));
         dto.CanEmitVoucher = string.IsNullOrWhiteSpace(EconomicRulesHelper.GetVoucherBlockReason(reserva, settings));

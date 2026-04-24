@@ -65,6 +65,149 @@ public class BookingService : IBookingService
         return await _db.Set<Rate>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == rateId.Value, ct);
     }
 
+    private static void ValidateHotelStay(DateTime checkIn, DateTime checkOut)
+    {
+        if (checkOut <= checkIn)
+        {
+            throw new ArgumentException("El check-out debe ser posterior al check-in.");
+        }
+    }
+
+    private static int GetHotelQuantity(HotelBooking hotel)
+    {
+        var nights = Math.Max((hotel.CheckOut.Date - hotel.CheckIn.Date).Days, 0);
+        hotel.Nights = nights;
+        var safeRooms = Math.Max(hotel.Rooms, 1);
+        return Math.Max(nights, 1) * safeRooms;
+    }
+
+    private static (decimal UnitNetCost, decimal UnitSalePrice, decimal UnitCommission) GetHotelSnapshotUnitValues(HotelBooking hotel)
+    {
+        var quantity = GetHotelQuantity(hotel);
+        return (
+            quantity > 0 ? hotel.NetCost / quantity : hotel.NetCost,
+            quantity > 0 ? hotel.SalePrice / quantity : hotel.SalePrice,
+            quantity > 0 ? hotel.Commission / quantity : hotel.Commission
+        );
+    }
+
+    private static void ApplyHotelPricingFromUnitSnapshot(
+        HotelBooking hotel,
+        decimal unitNetCost,
+        decimal unitSalePrice,
+        decimal unitCommission)
+    {
+        var quantity = GetHotelQuantity(hotel);
+        hotel.NetCost = Math.Round(unitNetCost * quantity, 2, MidpointRounding.AwayFromZero);
+        hotel.SalePrice = Math.Round(unitSalePrice * quantity, 2, MidpointRounding.AwayFromZero);
+        hotel.Commission = Math.Round(unitCommission * quantity, 2, MidpointRounding.AwayFromZero);
+    }
+
+    private static void ApplyHotelRateSnapshot(HotelBooking hotel, Rate rate)
+    {
+        hotel.RateId = rate.Id;
+
+        if (rate.SupplierId.HasValue)
+        {
+            hotel.SupplierId = rate.SupplierId.Value;
+        }
+
+        hotel.HotelName = string.IsNullOrWhiteSpace(rate.HotelName)
+            ? rate.ProductName
+            : rate.HotelName;
+
+        if (!string.IsNullOrWhiteSpace(rate.City))
+        {
+            hotel.City = rate.City;
+        }
+
+        hotel.StarRating = rate.StarRating;
+
+        if (!string.IsNullOrWhiteSpace(rate.RoomType))
+        {
+            hotel.RoomType = rate.RoomType;
+        }
+
+        if (!string.IsNullOrWhiteSpace(rate.MealPlan))
+        {
+            hotel.MealPlan = rate.MealPlan;
+        }
+
+        ApplyHotelPricingFromUnitSnapshot(hotel, rate.NetCost, rate.SalePrice, rate.Commission);
+    }
+
+    private async Task RecalculateReservationScheduleAsync(int reservaId, CancellationToken ct)
+    {
+        var reserva = await _db.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva == null)
+        {
+            return;
+        }
+
+        var startDates = new List<DateTime>();
+        var endDates = new List<DateTime>();
+
+        startDates.AddRange(await _db.FlightSegments
+            .Where(f => f.ReservaId == reservaId)
+            .Select(f => f.DepartureTime)
+            .ToListAsync(ct));
+
+        endDates.AddRange(await _db.FlightSegments
+            .Where(f => f.ReservaId == reservaId)
+            .Select(f => f.ArrivalTime)
+            .ToListAsync(ct));
+
+        startDates.AddRange(await _db.HotelBookings
+            .Where(h => h.ReservaId == reservaId)
+            .Select(h => h.CheckIn)
+            .ToListAsync(ct));
+
+        endDates.AddRange(await _db.HotelBookings
+            .Where(h => h.ReservaId == reservaId)
+            .Select(h => h.CheckOut)
+            .ToListAsync(ct));
+
+        startDates.AddRange(await _db.TransferBookings
+            .Where(t => t.ReservaId == reservaId)
+            .Select(t => t.PickupDateTime)
+            .ToListAsync(ct));
+
+        endDates.AddRange(await _db.TransferBookings
+            .Where(t => t.ReservaId == reservaId)
+            .Select(t => t.ReturnDateTime ?? t.PickupDateTime)
+            .ToListAsync(ct));
+
+        startDates.AddRange(await _db.PackageBookings
+            .Where(p => p.ReservaId == reservaId)
+            .Select(p => p.StartDate)
+            .ToListAsync(ct));
+
+        endDates.AddRange(await _db.PackageBookings
+            .Where(p => p.ReservaId == reservaId)
+            .Select(p => p.EndDate)
+            .ToListAsync(ct));
+
+        startDates.AddRange(await _db.Servicios
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => s.DepartureDate)
+            .ToListAsync(ct));
+
+        endDates.AddRange(await _db.Servicios
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => s.ReturnDate ?? s.DepartureDate)
+            .ToListAsync(ct));
+
+        DateTime? nextStartDate = startDates.Count > 0 ? startDates.Min() : null;
+        DateTime? nextEndDate = endDates.Count > 0 ? endDates.Max() : null;
+
+        if (reserva.StartDate != nextStartDate || reserva.EndDate != nextEndDate)
+        {
+            reserva.StartDate = nextStartDate;
+            reserva.EndDate = nextEndDate;
+            await _db.SaveChangesAsync(ct);
+        }
+    }
+
     private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken ct)
         where TEntity : class, IHasPublicId
     {
@@ -133,6 +276,7 @@ public class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
 
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<FlightSegmentDto>(flight);
     }
@@ -150,7 +294,6 @@ public class BookingService : IBookingService
         var flight = await _flightRepo.GetByIdAsync(id, ct);
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
-        var oldNetCost = flight.NetCost;
         var oldSupplierId = flight.SupplierId;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
@@ -162,6 +305,7 @@ public class BookingService : IBookingService
         if (rateId.HasValue)
             flight.RateId = rateId.Value;
 
+        await _flightRepo.UpdateAsync(flight, ct);
         if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
         {
             await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
@@ -172,7 +316,7 @@ public class BookingService : IBookingService
             if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
 
-        await _flightRepo.UpdateAsync(flight, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<FlightSegmentDto>(flight);
     }
@@ -191,12 +335,13 @@ public class BookingService : IBookingService
 
         await EnsureNoPaymentsAsync(reservaId, ct);
 
+        await _flightRepo.DeleteAsync(flight, ct);
         if (flight.SupplierId > 0)
         {
             await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
 
-        await _flightRepo.DeleteAsync(flight, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
@@ -242,23 +387,20 @@ public class BookingService : IBookingService
 
     public async Task<HotelBookingDto> CreateHotelAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
     {
+        ValidateHotelStay(req.CheckIn, req.CheckOut);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
+        var rate = await GetRateAsync(req.RateId, ct);
+        var supplierId = rate?.SupplierId ?? await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         var hotel = _mapper.Map<HotelBooking>(req);
         hotel.ReservaId = reservaId;
         hotel.SupplierId = supplierId;
 
-        // Snapshot desde tarifario
-        var rate = await GetRateAsync(req.RateId, ct);
         if (rate != null)
         {
-            hotel.RateId = rate.Id;
-            hotel.NetCost = rate.NetCost;
-            hotel.SalePrice = rate.SalePrice;
-            hotel.Commission = rate.Commission;
+            ApplyHotelRateSnapshot(hotel, rate);
         }
 
         await _hotelRepo.AddAsync(hotel, ct);
@@ -268,6 +410,7 @@ public class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
 
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<HotelBookingDto>(hotel);
     }
@@ -281,21 +424,55 @@ public class BookingService : IBookingService
 
     public async Task<HotelBookingDto> UpdateHotelAsync(int reservaId, int id, UpdateHotelRequest req, CancellationToken ct)
     {
+        ValidateHotelStay(req.CheckIn, req.CheckOut);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
-        var oldNetCost = hotel.NetCost;
         var oldSupplierId = hotel.SupplierId;
-        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
+        var oldRateId = hotel.RateId;
+        var oldHotelName = hotel.HotelName;
+        var oldCity = hotel.City;
+        var oldCountry = hotel.Country;
+        var oldStarRating = hotel.StarRating;
+        var oldRoomType = hotel.RoomType;
+        var oldMealPlan = hotel.MealPlan;
+        var oldSnapshotUnits = GetHotelSnapshotUnitValues(hotel);
+        var requestedRateId = await ResolveRateIdAsync(req.RateId, ct);
+        var isRateChanged = requestedRateId.HasValue && requestedRateId != oldRateId;
+        var requestedRate = isRateChanged
+            ? await _db.Set<Rate>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == requestedRateId.Value, ct)
+            : null;
+        var supplierId = requestedRate?.SupplierId
+            ?? (!string.IsNullOrWhiteSpace(req.SupplierId)
+                ? await ResolveSupplierIdAsync(req.SupplierId, ct)
+                : hotel.SupplierId);
 
         _mapper.Map(req, hotel);
         hotel.SupplierId = supplierId;
 
-        var rateId = await ResolveRateIdAsync(req.RateId, ct);
-        if (rateId.HasValue)
-            hotel.RateId = rateId.Value;
+        if (requestedRate != null)
+        {
+            ApplyHotelRateSnapshot(hotel, requestedRate);
+        }
+        else if (oldRateId.HasValue)
+        {
+            hotel.RateId = oldRateId;
+            hotel.SupplierId = oldSupplierId;
+            hotel.HotelName = oldHotelName;
+            hotel.City = oldCity;
+            hotel.Country = oldCountry;
+            hotel.StarRating = oldStarRating;
+            hotel.RoomType = oldRoomType;
+            hotel.MealPlan = oldMealPlan;
+            ApplyHotelPricingFromUnitSnapshot(
+                hotel,
+                oldSnapshotUnits.UnitNetCost,
+                oldSnapshotUnits.UnitSalePrice,
+                oldSnapshotUnits.UnitCommission);
+        }
 
+        await _hotelRepo.UpdateAsync(hotel, ct);
         if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
         {
             await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
@@ -306,7 +483,7 @@ public class BookingService : IBookingService
             if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
 
-        await _hotelRepo.UpdateAsync(hotel, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<HotelBookingDto>(hotel);
     }
@@ -325,12 +502,13 @@ public class BookingService : IBookingService
 
         await EnsureNoPaymentsAsync(reservaId, ct);
 
+        await _hotelRepo.DeleteAsync(hotel, ct);
         if (hotel.SupplierId > 0)
         {
             await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
 
-        await _hotelRepo.DeleteAsync(hotel, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
@@ -388,6 +566,7 @@ public class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
 
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<PackageBookingDto>(package);
     }
@@ -416,6 +595,7 @@ public class BookingService : IBookingService
         if (rateId.HasValue)
             package.RateId = rateId.Value;
 
+        await _packageRepo.UpdateAsync(package, ct);
         if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
         {
             await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
@@ -426,7 +606,7 @@ public class BookingService : IBookingService
             if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
 
-        await _packageRepo.UpdateAsync(package, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<PackageBookingDto>(package);
     }
@@ -445,12 +625,13 @@ public class BookingService : IBookingService
 
         await EnsureNoPaymentsAsync(reservaId, ct);
 
+        await _packageRepo.DeleteAsync(package, ct);
         if (package.SupplierId > 0)
         {
             await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
 
-        await _packageRepo.DeleteAsync(package, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
@@ -508,6 +689,7 @@ public class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
 
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<TransferBookingDto>(transfer);
     }
@@ -536,6 +718,7 @@ public class BookingService : IBookingService
         if (rateId.HasValue)
             transfer.RateId = rateId.Value;
 
+        await _transferRepo.UpdateAsync(transfer, ct);
         if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)
         {
             await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
@@ -546,7 +729,7 @@ public class BookingService : IBookingService
             if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
 
-        await _transferRepo.UpdateAsync(transfer, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
         return _mapper.Map<TransferBookingDto>(transfer);
     }
@@ -565,12 +748,13 @@ public class BookingService : IBookingService
 
         await EnsureNoPaymentsAsync(reservaId, ct);
 
+        await _transferRepo.DeleteAsync(transfer, ct);
         if (transfer.SupplierId > 0)
         {
             await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
 
-        await _transferRepo.DeleteAsync(transfer, ct);
+        await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 

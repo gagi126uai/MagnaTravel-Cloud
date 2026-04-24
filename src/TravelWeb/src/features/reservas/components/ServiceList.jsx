@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Plane, Hotel, Car, Package, Edit2, Trash2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, Edit2, Trash2, ShieldCheck } from "lucide-react";
 import { isAdmin } from "../../../auth";
 import {
     SERVICE_RECORD_KIND,
@@ -20,8 +20,9 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
     return <Package className={`${className} text-violet-500`} />;
 }
 
-export function ServiceList({ services, onAddService, onEditService, onDeleteService }) {
+export function ServiceList({ services, serviceCollectionErrors = {}, onAddService, onEditService, onDeleteService }) {
     const admin = isAdmin();
+    const collectionErrorMessages = Object.values(serviceCollectionErrors).filter(Boolean);
 
     return (
         <div>
@@ -34,6 +35,20 @@ export function ServiceList({ services, onAddService, onEditService, onDeleteSer
                     <Plus className="w-4 h-4" /> Agregar Servicio
                 </button>
             </div>
+
+            {collectionErrorMessages.length > 0 ? (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+                    <div className="flex items-start gap-3">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                        <div className="space-y-1">
+                            <div className="font-semibold">La reserva sigue visible, pero una o mas listas de servicios no se pudieron refrescar.</div>
+                            {collectionErrorMessages.map((message) => (
+                                <div key={message}>{message}</div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
 
             {services.length === 0 ? (
                 <div className="text-center py-12 bg-gray-50 dark:bg-slate-800 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
