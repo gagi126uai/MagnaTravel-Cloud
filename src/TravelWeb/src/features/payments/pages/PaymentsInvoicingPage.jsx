@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { Loader2, Calendar, ChevronLeft, ChevronRight, FileText, Receipt } from "lucide-react";
 import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
@@ -146,9 +146,45 @@ export default function PaymentsInvoicingPage() {
               )
             }
           />
-      )}
-
-              </div>
+          {mainTab === "pending" ? (
+            <WorkItemSection
+              items={workItems}
+              searchTerm={worklistSearchTerm}
+              onSearchChange={setWorklistSearchTerm}
+              onSelectItem={setSelectedItem}
+              loading={loading}
+              pagination={
+                <PaginationFooter
+                  page={worklistPage}
+                  totalPages={worklistTotalPages}
+                  onPageChange={setWorklistPage}
+                  hasNext={worklistHasNextPage}
+                  hasPrevious={worklistHasPreviousPage}
+                />
+              }
+            />
+          ) : (
+            <InvoiceSection
+              items={invoices}
+              searchTerm={invoiceSearchTerm}
+              onSearchChange={setInvoiceSearchTerm}
+              loading={loading}
+              onViewPdf={handleViewPdf}
+              onDownloadPdf={handleDownloadPdf}
+              onRetry={handleRetryInvoice}
+              onAnnul={handleAnnulInvoice}
+              pagination={
+                <PaginationFooter
+                  page={invoicePage}
+                  totalPages={invoiceTotalPages}
+                  onPageChange={setInvoicePage}
+                  hasNext={invoiceHasNextPage}
+                  hasPrevious={invoiceHasPreviousPage}
+                />
+              }
+            />
+          )}
+        </div>
       )}
 
       <CreateInvoiceModal
