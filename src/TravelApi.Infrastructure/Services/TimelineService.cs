@@ -77,20 +77,37 @@ public class TimelineService : ITimelineService
                         
                         if (log.Action == "Update" && meaningfulChanges.Count == 0)
                         {
-                            continue; // Skip logs that only contain ignored fields (like Balance auto-update)
+                            continue;
                         }
 
                         foreach (var change in meaningfulChanges)
                         {
-                            var oldVal = change.Value.ContainsKey("Old") ? change.Value["Old"].ToString() : "";
-                            var newVal = change.Value.ContainsKey("New") ? change.Value["New"].ToString() : "";
-                            details.Add($"• **{change.Key}**: {oldVal} ➔ {newVal}");
+                            var fieldName = NormalizeFieldName(change.Key);
+                            var oldValRaw = change.Value.ContainsKey("Old") ? change.Value["Old"].ToString() : "";
+                            var newValRaw = change.Value.ContainsKey("New") ? change.Value["New"].ToString() : "";
+
+                            if (log.Action == "Create")
+                            {
+                                var val = FormatValue(change.Key, oldValRaw.Length > 0 ? oldValRaw : newValRaw);
+                                details.Add($"• **{fieldName}**: {val}");
+                            }
+                            else if (log.Action == "Update")
+                            {
+                                var oldVal = FormatValue(change.Key, oldValRaw);
+                                var newVal = FormatValue(change.Key, newValRaw);
+                                details.Add($"• {fieldName}: de *{oldVal}* a **{newVal}**");
+                            }
+                            else if (log.Action == "Delete")
+                            {
+                                var val = FormatValue(change.Key, oldValRaw);
+                                details.Add($"• **{fieldName}**: {val}");
+                            }
                         }
                     }
                 }
                 catch
                 {
-                    details.Add("Detalles técnicos ocultos por legibilidad.");
+                    details.Add("Modificaciones en campos técnicos.");
                 }
             }
 
@@ -127,15 +144,15 @@ public class TimelineService : ITimelineService
     {
         return technicalName switch
         {
-            "Reserva" => "Reserva",
-            "FlightSegment" => "Vuelo",
-            "HotelBooking" => "Hotel",
-            "PackageBooking" => "Paquete",
-            "TransferBooking" => "Traslado",
-            "ServicioReserva" => "Servicio Gral.",
-            "Payment" => "Cobranza",
-            "Invoice" => "Factura AFIP",
-            "ReservaAttachment" => "Archivo Adjunto",
+            "Reserva" => "la Reserva",
+            "FlightSegment" => "un Vuelo",
+            "HotelBooking" => "un Hotel",
+            "PackageBooking" => "un Paquete",
+            "TransferBooking" => "un Traslado",
+            "ServicioReserva" => "un Servicio",
+            "Payment" => "un Pago",
+            "Invoice" => "una Factura",
+            "ReservaAttachment" => "un Archivo",
             _ => technicalName
         };
     }
@@ -145,9 +162,69 @@ public class TimelineService : ITimelineService
         return action switch
         {
             "Create" => "Alta de",
-            "Update" => "Modificación en",
+            "Update" => "Cambio en",
             "Delete" => "Eliminación de",
+            "SoftDelete" => "Anulación de",
             _ => action
         };
+    }
+
+    private static string NormalizeFieldName(string fieldName)
+    {
+        return fieldName switch
+        {
+            "Status" => "Estado",
+            "Name" => "Nombre",
+            "Amount" => "Importe",
+            "Method" => "Método",
+            "PaidAt" => "Fecha Pago",
+            "CheckIn" => "Check-In",
+            "CheckOut" => "Check-Out",
+            "DepartureTime" => "Salida",
+            "ArrivalTime" => "Llegada",
+            "Origin" => "Origen",
+            "Destination" => "Destino",
+            "FlightNumber" => "Nro. Vuelo",
+            "AirlineCode" => "Línea Aérea",
+            "Rooms" => "Habitaciones",
+            "Adults" => "Adultos",
+            "Children" => "Menores",
+            "NetCost" => "Costo Neto",
+            "SalePrice" => "Precio Venta",
+            "Commission" => "Comisión",
+            "Tax" => "Impuestos",
+            "SupplierId" => "Proveedor",
+            "Description" => "Descripción",
+            "Notes" => "Notas",
+            "EntryType" => "Tipo de Pago",
+            "RoomType" => "Habitación",
+            "MealPlan" => "Régimen",
+            "WorkflowStatus" => "Estado Operativo",
+            "IsDeleted" => "Borrado",
+            "ConfirmationNumber" => "Confirmación",
+            "StartDate" => "Inicio",
+            "EndDate" => "Fin",
+            _ => fieldName
+        };
+    }
+
+    private static string FormatValue(string fieldName, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value == "null" || value == "0" && (fieldName.Contains("Price") || fieldName.Contains("Cost") || fieldName.Contains("Amount"))) return "N/A";
+        
+        if (fieldName.Contains("Price") || fieldName.Contains("Cost") || fieldName.Contains("Amount") || fieldName.Contains("Tax") || fieldName.Contains("Commission"))
+        {
+            if (decimal.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var decimalValue))
+            {
+                return decimalValue.ToString("C", new System.Globalization.CultureInfo("es-AR"));
+            }
+        }
+
+        if (value.Contains("T") && DateTime.TryParse(value, out var dateValue))
+        {
+            return dateValue.ToString("dd/MM/yyyy HH:mm");
+        }
+
+        return value;
     }
 }
