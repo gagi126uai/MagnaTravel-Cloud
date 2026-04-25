@@ -163,6 +163,12 @@ export function useReservaDetail(reservaId, navigate) {
         return camelize(passengers || []);
     }, [reservaId]);
 
+    const fetchPayments = useCallback(async () => {
+        if (!reservaId) return [];
+        const payments = await api.get(`/reservas/${reservaId}/payments`, { cache: "no-store" });
+        return camelize(payments || []);
+    }, [reservaId]);
+
     const fetchReserva = useCallback(async ({ showLoading = true, collectionKeys, strictCollections = false, service, serviceType, passenger, preserveOnError = false } = {}) => {
         if (!reservaId) return null;
         const fetchSequence = fetchSequenceRef.current + 1;
@@ -172,9 +178,12 @@ export function useReservaDetail(reservaId, navigate) {
                 setLoading(true);
             }
 
-            const [rawRes, passengerResult] = await Promise.all([
+            const [rawRes, passengerResult, paymentResult] = await Promise.all([
                 api.get(`/reservas/${reservaId}`, { cache: "no-store" }),
                 fetchPassengers()
+                    .then((value) => ({ status: "fulfilled", value }))
+                    .catch((reason) => ({ status: "rejected", reason })),
+                fetchPayments()
                     .then((value) => ({ status: "fulfilled", value }))
                     .catch((reason) => ({ status: "rejected", reason })),
             ]);
@@ -234,8 +243,13 @@ export function useReservaDetail(reservaId, navigate) {
                     ? mergePassengerCollections(currentPassengers, fetchedPassengers)
                     : fetchedPassengers)
                 : (currentPassengers.length > 0 ? currentPassengers : responsePassengers);
+            const responsePayments = Array.isArray(res.payments) ? res.payments : [];
+            const fetchedPayments = paymentResult.status === "fulfilled"
+                ? paymentResult.value
+                : null;
+            const nextPayments = fetchedPayments ?? responsePayments;
 
-            const nextReserva = { ...res, ...collections, passengers: nextPassengers };
+            const nextReserva = { ...res, ...collections, passengers: nextPassengers, payments: nextPayments };
 
             // Inject authoritative service data if provided (fixes RabbitMQ/Cache sync lag)
             if (service && serviceType) {
@@ -292,7 +306,7 @@ export function useReservaDetail(reservaId, navigate) {
                 setLoading(false);
             }
         }
-    }, [reservaId, fetchServiceCollections, fetchPassengers, setReservaSnapshot]);
+    }, [reservaId, fetchServiceCollections, fetchPassengers, fetchPayments, setReservaSnapshot]);
 
     const fetchSuppliers = useCallback(async () => {
         try {

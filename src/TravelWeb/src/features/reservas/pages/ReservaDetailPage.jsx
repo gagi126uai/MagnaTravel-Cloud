@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, FileText, History, Paperclip, Users, Trash2, Edit2 } from "lucide-react";
+import { Clock, CreditCard, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2 } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -41,6 +41,57 @@ function InvoiceStatusBadge({ resultado }) {
 
 function InvoiceTypeLabel({ tipoComprobante }) {
   return <>Factura {tipoComprobante === 1 ? "A" : tipoComprobante === 6 ? "B" : "C"}</>;
+}
+
+function getPaymentReceipt(payment) {
+  return payment?.receipt || payment?.Receipt || null;
+}
+
+function canIssuePaymentReceipt(payment) {
+  const entryType = payment?.entryType || payment?.EntryType || "Payment";
+  const receipt = getPaymentReceipt(payment);
+  return entryType === "Payment" && Number(payment?.amount || payment?.Amount || 0) > 0 && !receipt;
+}
+
+function PaymentReceiptActions({ payment, onView, onIssue }) {
+  const receipt = getPaymentReceipt(payment);
+
+  if (receipt) {
+    const isVoided = receipt.status === "Voided";
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${isVoided ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"}`}>
+          {isVoided ? "Anulado" : receipt.receiptNumber}
+        </span>
+        {!isVoided ? (
+          <button
+            type="button"
+            onClick={() => onView(payment)}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+            title="Ver comprobante de pago"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Ver PDF
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (canIssuePaymentReceipt(payment)) {
+    return (
+      <button
+        type="button"
+        onClick={() => onIssue(payment)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+      >
+        <Receipt className="h-3.5 w-3.5" />
+        Emitir comprobante
+      </button>
+    );
+  }
+
+  return <span className="text-xs text-slate-400">Sin comprobante</span>;
 }
 
 export default function ReservaDetailPage() {
@@ -91,11 +142,31 @@ export default function ReservaDetailPage() {
 
   const handleDeletePayment = async (payment) => {
     try {
-      await api.delete(`/payments/${payment.publicId}`);
+      await api.delete(`/payments/${getPublicId(payment)}`);
       showSuccess("Pago eliminado correctamente");
       fetchReserva();
     } catch (error) {
       showError(getApiErrorMessage(error, "Error al eliminar pago"));
+    }
+  };
+
+  const handleViewReceiptPdf = async (payment) => {
+    try {
+      const response = await api.get(`/payments/${getPublicId(payment)}/receipt/pdf`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
+      window.open(url, "_blank");
+    } catch (error) {
+      showError(getApiErrorMessage(error, "No se pudo abrir el comprobante."));
+    }
+  };
+
+  const handleIssueReceipt = async (payment) => {
+    try {
+      await api.post(`/payments/${getPublicId(payment)}/receipt`);
+      showSuccess("Comprobante emitido correctamente");
+      await fetchReserva({ showLoading: false, preserveOnError: true });
+    } catch (error) {
+      showError(getApiErrorMessage(error, "No se pudo emitir el comprobante."));
     }
   };
 
@@ -307,14 +378,15 @@ export default function ReservaDetailPage() {
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/10">
                     <History className="w-4 h-4 text-emerald-500" />
-                    <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">Historial de Cobranzas</h4>
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">Historial de Cobranzas y Comprobantes</h4>
                   </div>
-                  <DataGrid density="compact" minWidth="720px">
+                  <DataGrid density="compact" minWidth="900px">
                     <DataGridHeader>
                       <DataGridHeaderRow>
                         <DataGridHeaderCell>Fecha</DataGridHeaderCell>
                         <DataGridHeaderCell>Metodo</DataGridHeaderCell>
                         <DataGridHeaderCell>Notas</DataGridHeaderCell>
+                        <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Acciones</DataGridHeaderCell>
                       </DataGridHeaderRow>
@@ -330,6 +402,9 @@ export default function ReservaDetailPage() {
                               </span>
                             </DataGridCell>
                             <DataGridCell>{payment.notes || "-"}</DataGridCell>
+                            <DataGridCell>
+                              <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} />
+                            </DataGridCell>
                             <DataGridCell align="right" className="font-black text-emerald-600">
                               {payment.amount?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
                             </DataGridCell>
@@ -364,7 +439,7 @@ export default function ReservaDetailPage() {
                           </DataGridRow>
                         ))
                       ) : (
-                        <DataGridEmptyState colSpan={4} title="No hay pagos registrados." />
+                        <DataGridEmptyState colSpan={6} title="No hay pagos registrados." />
                       )}
                     </DataGridBody>
                   </DataGrid>
@@ -375,7 +450,14 @@ export default function ReservaDetailPage() {
                           key={getPublicId(payment)}
                           title={payment.method}
                           subtitle={new Date(payment.paidAt).toLocaleDateString()}
-                          meta={<div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>}
+                          meta={
+                            <>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>
+                              <div>
+                                <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} />
+                              </div>
+                            </>
+                          }
                           footer={<span className="text-sm font-bold text-emerald-600">{payment.amount?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}</span>}
                         />
                       ))}
