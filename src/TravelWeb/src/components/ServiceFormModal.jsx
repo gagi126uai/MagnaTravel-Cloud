@@ -516,7 +516,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                     rooms={form.rooms || 1}
                     reservaPax={reservaPax}
                     value={form.roomingAssignments}
-                    onChange={(val) => setForm({ ...form, roomingAssignments: val })}
+                    onChange={(val) => setForm((current) => ({ ...current, roomingAssignments: val }))}
                 />
             </div>
         </div>

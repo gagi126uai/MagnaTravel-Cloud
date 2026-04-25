@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { getPublicId } from "../../../lib/publicIds";
 import { camelize } from "../../../lib/utils";
 import {
     findNormalizedService,
@@ -46,10 +47,11 @@ function upsertPassengerInReservaSnapshot(reserva, passenger) {
         return reserva;
     }
 
-    const passengerId = passenger.publicId || passenger.PublicId || passenger.id || passenger.Id;
+    const normalizedPassenger = camelize(passenger);
+    const passengerId = getPublicId(normalizedPassenger);
     const passengers = Array.isArray(reserva.passengers) ? reserva.passengers : [];
     const exists = passengers.some((item) => {
-        const itemId = item.publicId || item.PublicId || item.id || item.Id;
+        const itemId = getPublicId(item);
         return String(itemId || "") === String(passengerId || "");
     });
 
@@ -57,10 +59,10 @@ function upsertPassengerInReservaSnapshot(reserva, passenger) {
         ...reserva,
         passengers: exists
             ? passengers.map((item) => {
-                const itemId = item.publicId || item.PublicId || item.id || item.Id;
-                return String(itemId || "") === String(passengerId || "") ? passenger : item;
+                const itemId = getPublicId(item);
+                return String(itemId || "") === String(passengerId || "") ? normalizedPassenger : item;
             })
-            : [...passengers, passenger],
+            : [...passengers, normalizedPassenger],
     };
 }
 
@@ -72,10 +74,24 @@ function removePassengerFromReservaSnapshot(reserva, passengerId) {
     return {
         ...reserva,
         passengers: (reserva.passengers || []).filter((item) => {
-            const itemId = item.publicId || item.PublicId || item.id || item.Id;
+            const itemId = getPublicId(item);
             return String(itemId || "") !== String(passengerId || "");
         }),
     };
+}
+
+function mergePassengerCollections(...collections) {
+    const passengersById = new Map();
+
+    collections.flat().forEach((passenger) => {
+        if (!passenger) return;
+        const normalizedPassenger = camelize(passenger);
+        const passengerId = getPublicId(normalizedPassenger);
+        if (!passengerId) return;
+        passengersById.set(String(passengerId), normalizedPassenger);
+    });
+
+    return Array.from(passengersById.values());
 }
 
 /**
@@ -86,6 +102,22 @@ export function useReservaDetail(reservaId, navigate) {
     const [loading, setLoading] = useState(true);
     const [suppliers, setSuppliers] = useState([]);
     const [serviceCollectionErrors, setServiceCollectionErrors] = useState({});
+    const reservaRef = useRef(null);
+    const fetchSequenceRef = useRef(0);
+
+    useEffect(() => {
+        reservaRef.current = reserva;
+    }, [reserva]);
+
+    const setReservaSnapshot = useCallback((valueOrUpdater) => {
+        setReserva((currentReserva) => {
+            const nextReserva = typeof valueOrUpdater === "function"
+                ? valueOrUpdater(currentReserva)
+                : valueOrUpdater;
+            reservaRef.current = nextReserva;
+            return nextReserva;
+        });
+    }, []);
 
     const fetchServiceCollections = useCallback(async ({ keys, strict = false } = {}) => {
         if (!reservaId) return {};
@@ -125,13 +157,37 @@ export function useReservaDetail(reservaId, navigate) {
         return { collections, errors, strictError, collectionKeys };
     }, [reservaId]);
 
+    const fetchPassengers = useCallback(async () => {
+        if (!reservaId) return [];
+        const passengers = await api.get(`/reservas/${reservaId}/passengers`, { cache: "no-store" });
+        return camelize(passengers || []);
+    }, [reservaId]);
+
     const fetchReserva = useCallback(async ({ showLoading = true, collectionKeys, strictCollections = false, service, serviceType, passenger, preserveOnError = false } = {}) => {
         if (!reservaId) return null;
+        const fetchSequence = fetchSequenceRef.current + 1;
+        fetchSequenceRef.current = fetchSequence;
         try {
             if (showLoading) {
                 setLoading(true);
             }
-            const rawRes = await api.get(`/reservas/${reservaId}`, { cache: "no-store" });
+
+            const [rawRes, passengerResult] = await Promise.all([
+                api.get(`/reservas/${reservaId}`, { cache: "no-store" }),
+                fetchPassengers()
+                    .then((value) => ({ status: "fulfilled", value }))
+                    .catch((reason) => ({ status: "rejected", reason })),
+            ]);
+
+            if (fetchSequence !== fetchSequenceRef.current) {
+                return {
+                    reserva: reservaRef.current,
+                    serviceCollectionError: null,
+                    collectionErrors: {},
+                    ignored: true,
+                };
+            }
+
             const res = camelize(rawRes);
             const {
                 collections,
@@ -142,6 +198,15 @@ export function useReservaDetail(reservaId, navigate) {
                 keys: collectionKeys,
                 strict: strictCollections,
             });
+
+            if (fetchSequence !== fetchSequenceRef.current) {
+                return {
+                    reserva: reservaRef.current,
+                    serviceCollectionError: null,
+                    collectionErrors: {},
+                    ignored: true,
+                };
+            }
 
             setServiceCollectionErrors((currentErrors) => {
                 const nextErrors = collectionKeys?.length ? { ...currentErrors } : {};
@@ -155,7 +220,22 @@ export function useReservaDetail(reservaId, navigate) {
                 return nextErrors;
             });
 
-            const nextReserva = { ...res, ...collections };
+            const currentPassengers = Array.isArray(reservaRef.current?.passengers)
+                ? reservaRef.current.passengers
+                : [];
+            const responsePassengers = Array.isArray(res.passengers) ? res.passengers : [];
+            const fetchedPassengers = passengerResult.status === "fulfilled"
+                ? passengerResult.value
+                : null;
+            const shouldMergeCurrentPassengers = currentPassengers.length > 0
+                && (Boolean(passenger) || Boolean(service) || Boolean(serviceType) || preserveOnError);
+            const nextPassengers = fetchedPassengers
+                ? (shouldMergeCurrentPassengers
+                    ? mergePassengerCollections(currentPassengers, fetchedPassengers)
+                    : fetchedPassengers)
+                : (currentPassengers.length > 0 ? currentPassengers : responsePassengers);
+
+            const nextReserva = { ...res, ...collections, passengers: nextPassengers };
 
             // Inject authoritative service data if provided (fixes RabbitMQ/Cache sync lag)
             if (service && serviceType) {
@@ -190,7 +270,7 @@ export function useReservaDetail(reservaId, navigate) {
                 ? upsertPassengerInReservaSnapshot(nextReserva, passenger)
                 : nextReserva;
 
-            setReserva(hydratedReserva);
+            setReservaSnapshot(hydratedReserva);
             return {
                 reserva: hydratedReserva,
                 serviceCollectionError: strictError,
@@ -200,7 +280,7 @@ export function useReservaDetail(reservaId, navigate) {
             console.error(error);
             showError("Error al cargar la reserva: " + getApiErrorMessage(error, "Error desconocido"));
             if (!preserveOnError) {
-                setReserva(null);
+                setReservaSnapshot(null);
             }
             return {
                 reserva: null,
@@ -212,7 +292,7 @@ export function useReservaDetail(reservaId, navigate) {
                 setLoading(false);
             }
         }
-    }, [reservaId, fetchServiceCollections]);
+    }, [reservaId, fetchServiceCollections, fetchPassengers, setReservaSnapshot]);
 
     const fetchSuppliers = useCallback(async () => {
         try {
@@ -284,7 +364,7 @@ export function useReservaDetail(reservaId, navigate) {
             const hasDedicatedCollection = Boolean(collectionKey && SERVICE_COLLECTION_ENDPOINTS[collectionKey]);
 
             await api.delete(endpoint);
-            setReserva((currentReserva) => removeServiceFromReservaSnapshot(currentReserva, service));
+            setReservaSnapshot((currentReserva) => removeServiceFromReservaSnapshot(currentReserva, service));
             const refreshResult = await fetchReserva({
                 showLoading: false,
                 collectionKeys: hasDedicatedCollection ? [collectionKey] : undefined,
@@ -294,13 +374,13 @@ export function useReservaDetail(reservaId, navigate) {
             const updatedReserva = refreshResult?.reserva || null;
 
             if (refreshResult?.serviceCollectionError) {
-                setReserva((currentReserva) => removeServiceFromReservaSnapshot(currentReserva, service));
+                setReservaSnapshot((currentReserva) => removeServiceFromReservaSnapshot(currentReserva, service));
                 showSuccess("Servicio eliminado. Esa lista no se pudo refrescar en este momento.");
                 return true;
             }
 
             if (updatedReserva && findNormalizedService(updatedReserva, service)) {
-                setReserva((currentReserva) => removeServiceFromReservaSnapshot(currentReserva, service));
+                setReservaSnapshot((currentReserva) => removeServiceFromReservaSnapshot(currentReserva, service));
             }
 
             showSuccess("Servicio eliminado");
@@ -314,13 +394,13 @@ export function useReservaDetail(reservaId, navigate) {
     const handleDeletePassenger = async (passengerId) => {
         try {
             await api.delete(`/reservas/passengers/${passengerId}`);
-            setReserva((currentReserva) => removePassengerFromReservaSnapshot(currentReserva, passengerId));
+            setReservaSnapshot((currentReserva) => removePassengerFromReservaSnapshot(currentReserva, passengerId));
             const refreshResult = await fetchReserva({ showLoading: false, preserveOnError: true });
             if (refreshResult?.reserva?.passengers?.some((passenger) => {
-                const currentId = passenger.publicId || passenger.PublicId || passenger.id || passenger.Id;
+                const currentId = getPublicId(passenger);
                 return String(currentId || "") === String(passengerId || "");
             })) {
-                setReserva((currentReserva) => removePassengerFromReservaSnapshot(currentReserva, passengerId));
+                setReservaSnapshot((currentReserva) => removePassengerFromReservaSnapshot(currentReserva, passengerId));
             }
             showSuccess("Pasajero eliminado");
             return true;

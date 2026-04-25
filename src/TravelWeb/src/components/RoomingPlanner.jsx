@@ -2,6 +2,18 @@ import { useState, useEffect } from "react";
 import { Users, User, UserPlus, Info } from "lucide-react";
 import { getPublicId } from "../lib/publicIds";
 
+const toPaxId = (value) => {
+    const id = typeof value === "object" ? getPublicId(value) : value;
+    return id === null || id === undefined ? "" : String(id);
+};
+
+const normalizeRoomAssignment = (room, index) => ({
+    roomIndex: Number(room?.roomIndex) || index + 1,
+    paxIds: Array.isArray(room?.paxIds)
+        ? Array.from(new Set(room.paxIds.map(toPaxId).filter(Boolean)))
+        : [],
+});
+
 export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
     const [assignments, setAssignments] = useState([]);
 
@@ -13,7 +25,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                 // Si la longitud coincide o hay datos, usamos eso
                 if (Array.isArray(parsed) && parsed.length > 0) {
                     // Ajustar si la cantidad de habitaciones cambia
-                    let adjusted = [...parsed];
+                    let adjusted = parsed.map(normalizeRoomAssignment);
                     if (adjusted.length < rooms) {
                         for (let i = adjusted.length; i < rooms; i++) {
                             adjusted.push({ roomIndex: i + 1, paxIds: [] });
@@ -39,13 +51,16 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
     }, [rooms, value]);
 
     const handleAssign = (roomIndex, paxId) => {
+        const normalizedPaxId = toPaxId(paxId);
+        if (!normalizedPaxId) return;
+
         const newAssignments = assignments.map(room => {
             // Remove pax from any room first
-            const newPaxIds = room.paxIds.filter(id => id !== paxId);
+            const newPaxIds = room.paxIds.map(toPaxId).filter(id => id !== normalizedPaxId);
             
             // Add to selected room
             if (room.roomIndex === roomIndex) {
-                newPaxIds.push(paxId);
+                newPaxIds.push(normalizedPaxId);
             }
             return { ...room, paxIds: newPaxIds };
         });
@@ -55,16 +70,17 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
     };
 
     const handleUnassign = (paxId) => {
+        const normalizedPaxId = toPaxId(paxId);
         const newAssignments = assignments.map(room => ({
             ...room,
-            paxIds: room.paxIds.filter(id => id !== paxId)
+            paxIds: room.paxIds.map(toPaxId).filter(id => id !== normalizedPaxId)
         }));
         setAssignments(newAssignments);
         onChange?.(JSON.stringify(newAssignments));
     };
 
-    const assignedPaxIds = assignments.flatMap(r => r.paxIds);
-    const unassignedPax = reservaPax?.filter(p => !assignedPaxIds.includes(getPublicId(p))) || [];
+    const assignedPaxIds = assignments.flatMap(r => r.paxIds.map(toPaxId));
+    const unassignedPax = reservaPax?.filter(p => !assignedPaxIds.includes(toPaxId(p))) || [];
 
     if (!reservaPax || reservaPax.length === 0) {
         return (
@@ -96,13 +112,13 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                         </h5>
                         <div className="space-y-2">
                             {room.paxIds.map(paxId => {
-                                const pax = reservaPax.find(p => getPublicId(p) === paxId);
+                                const pax = reservaPax.find(p => toPaxId(p) === toPaxId(paxId));
                                 if (!pax) return null;
                                 return (
                                     <div key={paxId} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-2 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-900">
                                         <div className="flex items-center gap-2">
                                             <User className="h-4 w-4 text-slate-400" />
-                                            <span className="font-medium text-slate-700 dark:text-slate-200">{pax.fullName}</span>
+                                            <span className="font-medium text-slate-700 dark:text-slate-200">{pax.fullName || pax.FullName || "Pasajero"}</span>
                                         </div>
                                         <button 
                                             type="button" 
@@ -126,7 +142,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                                 >
                                     <option value="">+ Asignar pasajero...</option>
                                     {unassignedPax.map(p => (
-                                        <option key={getPublicId(p)} value={getPublicId(p)}>{p.fullName}</option>
+                                        <option key={toPaxId(p)} value={toPaxId(p)}>{p.fullName || p.FullName || "Pasajero"}</option>
                                     ))}
                                 </select>
                             )}
@@ -141,9 +157,9 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                     <h5 className="mb-2 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">Pasajeros sin asignar</h5>
                     <div className="flex flex-wrap gap-2">
                         {unassignedPax.map(p => (
-                            <div key={getPublicId(p)} className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            <div key={toPaxId(p)} className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                 <UserPlus className="h-3.5 w-3.5" />
-                                {p.fullName}
+                                {p.fullName || p.FullName || "Pasajero"}
                             </div>
                         ))}
                     </div>
