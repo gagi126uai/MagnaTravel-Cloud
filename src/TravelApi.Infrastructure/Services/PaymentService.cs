@@ -363,8 +363,17 @@ public class PaymentService : IPaymentService
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
 
-        if (payment.EntryType != PaymentEntryTypes.Payment || payment.Amount <= 0)
+        var entryType = string.IsNullOrWhiteSpace(payment.EntryType)
+            ? PaymentEntryTypes.Payment
+            : payment.EntryType;
+
+        if (entryType != PaymentEntryTypes.Payment || payment.Amount <= 0)
             throw new InvalidOperationException("Solo los pagos positivos pueden emitir comprobante.");
+
+        if (string.IsNullOrWhiteSpace(payment.EntryType))
+        {
+            payment.EntryType = PaymentEntryTypes.Payment;
+        }
 
         if (payment.Receipt != null)
             return _mapper.Map<PaymentReceiptDto>(payment.Receipt);

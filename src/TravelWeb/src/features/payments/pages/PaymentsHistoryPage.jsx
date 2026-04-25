@@ -30,8 +30,9 @@ function HistoryActions({
   onIssueReceipt,
 }) {
   if (item.entityType === "payment") {
+    const paymentEntryType = item.paymentEntryType || "Payment";
     const canIssueReceipt =
-      item.paymentEntryType === "Payment" &&
+      paymentEntryType === "Payment" &&
       Number(item.amount) > 0 &&
       !item.receiptPublicId;
 

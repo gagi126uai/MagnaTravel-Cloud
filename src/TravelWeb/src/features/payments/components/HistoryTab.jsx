@@ -126,7 +126,8 @@ export function HistoryTab({
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {payments.slice(0, visibleCountPayments).map((payment) => {
                   const isPositive = Number(payment.amount) >= 0;
-                  const canIssueReceipt = payment.entryType === "Payment" && Number(payment.amount) > 0 && !payment.receipt;
+                  const paymentEntryType = payment.entryType || "Payment";
+                  const canIssueReceipt = paymentEntryType === "Payment" && Number(payment.amount) > 0 && !payment.receipt;
 
                   return (
                     <tr key={getPublicId(payment)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">

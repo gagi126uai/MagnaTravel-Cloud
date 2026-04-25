@@ -148,10 +148,16 @@ export default function PaymentsInvoicingPage() {
           />
           {mainTab === "pending" ? (
             <WorkItemSection
+              status={worklistStatus}
+              onStatusChange={setWorklistStatus}
               items={workItems}
+              onInvoice={setSelectedItem}
               searchTerm={worklistSearchTerm}
-              onSearchChange={setWorklistSearchTerm}
-              onSelectItem={setSelectedItem}
+              onSearchTermChange={setWorklistSearchTerm}
+              customerFilter={worklistCustomerFilter}
+              onCustomerFilterChange={setWorklistCustomerFilter}
+              reservationFilter={worklistReservationFilter}
+              onReservationFilterChange={setWorklistReservationFilter}
               loading={loading}
               pagination={
                 <PaginationFooter
@@ -165,14 +171,26 @@ export default function PaymentsInvoicingPage() {
             />
           ) : (
             <InvoiceSection
+              invoiceKind={invoiceKind}
+              onInvoiceKindChange={setInvoiceKind}
               items={invoices}
-              searchTerm={invoiceSearchTerm}
-              onSearchChange={setInvoiceSearchTerm}
-              loading={loading}
-              onViewPdf={handleViewPdf}
               onDownloadPdf={handleDownloadPdf}
-              onRetry={handleRetryInvoice}
-              onAnnul={handleAnnulInvoice}
+              onViewPdf={handleViewPdf}
+              onRetryInvoice={handleRetryInvoice}
+              onAnnulInvoice={handleAnnulInvoice}
+              searchTerm={invoiceSearchTerm}
+              onSearchTermChange={setInvoiceSearchTerm}
+              period={invoicePeriod}
+              onPeriodChange={setInvoicePeriod}
+              customerFilter={invoiceCustomerFilter}
+              onCustomerFilterChange={setInvoiceCustomerFilter}
+              reservationFilter={invoiceReservationFilter}
+              onReservationFilterChange={setInvoiceReservationFilter}
+              voucherNumberFilter={invoiceVoucherNumberFilter}
+              onVoucherNumberFilterChange={setInvoiceVoucherNumberFilter}
+              resultFilter={invoiceResultFilter}
+              onResultFilterChange={setInvoiceResultFilter}
+              loading={loading}
               pagination={
                 <PaginationFooter
                   page={invoicePage}
