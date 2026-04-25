@@ -82,7 +82,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         
         var user = _httpContextAccessor?.HttpContext?.User;
         var userId = user?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
-        var userName = user?.FindFirst(ClaimTypes.Name)?.Value ?? "System";
+        var userName = user?.FindFirst("FullName")?.Value 
+                      ?? user?.FindFirst(ClaimTypes.Name)?.Value 
+                      ?? user?.Identity?.Name 
+                      ?? "Sistema";
         var timestamp = DateTime.UtcNow;
 
         foreach (var entry in ChangeTracker.Entries())

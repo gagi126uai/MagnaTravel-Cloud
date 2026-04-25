@@ -43,7 +43,7 @@ public class TimelineService : ITimelineService
         var rId = reservaId.ToString();
         var rPublicId = await _context.Reservas.Where(x => x.Id == reservaId).Select(x => x.PublicId.ToString()).FirstOrDefaultAsync(cancellationToken);
 
-        var logs = await _context.AuditLogs
+        var logsRaw = await _context.AuditLogs
             .AsNoTracking()
             .Where(a => 
                 (a.EntityName == "Reserva" && (a.EntityId == rId || a.EntityId == rPublicId)) ||
@@ -59,14 +59,32 @@ public class TimelineService : ITimelineService
             .OrderByDescending(a => a.Timestamp)
             .ToListAsync(cancellationToken);
 
+        // Resolver nombres de usuario para logs antiguos o incompletos
+        var userIds = logsRaw.Select(l => l.UserId).Distinct().ToList();
+        var userMap = await _context.Users
+            .AsNoTracking()
+            .Where(u => userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.FullName, cancellationToken);
+
         var events = new List<TimelineEventDto>();
 
-        foreach (var log in logs)
+        foreach (var log in logsRaw)
         {
             var eventType = log.Action;
             var friendlyEntity = NormalizeEntityName(log.EntityName);
             var title = $"{TranslateAction(log.Action)} {friendlyEntity}";
             var details = new List<string>();
+
+            // Resolver actor: Preferir FullName del mapa, luego UserName del log, luego "Sistema"
+            var actor = "Sistema";
+            if (userMap.TryGetValue(log.UserId, out var fullName) && !string.IsNullOrWhiteSpace(fullName))
+            {
+                actor = fullName;
+            }
+            else if (!string.IsNullOrWhiteSpace(log.UserName) && !Guid.TryParse(log.UserName, out _))
+            {
+                actor = log.UserName;
+            }
 
             if (!string.IsNullOrWhiteSpace(log.Changes))
             {
@@ -121,7 +139,7 @@ public class TimelineService : ITimelineService
             events.Add(new TimelineEventDto
             {
                 Timestamp = log.Timestamp,
-                Actor = string.IsNullOrWhiteSpace(log.UserName) ? "Sistema" : log.UserName,
+                Actor = actor,
                 EventType = eventType,
                 Title = title,
                 Details = details.Count > 0 ? string.Join("\n", details) : null,
