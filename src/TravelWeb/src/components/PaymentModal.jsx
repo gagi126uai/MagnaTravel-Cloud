@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { api } from "../api";
 import { DollarSign, X } from "lucide-react";
 import { showError, showSuccess } from "../alerts";
+import { getApiErrorMessage } from "../lib/errors";
+import { getPublicId } from "../lib/publicIds";
 
 export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, maxAmount, paymentToEdit }) {
     const [amount, setAmount] = useState("");
@@ -42,14 +44,15 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
             }
 
             if (paymentToEdit) {
-                await api.put(`/payments/${paymentToEdit.publicId}`, {
+                await api.put(`/payments/${getPublicId(paymentToEdit)}`, {
                     amount: parseFloat(amount),
                     method,
                     notes
                 });
                 showSuccess("Pago actualizado correctamente");
             } else {
-                await api.post(`/reservas/${reservaId}/payments`, {
+                await api.post("/payments", {
+                    reservaId,
                     amount: parseFloat(amount),
                     method,
                     notes
@@ -57,11 +60,11 @@ export default function PaymentModal({ isOpen, onClose, onSuccess, reservaId, ma
                 showSuccess("Pago registrado correctamente");
             }
 
-            onSuccess();
+            await onSuccess?.();
             onClose();
         } catch (error) {
             console.error(error);
-            showError(error.message || "Error al procesar el pago");
+            showError(getApiErrorMessage(error, "Error al procesar el pago"));
         } finally {
             setLoading(false);
         }

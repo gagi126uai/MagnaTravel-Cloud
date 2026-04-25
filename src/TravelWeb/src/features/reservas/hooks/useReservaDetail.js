@@ -165,7 +165,7 @@ export function useReservaDetail(reservaId, navigate) {
 
     const fetchPayments = useCallback(async () => {
         if (!reservaId) return [];
-        const payments = await api.get(`/reservas/${reservaId}/payments`, { cache: "no-store" });
+        const payments = await api.get(`/payments/reserva/${reservaId}`, { cache: "no-store" });
         return camelize(payments || []);
     }, [reservaId]);
 

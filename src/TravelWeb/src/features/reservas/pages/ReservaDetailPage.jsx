@@ -555,7 +555,7 @@ export default function ReservaDetailPage() {
         reservaId={publicId}
         maxAmount={reserva?.balance}
         paymentToEdit={paymentToEdit}
-        onSuccess={() => fetchReserva()}
+        onSuccess={() => fetchReserva({ showLoading: false, preserveOnError: true })}
       />
 
       <PassengerFormModal
