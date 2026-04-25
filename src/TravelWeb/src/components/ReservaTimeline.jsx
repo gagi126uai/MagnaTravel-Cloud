@@ -69,19 +69,20 @@ export default function ReservaTimeline({ reservaId }) {
                                         </p>
 
                                         {event.details && (
-                                            <div className="mt-2 rounded border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                            <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-sm text-slate-700 dark:border-slate-700/50 dark:bg-slate-900/30 dark:text-slate-300">
                                                 {event.details.split('\n').map((line, i) => {
-                                                    const isBoldSplit = line.includes('**');
-                                                    if (isBoldSplit) {
-                                                        const parts = line.split('**');
-                                                        return (
-                                                            <div key={i} className="mb-1 last:mb-0">
-                                                                <span className="font-bold text-slate-600 dark:text-slate-400">{parts[1]}</span>
-                                                                {parts[2]}
-                                                            </div>
-                                                        );
-                                                    }
-                                                    return <div key={i} className="mb-1 last:mb-0">{line}</div>;
+                                                    // Simple replacement for **bold** and *italic* for basic formatting
+                                                    const formattedLine = line
+                                                        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-900 dark:text-white">$1</strong>')
+                                                        .replace(/\*(.*?)\*/g, '<em class="italic text-slate-500">$1</em>');
+                                                    
+                                                    return (
+                                                        <div 
+                                                            key={i} 
+                                                            className="mb-1.5 last:mb-0 leading-relaxed"
+                                                            dangerouslySetInnerHTML={{ __html: formattedLine }}
+                                                        />
+                                                    );
                                                 })}
                                             </div>
                                         )}

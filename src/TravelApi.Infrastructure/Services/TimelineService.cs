@@ -12,9 +12,11 @@ public class TimelineService : ITimelineService
     private readonly AppDbContext _context;
 
     private static readonly string[] IgnoredFields = { 
-        "UpdatedAt", "TotalSale", "TotalCost", "Balance", "TotalPaid", 
+        "Id", "PublicId", "UpdatedAt", "CreatedAt", "TotalSale", "TotalCost", "Balance", "TotalPaid", 
         "IsEconomicallySettled", "CanMoveToOperativo", "CanEmitVoucher", 
-        "CanEmitAfipInvoice", "EconomicBlockReason"
+        "CanEmitAfipInvoice", "EconomicBlockReason", "ReservaId", "RateId", "SupplierId", 
+        "CustomerId", "SourceLeadId", "SourceQuoteId", "ServicioReservaId", "ResponsibleUserId",
+        "TravelFileId", "ReservationId"
     };
 
     public TimelineService(AppDbContext context)
@@ -83,6 +85,8 @@ public class TimelineService : ITimelineService
                         foreach (var change in meaningfulChanges)
                         {
                             var fieldName = NormalizeFieldName(change.Key);
+                            if (fieldName == change.Key) continue; // Si no tiene traducción, es técnico o no relevante
+
                             var oldValRaw = change.Value.ContainsKey("Old") ? change.Value["Old"].ToString() : "";
                             var newValRaw = change.Value.ContainsKey("New") ? change.Value["New"].ToString() : "";
 
@@ -95,6 +99,9 @@ public class TimelineService : ITimelineService
                             {
                                 var oldVal = FormatValue(change.Key, oldValRaw);
                                 var newVal = FormatValue(change.Key, newValRaw);
+                                
+                                if (oldVal == newVal) continue;
+
                                 details.Add($"• {fieldName}: de *{oldVal}* a **{newVal}**");
                             }
                             else if (log.Action == "Delete")
@@ -191,6 +198,8 @@ public class TimelineService : ITimelineService
             "Children" => "Menores",
             "NetCost" => "Costo Neto",
             "SalePrice" => "Precio Venta",
+            "UnitNetCost" => "Costo Unitario",
+            "UnitSalePrice" => "Venta Unitario",
             "Commission" => "Comisión",
             "Tax" => "Impuestos",
             "SupplierId" => "Proveedor",
@@ -204,13 +213,22 @@ public class TimelineService : ITimelineService
             "ConfirmationNumber" => "Confirmación",
             "StartDate" => "Inicio",
             "EndDate" => "Fin",
+            "HotelName" => "Hotel",
+            "City" => "Ciudad",
+            "StarRating" => "Categoría",
+            "PackageName" => "Paquete",
+            "PickupLocation" => "Origen Traslado",
+            "DropoffLocation" => "Destino Traslado",
+            "PickupDate" => "Fecha Traslado",
+            "PickupTime" => "Hora Traslado",
             _ => fieldName
         };
     }
 
     private static string FormatValue(string fieldName, string value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value == "null" || value == "0" && (fieldName.Contains("Price") || fieldName.Contains("Cost") || fieldName.Contains("Amount"))) return "N/A";
+        if (string.IsNullOrWhiteSpace(value) || value == "null") return "N/A";
+        if (value == "0" && (fieldName.Contains("Price") || fieldName.Contains("Cost") || fieldName.Contains("Amount"))) return "0";
         
         if (fieldName.Contains("Price") || fieldName.Contains("Cost") || fieldName.Contains("Amount") || fieldName.Contains("Tax") || fieldName.Contains("Commission"))
         {
@@ -222,8 +240,12 @@ public class TimelineService : ITimelineService
 
         if (value.Contains("T") && DateTime.TryParse(value, out var dateValue))
         {
+            if (dateValue.TimeOfDay.TotalSeconds == 0) return dateValue.ToString("dd/MM/yyyy");
             return dateValue.ToString("dd/MM/yyyy HH:mm");
         }
+
+        if (value.ToLower() == "true") return "Sí";
+        if (value.ToLower() == "false") return "No";
 
         return value;
     }
