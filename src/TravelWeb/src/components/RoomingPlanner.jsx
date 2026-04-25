@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Users, User, UserPlus, Info } from "lucide-react";
+import { getPublicId } from "../lib/publicIds";
 
 export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
     const [assignments, setAssignments] = useState([]);
@@ -50,7 +51,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
         });
         
         setAssignments(newAssignments);
-        onChange(JSON.stringify(newAssignments));
+        onChange?.(JSON.stringify(newAssignments));
     };
 
     const handleUnassign = (paxId) => {
@@ -59,11 +60,11 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
             paxIds: room.paxIds.filter(id => id !== paxId)
         }));
         setAssignments(newAssignments);
-        onChange(JSON.stringify(newAssignments));
+        onChange?.(JSON.stringify(newAssignments));
     };
 
     const assignedPaxIds = assignments.flatMap(r => r.paxIds);
-    const unassignedPax = reservaPax?.filter(p => !assignedPaxIds.includes(p.publicId)) || [];
+    const unassignedPax = reservaPax?.filter(p => !assignedPaxIds.includes(getPublicId(p))) || [];
 
     if (!reservaPax || reservaPax.length === 0) {
         return (
@@ -95,7 +96,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                         </h5>
                         <div className="space-y-2">
                             {room.paxIds.map(paxId => {
-                                const pax = reservaPax.find(p => p.publicId === paxId);
+                                const pax = reservaPax.find(p => getPublicId(p) === paxId);
                                 if (!pax) return null;
                                 return (
                                     <div key={paxId} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-2 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -125,7 +126,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                                 >
                                     <option value="">+ Asignar pasajero...</option>
                                     {unassignedPax.map(p => (
-                                        <option key={p.publicId} value={p.publicId}>{p.fullName}</option>
+                                        <option key={getPublicId(p)} value={getPublicId(p)}>{p.fullName}</option>
                                     ))}
                                 </select>
                             )}
@@ -140,7 +141,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                     <h5 className="mb-2 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">Pasajeros sin asignar</h5>
                     <div className="flex flex-wrap gap-2">
                         {unassignedPax.map(p => (
-                            <div key={p.publicId} className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            <div key={getPublicId(p)} className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                 <UserPlus className="h-3.5 w-3.5" />
                                 {p.fullName}
                             </div>

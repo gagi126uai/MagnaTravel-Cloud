@@ -2,22 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Printer, Download, Eye, Loader2, AlertCircle } from "lucide-react";
 import { api } from "../api";
 import { showError } from "../alerts";
-
-function getVoucherErrorMessage(error, fallbackMessage) {
-    if (typeof error?.payload === "string" && error.payload.trim()) {
-        return error.payload;
-    }
-
-    if (error?.payload?.message) {
-        return error.payload.message;
-    }
-
-    if (error?.payload?.error) {
-        return error.payload.error;
-    }
-
-    return error?.message || fallbackMessage;
-}
+import { getApiErrorMessage } from "../lib/errors";
 
 export function ReservaVoucherTab({ reservaId, reserva }) {
     const [html, setHtml] = useState("");
@@ -41,7 +26,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
             setHtml(response.html);
         } catch (err) {
             console.error("Error fetching voucher preview:", err);
-            const message = getVoucherErrorMessage(err, "No se pudo cargar la vista previa del voucher.");
+            const message = getApiErrorMessage(err, "No se pudo cargar la vista previa del voucher.");
             setError(message);
             showError(message);
         } finally {
@@ -86,7 +71,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
             link.click();
             link.remove();
         } catch (err) {
-            showError(getVoucherErrorMessage(err, "No se pudo descargar el PDF."));
+            showError(getApiErrorMessage(err, "No se pudo descargar el PDF."));
         }
     };
 

@@ -7,7 +7,7 @@ export function getPublicId(entity) {
     return entity;
   }
 
-  return entity.publicId ?? null;
+  return entity.publicId ?? entity.PublicId ?? entity.id ?? entity.Id ?? null;
 }
 
 export function getRelatedPublicId(entity, publicKey, legacyKey) {

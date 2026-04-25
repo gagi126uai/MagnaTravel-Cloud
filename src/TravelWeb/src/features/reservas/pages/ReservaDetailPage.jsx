@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, FileText, History, Paperclip, Users, Trash2, Edit2 } from "lucide-react";
+import { api } from "../../../api";
+import { showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import PassengerFormModal from "../../../components/PassengerFormModal";
@@ -20,6 +22,7 @@ import {
 } from "../../../components/ui/DataGrid";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
+import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
 import { PassengerList } from "../components/PassengerList";
@@ -92,7 +95,7 @@ export default function ReservaDetailPage() {
       showSuccess("Pago eliminado correctamente");
       fetchReserva();
     } catch (error) {
-      showError(error.message || "Error al eliminar pago");
+      showError(getApiErrorMessage(error, "Error al eliminar pago"));
     }
   };
 
@@ -455,7 +458,7 @@ export default function ReservaDetailPage() {
         onClose={() => setShowServiceModal(false)}
         reservaId={publicId}
         reservaStatus={reserva?.status}
-        reservaPax={reserva?.pax || []}
+        reservaPax={reserva?.passengers || []}
         serviceToEdit={serviceToEdit}
         onSuccess={(options) => fetchReserva(options)}
         suppliers={suppliers}
@@ -475,10 +478,13 @@ export default function ReservaDetailPage() {
 
       <PassengerFormModal
         isOpen={showPassengerForm}
-        onClose={() => setShowPassengerForm(false)}
+        onClose={() => {
+          setShowPassengerForm(false);
+          setEditingPassenger(null);
+        }}
         reservaId={publicId}
         passengerToEdit={editingPassenger}
-        onSuccess={() => fetchReserva()}
+        onSuccess={(options) => fetchReserva({ ...options, showLoading: false, preserveOnError: true })}
       />
 
       <ConfirmModal

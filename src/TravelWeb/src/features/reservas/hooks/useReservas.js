@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess, showWarning } from "../../../alerts";
 import { useDebounce } from "../../../hooks/useDebounce";
-import { isDatabaseUnavailableError } from "../../../lib/errors";
+import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 
@@ -83,7 +83,7 @@ export function useReservas() {
       console.error(error);
       setReservasPage(emptyPage);
       setDatabaseUnavailable(isDatabaseUnavailableError(error));
-      showError("Error cargando reservas: " + error.message);
+      showError(`Error cargando reservas: ${getApiErrorMessage(error, "Error desconocido")}`);
     } finally {
       setLoading(false);
     }
@@ -130,7 +130,7 @@ export function useReservas() {
       await loadReservas();
       return true;
     } catch (error) {
-      showError(error.payload?.message || error.payload || error.message || "Error al archivar");
+      showError(getApiErrorMessage(error, "Error al archivar"));
       return false;
     }
   };

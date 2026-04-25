@@ -63,6 +63,14 @@ const formatMoney = (value) => {
     })}`;
 };
 
+const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
+const getHotelQuantity = (form) => {
+    const nights = calculateNights(form.checkIn, form.checkOut);
+    const rooms = Math.max(Number(form.rooms) || 1, 1);
+    return Math.max(nights || 1, 1) * rooms;
+};
+
 const formatShortDate = (value) => {
     if (!value) return "Sin definir";
     const date = new Date(value);
@@ -267,6 +275,8 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
     const [loading, setLoading] = useState(false);
     const [showResults, setShowResults] = useState(false);
     const [expandedHotel, setExpandedHotel] = useState(null);
+    const nights = calculateNights(form.checkIn, form.checkOut);
+    const days = nights > 0 ? nights + 1 : 0;
 
     const searchHotels = useCallback(async (query) => {
         if (!query || query.length < 3) {
@@ -486,6 +496,21 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 </div>
             </div>
 
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Noches</div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{nights}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Dias</div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{days}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pasajeros</div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{(reservaPax || []).length}</div>
+                </div>
+            </div>
+
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
                 <RoomingPlanner
                     rooms={form.rooms || 1}
@@ -656,7 +681,7 @@ function GenericServiceForm({ form, setForm, suppliers, disabled }) {
     );
 }
 
-function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled }) {
+function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled, onManualPriceChange }) {
     const margin = (form.salePrice || 0) - (form.netCost || 0);
 
     return (
@@ -681,14 +706,38 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                     <label className={labelClass}>Costo Neto *</label>
                     <div className="relative">
                         <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                        <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.netCost || 0} onChange={(event) => setForm({ ...form, netCost: parseFloat(event.target.value) || 0 })} required disabled={disabled} />
+                        <input
+                            type="number"
+                            step="0.01"
+                            className={`${inputClass} pl-6`}
+                            value={form.netCost || 0}
+                            onChange={(event) => {
+                                const netCost = parseFloat(event.target.value) || 0;
+                                onManualPriceChange?.("netCost");
+                                setForm({ ...form, netCost, commission: roundMoney((form.salePrice || 0) - netCost) });
+                            }}
+                            required
+                            disabled={disabled}
+                        />
                     </div>
                 </div>
                 <div>
                     <label className={labelClass}>Precio Venta *</label>
                     <div className="relative">
                         <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                        <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.salePrice || 0} onChange={(event) => setForm({ ...form, salePrice: parseFloat(event.target.value) || 0 })} required disabled={disabled} />
+                        <input
+                            type="number"
+                            step="0.01"
+                            className={`${inputClass} pl-6`}
+                            value={form.salePrice || 0}
+                            onChange={(event) => {
+                                const salePrice = parseFloat(event.target.value) || 0;
+                                onManualPriceChange?.("salePrice");
+                                setForm({ ...form, salePrice, commission: roundMoney(salePrice - (form.netCost || 0)) });
+                            }}
+                            required
+                            disabled={disabled}
+                        />
                     </div>
                 </div>
                 <div>
@@ -709,8 +758,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         rateId: "",
         netCost: 0,
         salePrice: 0,
+        commission: 0,
         unitNetCost: 0,
         unitSalePrice: 0,
+        unitCommission: 0,
         rooms: 1,
         adults: 2,
         children: 0,
@@ -723,6 +774,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     });
     const [loading, setLoading] = useState(false);
     const [commissionPercent, setCommissionPercent] = useState(10);
+    const [manualHotelPricing, setManualHotelPricing] = useState({ netCost: false, salePrice: false });
 
     const isGenericEdit = serviceToEdit?.recordKind === SERVICE_RECORD_KIND.GENERIC;
     const isLocked = reservaStatus === "Operativo" || reservaStatus === "Cerrado";
@@ -760,17 +812,30 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
     useEffect(() => {
         if (serviceType === "Hotel") {
-            const nights = calculateNights(form.checkIn, form.checkOut);
-            const qty = (nights || 1) * (form.rooms || 1);
-            if (form.unitNetCost > 0 || form.unitSalePrice > 0) {
-                setForm((prev) => ({
-                    ...prev,
-                    netCost: Math.round(prev.unitNetCost * qty * 100) / 100,
-                    salePrice: Math.round(prev.unitSalePrice * qty * 100) / 100
-                }));
+            const qty = getHotelQuantity(form);
+            if (form.unitNetCost > 0 || form.unitSalePrice > 0 || form.unitCommission > 0) {
+                setForm((prev) => {
+                    const next = { ...prev };
+
+                    if (!manualHotelPricing.netCost && prev.unitNetCost > 0) {
+                        next.netCost = roundMoney(prev.unitNetCost * qty);
+                    }
+
+                    if (!manualHotelPricing.salePrice && prev.unitSalePrice > 0) {
+                        next.salePrice = roundMoney(prev.unitSalePrice * qty);
+                    }
+
+                    if (prev.unitCommission > 0) {
+                        next.commission = roundMoney(prev.unitCommission * qty);
+                    } else {
+                        next.commission = roundMoney((next.salePrice || 0) - (next.netCost || 0));
+                    }
+
+                    return next;
+                });
             }
         }
-    }, [form.checkIn, form.checkOut, form.rooms, form.unitNetCost, form.unitSalePrice, serviceType]);
+    }, [form.checkIn, form.checkOut, form.rooms, form.unitNetCost, form.unitSalePrice, form.unitCommission, manualHotelPricing.netCost, manualHotelPricing.salePrice, serviceType]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -805,20 +870,25 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 const qty = Math.max(nights || 1, 1) * Math.max(serviceToEdit.rooms || 1, 1);
                 formattedForm.unitNetCost = qty > 0 ? (Number(serviceToEdit.netCost) || 0) / qty : 0;
                 formattedForm.unitSalePrice = qty > 0 ? (Number(serviceToEdit.salePrice) || 0) / qty : 0;
+                formattedForm.unitCommission = qty > 0 ? (Number(serviceToEdit.commission) || 0) / qty : 0;
             }
 
+            setManualHotelPricing({ netCost: false, salePrice: false });
             setForm(formattedForm);
             return;
         }
 
         setServiceType(initialServiceType || "Aereo");
+        setManualHotelPricing({ netCost: false, salePrice: false });
         setForm({
             supplierId: "",
             rateId: "",
             netCost: 0,
             salePrice: 0,
+            commission: 0,
             unitNetCost: 0,
             unitSalePrice: 0,
+            unitCommission: 0,
             rooms: 1,
             adults: 2,
             children: 0,
@@ -832,18 +902,23 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     }, [initialServiceType, isGenericEdit, isOpen, serviceToEdit]);
 
     const handleRateSelect = (rate) => {
+        setManualHotelPricing({ netCost: false, salePrice: false });
         setForm((prev) => {
+            const hotelQuantity = getHotelQuantity(prev);
             const newForm = {
                 ...prev,
                 rateId: rate.publicId?.toString() || "",
                 unitNetCost: rate.netCost,
                 unitSalePrice: rate.salePrice,
+                unitCommission: rate.commission ?? Math.max((rate.salePrice || 0) - (rate.netCost || 0), 0),
+                commission: rate.commission ?? Math.max((rate.salePrice || 0) - (rate.netCost || 0), 0),
                 description: rate.description || prev.description || ""
             };
 
             if (serviceType !== "Hotel") {
                 newForm.netCost = rate.netCost;
                 newForm.salePrice = rate.salePrice;
+                newForm.commission = rate.commission ?? Math.max((rate.salePrice || 0) - (rate.netCost || 0), 0);
             }
 
             if (serviceType === "Hotel") {
@@ -851,6 +926,9 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 newForm.city = rate.city || prev.city;
                 if (rate.roomType) newForm.roomType = rate.roomType;
                 if (rate.mealPlan) newForm.mealPlan = rate.mealPlan;
+                newForm.netCost = roundMoney((rate.netCost || 0) * hotelQuantity);
+                newForm.salePrice = roundMoney((rate.salePrice || 0) * hotelQuantity);
+                newForm.commission = roundMoney((newForm.unitCommission || 0) * hotelQuantity);
             } else if (serviceType === "Paquete") {
                 newForm.packageName = rate.productName;
             } else if (serviceType === "Aereo") {
@@ -868,13 +946,22 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
     const applyCommission = () => {
         if (serviceType === "Hotel" && form.unitNetCost > 0) {
-            const cost = form.unitNetCost;
-            const margin = cost * (commissionPercent / 100);
-            setForm((prev) => ({ ...prev, unitSalePrice: Math.round((cost + margin) * 100) / 100 }));
+            const unitCost = form.unitNetCost;
+            const unitMargin = unitCost * (commissionPercent / 100);
+            const unitSalePrice = roundMoney(unitCost + unitMargin);
+            const qty = getHotelQuantity(form);
+            setManualHotelPricing((current) => ({ ...current, salePrice: false }));
+            setForm((prev) => ({
+                ...prev,
+                unitSalePrice,
+                unitCommission: roundMoney(unitMargin),
+                salePrice: roundMoney(unitSalePrice * qty),
+                commission: roundMoney(unitMargin * qty),
+            }));
         } else {
             const cost = form.netCost || 0;
             const margin = cost * (commissionPercent / 100);
-            setForm((prev) => ({ ...prev, salePrice: Math.round((cost + margin) * 100) / 100 }));
+            setForm((prev) => ({ ...prev, salePrice: roundMoney(cost + margin), commission: roundMoney(margin) }));
         }
     };
 
@@ -926,14 +1013,17 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 onClose();
             } else {
                 showSuccess(`Habitacion "${form.roomType || "Estandar"}" agregada correctamente.`);
+                setManualHotelPricing({ netCost: false, salePrice: false });
                 // Reset variant-specific fields but keep hotel, dates and supplier
                 setForm(prev => ({
                     ...prev,
                     rateId: "",
                     unitNetCost: 0,
                     unitSalePrice: 0,
+                    unitCommission: 0,
                     netCost: 0,
                     salePrice: 0,
+                    commission: 0,
                     roomType: "",
                     mealPlan: "",
                     roomingAssignments: "",
@@ -980,6 +1070,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                                 onClick={() => {
                                     if (!serviceToEdit) {
                                         setServiceType(value);
+                                        setManualHotelPricing({ netCost: false, salePrice: false });
                                         setForm((prev) => ({ ...prev, serviceType: value }));
                                     }
                                 }}
@@ -1014,7 +1105,18 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} /> : null}
 
                     {showPricingForm ? (
-                        <PricingForm form={form} setForm={setForm} commissionPercent={commissionPercent} onRecalculate={applyCommission} disabled={isLocked} />
+                        <PricingForm
+                            form={form}
+                            setForm={setForm}
+                            commissionPercent={commissionPercent}
+                            onRecalculate={applyCommission}
+                            disabled={isLocked}
+                            onManualPriceChange={(field) => {
+                                if (serviceType === "Hotel") {
+                                    setManualHotelPricing((current) => ({ ...current, [field]: true }));
+                                }
+                            }}
+                        />
                     ) : null}
 
                     <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">

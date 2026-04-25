@@ -1,30 +1,31 @@
 import { toast } from "sonner";
 import Swal from "sweetalert2";
+import { normalizeMessage } from "./lib/errors";
 
 export function showSuccess(message, title = "Listo") {
   toast.success(title, {
-    description: message,
+    description: normalizeMessage(message, ""),
     duration: 3000,
   });
 }
 
 export function showError(message, title = "Error") {
   toast.error(title, {
-    description: message,
+    description: normalizeMessage(message, ""),
     duration: 4000,
   });
 }
 
 export function showInfo(message, title = "Informacion") {
   toast.info(title, {
-    description: message,
+    description: normalizeMessage(message, ""),
     duration: 3000,
   });
 }
 
 export function showWarning(message, title = "Advertencia") {
   toast.warning(title, {
-    description: message,
+    description: normalizeMessage(message, ""),
     duration: 3500,
   });
 }
@@ -123,9 +124,9 @@ export async function showConfirm(input, text, confirmText = "Si, confirmar", co
 }
 
 export function showToastSuccess(message) {
-  toast.success(message);
+  toast.success(normalizeMessage(message, ""));
 }
 
 export function showToastError(message) {
-  toast.error(message);
+  toast.error(normalizeMessage(message, ""));
 }

@@ -73,36 +73,6 @@ public class BookingService : IBookingService
         }
     }
 
-    private static int GetHotelQuantity(HotelBooking hotel)
-    {
-        var nights = Math.Max((hotel.CheckOut.Date - hotel.CheckIn.Date).Days, 0);
-        hotel.Nights = nights;
-        var safeRooms = Math.Max(hotel.Rooms, 1);
-        return Math.Max(nights, 1) * safeRooms;
-    }
-
-    private static (decimal UnitNetCost, decimal UnitSalePrice, decimal UnitCommission) GetHotelSnapshotUnitValues(HotelBooking hotel)
-    {
-        var quantity = GetHotelQuantity(hotel);
-        return (
-            quantity > 0 ? hotel.NetCost / quantity : hotel.NetCost,
-            quantity > 0 ? hotel.SalePrice / quantity : hotel.SalePrice,
-            quantity > 0 ? hotel.Commission / quantity : hotel.Commission
-        );
-    }
-
-    private static void ApplyHotelPricingFromUnitSnapshot(
-        HotelBooking hotel,
-        decimal unitNetCost,
-        decimal unitSalePrice,
-        decimal unitCommission)
-    {
-        var quantity = GetHotelQuantity(hotel);
-        hotel.NetCost = Math.Round(unitNetCost * quantity, 2, MidpointRounding.AwayFromZero);
-        hotel.SalePrice = Math.Round(unitSalePrice * quantity, 2, MidpointRounding.AwayFromZero);
-        hotel.Commission = Math.Round(unitCommission * quantity, 2, MidpointRounding.AwayFromZero);
-    }
-
     private static void ApplyHotelRateSnapshot(HotelBooking hotel, Rate rate)
     {
         hotel.RateId = rate.Id;
@@ -132,8 +102,6 @@ public class BookingService : IBookingService
         {
             hotel.MealPlan = rate.MealPlan;
         }
-
-        ApplyHotelPricingFromUnitSnapshot(hotel, rate.NetCost, rate.SalePrice, rate.Commission);
     }
 
     private async Task RecalculateReservationScheduleAsync(int reservaId, CancellationToken ct)
@@ -437,7 +405,6 @@ public class BookingService : IBookingService
         var oldStarRating = hotel.StarRating;
         var oldRoomType = hotel.RoomType;
         var oldMealPlan = hotel.MealPlan;
-        var oldSnapshotUnits = GetHotelSnapshotUnitValues(hotel);
         var requestedRateId = await ResolveRateIdAsync(req.RateId, ct);
         var isRateChanged = requestedRateId.HasValue && requestedRateId != oldRateId;
         var requestedRate = isRateChanged
@@ -465,11 +432,6 @@ public class BookingService : IBookingService
             hotel.StarRating = oldStarRating;
             hotel.RoomType = oldRoomType;
             hotel.MealPlan = oldMealPlan;
-            ApplyHotelPricingFromUnitSnapshot(
-                hotel,
-                oldSnapshotUnits.UnitNetCost,
-                oldSnapshotUnits.UnitSalePrice,
-                oldSnapshotUnits.UnitCommission);
         }
 
         await _hotelRepo.UpdateAsync(hotel, ct);

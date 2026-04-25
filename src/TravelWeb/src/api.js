@@ -1,3 +1,5 @@
+import { normalizeMessage } from "./lib/errors";
+
 const configuredApiUrl = (import.meta.env.VITE_API_URL || "").trim();
 
 function normalizeBasePath(pathname) {
@@ -111,35 +113,14 @@ async function parseErrorResponse(response) {
   try {
     const data = JSON.parse(errorText);
 
-    if (Array.isArray(data) && data.length > 0) {
-      return { message: data.join(", "), code: null, payload: data };
-    }
-
-    if (data.errors && typeof data.errors === "object") {
-      const errorMessages = Object.values(data.errors).flat();
-      return {
-        message: errorMessages.length > 0 ? errorMessages.join("\n") : "Error de validacion",
-        code: data.code || null,
-        payload: data,
-      };
-    }
-
-    if (data?.message) {
-      return { message: data.message, code: data.code || null, payload: data };
-    }
-
-    if (data?.title) {
-      return { message: data.title, code: data.code || null, payload: data };
-    }
-
-    if (data?.error) {
-      return { message: data.error, code: data.code || null, payload: data };
-    }
-
-    return { message: JSON.stringify(data), code: data.code || null, payload: data };
+    return {
+      message: normalizeMessage(data, response.statusText || "Request failed"),
+      code: data?.code || null,
+      payload: data,
+    };
   } catch {
     return {
-      message: errorText,
+      message: normalizeMessage(errorText, response.statusText || "Request failed"),
       code: null,
       payload: errorText,
     };
