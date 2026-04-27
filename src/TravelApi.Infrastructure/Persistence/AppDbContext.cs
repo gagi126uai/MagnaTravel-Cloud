@@ -281,6 +281,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ManualCashMovement> ManualCashMovements => Set<ManualCashMovement>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ReservaAttachment> ReservaAttachments => Set<ReservaAttachment>();
+    public DbSet<Voucher> Vouchers => Set<Voucher>();
+    public DbSet<VoucherPassengerAssignment> VoucherPassengerAssignments => Set<VoucherPassengerAssignment>();
+    public DbSet<VoucherAuditEntry> VoucherAuditEntries => Set<VoucherAuditEntry>();
 
     // Pilar 1: Cotizador + CRM
     public DbSet<Quote> Quotes => Set<Quote>();
@@ -289,6 +292,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<LeadActivity> LeadActivities => Set<LeadActivity>();
     public DbSet<WhatsAppBotConfig> WhatsAppBotConfigs => Set<WhatsAppBotConfig>();
     public DbSet<WhatsAppDelivery> WhatsAppDeliveries => Set<WhatsAppDelivery>();
+    public DbSet<MessageDelivery> MessageDeliveries => Set<MessageDelivery>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<BusinessSequence> BusinessSequences => Set<BusinessSequence>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
@@ -324,6 +328,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<CatalogPackageDeparture>(modelBuilder);
         ConfigurePublicEntity<TransferBooking>(modelBuilder);
         ConfigurePublicEntity<ReservaAttachment>(modelBuilder);
+        ConfigurePublicEntity<Voucher>(modelBuilder);
+        ConfigurePublicEntity<MessageDelivery>(modelBuilder);
         ConfigurePublicEntity<SupplierPayment>(modelBuilder);
         ConfigurePublicEntity<ManualCashMovement>(modelBuilder);
         ConfigurePublicEntity<PaymentReceipt>(modelBuilder);
@@ -393,6 +399,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithOne(p => p.Reserva)
                   .HasForeignKey(p => p.ReservaId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(f => f.Vouchers)
+                  .WithOne(v => v.Reserva)
+                  .HasForeignKey(v => v.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(f => f.MessageDeliveries)
+                  .WithOne(m => m.Reserva)
+                  .HasForeignKey(m => m.ReservaId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Passenger
@@ -691,6 +707,109 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(d => d.Customer)
                   .WithMany()
                   .HasForeignKey(d => d.CustomerId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Voucher>(entity =>
+        {
+            entity.ToTable("Vouchers");
+            entity.Property(v => v.Source).HasMaxLength(30).IsRequired();
+            entity.Property(v => v.Status).HasMaxLength(30).IsRequired();
+            entity.Property(v => v.Scope).HasMaxLength(40).IsRequired();
+            entity.Property(v => v.FileName).HasMaxLength(255).IsRequired();
+            entity.Property(v => v.StoredFileName).HasMaxLength(500);
+            entity.Property(v => v.ContentType).HasMaxLength(120).IsRequired();
+            entity.Property(v => v.ExternalOrigin).HasMaxLength(200);
+            entity.Property(v => v.CreatedByUserId).HasMaxLength(200);
+            entity.Property(v => v.CreatedByUserName).HasMaxLength(200);
+            entity.Property(v => v.IssuedByUserId).HasMaxLength(200);
+            entity.Property(v => v.IssuedByUserName).HasMaxLength(200);
+            entity.Property(v => v.IssueReason).HasMaxLength(1000);
+            entity.Property(v => v.ExceptionalReason).HasMaxLength(1000);
+            entity.Property(v => v.AuthorizedBySuperiorUserId).HasMaxLength(200);
+            entity.Property(v => v.AuthorizedBySuperiorUserName).HasMaxLength(200);
+            entity.Property(v => v.OutstandingBalanceAtIssue).HasPrecision(18, 2);
+            entity.HasIndex(v => new { v.ReservaId, v.Status });
+
+            entity.HasOne(v => v.Reserva)
+                  .WithMany(r => r.Vouchers)
+                  .HasForeignKey(v => v.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VoucherPassengerAssignment>(entity =>
+        {
+            entity.ToTable("VoucherPassengerAssignments");
+            entity.HasIndex(a => new { a.VoucherId, a.PassengerId }).IsUnique();
+
+            entity.HasOne(a => a.Voucher)
+                  .WithMany(v => v.PassengerAssignments)
+                  .HasForeignKey(a => a.VoucherId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(a => a.Passenger)
+                  .WithMany()
+                  .HasForeignKey(a => a.PassengerId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VoucherAuditEntry>(entity =>
+        {
+            entity.ToTable("VoucherAuditEntries");
+            entity.Property(a => a.Action).HasMaxLength(50).IsRequired();
+            entity.Property(a => a.UserId).HasMaxLength(200).IsRequired();
+            entity.Property(a => a.UserName).HasMaxLength(200);
+            entity.Property(a => a.Reason).HasMaxLength(1000);
+            entity.Property(a => a.AuthorizedBySuperiorUserId).HasMaxLength(200);
+            entity.Property(a => a.AuthorizedBySuperiorUserName).HasMaxLength(200);
+            entity.Property(a => a.Details).HasMaxLength(2000);
+            entity.Property(a => a.OutstandingBalance).HasPrecision(18, 2);
+            entity.HasIndex(a => new { a.ReservaId, a.OccurredAt });
+
+            entity.HasOne(a => a.Voucher)
+                  .WithMany(v => v.AuditEntries)
+                  .HasForeignKey(a => a.VoucherId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(a => a.Reserva)
+                  .WithMany()
+                  .HasForeignKey(a => a.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MessageDelivery>(entity =>
+        {
+            entity.ToTable("MessageDeliveries");
+            entity.Property(m => m.Channel).HasMaxLength(30).IsRequired();
+            entity.Property(m => m.Kind).HasMaxLength(30).IsRequired();
+            entity.Property(m => m.Status).HasMaxLength(30).IsRequired();
+            entity.Property(m => m.Phone).HasMaxLength(50).IsRequired();
+            entity.Property(m => m.MessageText).HasMaxLength(2000);
+            entity.Property(m => m.AttachmentName).HasMaxLength(255);
+            entity.Property(m => m.BotMessageId).HasMaxLength(200);
+            entity.Property(m => m.SentByUserId).HasMaxLength(200);
+            entity.Property(m => m.SentByUserName).HasMaxLength(200);
+            entity.Property(m => m.Error).HasMaxLength(1000);
+            entity.HasIndex(m => new { m.ReservaId, m.CreatedAt });
+
+            entity.HasOne(m => m.Reserva)
+                  .WithMany(r => r.MessageDeliveries)
+                  .HasForeignKey(m => m.ReservaId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(m => m.Passenger)
+                  .WithMany()
+                  .HasForeignKey(m => m.PassengerId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(m => m.Customer)
+                  .WithMany()
+                  .HasForeignKey(m => m.CustomerId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(m => m.Voucher)
+                  .WithMany()
+                  .HasForeignKey(m => m.VoucherId)
                   .OnDelete(DeleteBehavior.SetNull);
         });
 

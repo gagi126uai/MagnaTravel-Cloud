@@ -40,6 +40,10 @@ docker compose up -d --build
 
 El volumen `whatsapp_auth` persiste la sesion de WhatsApp. Si el bot no tiene sesion iniciada, hay que vincularlo una vez y luego la sesion queda guardada.
 
+La autenticacion de `whatsapp-web.js` se guarda en `LocalAuth` usando `WHATSAPP_AUTH_PATH=/app/.wwebjs_auth`. En Docker Compose ese path esta montado en el volumen persistente `whatsapp_auth:/app/.wwebjs_auth`, por lo que no queda dentro del filesystem temporal del contenedor.
+
+Al reiniciar Docker, el contenedor vuelve a montar `whatsapp_auth`, el bot limpia locks temporales y recupera la sesion existente desde `/app/.wwebjs_auth`. Solo deberia volver a pedir QR si el volumen fue eliminado, si WhatsApp invalido la sesion o si se ejecuto logout del bot.
+
 ### Comandos utiles
 
 ```bash

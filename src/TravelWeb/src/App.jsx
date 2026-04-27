@@ -15,6 +15,7 @@ import PaymentsPage from "./features/payments/pages/PaymentsPage";
 import PaymentsCollectionsPage from "./features/payments/pages/PaymentsCollectionsPage";
 import PaymentsInvoicingPage from "./features/payments/pages/PaymentsInvoicingPage";
 import PaymentsHistoryPage from "./features/payments/pages/PaymentsHistoryPage";
+import MessagesPage from "./features/messages/pages/MessagesPage";
 import CashPage from "./features/payments/pages/CashPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./features/suppliers/pages/SuppliersPage";
@@ -201,6 +202,10 @@ export default function App() {
                       <Route path="history" element={<PaymentsHistoryPage />} />
                     </Route>
                     <Route path="/cash" element={<CashPage />} />
+                    <Route
+                      path="/messages"
+                      element={hasPermission("messages.view") ? <MessagesPage /> : <Navigate to="/dashboard" replace />}
+                    />
                     <Route path="/rates" element={<RatesPage />} />
                     <Route path="/quotes" element={<QuotesPage />} />
                     <Route

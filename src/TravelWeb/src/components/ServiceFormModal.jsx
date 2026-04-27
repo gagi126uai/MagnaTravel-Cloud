@@ -632,13 +632,9 @@ function GenericServiceForm({ form, setForm, suppliers, disabled }) {
 
     return (
         <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                Este servicio es generico/legacy. El tipo se usa solo como etiqueta visual; la edicion se guarda por el endpoint generico.
-            </div>
-
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Tipo visual *</label>
+                    <label className={labelClass}>Tipo de servicio *</label>
                     <select className={inputClass} value={currentType} onChange={(event) => setForm({ ...form, serviceType: event.target.value })} required disabled={disabled}>
                         {typeOptions.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
@@ -1057,11 +1053,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     </button>
                 </div>
 
-                {isGenericEdit ? (
-                    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300">
-                        Editando servicio generico con etiqueta visual <b>{serviceType}</b>. No se usaran endpoints de hotel/vuelo/traslado/paquete.
-                    </div>
-                ) : (
+                {!isGenericEdit ? (
                     <div className="flex border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50">
                         {SERVICE_TYPES.map(({ value, label, icon: Icon, color }) => (
                             <button
@@ -1086,7 +1078,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                             </button>
                         ))}
                     </div>
-                )}
+                ) : null}
 
                 <form onSubmit={handleSubmit} className="max-h-[78vh] space-y-4 overflow-y-auto p-4">
                     {isLocked ? (

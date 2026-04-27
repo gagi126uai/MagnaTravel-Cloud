@@ -123,7 +123,6 @@ public class MappingProfile : Profile
 
         // Customers
         CreateMap<Customer, CustomerDto>();
-        CreateMap<WhatsAppDelivery, WhatsAppDeliveryDto>();
 
         // Servicios
         CreateMap<ServicioReserva, ServicioReservaDto>()

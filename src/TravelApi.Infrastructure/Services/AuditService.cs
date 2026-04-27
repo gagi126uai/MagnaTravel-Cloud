@@ -177,7 +177,8 @@ public class AuditService : IAuditService
         "PaymentReceipt", "InvoiceItem", "InvoiceTribute",
         "CatalogPackage", "CatalogPackageDeparture",
         "Country", "Destination", "DestinationDeparture",
-        "WhatsAppDelivery",
+        "WhatsAppDelivery", "Voucher", "VoucherPassengerAssignment",
+        "VoucherAuditEntry", "MessageDelivery",
         // Business events (login, export, etc.)
         "Session", "Report", "User"
     };

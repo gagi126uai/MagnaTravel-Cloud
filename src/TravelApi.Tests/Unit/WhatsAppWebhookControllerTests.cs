@@ -50,7 +50,8 @@ public class WhatsAppWebhookControllerTests
             config,
             NullLogger<WebhooksController>.Instance,
             new Mock<IHttpClientFactory>().Object,
-            new EntityReferenceResolver(db));
+            new EntityReferenceResolver(db),
+            new Mock<IWhatsAppGateway>().Object);
 
         controller.ControllerContext = new ControllerContext
         {

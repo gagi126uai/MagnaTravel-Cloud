@@ -10,6 +10,17 @@ public static class Permissions
     public const string ReservasEdit = "reservas.edit";
     public const string ReservasDelete = "reservas.delete";
 
+    // Vouchers
+    public const string VouchersGenerate = "vouchers.generate";
+    public const string VouchersIssue = "vouchers.issue";
+    public const string VouchersUpload = "vouchers.upload";
+    public const string VouchersSend = "vouchers.send";
+    public const string VouchersAuthorizeException = "vouchers.authorize_exception";
+
+    // Mensajes
+    public const string MessagesView = "messages.view";
+    public const string MessagesSend = "messages.send";
+
     // Clientes
     public const string ClientesView = "clientes.view";
     public const string ClientesEdit = "clientes.edit";
@@ -56,6 +67,8 @@ public static class Permissions
     public static readonly Dictionary<string, string[]> AllByModule = new()
     {
         ["Reservas"] = new[] { ReservasView, ReservasEdit, ReservasDelete },
+        ["Vouchers"] = new[] { VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersAuthorizeException },
+        ["Mensajes"] = new[] { MessagesView, MessagesSend },
         ["Clientes"] = new[] { ClientesView, ClientesEdit },
         ["Proveedores"] = new[] { ProveedoresView, ProveedoresEdit },
         ["Cobranzas"] = new[] { CobranzasView, CobranzasEdit },
@@ -77,6 +90,8 @@ public static class Permissions
     public static readonly string[] DefaultColaborador = new[]
     {
         ReservasView, ReservasEdit,
+        VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend,
+        MessagesView, MessagesSend,
         ClientesView, ClientesEdit,
         ProveedoresView,
         CobranzasView,
@@ -89,6 +104,8 @@ public static class Permissions
     public static readonly string[] DefaultVendedor = new[]
     {
         ReservasView, ReservasEdit,
+        VouchersGenerate, VouchersSend,
+        MessagesView, MessagesSend,
         ClientesView, ClientesEdit,
         CrmView, CrmEdit,
         CobranzasView,

@@ -6,7 +6,7 @@ internal static class EconomicRulesHelper
 {
     public static bool IsEconomicallySettled(Reserva reserva)
     {
-        return Math.Round(reserva.Balance, 2, MidpointRounding.AwayFromZero) <= 0m;
+        return ReservationEconomicPolicy.IsEconomicallySettled(reserva);
     }
 
     public static string? GetOperativeBlockReason(Reserva reserva, OperationalFinanceSettings settings)
@@ -83,6 +83,6 @@ internal static class EconomicRulesHelper
 
     public static decimal RoundCurrency(decimal amount)
     {
-        return Math.Round(amount, 2, MidpointRounding.AwayFromZero);
+        return ReservationEconomicPolicy.RoundCurrency(amount);
     }
 }

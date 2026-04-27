@@ -7,7 +7,7 @@ import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import PassengerFormModal from "../../../components/PassengerFormModal";
 import PaymentModal from "../../../components/PaymentModal";
-import { ReservaAttachmentsTab } from "../../../components/ReservaAttachmentsTab";
+import { ReservaDocumentsTab } from "../../../components/ReservaDocumentsTab";
 import ServiceFormModal from "../../../components/ServiceFormModal";
 import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
 import {
@@ -266,7 +266,7 @@ export default function ReservaDetailPage() {
               { id: "passengers", label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
               { id: "history", label: "Historial", icon: Clock },
               { id: "account", label: "Estado de Cuenta", icon: CreditCard },
-              { id: "voucher", label: "Voucher", icon: FileText },
+              { id: "voucher", label: "Vouchers", icon: FileText },
               { id: "attachments", label: "Documentos", icon: Paperclip },
             ].map((tab) => (
               <button
@@ -333,7 +333,7 @@ export default function ReservaDetailPage() {
           ) : null}
 
           {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}
-          {activeTab === "attachments" ? <ReservaAttachmentsTab reservaId={publicId} /> : null}
+          {activeTab === "attachments" ? <ReservaDocumentsTab reservaId={publicId} /> : null}
           {activeTab === "voucher" ? <ReservaVoucherTab reservaId={publicId} reserva={reserva} /> : null}
 
           {activeTab === "account" ? (

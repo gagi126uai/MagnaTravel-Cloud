@@ -118,6 +118,8 @@ builder.Services.AddScoped<ISupplierService, SupplierService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<IFileStoragePort, MinioFileStoragePort>();
+builder.Services.AddScoped<IWhatsAppGateway, WhatsAppGateway>();
 builder.Services.AddScoped<IWhatsAppDeliveryService, WhatsAppDeliveryService>();
 
 builder.Services.AddMinio(options =>

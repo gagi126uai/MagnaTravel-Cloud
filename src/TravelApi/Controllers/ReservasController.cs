@@ -18,20 +18,17 @@ public class ReservasController : ControllerBase
 {
     private readonly IReservaService _reservaService;
     private readonly IVoucherService _voucherService;
-    private readonly IWhatsAppDeliveryService _whatsAppDeliveryService;
     private readonly ITimelineService _timelineService;
     private readonly ILogger<ReservasController> _logger;
 
     public ReservasController(
         IReservaService reservaService,
         IVoucherService voucherService,
-        IWhatsAppDeliveryService whatsAppDeliveryService,
         ITimelineService timelineService,
         ILogger<ReservasController> logger)
     {
         _reservaService = reservaService;
         _voucherService = voucherService;
-        _whatsAppDeliveryService = whatsAppDeliveryService;
         _timelineService = timelineService;
         _logger = logger;
     }
@@ -415,11 +412,6 @@ public class ReservasController : ControllerBase
         try
         {
             var reserva = await _reservaService.UpdateStatusAsync(publicIdOrLegacyId, request.Status, cancellationToken);
-            if (request.Status == EstadoReserva.Operational)
-            {
-                await _whatsAppDeliveryService.PrepareVoucherDraftAsync(publicIdOrLegacyId, cancellationToken);
-            }
-
             return Ok(reserva);
         }
         catch (KeyNotFoundException)
@@ -572,89 +564,4 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPatch("{publicIdOrLegacyId}/whatsapp-contact")]
-    public async Task<IActionResult> UpdateWhatsAppContact(
-        string publicIdOrLegacyId,
-        [FromBody] UpdateReservaWhatsAppContactRequest request,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var preview = await _whatsAppDeliveryService.UpdateReservaWhatsAppContactAsync(
-                publicIdOrLegacyId,
-                request.WhatsAppPhoneOverride,
-                cancellationToken);
-            return Ok(preview);
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Unexpected error updating WhatsApp contact for reserva {ReservaId}", publicIdOrLegacyId);
-            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el contacto de WhatsApp.");
-        }
-    }
-
-    [HttpGet("{publicIdOrLegacyId}/whatsapp/voucher-preview")]
-    public async Task<IActionResult> GetVoucherPreview(string publicIdOrLegacyId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var preview = await _whatsAppDeliveryService.GetVoucherPreviewAsync(publicIdOrLegacyId, cancellationToken);
-            return Ok(preview);
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Unexpected error getting WhatsApp preview for reserva {ReservaId}", publicIdOrLegacyId);
-            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener la vista previa del voucher.");
-        }
-    }
-
-    [HttpPost("{publicIdOrLegacyId}/whatsapp/send-voucher")]
-    public async Task<IActionResult> SendVoucher(
-        string publicIdOrLegacyId,
-        [FromBody] SendVoucherRequest request,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var performedBy = User.Identity?.Name ?? "Agente";
-            var delivery = await _whatsAppDeliveryService.SendVoucherAsync(publicIdOrLegacyId, request.Caption, performedBy, cancellationToken);
-            return Ok(delivery);
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound();
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Unexpected error sending WhatsApp voucher for reserva {ReservaId}", publicIdOrLegacyId);
-            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo enviar el voucher por WhatsApp.");
-        }
-    }
-
-    [HttpGet("{publicIdOrLegacyId}/whatsapp/history")]
-    public async Task<IActionResult> GetWhatsAppHistory(string publicIdOrLegacyId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var history = await _whatsAppDeliveryService.GetHistoryAsync(publicIdOrLegacyId, cancellationToken);
-            return Ok(history);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Unexpected error getting WhatsApp history for reserva {ReservaId}", publicIdOrLegacyId);
-            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el historial de WhatsApp.");
-        }
-    }
 }

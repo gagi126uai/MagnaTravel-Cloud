@@ -20,6 +20,7 @@ public class WebhooksController : ControllerBase
     private readonly ILogger<WebhooksController> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IEntityReferenceResolver _entityReferenceResolver;
+    private readonly IWhatsAppGateway _whatsAppGateway;
 
     public WebhooksController(
         ILeadService leadService,
@@ -27,7 +28,8 @@ public class WebhooksController : ControllerBase
         IConfiguration config,
         ILogger<WebhooksController> logger,
         IHttpClientFactory httpClientFactory,
-        IEntityReferenceResolver entityReferenceResolver)
+        IEntityReferenceResolver entityReferenceResolver,
+        IWhatsAppGateway whatsAppGateway)
     {
         _leadService = leadService;
         _whatsAppWebhookService = whatsAppWebhookService;
@@ -35,6 +37,7 @@ public class WebhooksController : ControllerBase
         _logger = logger;
         _httpClientFactory = httpClientFactory;
         _entityReferenceResolver = entityReferenceResolver;
+        _whatsAppGateway = whatsAppGateway;
     }
 
     private bool ValidateSecret()
@@ -166,32 +169,9 @@ public class WebhooksController : ControllerBase
             return BadRequest(new { message = "El mensaje es obligatorio." });
         }
 
-        var botUrl = _config["WhatsApp:BotUrl"] ?? "http://whatsapp-bot:3001";
-        var secret = _config["WhatsApp:WebhookSecret"] ?? "CHANGE_THIS_SECRET";
-
         try
         {
-            var httpClient = _httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(10);
-
-            var botRequest = new HttpRequestMessage(HttpMethod.Post, $"{botUrl}/send")
-            {
-                Content = System.Net.Http.Json.JsonContent.Create(new
-                {
-                    phone = lead.Phone,
-                    message = request.Message
-                })
-            };
-            botRequest.Headers.Add("X-Webhook-Secret", secret);
-
-            var response = await httpClient.SendAsync(botRequest, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("Error enviando WhatsApp a {Phone}: {Error}", lead.Phone, error);
-                return StatusCode(502, new { message = "Error al enviar mensaje por WhatsApp." });
-            }
+            await _whatsAppGateway.SendTextAsync(lead.Phone, request.Message.Trim(), cancellationToken);
 
             var userName = User.Identity?.Name ?? "Agente";
             await _leadService.AddActivityAsync(

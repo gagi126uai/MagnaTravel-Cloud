@@ -15,7 +15,7 @@ const API_URL = process.env.API_URL || "http://api:8080";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "CHANGE_THIS_SECRET";
 const SESSION_TIMEOUT = (parseInt(process.env.BOT_SESSION_TIMEOUT_MINUTES, 10) || 30) * 60 * 1000;
 const HTTP_PORT = parseInt(process.env.BOT_HTTP_PORT, 10) || 3001;
-const AUTH_PATH = path.join(__dirname, ".wwebjs_auth");
+const AUTH_PATH = process.env.WHATSAPP_AUTH_PATH || path.join(__dirname, ".wwebjs_auth");
 const CLIENT_RESTART_DELAY_MS = (parseInt(process.env.BOT_RESTART_DELAY_SECONDS, 10) || 10) * 1000;
 
 let isShowingQR = false;
@@ -267,11 +267,11 @@ async function restartClient(reason) {
     }, CLIENT_RESTART_DELAY_MS);
 }
 
-botLog("Iniciando motor del bot...");
+botLog(`Iniciando motor del bot. Sesion WhatsApp en ${AUTH_PATH}`);
 cleanLockFiles();
 
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({ dataPath: AUTH_PATH }),
     authTimeoutMs: 60000,
     puppeteer: {
         headless: "new",

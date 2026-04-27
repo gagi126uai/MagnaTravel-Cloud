@@ -79,6 +79,8 @@ public class Reserva : IHasPublicId
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
     public ICollection<FlightSegment> FlightSegments { get; set; } = new List<FlightSegment>();
     public ICollection<ReservaAttachment> Attachments { get; set; } = new List<ReservaAttachment>();
+    public ICollection<Voucher> Vouchers { get; set; } = new List<Voucher>();
     public ICollection<WhatsAppDelivery> WhatsAppDeliveries { get; set; } = new List<WhatsAppDelivery>();
+    public ICollection<MessageDelivery> MessageDeliveries { get; set; } = new List<MessageDelivery>();
     public ICollection<ManualCashMovement> ManualCashMovements { get; set; } = new List<ManualCashMovement>();
 }

@@ -138,7 +138,6 @@ public class ReservasControllerServiceRouteTests
         return new ReservasController(
             reservaService.Object,
             Mock.Of<IVoucherService>(),
-            Mock.Of<IWhatsAppDeliveryService>(),
             Mock.Of<ITimelineService>(),
             NullLogger<ReservasController>.Instance);
     }

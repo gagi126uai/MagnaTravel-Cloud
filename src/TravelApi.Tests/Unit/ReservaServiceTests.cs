@@ -61,6 +61,21 @@ public class ReservaServiceTests
     {
         using var context = new AppDbContext(_dbOptions);
         context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Budget });
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 1,
+            ReservaId = 1,
+            ServiceType = "Hotel",
+            ProductType = "Hotel",
+            Description = "Servicio test",
+            ConfirmationNumber = "ABC123",
+            Status = "Confirmado",
+            DepartureDate = DateTime.UtcNow.AddDays(15),
+            SalePrice = 150m,
+            NetCost = 100m,
+            Commission = 50m,
+            CreatedAt = DateTime.UtcNow
+        });
         await context.SaveChangesAsync();
 
         var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);

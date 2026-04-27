@@ -361,6 +361,9 @@ builder.Services.AddScoped<ICatalogPackageService, CatalogPackageService>();
 builder.Services.AddScoped<IWhatsAppBotConfigService, WhatsAppBotConfigService>();
 builder.Services.AddScoped<IWhatsAppConversationService, WhatsAppConversationService>();
 builder.Services.AddScoped<IWhatsAppWebhookService, WhatsAppWebhookService>();
+builder.Services.AddScoped<IWhatsAppGateway, WhatsAppGateway>();
+builder.Services.AddScoped<IMessageService, MessageService>();
+builder.Services.AddScoped<IFileStoragePort, MinioFileStoragePort>();
 builder.Services.AddHostedService<LogStreamingService>();
 builder.Services.AddHostedService<BotLogMonitorService>();
 
@@ -432,9 +435,9 @@ else
 
 builder.Services.AddMinio(options =>
 {
-    options.Endpoint = builder.Configuration["Minio:Endpoint"] ?? "localhost:9000";
-    options.AccessKey = builder.Configuration["Minio:AccessKey"] ?? "minioadmin";
-    options.SecretKey = builder.Configuration["Minio:SecretKey"] ?? "minioadmin";
+    options.Endpoint = builder.Configuration["Minio:Endpoint"] ?? builder.Configuration["MINIO_ENDPOINT"] ?? "localhost:9000";
+    options.AccessKey = builder.Configuration["Minio:AccessKey"] ?? builder.Configuration["MINIO_ACCESS_KEY"] ?? "minioadmin";
+    options.SecretKey = builder.Configuration["Minio:SecretKey"] ?? builder.Configuration["MINIO_SECRET_KEY"] ?? "minioadmin";
 });
 
 // Load allowed origins from configuration (appsettings.json or ENV)

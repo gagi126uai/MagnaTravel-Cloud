@@ -20,6 +20,7 @@
     <Compile Include="..\TravelApi\Controllers\PackageBookingsController.cs" Link="Controllers\PackageBookingsController.cs" />
     <Compile Include="..\TravelApi\Controllers\TransferBookingsController.cs" Link="Controllers\TransferBookingsController.cs" />
     <Compile Include="..\TravelApi\Controllers\AttachmentsController.cs" Link="Controllers\AttachmentsController.cs" />
+    <Compile Include="..\TravelApi\Controllers\VouchersController.cs" Link="Controllers\VouchersController.cs" />
     <Compile Include="..\TravelApi\Errors\DatabaseExceptionClassifier.cs" Link="Errors\DatabaseExceptionClassifier.cs" />
   </ItemGroup>
 
