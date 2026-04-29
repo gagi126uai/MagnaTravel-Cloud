@@ -22,6 +22,11 @@ public class UploadExternalVoucherRequest
     public string ExternalOrigin { get; set; } = "Operador externo";
 }
 
+public class RejectVoucherRequest
+{
+    public string Reason { get; set; } = string.Empty;
+}
+
 public class VoucherExceptionRequest
 {
     public string? ExceptionalReason { get; set; }
@@ -58,6 +63,8 @@ public class VoucherDto
     public bool WasExceptionalIssue { get; set; }
     public string? ExceptionalReason { get; set; }
     public string? AuthorizedBySuperiorUserName { get; set; }
+    public string AuthorizationStatus { get; set; } = string.Empty;
+    public string? RejectReason { get; set; }
     public List<Guid> PassengerPublicIds { get; set; } = new();
     public List<string> PassengerNames { get; set; } = new();
 }

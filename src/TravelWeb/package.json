@@ -10,6 +10,8 @@
     "preview": "vite preview --host 0.0.0.0 --port 3000"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.10",
+    "@heroicons/react": "^2.2.0",
     "@microsoft/signalr": "^10.0.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

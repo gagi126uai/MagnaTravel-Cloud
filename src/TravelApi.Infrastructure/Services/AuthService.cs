@@ -280,7 +280,7 @@ public class AuthService : IAuthService
         {
             new(ClaimTypes.NameIdentifier, user.Id),
             new(ClaimTypes.Email, user.Email ?? string.Empty),
-            new(ClaimTypes.Name, user.FullName)
+            new(ClaimTypes.Name, string.IsNullOrWhiteSpace(user.FullName) ? (user.Email ?? "Usuario") : user.FullName)
         };
 
         var roles = await _userManager.GetRolesAsync(user);

@@ -136,6 +136,55 @@ public class VouchersController : ControllerBase
         }
     }
 
+    [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/approve")]
+    public async Task<ActionResult<VoucherDto>> ApproveVoucher(
+        string voucherPublicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var voucher = await _voucherService.ApproveVoucherIssueAsync(voucherPublicIdOrLegacyId, BuildActor(), cancellationToken);
+            return Ok(voucher);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/reject")]
+    public async Task<ActionResult<VoucherDto>> RejectVoucher(
+        string voucherPublicIdOrLegacyId,
+        [FromBody] RejectVoucherRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var voucher = await _voucherService.RejectVoucherIssueAsync(voucherPublicIdOrLegacyId, request, BuildActor(), cancellationToken);
+            return Ok(voucher);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/ensure-send")]
     public async Task<ActionResult<VoucherDto>> EnsureVoucherCanBeSent(
         string voucherPublicIdOrLegacyId,

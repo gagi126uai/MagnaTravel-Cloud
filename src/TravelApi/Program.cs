@@ -186,7 +186,7 @@ builder.Services.AddAuthentication(options =>
             ValidIssuer = jwtOptions.Issuer,
             ValidAudience = jwtOptions.Audience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key)),
-            NameClaimType = ClaimTypes.NameIdentifier,
+            NameClaimType = ClaimTypes.Name,
             RoleClaimType = ClaimTypes.Role,
             ClockSkew = TimeSpan.FromMinutes(1)
         };
@@ -639,8 +639,7 @@ app.UseOutputCache();
 
 app.UseRouting();
 app.UseMiddleware<InternalMetricsMiddleware>();
-app.UseRateLimiter();
-
+app.UseCors("web");
 app.UseAuthentication();
 app.UseMiddleware<TravelApi.Middleware.CookieCsrfMiddleware>();
 app.UseAuthorization();

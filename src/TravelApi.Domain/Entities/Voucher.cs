@@ -11,9 +11,18 @@ public static class VoucherSources
 public static class VoucherStatuses
 {
     public const string Draft = "Draft";
+    public const string PendingAuthorization = "PendingAuthorization";
     public const string Issued = "Issued";
     public const string UploadedExternal = "UploadedExternal";
     public const string Revoked = "Revoked";
+}
+
+public static class VoucherAuthorizationStatuses
+{
+    public const string NotRequired = "NotRequired";
+    public const string Pending = "Pending";
+    public const string Approved = "Approved";
+    public const string Rejected = "Rejected";
 }
 
 public static class VoucherScopes
@@ -31,6 +40,9 @@ public static class VoucherAuditActions
     public const string ExceptionalIssue = "ExceptionalIssue";
     public const string Sent = "Sent";
     public const string ExceptionalSend = "ExceptionalSend";
+    public const string AuthorizationRequested = "AuthorizationRequested";
+    public const string AuthorizationApproved = "AuthorizationApproved";
+    public const string AuthorizationRejected = "AuthorizationRejected";
 }
 
 public class Voucher : IHasPublicId
@@ -95,6 +107,12 @@ public class Voucher : IHasPublicId
 
     [MaxLength(200)]
     public string? AuthorizedBySuperiorUserName { get; set; }
+
+    [MaxLength(30)]
+    public string AuthorizationStatus { get; set; } = VoucherAuthorizationStatuses.NotRequired;
+
+    [MaxLength(1000)]
+    public string? RejectReason { get; set; }
 
     public decimal OutstandingBalanceAtIssue { get; set; }
 

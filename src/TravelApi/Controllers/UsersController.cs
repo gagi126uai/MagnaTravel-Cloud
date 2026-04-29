@@ -10,10 +10,12 @@ namespace TravelApi.Controllers;
 public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
+    private readonly IServiceProvider _serviceProvider;
 
-    public UsersController(IUserService userService)
+    public UsersController(IUserService userService, IServiceProvider serviceProvider)
     {
         _userService = userService;
+        _serviceProvider = serviceProvider;
     }
 
     [HttpGet]
@@ -115,17 +117,57 @@ public class UsersController : ControllerBase
         return NoContent();
     }
 
-    [HttpDelete("{id}")]
+    [HttpDelete("{userId}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> DeleteUser(string id)
+    public async Task<IActionResult> DeleteUser([FromRoute] string userId)
     {
-        var result = await _userService.DeleteUserAsync(id);
-        if (!result.Succeeded)
-        {
-            return result.Errors?.Contains("no encontrado") == true ? NotFound(result.Errors) : BadRequest(result.Errors);
-        }
-
+        var result = await _userService.DeleteUserAsync(userId);
+        if (!result.Succeeded) return BadRequest(new { errors = result.Errors });
         return NoContent();
+    }
+
+    [HttpPost("fix-uuids")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> FixUuids()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TravelApi.Infrastructure.Persistence.AppDbContext>();
+        
+        var sql = @"
+            UPDATE ""Vouchers""
+            SET ""CreatedByUserName"" = u.""FullName""
+            FROM ""AspNetUsers"" u
+            WHERE ""Vouchers"".""CreatedByUserId"" = u.""Id"" AND length(""Vouchers"".""CreatedByUserName"") = 36;
+
+            UPDATE ""Vouchers""
+            SET ""IssuedByUserName"" = u.""FullName""
+            FROM ""AspNetUsers"" u
+            WHERE ""Vouchers"".""IssuedByUserId"" = u.""Id"" AND length(""Vouchers"".""IssuedByUserName"") = 36;
+
+            UPDATE ""Vouchers""
+            SET ""AuthorizedBySuperiorUserName"" = u.""FullName""
+            FROM ""AspNetUsers"" u
+            WHERE ""Vouchers"".""AuthorizedBySuperiorUserId"" = u.""Id"" AND length(""Vouchers"".""AuthorizedBySuperiorUserName"") = 36;
+
+            UPDATE ""AuditLogs""
+            SET ""UserName"" = u.""FullName""
+            FROM ""AspNetUsers"" u
+            WHERE ""AuditLogs"".""UserId"" = u.""Id"" AND length(""AuditLogs"".""UserName"") = 36;
+
+            UPDATE ""Invoices""
+            SET ""ForcedByUserName"" = u.""FullName""
+            FROM ""AspNetUsers"" u
+            WHERE ""Invoices"".""ForcedByUserId"" = u.""Id"" AND length(""Invoices"".""ForcedByUserName"") = 36;
+            
+            UPDATE ""MessageDeliveries""
+            SET ""SentByUserName"" = u.""FullName""
+            FROM ""AspNetUsers"" u
+            WHERE ""MessageDeliveries"".""SentByUserId"" = u.""Id"" AND length(""MessageDeliveries"".""SentByUserName"") = 36;
+        ";
+        
+        await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRawAsync(db.Database, sql);
+        
+        return Ok(new { Message = "UUIDs fixed in database." });
     }
 
     // --- Permission Endpoints ---

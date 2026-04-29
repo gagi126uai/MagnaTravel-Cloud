@@ -1,0 +1,50 @@
+2026-04-29 19:26:44.145 -03:00 [INF] Allowed CORS Origins: http://localhost:3000, http://localhost:5173
+2026-04-29 19:26:44.247 -03:00 [FTL] Application start-up failed
+Microsoft.Extensions.Hosting.HostAbortedException: The host was aborted.
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.ThrowHostAborted()
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.OnNext(KeyValuePair`2 value)
+   at System.Diagnostics.DiagnosticListener.Write(String name, Object value)
+   at System.Diagnostics.DiagnosticSource.Write[T](String name, T value)
+   at Microsoft.Extensions.Hosting.HostBuilder.ResolveHost(IServiceProvider serviceProvider, DiagnosticListener diagnosticListener)
+   at Microsoft.Extensions.Hosting.HostApplicationBuilder.Build()
+   at Microsoft.AspNetCore.Builder.WebApplicationBuilder.Build()
+   at Program.<Main>$(String[] args) in D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Program.cs:line 494
+2026-04-29 19:26:56.655 -03:00 [INF] Allowed CORS Origins: http://localhost:3000, http://localhost:5173
+2026-04-29 19:26:56.732 -03:00 [FTL] Application start-up failed
+Microsoft.Extensions.Hosting.HostAbortedException: The host was aborted.
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.ThrowHostAborted()
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.OnNext(KeyValuePair`2 value)
+   at System.Diagnostics.DiagnosticListener.Write(String name, Object value)
+   at System.Diagnostics.DiagnosticSource.Write[T](String name, T value)
+   at Microsoft.Extensions.Hosting.HostBuilder.ResolveHost(IServiceProvider serviceProvider, DiagnosticListener diagnosticListener)
+   at Microsoft.Extensions.Hosting.HostApplicationBuilder.Build()
+   at Microsoft.AspNetCore.Builder.WebApplicationBuilder.Build()
+   at Program.<Main>$(String[] args) in D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Program.cs:line 494
+2026-04-29 19:32:59.304 -03:00 [INF] Allowed CORS Origins: http://localhost:3000, http://localhost:5173
+2026-04-29 19:32:59.498 -03:00 [INF] Bootstrapping operational finance schema via raw SQL...
+2026-04-29 19:33:00.090 -03:00 [WRN] Entity 'Payment' has a global query filter defined and is the required end of a relationship with the entity 'PaymentReceipt'. This may lead to unexpected results when the required entity is filtered out. Either configure the navigation as optional, or define matching query filters for both entities in the navigation. See https://go.microsoft.com/fwlink/?linkid=2131316 for more information.
+2026-04-29 19:33:04.410 -03:00 [ERR] An error occurred using the connection to database 'travel' on server 'tcp://localhost:5432'.
+2026-04-29 19:33:04.411 -03:00 [WRN] Operational finance bootstrap skipped or failed: Failed to connect to 127.0.0.1:5432
+2026-04-29 19:33:04.411 -03:00 [INF] Bootstrapping refresh token schema via raw SQL...
+2026-04-29 19:33:21.760 -03:00 [INF] Allowed CORS Origins: http://localhost:3000, http://localhost:5173
+2026-04-29 19:33:21.833 -03:00 [FTL] Application start-up failed
+Microsoft.Extensions.Hosting.HostAbortedException: The host was aborted.
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.ThrowHostAborted()
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.OnNext(KeyValuePair`2 value)
+   at System.Diagnostics.DiagnosticListener.Write(String name, Object value)
+   at System.Diagnostics.DiagnosticSource.Write[T](String name, T value)
+   at Microsoft.Extensions.Hosting.HostBuilder.ResolveHost(IServiceProvider serviceProvider, DiagnosticListener diagnosticListener)
+   at Microsoft.Extensions.Hosting.HostApplicationBuilder.Build()
+   at Microsoft.AspNetCore.Builder.WebApplicationBuilder.Build()
+   at Program.<Main>$(String[] args) in D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Program.cs:line 494
+2026-04-29 19:38:15.580 -03:00 [INF] Allowed CORS Origins: http://localhost:3000, http://localhost:5173
+2026-04-29 19:38:15.655 -03:00 [FTL] Application start-up failed
+Microsoft.Extensions.Hosting.HostAbortedException: The host was aborted.
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.ThrowHostAborted()
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.OnNext(KeyValuePair`2 value)
+   at System.Diagnostics.DiagnosticListener.Write(String name, Object value)
+   at System.Diagnostics.DiagnosticSource.Write[T](String name, T value)
+   at Microsoft.Extensions.Hosting.HostBuilder.ResolveHost(IServiceProvider serviceProvider, DiagnosticListener diagnosticListener)
+   at Microsoft.Extensions.Hosting.HostApplicationBuilder.Build()
+   at Microsoft.AspNetCore.Builder.WebApplicationBuilder.Build()
+   at Program.<Main>$(String[] args) in D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Program.cs:line 494

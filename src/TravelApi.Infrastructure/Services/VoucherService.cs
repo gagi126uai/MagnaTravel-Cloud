@@ -301,11 +301,6 @@ public class VoucherService : IVoucherService
             actor,
             cancellationToken);
 
-        voucher.Status = VoucherStatuses.Issued;
-        voucher.IsEnabledForSending = true;
-        voucher.IssuedByUserId = actor.UserId;
-        voucher.IssuedByUserName = actor.UserName;
-        voucher.IssuedAt = DateTime.UtcNow;
         voucher.IssueReason = NormalizeOptionalReason(request.Reason);
         voucher.WasExceptionalIssue = authorization.WasExceptional;
         voucher.ExceptionalReason = authorization.WasExceptional ? authorization.Reason : null;
@@ -313,15 +308,113 @@ public class VoucherService : IVoucherService
         voucher.AuthorizedBySuperiorUserName = authorization.SuperiorUserName;
         voucher.OutstandingBalanceAtIssue = authorization.OutstandingBalance;
 
+        if (authorization.WasExceptional && !actor.IsAdmin)
+        {
+            voucher.Status = VoucherStatuses.PendingAuthorization;
+            voucher.AuthorizationStatus = VoucherAuthorizationStatuses.Pending;
+
+            AddVoucherAudit(
+                voucher,
+                voucher.Reserva,
+                VoucherAuditActions.AuthorizationRequested,
+                actor,
+                authorization.Reason,
+                authorization.SuperiorUserId,
+                authorization.SuperiorUserName,
+                "Solicitud de autorizacion enviada al supervisor.");
+        }
+        else
+        {
+            voucher.Status = VoucherStatuses.Issued;
+            voucher.IsEnabledForSending = true;
+            voucher.IssuedByUserId = actor.UserId;
+            voucher.IssuedByUserName = actor.UserName;
+            voucher.IssuedAt = DateTime.UtcNow;
+
+            if (authorization.WasExceptional)
+            {
+                voucher.AuthorizationStatus = VoucherAuthorizationStatuses.Approved;
+            }
+
+            AddVoucherAudit(
+                voucher,
+                voucher.Reserva,
+                authorization.WasExceptional ? VoucherAuditActions.ExceptionalIssue : VoucherAuditActions.Issued,
+                actor,
+                authorization.WasExceptional ? authorization.Reason : voucher.IssueReason,
+                authorization.SuperiorUserId,
+                authorization.SuperiorUserName,
+                authorization.WasExceptional ? "Reserva con saldo pendiente (Autorizado directamente por Admin)." : null);
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+        return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
+    }
+
+    public async Task<VoucherDto> ApproveVoucherIssueAsync(string voucherPublicIdOrLegacyId, OperationActor actor, CancellationToken cancellationToken)
+    {
+        await EnsureActorCanAsync(actor, Permissions.VouchersAuthorizeException, cancellationToken);
+
+        var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
+        if (voucher.Status != VoucherStatuses.PendingAuthorization || voucher.AuthorizationStatus != VoucherAuthorizationStatuses.Pending)
+        {
+            throw new InvalidOperationException("El voucher no esta pendiente de autorizacion.");
+        }
+
+        if (!actor.IsAdmin && voucher.AuthorizedBySuperiorUserId != actor.UserId)
+        {
+            throw new UnauthorizedAccessException("Solo el administrador o el supervisor asignado puede aprobar esta solicitud.");
+        }
+
+        voucher.Status = VoucherStatuses.Issued;
+        voucher.AuthorizationStatus = VoucherAuthorizationStatuses.Approved;
+        voucher.IsEnabledForSending = true;
+        voucher.IssuedByUserId = actor.UserId;
+        voucher.IssuedByUserName = actor.UserName;
+        voucher.IssuedAt = DateTime.UtcNow;
+
         AddVoucherAudit(
             voucher,
-            voucher.Reserva,
-            authorization.WasExceptional ? VoucherAuditActions.ExceptionalIssue : VoucherAuditActions.Issued,
+            voucher.Reserva!,
+            VoucherAuditActions.AuthorizationApproved,
             actor,
-            authorization.WasExceptional ? authorization.Reason : voucher.IssueReason,
-            authorization.SuperiorUserId,
-            authorization.SuperiorUserName,
-            authorization.WasExceptional ? "Reserva con saldo pendiente al emitir voucher." : null);
+            "Solicitud de autorizacion aprobada.",
+            voucher.AuthorizedBySuperiorUserId,
+            voucher.AuthorizedBySuperiorUserName,
+            null);
+
+        await _db.SaveChangesAsync(cancellationToken);
+        return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
+    }
+
+    public async Task<VoucherDto> RejectVoucherIssueAsync(string voucherPublicIdOrLegacyId, RejectVoucherRequest request, OperationActor actor, CancellationToken cancellationToken)
+    {
+        await EnsureActorCanAsync(actor, Permissions.VouchersAuthorizeException, cancellationToken);
+
+        var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
+        if (voucher.Status != VoucherStatuses.PendingAuthorization || voucher.AuthorizationStatus != VoucherAuthorizationStatuses.Pending)
+        {
+            throw new InvalidOperationException("El voucher no esta pendiente de autorizacion.");
+        }
+
+        if (!actor.IsAdmin && voucher.AuthorizedBySuperiorUserId != actor.UserId)
+        {
+            throw new UnauthorizedAccessException("Solo el administrador o el supervisor asignado puede rechazar esta solicitud.");
+        }
+
+        voucher.Status = VoucherStatuses.Draft;
+        voucher.AuthorizationStatus = VoucherAuthorizationStatuses.Rejected;
+        voucher.RejectReason = request.Reason;
+        
+        AddVoucherAudit(
+            voucher,
+            voucher.Reserva!,
+            VoucherAuditActions.AuthorizationRejected,
+            actor,
+            request.Reason,
+            voucher.AuthorizedBySuperiorUserId,
+            voucher.AuthorizedBySuperiorUserName,
+            "Solicitud de autorizacion rechazada.");
 
         await _db.SaveChangesAsync(cancellationToken);
         return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
@@ -705,6 +798,8 @@ public class VoucherService : IVoucherService
             WasExceptionalIssue = voucher.WasExceptionalIssue,
             ExceptionalReason = voucher.ExceptionalReason,
             AuthorizedBySuperiorUserName = voucher.AuthorizedBySuperiorUserName,
+            AuthorizationStatus = voucher.AuthorizationStatus,
+            RejectReason = voucher.RejectReason,
             PassengerPublicIds = voucher.PassengerAssignments
                 .Where(a => a.Passenger != null)
                 .Select(a => a.Passenger!.PublicId)
