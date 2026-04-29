@@ -1,9 +1,12 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
 namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
+    [DbContext(typeof(AppDbContext))]
     [Migration("20260427000000_AddVouchersAndMessages")]
     public partial class AddVouchersAndMessages : Migration
     {

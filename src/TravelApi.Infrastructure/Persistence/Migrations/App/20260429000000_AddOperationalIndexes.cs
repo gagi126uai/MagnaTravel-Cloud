@@ -1,9 +1,12 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
 namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
+    [DbContext(typeof(AppDbContext))]
     [Migration("20260429000000_AddOperationalIndexes")]
     public partial class AddOperationalIndexes : Migration
     {
