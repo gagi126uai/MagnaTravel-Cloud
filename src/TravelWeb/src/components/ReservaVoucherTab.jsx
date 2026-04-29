@@ -344,7 +344,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
               onScopeChange={setUploadScope}
               onPassengersChange={setUploadPassengerIds}
             />
-            <div className="grid gap-3 sm:grid-cols-[1fr,1.2fr]">
+            <div className="flex flex-col gap-3">
               <input
                 value={externalOrigin}
                 onChange={(event) => setExternalOrigin(event.target.value)}
