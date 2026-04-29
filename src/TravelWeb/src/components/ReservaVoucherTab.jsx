@@ -5,13 +5,7 @@ import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
 
-const VOUCHER_SCOPES = [
-  { value: "ReservaCompleta", label: "Reserva completa" },
-  { value: "TodosLosPasajeros", label: "Todos los pasajeros" },
-  { value: "PasajerosSeleccionados", label: "Pasajeros seleccionados" },
-];
-
-function getPassengerName(passenger) {
+// Mapeo comercial para scopes eliminado para simplificar inline
   return passenger?.fullName || passenger?.FullName || passenger?.name || passenger?.Name || "Pasajero";
 }
 
@@ -44,7 +38,10 @@ function formatStatus(status) {
 }
 
 function formatScope(scope) {
-  return VOUCHER_SCOPES.find((item) => item.value === scope)?.label || scope || "Reserva completa";
+  if (scope === "ReservaCompleta") return "Toda la reserva";
+  if (scope === "TodosLosPasajeros") return "Todos los pasajeros";
+  if (scope === "PasajerosSeleccionados") return "Pasajeros específicos";
+  return scope || "Toda la reserva";
 }
 
 function normalizeVoucher(item) {
@@ -99,18 +96,16 @@ function ScopeSelector({ label, value, selectedPassengerIds, passengers, onScope
         onChange={(event) => onScopeChange(event.target.value)}
         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
       >
-        {VOUCHER_SCOPES.map((scope) => (
-          <option key={scope.value} value={scope.value}>
-            {scope.label}
-          </option>
-        ))}
+        <option value="ReservaCompleta">Toda la reserva</option>
+        <option value="TodosLosPasajeros">Todos los pasajeros</option>
+        <option value="PasajerosSeleccionados">Pasajeros seleccionados</option>
       </select>
 
       {value === "PasajerosSeleccionados" ? (
         <div className="grid gap-2 sm:grid-cols-2">
           {passengers.length === 0 ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
-              Esta reserva no tiene pasajeros cargados.
+              Aún no has agregado pasajeros a esta reserva.
             </div>
           ) : (
             passengers.map((passenger) => {
@@ -154,8 +149,17 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   const [issueReason, setIssueReason] = useState("");
   const [exceptionalReason, setExceptionalReason] = useState("");
   const [authorizedBySuperiorUserId, setAuthorizedBySuperiorUserId] = useState("");
+  const [supervisors, setSupervisors] = useState([]);
 
   const outstandingBalance = Number(reserva?.balance ?? 0) > 0;
+
+  useEffect(() => {
+    if (outstandingBalance) {
+      api.get("/users/supervisors").then(data => {
+        setSupervisors(Array.isArray(data) ? data : []);
+      }).catch(err => console.error("No se pudieron cargar supervisores", err));
+    }
+  }, [outstandingBalance]);
 
   const fetchVouchers = useCallback(async () => {
     if (!reservaId) return;
@@ -283,9 +287,9 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
         <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
           <div>
-            <div className="text-sm font-black">La reserva tiene saldo pendiente: {formatMoney(reserva?.balance)}</div>
+            <div className="text-sm font-black">Cobro Pendiente: {formatMoney(reserva?.balance)}</div>
             <div className="mt-1 text-xs font-medium">
-              La emision normal queda bloqueada. Para emitir, se requiere usuario Admin o superior autorizante y motivo auditado.
+              Esta reserva aún tiene un saldo a cobrar. Por política comercial, la entrega de vouchers requiere autorización y justificación.
             </div>
           </div>
         </div>
@@ -305,7 +309,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
 
           <div className="space-y-4">
             <ScopeSelector
-              label="Alcance del voucher"
+              label="¿Para quién es este documento?"
               value={generateScope}
               selectedPassengerIds={generatePassengerIds}
               passengers={passengers}
@@ -337,7 +341,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
 
           <div className="space-y-4">
             <ScopeSelector
-              label="Alcance del archivo externo"
+              label="¿Para quién es este documento externo?"
               value={uploadScope}
               selectedPassengerIds={uploadPassengerIds}
               passengers={passengers}
@@ -374,21 +378,25 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
 
       {outstandingBalance ? (
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <h3 className="text-sm font-black text-slate-900 dark:text-white">Autorizacion excepcional para emision</h3>
+          <h3 className="text-sm font-black text-slate-900 dark:text-white">Autorización Comercial</h3>
           <div className="mt-4 grid gap-3 lg:grid-cols-[1.2fr,1fr]">
             <textarea
               value={exceptionalReason}
               onChange={(event) => setExceptionalReason(event.target.value)}
               rows={3}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-              placeholder="Motivo obligatorio para emitir con saldo pendiente"
+              placeholder="Justificación para entregar vouchers con pago pendiente"
             />
-            <input
+            <select
               value={authorizedBySuperiorUserId}
               onChange={(event) => setAuthorizedBySuperiorUserId(event.target.value)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-              placeholder="ID publico del superior autorizante (si no sos Admin)"
-            />
+            >
+              <option value="">Selecciona el Supervisor que autoriza...</option>
+              {supervisors.map(sup => (
+                <option key={sup.id} value={sup.id}>{sup.fullName || sup.email}</option>
+              ))}
+            </select>
           </div>
         </div>
       ) : null}

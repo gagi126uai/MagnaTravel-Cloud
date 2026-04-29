@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { api } from "../api";
 import { format, isToday, isYesterday, formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
@@ -371,12 +371,20 @@ function ChangeDetail({ changes: raw }) {
 }
 
 function formatValue(val) {
-  if (val === null || val === undefined) return "â€”";
+  if (val === null || val === undefined) return "—";
   if (typeof val === "boolean") return val ? "Sí" : "No";
   if (val === "True" || val === "true") return "Sí";
   if (val === "False" || val === "false") return "No";
+
+  if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+    try {
+      JSON.parse(val);
+      return "[Datos estructurados actualizados]";
+    } catch {}
+  }
+
   const str = String(val);
-  if (str.length > 80) return str.substring(0, 80) + "â€¦";
+  if (str.length > 80) return str.substring(0, 80) + "…";
   return str;
 }
 

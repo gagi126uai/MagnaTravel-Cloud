@@ -7,7 +7,6 @@ namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/users")]
-[Authorize(Roles = "Admin")]
 public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
@@ -18,13 +17,25 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<IEnumerable<UserSummaryResponse>>> GetUsers()
     {
         var response = await _userService.GetUsersAsync();
         return Ok(response);
     }
 
+    [HttpGet("supervisors")]
+    [Authorize]
+    public async Task<ActionResult<IEnumerable<UserSummaryResponse>>> GetSupervisors()
+    {
+        var users = await _userService.GetUsersAsync();
+        // Filtrar usuarios que tienen rol Admin o algo equivalente que pueda autorizar
+        var supervisors = users.Where(u => u.Roles.Contains("Admin") || u.Roles.Contains("Supervisor")).ToList();
+        return Ok(supervisors);
+    }
+
     [HttpGet("roles")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<IEnumerable<string>>> GetRoles()
     {
         var roles = await _userService.GetRolesAsync();
@@ -32,6 +43,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost("roles")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest request)
     {
         var result = await _userService.CreateRoleAsync(request);
@@ -44,6 +56,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("roles/{roleName}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteRole(string roleName)
     {
         var result = await _userService.DeleteRoleAsync(roleName);
@@ -56,6 +69,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<UserSummaryResponse>> CreateUser(CreateUserRequest request)
     {
         try
@@ -70,6 +84,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<UserSummaryResponse>> UpdateUser(string id, UpdateUserRequest request)
     {
         try
@@ -88,6 +103,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id}/password")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> ChangePassword(string id, ChangePasswordRequest request)
     {
         var result = await _userService.ChangePasswordAsync(id, request);
@@ -100,6 +116,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteUser(string id)
     {
         var result = await _userService.DeleteUserAsync(id);
@@ -114,6 +131,7 @@ public class UsersController : ControllerBase
     // --- Permission Endpoints ---
 
     [HttpGet("permissions/catalog")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<Dictionary<string, string[]>>> GetPermissionCatalog()
     {
         var catalog = await _userService.GetAllPermissionCatalogAsync();
@@ -121,6 +139,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet("roles/{roleName}/permissions")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<IEnumerable<string>>> GetRolePermissions(string roleName)
     {
         var permissions = await _userService.GetPermissionsForRoleAsync(roleName);
@@ -128,6 +147,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("roles/{roleName}/permissions")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> UpdateRolePermissions(string roleName, [FromBody] string[] permissions)
     {
         var result = await _userService.UpdatePermissionsForRoleAsync(roleName, permissions);
