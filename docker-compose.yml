@@ -37,8 +37,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      reservas-service:
-        condition: service_healthy
     volumes:
       - ./backups/postgres:/backups
     environment:
@@ -53,11 +51,21 @@ services:
         set -e;
         mkdir -p /backups/daily /backups/weekly;
         while true; do
+          today=$$(date +%Y%m%d);
           ts=$$(date +%Y%m%d-%H%M%S);
-          file="/backups/daily/$${POSTGRES_DB}-$${ts}.dump";
-          echo "Creating PostgreSQL backup $${file}";
-          PGPASSWORD="$${POSTGRES_PASSWORD}" pg_dump -Fc -h db -U "$${POSTGRES_USER}" "$${POSTGRES_DB}" > "$${file}";
-          if [ "$$(date +%u)" = "7" ]; then cp "$${file}" "/backups/weekly/$${POSTGRES_DB}-$${ts}.dump"; fi;
+          existing_daily=$$(find /backups/daily -maxdepth 1 -type f -name "$${POSTGRES_DB}-$${today}-*.dump" | sort | tail -n 1);
+          if [ -n "$${existing_daily}" ]; then
+            echo "Daily PostgreSQL backup already exists for $${today}: $${existing_daily}";
+            if [ "$$(date +%u)" = "7" ] && ! find /backups/weekly -maxdepth 1 -type f -name "$${POSTGRES_DB}-$${today}-*.dump" | grep -q .; then
+              cp "$${existing_daily}" "/backups/weekly/$$(basename "$${existing_daily}")";
+              echo "Created missing weekly PostgreSQL backup from existing daily backup.";
+            fi;
+          else
+            file="/backups/daily/$${POSTGRES_DB}-$${ts}.dump";
+            echo "Creating PostgreSQL backup $${file}";
+            PGPASSWORD="$${POSTGRES_PASSWORD}" pg_dump -Fc -h db -U "$${POSTGRES_USER}" "$${POSTGRES_DB}" > "$${file}";
+            if [ "$$(date +%u)" = "7" ]; then cp "$${file}" "/backups/weekly/$${POSTGRES_DB}-$${ts}.dump"; fi;
+          fi;
           find /backups/daily -type f -name "*.dump" -mtime "+$${BACKUP_DAILY_RETENTION_DAYS}" -delete;
           find /backups/weekly -type f -name "*.dump" -mtime "+$${BACKUP_WEEKLY_RETENTION_DAYS}" -delete;
           sleep "$${BACKUP_INTERVAL_SECONDS}";

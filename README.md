@@ -52,7 +52,7 @@ docker compose up -d --build
 - El contenedor `api` espera a que PostgreSQL este saludable.
 - Las migraciones EF se ejecutan una sola vez con el servicio `migrate`; la API no migra la base en cada arranque de produccion.
 - `worker` ejecuta Hangfire y agenda jobs recurrentes; `api` queda dedicada al trafico HTTP.
-- `postgres-backup` genera backups diarios en `backups/postgres/daily` y semanales en `backups/postgres/weekly`.
+- `postgres-backup` genera un backup diario por fecha en `backups/postgres/daily` y copia semanal en `backups/postgres/weekly` los domingos.
 - El frontend espera al backend saludable antes de iniciar.
 - El bot espera al backend saludable antes de iniciar.
 - Los healthchecks quedan definidos para `db`, `api`, `worker`, `web`, `reservas-service`, `minio` y `whatsapp-bot`.

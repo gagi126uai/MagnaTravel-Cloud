@@ -36,8 +36,8 @@ El worker queda con:
 
 Backups automaticos:
 
-- `postgres-backup` guarda dumps en `backups/postgres/daily`.
-- Copia semanal a `backups/postgres/weekly`.
+- `postgres-backup` guarda como maximo un dump diario por fecha en `backups/postgres/daily`.
+- Los domingos copia ese dump diario a `backups/postgres/weekly` si todavia no existe copia semanal de esa fecha.
 - Retencion por `.env`: `BACKUP_DAILY_RETENTION_DAYS` y `BACKUP_WEEKLY_RETENTION_DAYS`.
 
 Backups manuales:
