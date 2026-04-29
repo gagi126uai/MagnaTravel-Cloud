@@ -196,9 +196,23 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, ILogger<Program> logg
         await dbContext.MessageDeliveries.AsNoTracking().Take(1).AnyAsync(cancellationToken);
 
         // Verificar MinIO
-        var minioClient = app.Services.GetRequiredService<Minio.IMinioClient>();
-        var minioBucket = builder.Configuration["Minio:BucketName"] ?? "reservations";
-        await minioClient.BucketExistsAsync(new Minio.DataModel.Args.BucketExistsArgs().WithBucket(minioBucket), cancellationToken);
+        try 
+        {
+            var minioClient = app.Services.GetRequiredService<Minio.IMinioClient>();
+            var minioBucket = builder.Configuration["Minio:BucketName"] ?? "reservations";
+            await minioClient.BucketExistsAsync(new Minio.DataModel.Args.BucketExistsArgs().WithBucket(minioBucket), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "MinIO check failed during readiness probe.");
+            return Results.Json(new
+            {
+                status = "unready",
+                service = "reservations",
+                storage = "unavailable",
+                error = ex.Message
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
 
         return Results.Ok(new { status = "ready", service = "reservations", storage = "connected" });
     }
@@ -209,7 +223,8 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, ILogger<Program> logg
         {
             status = "unready",
             service = "reservations",
-            code = "database_schema_unavailable"
+            code = "readiness_check_failed",
+            error = ex.Message
         }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 }).AllowAnonymous();

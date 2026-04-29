@@ -687,9 +687,21 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, InternalMetricsServic
         }
 
         // Verificar MinIO
-        var minioClient = app.Services.GetRequiredService<Minio.IMinioClient>();
-        var minioBucket = builder.Configuration["Minio:BucketName"] ?? "reservations";
-        await minioClient.BucketExistsAsync(new Minio.DataModel.Args.BucketExistsArgs().WithBucket(minioBucket), cancellationToken);
+        try
+        {
+            var minioClient = app.Services.GetRequiredService<Minio.IMinioClient>();
+            var minioBucket = builder.Configuration["Minio:BucketName"] ?? "reservations";
+            await minioClient.BucketExistsAsync(new Minio.DataModel.Args.BucketExistsArgs().WithBucket(minioBucket), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return Results.Json(new
+            {
+                status = "unready",
+                storage = "unavailable",
+                error = ex.Message
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
 
         metrics.SetDatabaseReady(true);
         return Results.Ok(new { status = "ready", storage = "connected" });
