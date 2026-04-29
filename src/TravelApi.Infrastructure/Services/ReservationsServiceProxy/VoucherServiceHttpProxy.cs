@@ -41,7 +41,7 @@ public class VoucherServiceHttpProxy : ReservationsServiceHttpProxyBase, IVouche
         using var content = new MultipartFormDataContent();
         using var fileContent = new StreamContent(stream);
         fileContent.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-        content.Add(fileContent, "file", fileName);
+        content.Add(fileContent, "File", fileName);
         content.Add(new StringContent(request.Scope), nameof(request.Scope));
         content.Add(new StringContent(request.ExternalOrigin), nameof(request.ExternalOrigin));
 

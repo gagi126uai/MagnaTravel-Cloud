@@ -206,57 +206,73 @@ public class VoucherService : IVoucherService
 
         var safeFileName = SanitizeOriginalFileName(fileName);
         var normalizedContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType.Trim();
-        await using var buffer = new MemoryStream();
-        await stream.CopyToAsync(buffer, cancellationToken);
-        ValidateVoucherUpload(safeFileName, normalizedContentType, buffer.ToArray(), fileSize);
-        buffer.Position = 0;
-
-        var extension = Path.GetExtension(safeFileName).ToLowerInvariant();
-        var stored = await _fileStoragePort.SaveAsync(
-            buffer,
-            $"vouchers/external/{DateTime.UtcNow:yyyy}/{Guid.NewGuid():N}{extension}",
-            safeFileName,
-            normalizedContentType,
-            cancellationToken);
-
-        var voucher = new Voucher
+        
+        try
         {
-            ReservaId = reserva.Id,
-            Source = VoucherSources.External,
-            Status = VoucherStatuses.UploadedExternal,
-            Scope = NormalizeScope(request.Scope),
-            FileName = stored.FileName,
-            StoredFileName = stored.StoredFileName,
-            ContentType = stored.ContentType,
-            FileSize = stored.FileSize,
-            ExternalOrigin = string.IsNullOrWhiteSpace(request.ExternalOrigin) ? "Operador externo" : request.ExternalOrigin.Trim(),
-            IsEnabledForSending = true,
-            CreatedByUserId = actor.UserId,
-            CreatedByUserName = actor.UserName,
-            CreatedAt = DateTime.UtcNow,
-            IssuedByUserId = actor.UserId,
-            IssuedByUserName = actor.UserName,
-            IssuedAt = DateTime.UtcNow
-        };
+            await using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer, cancellationToken);
+            
+            // Validación de integridad y tipo
+            ValidateVoucherUpload(safeFileName, normalizedContentType, buffer.ToArray(), fileSize);
+            buffer.Position = 0;
 
-        foreach (var passenger in passengers)
-        {
-            voucher.PassengerAssignments.Add(new VoucherPassengerAssignment { PassengerId = passenger.Id });
+            var extension = Path.GetExtension(safeFileName).ToLowerInvariant();
+            var stored = await _fileStoragePort.SaveAsync(
+                buffer,
+                $"vouchers/external/{DateTime.UtcNow:yyyy}/{Guid.NewGuid():N}{extension}",
+                safeFileName,
+                normalizedContentType,
+                cancellationToken);
+
+            var voucher = new Voucher
+            {
+                ReservaId = reserva.Id,
+                Source = VoucherSources.External,
+                Status = VoucherStatuses.UploadedExternal,
+                Scope = NormalizeScope(request.Scope),
+                FileName = stored.FileName,
+                StoredFileName = stored.StoredFileName,
+                ContentType = stored.ContentType,
+                FileSize = stored.FileSize,
+                ExternalOrigin = string.IsNullOrWhiteSpace(request.ExternalOrigin) ? "Operador externo" : request.ExternalOrigin.Trim(),
+                IsEnabledForSending = true,
+                CreatedByUserId = actor.UserId,
+                CreatedByUserName = actor.UserName,
+                CreatedAt = DateTime.UtcNow,
+                IssuedByUserId = actor.UserId,
+                IssuedByUserName = actor.UserName,
+                IssuedAt = DateTime.UtcNow
+            };
+
+            foreach (var passenger in passengers)
+            {
+                voucher.PassengerAssignments.Add(new VoucherPassengerAssignment { PassengerId = passenger.Id });
+            }
+
+            _db.Vouchers.Add(voucher);
+            AddVoucherAudit(
+                voucher,
+                reserva,
+                VoucherAuditActions.UploadedExternal,
+                actor,
+                $"Origen: {voucher.ExternalOrigin}",
+                null,
+                null,
+                null);
+
+            await _db.SaveChangesAsync(cancellationToken);
+            return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
         }
-
-        _db.Vouchers.Add(voucher);
-        AddVoucherAudit(
-            voucher,
-            reserva,
-            VoucherAuditActions.UploadedExternal,
-            actor,
-            $"Origen: {voucher.ExternalOrigin}",
-            null,
-            null,
-            null);
-
-        await _db.SaveChangesAsync(cancellationToken);
-        return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
+        catch (InvalidOperationException)
+        {
+            // Re-lanzar validaciones de negocio tal cual
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Capturar errores de infraestructura (DB, MinIO, etc) y dar contexto
+            throw new InvalidOperationException($"Error procesando voucher externo '{safeFileName}': {ex.Message}", ex);
+        }
     }
 
     public async Task<VoucherDto> IssueVoucherAsync(

@@ -49,10 +49,13 @@ public class MinioFileStoragePort : IFileStoragePort
 
             await _minioClient.PutObjectAsync(args, cancellationToken);
         }
-        catch (MinioException ex)
+        catch (Exception ex)
         {
-            _logger.LogError(ex, "Error uploading object {ObjectName} to MinIO.", objectName);
-            throw new InvalidOperationException("Fallo la subida al almacenamiento remoto.");
+            _logger.LogError(ex, "Error uploading object {ObjectName} to MinIO. Bucket: {Bucket}", objectName, _bucketName);
+            
+            // Si es un error de comunicación, queremos saberlo.
+            var detail = ex is MinioException ? "Error de protocolo MinIO" : "Error de red o conexión con el almacenamiento";
+            throw new InvalidOperationException($"{detail}: {ex.Message}");
         }
 
         return new StoredFileDescriptor(objectName.Replace('\\', '/'), fileName, contentType, buffer.Length);
