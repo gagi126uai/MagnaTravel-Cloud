@@ -196,6 +196,7 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, ILogger<Program> logg
         await dbContext.MessageDeliveries.AsNoTracking().Take(1).AnyAsync(cancellationToken);
 
         // Verificar MinIO
+        var endpoint = builder.Configuration["Minio:Endpoint"] ?? builder.Configuration["MINIO_ENDPOINT"] ?? "minio:9000";
         try 
         {
             var minioClient = app.Services.GetRequiredService<Minio.IMinioClient>();
@@ -204,17 +205,18 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, ILogger<Program> logg
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "MinIO check failed during readiness probe.");
+            logger.LogError(ex, "CRITICAL: MinIO connectivity check failed for endpoint '{Endpoint}'. Check Docker network and credentials.", endpoint);
             return Results.Json(new
             {
                 status = "unready",
                 service = "reservations",
                 storage = "unavailable",
+                endpoint = endpoint,
                 error = ex.Message
             }, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
-        return Results.Ok(new { status = "ready", service = "reservations", storage = "connected" });
+        return Results.Ok(new { status = "ready", service = "reservations", storage = "connected", endpoint = endpoint });
     }
     catch (Exception ex)
     {

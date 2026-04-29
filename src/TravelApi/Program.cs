@@ -687,6 +687,7 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, InternalMetricsServic
         }
 
         // Verificar MinIO
+        var endpoint = builder.Configuration["Minio:Endpoint"] ?? builder.Configuration["MINIO_ENDPOINT"] ?? "localhost:9000";
         try
         {
             var minioClient = app.Services.GetRequiredService<Minio.IMinioClient>();
@@ -695,16 +696,18 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, InternalMetricsServic
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[CRITICAL] MinIO connectivity check failed for endpoint '{endpoint}': {ex.Message}");
             return Results.Json(new
             {
                 status = "unready",
                 storage = "unavailable",
+                endpoint = endpoint,
                 error = ex.Message
             }, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
         metrics.SetDatabaseReady(true);
-        return Results.Ok(new { status = "ready", storage = "connected" });
+        return Results.Ok(new { status = "ready", storage = "connected", endpoint = endpoint });
     }
     catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
     {
