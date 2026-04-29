@@ -73,6 +73,8 @@ bash scripts/ops/check-prod.sh
 bash scripts/ops/backup-db.sh
 bash scripts/ops/restore-db.sh --backup backups/postgres/daily/travel-YYYYMMDD-HHMMSS.dump
 bash scripts/ops/backup-volumes.sh
+bash scripts/ops/docker-disk-usage.sh
+bash scripts/ops/docker-cleanup.sh
 bash scripts/ops/load-test-smoke.sh
 ```
 
@@ -95,6 +97,28 @@ docker compose logs -f web
 docker compose logs -f db
 docker compose logs -f postgres-backup
 ```
+
+### Control de espacio Docker
+
+Ver uso real de Docker:
+
+```bash
+bash scripts/ops/docker-disk-usage.sh
+```
+
+Limpiar en modo simulacion:
+
+```bash
+bash scripts/ops/docker-cleanup.sh
+```
+
+Ejecutar limpieza segura de objetos no usados, sin tocar volumenes:
+
+```bash
+bash scripts/ops/docker-cleanup.sh --execute
+```
+
+Los logs de contenedores quedan rotados por Compose con `DOCKER_LOG_MAX_SIZE` y `DOCKER_LOG_MAX_FILE`.
 
 Si Vouchers o Mensajes devuelven 500 desde `reservas-service`, revisar primero:
 

@@ -62,3 +62,8 @@ docker compose up -d api worker reservas-service web whatsapp-bot postgres-backu
 
 echo "Checking production readiness..."
 bash scripts/ops/check-prod.sh
+
+if [ "${RUN_DOCKER_CLEANUP_AFTER_DEPLOY:-false}" = "true" ]; then
+  echo "Running post-deploy Docker cleanup..."
+  bash scripts/ops/docker-cleanup.sh --execute
+fi

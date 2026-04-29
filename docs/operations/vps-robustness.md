@@ -85,6 +85,60 @@ Alertas minimas a configurar en el VPS o proveedor:
 - backups vencidos o inexistentes.
 - `p95` por encima de 800 ms.
 
+## Control de espacio Docker
+
+Docker acumula build cache, imagenes viejas, contenedores parados, redes sin uso y logs JSON. No usar `docker compose down -v` ni `docker system prune --volumes` en produccion, porque puede borrar datos.
+
+Ver uso:
+
+```bash
+bash scripts/ops/docker-disk-usage.sh
+```
+
+Simular limpieza:
+
+```bash
+bash scripts/ops/docker-cleanup.sh
+```
+
+Ejecutar limpieza segura:
+
+```bash
+bash scripts/ops/docker-cleanup.sh --execute
+```
+
+Politica por defecto:
+
+- conserva objetos no usados de los ultimos 7 dias (`DOCKER_CLEANUP_KEEP_HOURS=168`).
+- limpia contenedores parados, redes sin uso, imagenes no usadas y build cache viejo.
+- no elimina volumenes salvo `DOCKER_CLEANUP_VOLUMES=true`.
+
+Para automatizarlo sin perder rollback inmediato, usar cron semanal:
+
+```bash
+0 4 * * 0 cd /home/MagnaTravel-Cloud && bash scripts/ops/docker-cleanup.sh --execute >> logs/docker-cleanup.log 2>&1
+```
+
+Los logs de contenedores rotan desde Compose:
+
+- `DOCKER_LOG_MAX_SIZE`, default `50m`.
+- `DOCKER_LOG_MAX_FILE`, default `3`.
+
+Tambien se puede activar garbage collection del builder en `/etc/docker/daemon.json`:
+
+```json
+{
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "defaultKeepStorage": "20GB"
+    }
+  }
+}
+```
+
+Despues de modificar `daemon.json`, reiniciar Docker en una ventana controlada.
+
 ## Base de datos
 
 PostgreSQL queda configurado con slow query logging:
