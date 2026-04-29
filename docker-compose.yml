@@ -37,6 +37,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      reservas-service:
+        condition: service_healthy
     volumes:
       - ./backups/postgres:/backups
     environment:

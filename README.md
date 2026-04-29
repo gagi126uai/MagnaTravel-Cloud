@@ -39,6 +39,14 @@ git pull
 bash scripts/ops/deploy.sh
 ```
 
+Si se usa `docker compose up -d --build` manualmente, ejecutar antes el paso de migraciones:
+
+```bash
+docker compose up -d db rabbitmq minio
+docker compose run --rm migrate
+docker compose up -d --build
+```
+
 ### Que hace automaticamente
 
 - El contenedor `api` espera a que PostgreSQL este saludable.
@@ -86,4 +94,12 @@ docker compose logs -f whatsapp-bot
 docker compose logs -f web
 docker compose logs -f db
 docker compose logs -f postgres-backup
+```
+
+Si Vouchers o Mensajes devuelven 500 desde `reservas-service`, revisar primero:
+
+```bash
+docker compose run --rm migrate
+docker compose logs --tail=200 reservas-service
+docker compose exec -T reservas-service curl -fsS http://127.0.0.1:8080/health/ready
 ```

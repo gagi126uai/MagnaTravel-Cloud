@@ -19,6 +19,8 @@ bash scripts/ops/deploy.sh
 
 El deploy valida secretos, construye imagenes, levanta infraestructura, ejecuta `migrate` una sola vez, inicia `api`, `worker`, `web`, `reservas-service`, `whatsapp-bot` y `postgres-backup`, y termina con `check-prod`.
 
+No reemplazar ese flujo por `docker compose up -d --build` en produccion. Si se levanta manualmente, correr primero `docker compose run --rm migrate`; si no, `reservas-service` puede quedar sin tablas nuevas como `Vouchers`, `VoucherPassengerAssignments`, `VoucherAuditEntries` o `MessageDeliveries`.
+
 En produccion la API queda con:
 
 - `Database__ApplyMigrationsOnStartup=false`

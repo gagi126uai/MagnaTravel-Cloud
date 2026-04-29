@@ -164,14 +164,49 @@ app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "reservations" })).AllowAnonymous();
-app.MapGet("/health/ready", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (AppDbContext dbContext, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
-    if (!await dbContext.Database.CanConnectAsync(cancellationToken))
+    try
     {
-        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
-    }
+        if (!await dbContext.Database.CanConnectAsync(cancellationToken))
+        {
+            return Results.Json(new
+            {
+                status = "unready",
+                service = "reservations",
+                code = "database_unavailable"
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
 
-    return Results.Ok(new { status = "ready", service = "reservations" });
+        var pendingMigrations = await dbContext.Database.GetPendingMigrationsAsync(cancellationToken);
+        if (pendingMigrations.Any())
+        {
+            return Results.Json(new
+            {
+                status = "unready",
+                service = "reservations",
+                code = "database_not_migrated",
+                pendingMigrations = pendingMigrations.ToArray()
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        await dbContext.Vouchers.AsNoTracking().Take(1).AnyAsync(cancellationToken);
+        await dbContext.VoucherPassengerAssignments.AsNoTracking().Take(1).AnyAsync(cancellationToken);
+        await dbContext.VoucherAuditEntries.AsNoTracking().Take(1).AnyAsync(cancellationToken);
+        await dbContext.MessageDeliveries.AsNoTracking().Take(1).AnyAsync(cancellationToken);
+
+        return Results.Ok(new { status = "ready", service = "reservations" });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Reservations service readiness check failed.");
+        return Results.Json(new
+        {
+            status = "unready",
+            service = "reservations",
+            code = "database_schema_unavailable"
+        }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
 }).AllowAnonymous();
 
 app.MapControllers();
