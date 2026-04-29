@@ -195,7 +195,12 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, ILogger<Program> logg
         await dbContext.VoucherAuditEntries.AsNoTracking().Take(1).AnyAsync(cancellationToken);
         await dbContext.MessageDeliveries.AsNoTracking().Take(1).AnyAsync(cancellationToken);
 
-        return Results.Ok(new { status = "ready", service = "reservations" });
+        // Verificar MinIO
+        var minioClient = app.Services.GetRequiredService<Minio.IMinioClient>();
+        var minioBucket = builder.Configuration["Minio:BucketName"] ?? "reservations";
+        await minioClient.BucketExistsAsync(new Minio.DataModel.Args.BucketExistsArgs().WithBucket(minioBucket), cancellationToken);
+
+        return Results.Ok(new { status = "ready", service = "reservations", storage = "connected" });
     }
     catch (Exception ex)
     {
