@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -62,7 +63,11 @@ public class VouchersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
         }
     }
 
@@ -107,7 +112,11 @@ public class VouchersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
         }
     }
 
@@ -132,7 +141,11 @@ public class VouchersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
         }
     }
 
@@ -156,7 +169,11 @@ public class VouchersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
         }
     }
 
@@ -181,7 +198,40 @@ public class VouchersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+    }
+
+    [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/revoke")]
+    public async Task<ActionResult<VoucherDto>> RevokeVoucher(
+        string voucherPublicIdOrLegacyId,
+        [FromBody] RevokeVoucherRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var voucher = await _voucherService.RevokeVoucherAsync(voucherPublicIdOrLegacyId, request, BuildActor(), cancellationToken);
+            return Ok(voucher);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
         }
     }
 
@@ -212,7 +262,11 @@ public class VouchersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
         }
     }
 
@@ -237,6 +291,14 @@ public class VouchersController : ControllerBase
         catch (UnauthorizedAccessException)
         {
             return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
         }
     }
 
@@ -266,6 +328,31 @@ public class VouchersController : ControllerBase
             User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "System",
             User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name ?? "Sistema",
             roles);
+    }
+
+    private static string NormalizeProxyMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "No se pudo procesar la solicitud.";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(message);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("message", out var messageProperty) &&
+                messageProperty.ValueKind == JsonValueKind.String)
+            {
+                return messageProperty.GetString() ?? message;
+            }
+        }
+        catch (JsonException)
+        {
+            // The message is already plain text.
+        }
+
+        return message;
     }
 }
 

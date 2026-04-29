@@ -63,7 +63,8 @@ public class MessageService : IMessageService
                     DisplayName = reserva.Payer.FullName,
                     Phone = WhatsAppPhoneHelper.Canonicalize(reserva.Payer.Phone) ?? WhatsAppPhoneHelper.Canonicalize(reserva.WhatsAppPhoneOverride),
                     Vouchers = reserva.Vouchers
-                        .Where(v => v.Scope == VoucherScopes.Reservation || v.Scope == VoucherScopes.AllPassengers)
+                        .Where(v => v.Status != VoucherStatuses.Revoked &&
+                            (v.Scope == VoucherScopes.Reservation || v.Scope == VoucherScopes.AllPassengers))
                         .Select(MapVoucher)
                         .ToList()
                 });
@@ -80,10 +81,11 @@ public class MessageService : IMessageService
                     DisplayName = passenger.FullName,
                     Phone = WhatsAppPhoneHelper.Canonicalize(passenger.Phone),
                     Vouchers = reserva.Vouchers
-                        .Where(v =>
+                        .Where(v => v.Status != VoucherStatuses.Revoked &&
+                            (
                             v.Scope == VoucherScopes.Reservation ||
                             v.Scope == VoucherScopes.AllPassengers ||
-                            v.PassengerAssignments.Any(a => a.PassengerId == passenger.Id))
+                            v.PassengerAssignments.Any(a => a.PassengerId == passenger.Id)))
                         .Select(MapVoucher)
                         .ToList()
                 });
@@ -338,7 +340,14 @@ public class MessageService : IMessageService
             IssuedAt = voucher.IssuedAt,
             WasExceptionalIssue = voucher.WasExceptionalIssue,
             ExceptionalReason = voucher.ExceptionalReason,
+            AuthorizedBySuperiorUserId = voucher.AuthorizedBySuperiorUserId,
             AuthorizedBySuperiorUserName = voucher.AuthorizedBySuperiorUserName,
+            AuthorizationStatus = voucher.AuthorizationStatus,
+            RejectReason = voucher.RejectReason,
+            RevokedAt = voucher.RevokedAt,
+            RevokedByUserId = voucher.RevokedByUserId,
+            RevokedByUserName = voucher.RevokedByUserName,
+            RevocationReason = voucher.RevocationReason,
             PassengerPublicIds = voucher.PassengerAssignments
                 .Where(assignment => assignment.Passenger is not null)
                 .Select(assignment => assignment.Passenger!.PublicId)

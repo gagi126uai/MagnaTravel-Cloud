@@ -23,6 +23,7 @@ public static class VoucherAuthorizationStatuses
     public const string Pending = "Pending";
     public const string Approved = "Approved";
     public const string Rejected = "Rejected";
+    public const string Cancelled = "Cancelled";
 }
 
 public static class VoucherScopes
@@ -43,6 +44,7 @@ public static class VoucherAuditActions
     public const string AuthorizationRequested = "AuthorizationRequested";
     public const string AuthorizationApproved = "AuthorizationApproved";
     public const string AuthorizationRejected = "AuthorizationRejected";
+    public const string Revoked = "Revoked";
 }
 
 public class Voucher : IHasPublicId
@@ -114,6 +116,17 @@ public class Voucher : IHasPublicId
     [MaxLength(1000)]
     public string? RejectReason { get; set; }
 
+    public DateTime? RevokedAt { get; set; }
+
+    [MaxLength(200)]
+    public string? RevokedByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? RevokedByUserName { get; set; }
+
+    [MaxLength(1000)]
+    public string? RevocationReason { get; set; }
+
     public decimal OutstandingBalanceAtIssue { get; set; }
 
     public ICollection<VoucherPassengerAssignment> PassengerAssignments { get; set; } = new List<VoucherPassengerAssignment>();
@@ -121,6 +134,7 @@ public class Voucher : IHasPublicId
 
     public bool CanBeSent() =>
         IsEnabledForSending &&
+        Status != VoucherStatuses.Revoked &&
         (Status == VoucherStatuses.Issued || Status == VoucherStatuses.UploadedExternal);
 }
 

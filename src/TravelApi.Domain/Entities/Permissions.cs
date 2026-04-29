@@ -16,6 +16,7 @@ public static class Permissions
     public const string VouchersUpload = "vouchers.upload";
     public const string VouchersSend = "vouchers.send";
     public const string VouchersAuthorizeException = "vouchers.authorize_exception";
+    public const string VouchersRevoke = "vouchers.revoke";
 
     // Mensajes
     public const string MessagesView = "messages.view";
@@ -67,7 +68,7 @@ public static class Permissions
     public static readonly Dictionary<string, string[]> AllByModule = new()
     {
         ["Reservas"] = new[] { ReservasView, ReservasEdit, ReservasDelete },
-        ["Vouchers"] = new[] { VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersAuthorizeException },
+        ["Vouchers"] = new[] { VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersAuthorizeException, VouchersRevoke },
         ["Mensajes"] = new[] { MessagesView, MessagesSend },
         ["Clientes"] = new[] { ClientesView, ClientesEdit },
         ["Proveedores"] = new[] { ProveedoresView, ProveedoresEdit },
@@ -90,7 +91,7 @@ public static class Permissions
     public static readonly string[] DefaultColaborador = new[]
     {
         ReservasView, ReservasEdit,
-        VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend,
+        VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersRevoke,
         MessagesView, MessagesSend,
         ClientesView, ClientesEdit,
         ProveedoresView,

@@ -34,14 +34,9 @@ export default function ConfirmModal({
         question: "bg-indigo-50 dark:bg-indigo-900/20 ring-4 ring-indigo-100 dark:ring-indigo-900/30"
     };
 
-    const handleBackdropClick = (e) => {
-        if (e.target === e.currentTarget && !isLoading) onClose();
-    };
-
     return (
         <div 
             className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300"
-            onClick={handleBackdropClick}
         >
             <div 
                 className="w-full max-w-sm bg-white/95 dark:bg-slate-950/95 rounded-[2.5rem] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] border border-white/40 dark:border-slate-800/50 overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-4 duration-300 relative"

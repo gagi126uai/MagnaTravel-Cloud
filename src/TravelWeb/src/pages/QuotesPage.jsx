@@ -37,7 +37,7 @@ function QuoteFormModal({ customers, initial, defaults, contextLead, onSave, onC
     const [form, setForm] = useState(() => buildForm(initial, defaults));
     const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
             <div className="max-h-[90vh] w-full max-w-2xl space-y-5 overflow-y-auto rounded-[2rem] border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900" onClick={(event) => event.stopPropagation()}>
                 <div><h2 className="text-2xl font-black text-slate-900 dark:text-white">{initial ? "Editar cotizacion" : "Nueva cotizacion"}</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Propuesta lista para seguir despues como reserva.</p></div>
                 {form.leadPublicId && !initial && <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-700 dark:border-violet-900/50 dark:bg-violet-900/10 dark:text-violet-300"><div className="text-[11px] font-black uppercase tracking-[0.22em]">Posible cliente asociado</div><div className="mt-1 font-semibold">{contextLead?.fullName || "Gestion comercial vinculada"}</div></div>}
@@ -80,7 +80,7 @@ function ItemModal({ serviceTypes, onSave, onClose }) {
     const selectRate = (rate) => { setForm((prev) => ({ ...prev, description: rate.productName || rate.hotelName || rate.description || "Servicio seleccionado", unitCost: rate.netCost || 0, unitPrice: rate.salePrice || 0, ratePublicId: getPublicId(rate), markupPercent: rate.netCost ? Math.round(((rate.salePrice - rate.netCost) / rate.netCost) * 100) : 0 })); setRatesResults([]); };
     const recalcSale = () => { if (form.unitCost > 0) set("unitPrice", Math.round(form.unitCost * (1 + (form.markupPercent || 0) / 100))); };
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
             <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900" onClick={(event) => event.stopPropagation()}>
                 <h2 className="border-b border-slate-100 pb-2 text-lg font-black text-slate-900 dark:border-slate-800 dark:text-white">Agregar servicio</h2>
                 <Field label="Tipo de servicio"><select value={form.serviceType} onChange={(event) => { set("serviceType", event.target.value); set("ratePublicId", null); }} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium dark:border-slate-700 dark:bg-slate-800">{serviceTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></Field>

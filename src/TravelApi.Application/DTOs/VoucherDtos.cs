@@ -27,6 +27,11 @@ public class RejectVoucherRequest
     public string Reason { get; set; } = string.Empty;
 }
 
+public class RevokeVoucherRequest
+{
+    public string Reason { get; set; } = string.Empty;
+}
+
 public class VoucherExceptionRequest
 {
     public string? ExceptionalReason { get; set; }
@@ -62,9 +67,14 @@ public class VoucherDto
     public DateTime? IssuedAt { get; set; }
     public bool WasExceptionalIssue { get; set; }
     public string? ExceptionalReason { get; set; }
+    public string? AuthorizedBySuperiorUserId { get; set; }
     public string? AuthorizedBySuperiorUserName { get; set; }
     public string AuthorizationStatus { get; set; } = string.Empty;
     public string? RejectReason { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    public string? RevokedByUserId { get; set; }
+    public string? RevokedByUserName { get; set; }
+    public string? RevocationReason { get; set; }
     public List<Guid> PassengerPublicIds { get; set; } = new();
     public List<string> PassengerNames { get; set; } = new();
 }

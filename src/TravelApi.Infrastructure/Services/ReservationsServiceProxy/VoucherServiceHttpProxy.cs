@@ -62,6 +62,9 @@ public class VoucherServiceHttpProxy : ReservationsServiceHttpProxyBase, IVouche
     public Task<VoucherDto> RejectVoucherIssueAsync(string voucherPublicIdOrLegacyId, RejectVoucherRequest request, OperationActor actor, CancellationToken cancellationToken)
         => PostAsync<RejectVoucherRequest, VoucherDto>($"api/vouchers/{voucherPublicIdOrLegacyId}/reject", request, cancellationToken);
 
+    public Task<VoucherDto> RevokeVoucherAsync(string voucherPublicIdOrLegacyId, RevokeVoucherRequest request, OperationActor actor, CancellationToken cancellationToken)
+        => PostAsync<RevokeVoucherRequest, VoucherDto>($"api/vouchers/{voucherPublicIdOrLegacyId}/revoke", request, cancellationToken);
+
     public Task<VoucherDto> EnsureVoucherCanBeSentAsync(
         string reservaPublicIdOrLegacyId,
         string voucherPublicIdOrLegacyId,

@@ -21,6 +21,7 @@ public interface IVoucherService
     Task<VoucherDto> IssueVoucherAsync(string voucherPublicIdOrLegacyId, IssueVoucherRequest request, OperationActor actor, CancellationToken cancellationToken);
     Task<VoucherDto> ApproveVoucherIssueAsync(string voucherPublicIdOrLegacyId, OperationActor actor, CancellationToken cancellationToken);
     Task<VoucherDto> RejectVoucherIssueAsync(string voucherPublicIdOrLegacyId, RejectVoucherRequest request, OperationActor actor, CancellationToken cancellationToken);
+    Task<VoucherDto> RevokeVoucherAsync(string voucherPublicIdOrLegacyId, RevokeVoucherRequest request, OperationActor actor, CancellationToken cancellationToken);
     Task<VoucherDto> EnsureVoucherCanBeSentAsync(
         string reservaPublicIdOrLegacyId,
         string voucherPublicIdOrLegacyId,

@@ -85,7 +85,6 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
             {/* Backdrop */}
             <div
                 className={`fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${bgOpacity}`}
-                onClick={handleClose}
             />
 
             {/* Modal Content */}

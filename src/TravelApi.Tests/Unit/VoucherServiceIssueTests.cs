@@ -77,7 +77,7 @@ public class VoucherServiceIssueTests
     }
 
     [Fact]
-    public async Task IssueVoucherAsync_AllowsExceptionalIssue_WithAuthorizedSuperiorAndAuditsAuthorization()
+    public async Task IssueVoucherAsync_RequestsAuthorization_WhenReservationHasOutstandingBalanceAndSuperiorIsSelected()
     {
         using var db = CreateDbContext();
         GrantIssuePermission(db);
@@ -95,13 +95,83 @@ public class VoucherServiceIssueTests
             new OperationActor("issuer-1", "Operador", new[] { "Ops" }),
             CancellationToken.None);
 
+        Assert.Equal(VoucherStatuses.PendingAuthorization, result.Status);
+        Assert.Equal(VoucherAuthorizationStatuses.Pending, result.AuthorizationStatus);
+        Assert.False(result.CanSend);
         Assert.True(result.WasExceptionalIssue);
         Assert.Equal("Superior", result.AuthorizedBySuperiorUserName);
 
-        var audit = await db.VoucherAuditEntries.SingleAsync(entry => entry.Action == VoucherAuditActions.ExceptionalIssue);
+        var audit = await db.VoucherAuditEntries.SingleAsync(entry => entry.Action == VoucherAuditActions.AuthorizationRequested);
         Assert.True(audit.ReservationHadOutstandingBalance);
         Assert.Equal("superior-1", audit.AuthorizedBySuperiorUserId);
         Assert.Equal("Superior", audit.AuthorizedBySuperiorUserName);
+    }
+
+    [Theory]
+    [InlineData(VoucherStatuses.Draft)]
+    [InlineData(VoucherStatuses.PendingAuthorization)]
+    [InlineData(VoucherStatuses.Issued)]
+    [InlineData(VoucherStatuses.UploadedExternal)]
+    public async Task RevokeVoucherAsync_RevokesSupportedStatusesAndAuditsReason(string status)
+    {
+        using var db = CreateDbContext();
+        GrantRevokePermission(db);
+        var voucher = await SeedDraftVoucherAsync(db, balance: status == VoucherStatuses.PendingAuthorization ? 120m : 0m);
+        voucher.Status = status;
+        voucher.Source = status == VoucherStatuses.UploadedExternal ? VoucherSources.External : VoucherSources.Generated;
+        voucher.IsEnabledForSending = status is VoucherStatuses.Issued or VoucherStatuses.UploadedExternal;
+        voucher.AuthorizationStatus = status == VoucherStatuses.PendingAuthorization
+            ? VoucherAuthorizationStatuses.Pending
+            : VoucherAuthorizationStatuses.NotRequired;
+        voucher.AuthorizedBySuperiorUserId = status == VoucherStatuses.PendingAuthorization ? "superior-1" : null;
+        voucher.AuthorizedBySuperiorUserName = status == VoucherStatuses.PendingAuthorization ? "Superior" : null;
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        var result = await service.RevokeVoucherAsync(
+            voucher.PublicId.ToString(),
+            new RevokeVoucherRequest { Reason = "Documento cargado o generado por error" },
+            new OperationActor("issuer-1", "Operador", new[] { "Ops" }),
+            CancellationToken.None);
+
+        Assert.Equal(VoucherStatuses.Revoked, result.Status);
+        Assert.False(result.CanSend);
+        Assert.Equal("Documento cargado o generado por error", result.RevocationReason);
+        Assert.Equal("Operador", result.RevokedByUserName);
+        Assert.NotNull(result.RevokedAt);
+
+        var audit = await db.VoucherAuditEntries.SingleAsync(entry => entry.Action == VoucherAuditActions.Revoked);
+        Assert.Equal("issuer-1", audit.UserId);
+        Assert.Equal("Documento cargado o generado por error", audit.Reason);
+
+        if (status == VoucherStatuses.PendingAuthorization)
+        {
+            Assert.Equal(VoucherAuthorizationStatuses.Cancelled, result.AuthorizationStatus);
+            Assert.Equal("superior-1", audit.AuthorizedBySuperiorUserId);
+        }
+    }
+
+    [Fact]
+    public async Task IssueVoucherAsync_BlocksIssue_WhenVoucherIsRevoked()
+    {
+        using var db = CreateDbContext();
+        GrantIssuePermission(db);
+        GrantRevokePermission(db);
+        var voucher = await SeedDraftVoucherAsync(db, balance: 0m);
+        var service = CreateService(db);
+
+        await service.RevokeVoucherAsync(
+            voucher.PublicId.ToString(),
+            new RevokeVoucherRequest { Reason = "Documento generado por error" },
+            new OperationActor("issuer-1", "Operador", new[] { "Ops" }),
+            CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.IssueVoucherAsync(
+            voucher.PublicId.ToString(),
+            new IssueVoucherRequest(),
+            new OperationActor("issuer-1", "Operador", new[] { "Ops" }),
+            CancellationToken.None));
     }
 
     private static AppDbContext CreateDbContext()
@@ -160,6 +230,16 @@ public class VoucherServiceIssueTests
         {
             RoleName = "Ops",
             Permission = Permissions.VouchersIssue
+        });
+        db.SaveChanges();
+    }
+
+    private static void GrantRevokePermission(AppDbContext db)
+    {
+        db.RolePermissions.Add(new RolePermission
+        {
+            RoleName = "Ops",
+            Permission = Permissions.VouchersRevoke
         });
         db.SaveChanges();
     }

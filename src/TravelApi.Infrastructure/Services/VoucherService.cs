@@ -289,6 +289,8 @@ public class VoucherService : IVoucherService
             throw new InvalidOperationException("El voucher no tiene reserva asociada.");
         }
 
+        EnsureVoucherIsNotRevoked(voucher);
+
         if (voucher.Status == VoucherStatuses.Issued || voucher.Status == VoucherStatuses.UploadedExternal)
         {
             throw new InvalidOperationException("El voucher ya esta emitido o cargado como externo.");
@@ -356,6 +358,8 @@ public class VoucherService : IVoucherService
         await EnsureActorCanAsync(actor, Permissions.VouchersAuthorizeException, cancellationToken);
 
         var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
+        EnsureVoucherIsNotRevoked(voucher);
+
         if (voucher.Status != VoucherStatuses.PendingAuthorization || voucher.AuthorizationStatus != VoucherAuthorizationStatuses.Pending)
         {
             throw new InvalidOperationException("El voucher no esta pendiente de autorizacion.");
@@ -392,6 +396,8 @@ public class VoucherService : IVoucherService
         await EnsureActorCanAsync(actor, Permissions.VouchersAuthorizeException, cancellationToken);
 
         var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
+        EnsureVoucherIsNotRevoked(voucher);
+
         if (voucher.Status != VoucherStatuses.PendingAuthorization || voucher.AuthorizationStatus != VoucherAuthorizationStatuses.Pending)
         {
             throw new InvalidOperationException("El voucher no esta pendiente de autorizacion.");
@@ -420,6 +426,53 @@ public class VoucherService : IVoucherService
         return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
     }
 
+    public async Task<VoucherDto> RevokeVoucherAsync(string voucherPublicIdOrLegacyId, RevokeVoucherRequest request, OperationActor actor, CancellationToken cancellationToken)
+    {
+        await EnsureActorCanAsync(actor, Permissions.VouchersRevoke, cancellationToken);
+
+        var reason = NormalizeRequiredReason(request.Reason, "Debe indicar un motivo de anulacion de al menos 10 caracteres.");
+        var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
+        if (voucher.Reserva is null)
+        {
+            throw new InvalidOperationException("El voucher no tiene reserva asociada.");
+        }
+
+        if (voucher.Status == VoucherStatuses.Revoked)
+        {
+            throw new InvalidOperationException("El voucher ya esta anulado.");
+        }
+
+        var wasPendingAuthorization = voucher.Status == VoucherStatuses.PendingAuthorization &&
+            voucher.AuthorizationStatus == VoucherAuthorizationStatuses.Pending;
+
+        voucher.Status = VoucherStatuses.Revoked;
+        voucher.IsEnabledForSending = false;
+        voucher.RevokedAt = DateTime.UtcNow;
+        voucher.RevokedByUserId = actor.UserId;
+        voucher.RevokedByUserName = actor.UserName;
+        voucher.RevocationReason = reason;
+
+        if (wasPendingAuthorization)
+        {
+            voucher.AuthorizationStatus = VoucherAuthorizationStatuses.Cancelled;
+        }
+
+        AddVoucherAudit(
+            voucher,
+            voucher.Reserva,
+            VoucherAuditActions.Revoked,
+            actor,
+            reason,
+            wasPendingAuthorization ? voucher.AuthorizedBySuperiorUserId : null,
+            wasPendingAuthorization ? voucher.AuthorizedBySuperiorUserName : null,
+            wasPendingAuthorization
+                ? "Voucher anulado; solicitud de autorizacion pendiente cancelada."
+                : "Voucher anulado por correccion documental.");
+
+        await _db.SaveChangesAsync(cancellationToken);
+        return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
+    }
+
     public async Task<VoucherDto> EnsureVoucherCanBeSentAsync(
         string reservaPublicIdOrLegacyId,
         string voucherPublicIdOrLegacyId,
@@ -432,6 +485,7 @@ public class VoucherService : IVoucherService
 
         var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
         var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
+        EnsureVoucherIsNotRevoked(voucher);
 
         if (voucher.ReservaId != reservaId)
         {
@@ -503,6 +557,8 @@ public class VoucherService : IVoucherService
         {
             throw new InvalidOperationException("El voucher no tiene reserva asociada.");
         }
+
+        EnsureVoucherIsNotRevoked(voucher);
 
         AddVoucherAudit(voucher, voucher.Reserva, VoucherAuditActions.Sent, actor, NormalizeOptionalReason(reason), null, null, null);
         await _db.SaveChangesAsync(cancellationToken);
@@ -797,9 +853,14 @@ public class VoucherService : IVoucherService
             IssuedAt = voucher.IssuedAt,
             WasExceptionalIssue = voucher.WasExceptionalIssue,
             ExceptionalReason = voucher.ExceptionalReason,
+            AuthorizedBySuperiorUserId = voucher.AuthorizedBySuperiorUserId,
             AuthorizedBySuperiorUserName = voucher.AuthorizedBySuperiorUserName,
             AuthorizationStatus = voucher.AuthorizationStatus,
             RejectReason = voucher.RejectReason,
+            RevokedAt = voucher.RevokedAt,
+            RevokedByUserId = voucher.RevokedByUserId,
+            RevokedByUserName = voucher.RevokedByUserName,
+            RevocationReason = voucher.RevocationReason,
             PassengerPublicIds = voucher.PassengerAssignments
                 .Where(a => a.Passenger != null)
                 .Select(a => a.Passenger!.PublicId)
@@ -831,6 +892,25 @@ public class VoucherService : IVoucherService
     {
         var normalized = reason?.Trim();
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static string NormalizeRequiredReason(string? reason, string errorMessage)
+    {
+        var normalized = NormalizeOptionalReason(reason);
+        if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < 10)
+        {
+            throw new InvalidOperationException(errorMessage);
+        }
+
+        return normalized;
+    }
+
+    private static void EnsureVoucherIsNotRevoked(Voucher voucher)
+    {
+        if (voucher.Status == VoucherStatuses.Revoked)
+        {
+            throw new InvalidOperationException("El voucher esta anulado y no admite acciones operativas.");
+        }
     }
 
     private static void ValidateVoucherUpload(string fileName, string contentType, byte[] bytes, long declaredSize)

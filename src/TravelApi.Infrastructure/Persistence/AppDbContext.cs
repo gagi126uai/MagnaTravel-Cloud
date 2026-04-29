@@ -729,6 +729,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(v => v.AuthorizedBySuperiorUserId).HasMaxLength(200);
             entity.Property(v => v.AuthorizedBySuperiorUserName).HasMaxLength(200);
             entity.Property(v => v.OutstandingBalanceAtIssue).HasPrecision(18, 2);
+            entity.Property(v => v.RevokedByUserId).HasMaxLength(200);
+            entity.Property(v => v.RevokedByUserName).HasMaxLength(200);
+            entity.Property(v => v.RevocationReason).HasMaxLength(1000);
             entity.HasIndex(v => new { v.ReservaId, v.Status });
 
             entity.HasOne(v => v.Reserva)

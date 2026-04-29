@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, FilePlus2, FileText, Loader2, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Download, FilePlus2, FileText, Loader2, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
-import { useAuthState, isAdmin } from "../auth";
+import { useAuthState, isAdmin, hasPermission } from "../auth";
 
 function getPassengerName(passenger) {
   return passenger?.fullName || passenger?.FullName || passenger?.name || passenger?.Name || "Pasajero";
@@ -34,7 +34,7 @@ function formatStatus(status) {
     case "UploadedExternal":
       return "Cargado Externo";
     case "Revoked":
-      return "Revocado";
+      return "Anulado";
     default:
       return status || "Sin estado";
   }
@@ -68,6 +68,10 @@ function normalizeVoucher(item) {
     authorizedBySuperiorUserName: item.authorizedBySuperiorUserName || item.AuthorizedBySuperiorUserName,
     authorizationStatus: item.authorizationStatus || item.AuthorizationStatus,
     rejectReason: item.rejectReason || item.RejectReason,
+    revokedAt: item.revokedAt || item.RevokedAt,
+    revokedByUserId: item.revokedByUserId || item.RevokedByUserId,
+    revokedByUserName: item.revokedByUserName || item.RevokedByUserName,
+    revocationReason: item.revocationReason || item.RevocationReason,
     passengerPublicIds: item.passengerPublicIds || item.PassengerPublicIds || [],
     passengerNames: item.passengerNames || item.PassengerNames || [],
     authorizedBySuperiorUserId: item.authorizedBySuperiorUserId || item.AuthorizedBySuperiorUserId,
@@ -142,7 +146,7 @@ function Modal({ isOpen, onClose, title, children }) {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
       <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-900/5 dark:bg-slate-900 dark:ring-slate-50/10">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
@@ -193,6 +197,12 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [voucherToReject, setVoucherToReject] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
+
+  // Revoke Modal
+  const [isRevokeModalOpen, setIsRevokeModalOpen] = useState(false);
+  const [voucherToRevoke, setVoucherToRevoke] = useState(null);
+  const [revokeReason, setRevokeReason] = useState("");
+  const [revokingId, setRevokingId] = useState(null);
 
   const outstandingBalance = Number(reserva?.balance ?? 0) > 0;
 
@@ -374,6 +384,26 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
     }
   };
 
+  const handleRevokeSubmit = async () => {
+    if (revokeReason.trim().length < 10) {
+      toast.error("Indica un motivo de anulacion de al menos 10 caracteres.");
+      return;
+    }
+    try {
+      setRevokingId(voucherToRevoke.publicId);
+      setIsRevokeModalOpen(false);
+      await api.post(`/vouchers/${voucherToRevoke.publicId}/revoke`, { reason: revokeReason.trim() });
+      toast.success("Documento anulado correctamente.");
+      await fetchVouchers();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "No se pudo anular el documento."));
+    } finally {
+      setRevokingId(null);
+      setVoucherToRevoke(null);
+      setRevokeReason("");
+    }
+  };
+
   const handleDownload = async (voucher) => {
     try {
       setDownloadingId(voucher.publicId);
@@ -424,13 +454,15 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {vouchers.map((voucher) => (
-              <div key={voucher.publicId} className="p-5 transition hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+              <div key={voucher.publicId} className={`p-5 transition hover:bg-slate-50/50 dark:hover:bg-slate-800/30 ${voucher.status === "Revoked" ? "bg-rose-50/30 dark:bg-rose-950/10" : ""}`}>
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0 space-y-2.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${
                         voucher.status === "PendingAuthorization" 
                         ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                        : voucher.status === "Revoked"
+                        ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300"
                         : voucher.status === "Draft"
                         ? "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                         : "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
@@ -477,6 +509,11 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                     {voucher.rejectReason ? (
                       <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-900 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
                         Rechazado: {voucher.rejectReason}
+                      </div>
+                    ) : null}
+                    {voucher.revocationReason ? (
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
+                        Anulado{voucher.revokedAt ? `: ${formatDateTime(voucher.revokedAt)}` : ""}{voucher.revokedByUserName ? ` por ${voucher.revokedByUserName}` : ""}. Motivo: {voucher.revocationReason}
                       </div>
                     ) : null}
                   </div>
@@ -528,6 +565,22 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                           Rechazar
                         </button>
                       </>
+                    ) : null}
+
+                    {voucher.status !== "Revoked" && hasPermission("vouchers.revoke") ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVoucherToRevoke(voucher);
+                          setRevokeReason("");
+                          setIsRevokeModalOpen(true);
+                        }}
+                        disabled={revokingId === voucher.publicId}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 px-4 py-2.5 text-sm font-bold text-rose-700 transition hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-900/20"
+                      >
+                        {revokingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                        Anular
+                      </button>
                     ) : null}
                   </div>
                 </div>
@@ -734,6 +787,53 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
             >
               {processingAuthId === voucherToReject?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Rechazar
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL ANULAR */}
+      <Modal
+        isOpen={isRevokeModalOpen}
+        onClose={() => setIsRevokeModalOpen(false)}
+        title="Anular Documento"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
+            <Ban className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <div className="text-sm font-black">El documento quedara trazable como anulado.</div>
+              <div className="mt-1 text-xs font-medium">
+                No se podra emitir, aprobar, rechazar ni enviar. El historial conservara quien lo anulo y por que.
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400">Motivo de Anulacion</label>
+            <textarea
+              value={revokeReason}
+              onChange={(event) => setRevokeReason(event.target.value)}
+              rows={3}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              placeholder="Ej. Se genero con datos incorrectos, se subio el archivo equivocado..."
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-3">
+            <button
+              type="button"
+              onClick={() => setIsRevokeModalOpen(false)}
+              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleRevokeSubmit}
+              disabled={revokingId === voucherToRevoke?.publicId}
+              className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-rose-700 disabled:opacity-60"
+            >
+              {revokingId === voucherToRevoke?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Anular Documento
             </button>
           </div>
         </div>
