@@ -58,6 +58,7 @@ try
         }
 
         return value.Contains("CHANGE_THIS_SECRET", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("change_this", StringComparison.OrdinalIgnoreCase)
             || value.Contains("travelpass", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -65,9 +66,10 @@ try
     {
         var jwtKey = builder.Configuration["Jwt:Key"] ?? builder.Configuration["Jwt__Key"];
         var webhookSecret = builder.Configuration["WhatsApp:WebhookSecret"] ?? builder.Configuration["WhatsApp__WebhookSecret"];
+        var metricsToken = builder.Configuration["Metrics:Token"] ?? builder.Configuration["METRICS_TOKEN"];
         var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
-        if (IsPlaceholderSecret(jwtKey) || IsPlaceholderSecret(webhookSecret) || IsPlaceholderSecret(connectionString))
+        if (IsPlaceholderSecret(jwtKey) || IsPlaceholderSecret(webhookSecret) || IsPlaceholderSecret(metricsToken) || IsPlaceholderSecret(connectionString))
         {
             throw new InvalidOperationException(
                 "Production startup blocked because placeholder secrets or default credentials are still configured.");
@@ -364,8 +366,14 @@ builder.Services.AddScoped<IWhatsAppWebhookService, WhatsAppWebhookService>();
 builder.Services.AddScoped<IWhatsAppGateway, WhatsAppGateway>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IFileStoragePort, MinioFileStoragePort>();
-builder.Services.AddHostedService<LogStreamingService>();
-builder.Services.AddHostedService<BotLogMonitorService>();
+builder.Services.AddSingleton<InternalMetricsService>();
+
+var realtimeHostedServicesEnabled = builder.Configuration.GetValue("HostedServices:RealtimeEnabled", true);
+if (realtimeHostedServicesEnabled)
+{
+    builder.Services.AddHostedService<LogStreamingService>();
+    builder.Services.AddHostedService<BotLogMonitorService>();
+}
 
 // Pilar 1: Cotizador + CRM + Vouchers
 builder.Services.AddScoped<IQuoteService, QuoteService>();
@@ -477,9 +485,14 @@ builder.Services.AddHangfire(configuration => configuration
     .UseRecommendedSerializerSettings()
     .UsePostgreSqlStorage(jobStorageConnectionString));
 
-builder.Services.AddHangfireServer();
+var hangfireServerEnabled = builder.Configuration.GetValue("Hangfire:ServerEnabled", true);
+if (hangfireServerEnabled)
+{
+    builder.Services.AddHangfireServer();
+}
 
 var app = builder.Build();
+GlobalJobFilters.Filters.Add(new HangfireMetricsFilter(app.Services.GetRequiredService<InternalMetricsService>()));
 
 if (!app.Environment.IsProduction())
 {
@@ -507,71 +520,87 @@ app.Use(async (context, next) =>
     }
 });
 
-// Apply migrations on startup
-using (var scope = app.Services.CreateScope())
+var migrateOnly = args.Any(arg => string.Equals(arg, "--migrate-only", StringComparison.OrdinalIgnoreCase));
+var applyMigrationsOnStartup = builder.Configuration.GetValue("Database:ApplyMigrationsOnStartup", !app.Environment.IsProduction());
+
+// In production migrations run from the dedicated migrate command/service before the API starts serving traffic.
+if (migrateOnly || applyMigrationsOnStartup)
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    
-    try
+    using (var scope = app.Services.CreateScope())
     {
-        app.Logger.LogInformation("Bootstrapping operational finance schema via raw SQL...");
-        await OperationalFinanceSchemaBootstrapper.EnsureAsync(db);
-        await OperationalFinanceSchemaBootstrapper.MarkOperationalFinanceMigrationAsAppliedAsync(db);
-        app.Logger.LogInformation("Operational finance bootstrap finished.");
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning("Operational finance bootstrap skipped or failed: {Message}", ex.Message);
-    }
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    try
-    {
-        app.Logger.LogInformation("Bootstrapping refresh token schema via raw SQL...");
-        await RefreshTokenSchemaBootstrapper.EnsureAsync(db);
-        await RefreshTokenSchemaBootstrapper.MarkRefreshTokenMigrationAsAppliedAsync(db);
-        app.Logger.LogInformation("Refresh token bootstrap finished.");
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning("Refresh token bootstrap skipped or failed: {Message}", ex.Message);
-    }
-
-    try
-    {
-        app.Logger.LogInformation("Bootstrapping BNA exchange rate snapshot schema via raw SQL...");
-        await BnaExchangeRateSchemaBootstrapper.EnsureAsync(db);
-        app.Logger.LogInformation("BNA exchange rate snapshot bootstrap finished.");
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning("BNA exchange rate snapshot bootstrap skipped or failed: {Message}", ex.Message);
-    }
-
-    int retries = 5;
-    while (retries > 0)
-    {
-        try 
+        try
         {
-            app.Logger.LogInformation("Applying EF Core Migrations (Attempts remaining: {Retries})...", retries);
-            await db.Database.MigrateAsync();
-            app.Logger.LogInformation("EF Core Migrations applied successfully.");
-            break;
+            app.Logger.LogInformation("Bootstrapping operational finance schema via raw SQL...");
+            await OperationalFinanceSchemaBootstrapper.EnsureAsync(db);
+            await OperationalFinanceSchemaBootstrapper.MarkOperationalFinanceMigrationAsAppliedAsync(db);
+            app.Logger.LogInformation("Operational finance bootstrap finished.");
         }
         catch (Exception ex)
         {
-            retries--;
-            if (retries == 0)
+            app.Logger.LogWarning("Operational finance bootstrap skipped or failed: {Message}", ex.Message);
+        }
+
+        try
+        {
+            app.Logger.LogInformation("Bootstrapping refresh token schema via raw SQL...");
+            await RefreshTokenSchemaBootstrapper.EnsureAsync(db);
+            await RefreshTokenSchemaBootstrapper.MarkRefreshTokenMigrationAsAppliedAsync(db);
+            app.Logger.LogInformation("Refresh token bootstrap finished.");
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning("Refresh token bootstrap skipped or failed: {Message}", ex.Message);
+        }
+
+        try
+        {
+            app.Logger.LogInformation("Bootstrapping BNA exchange rate snapshot schema via raw SQL...");
+            await BnaExchangeRateSchemaBootstrapper.EnsureAsync(db);
+            app.Logger.LogInformation("BNA exchange rate snapshot bootstrap finished.");
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning("BNA exchange rate snapshot bootstrap skipped or failed: {Message}", ex.Message);
+        }
+
+        int retries = 5;
+        while (retries > 0)
+        {
+            try
             {
-                app.Logger.LogError(ex, "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS AFTER MULTIPLE ATTEMPTS");
-                throw;
+                app.Logger.LogInformation("Applying EF Core Migrations (Attempts remaining: {Retries})...", retries);
+                await db.Database.MigrateAsync();
+                app.Logger.LogInformation("EF Core Migrations applied successfully.");
+                break;
             }
-            else
+            catch (Exception ex)
             {
-                app.Logger.LogWarning("Migration failed, retrying in 5 seconds... Error: {Message}", ex.Message);
-                await Task.Delay(5000);
+                retries--;
+                if (retries == 0)
+                {
+                    app.Logger.LogError(ex, "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS AFTER MULTIPLE ATTEMPTS");
+                    throw;
+                }
+                else
+                {
+                    app.Logger.LogWarning("Migration failed, retrying in 5 seconds... Error: {Message}", ex.Message);
+                    await Task.Delay(5000);
+                }
             }
         }
     }
+
+    if (migrateOnly)
+    {
+        app.Logger.LogInformation("Migration-only command completed. Exiting without starting HTTP server.");
+        return;
+    }
+}
+else
+{
+    app.Logger.LogInformation("Database migrations skipped on startup. Run `dotnet TravelApi.dll --migrate-only` before deploy.");
 }
 
 // 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy) - MUST BE FIRST
@@ -609,6 +638,7 @@ app.UseResponseCompression();
 app.UseOutputCache();
 
 app.UseRouting();
+app.UseMiddleware<InternalMetricsMiddleware>();
 app.UseRateLimiter();
 
 app.UseAuthentication();
@@ -620,20 +650,25 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
     Authorization = new[] { new TravelApi.Filters.HangfireAuthorizationFilter() } 
 });
 
-RecurringJob.AddOrUpdate<OperationalFinanceMonitorService>(
-    "upcoming-unpaid-reservas",
-    service => service.GenerateUpcomingUnpaidReservationNotificationsAsync(),
-    Cron.Daily());
+var hangfireSchedulerEnabled = app.Configuration.GetValue("Hangfire:SchedulerEnabled", hangfireServerEnabled);
+if (hangfireSchedulerEnabled)
+{
+    RecurringJob.AddOrUpdate<OperationalFinanceMonitorService>(
+        "upcoming-unpaid-reservas",
+        service => service.GenerateUpcomingUnpaidReservationNotificationsAsync(),
+        Cron.Daily());
+}
 
 // 3. Health Check
 app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" })).AllowAnonymous();
-app.MapGet("/health/ready", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (AppDbContext dbContext, InternalMetricsService metrics, CancellationToken cancellationToken) =>
 {
     try
     {
         if (!await dbContext.Database.CanConnectAsync(cancellationToken))
         {
+            metrics.SetDatabaseReady(false);
             return Results.Json(
                 DatabaseExceptionClassifier.CreateProblemDetails(),
                 statusCode: StatusCodes.Status503ServiceUnavailable);
@@ -642,6 +677,7 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, CancellationToken can
         var pendingMigrations = await dbContext.Database.GetPendingMigrationsAsync(cancellationToken);
         if (pendingMigrations.Any())
         {
+            metrics.SetDatabaseReady(false);
             return Results.Json(new
             {
                 status = "unready",
@@ -650,14 +686,35 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, CancellationToken can
             }, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
+        metrics.SetDatabaseReady(true);
         return Results.Ok(new { status = "ready" });
     }
     catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
     {
+        metrics.SetDatabaseReady(false);
         return Results.Json(
             DatabaseExceptionClassifier.CreateProblemDetails(app.Environment.IsDevelopment() ? ex.Message : null),
             statusCode: StatusCodes.Status503ServiceUnavailable);
     }
+}).AllowAnonymous();
+app.MapGet("/internal/metrics", (HttpContext context, IConfiguration configuration, IWebHostEnvironment environment, InternalMetricsService metrics) =>
+{
+    var configuredToken = configuration["Metrics:Token"] ?? configuration["METRICS_TOKEN"];
+    var providedToken = context.Request.Headers["X-Metrics-Token"].FirstOrDefault();
+
+    if (string.IsNullOrWhiteSpace(configuredToken) || IsPlaceholderSecret(configuredToken))
+    {
+        return environment.IsProduction()
+            ? Results.NotFound()
+            : Results.Text(metrics.RenderPrometheus(), "text/plain; version=0.0.4; charset=utf-8");
+    }
+
+    if (!string.Equals(configuredToken, providedToken, StringComparison.Ordinal))
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Text(metrics.RenderPrometheus(), "text/plain; version=0.0.4; charset=utf-8");
 }).AllowAnonymous();
 
 using (var scope = app.Services.CreateScope())

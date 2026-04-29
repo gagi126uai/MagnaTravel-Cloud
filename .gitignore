@@ -22,6 +22,7 @@ appsettings.*.json
 !appsettings.json
 node_modules/
 dist/
+backups/
 .dotnet/
 .nuget/
 backend_build_diag.txt
