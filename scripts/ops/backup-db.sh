@@ -3,12 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-if [ -f .env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
-fi
+# shellcheck disable=SC1091
+. scripts/ops/lib/env.sh
+load_env_file .env
 
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-travel_db}"
 POSTGRES_DB="${POSTGRES_DB:-travel}"
