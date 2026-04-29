@@ -5,7 +5,7 @@ import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
 
-// Mapeo comercial para scopes eliminado para simplificar inline
+function getPassengerName(passenger) {
   return passenger?.fullName || passenger?.FullName || passenger?.name || passenger?.Name || "Pasajero";
 }
 
