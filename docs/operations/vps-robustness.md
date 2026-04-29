@@ -88,7 +88,7 @@ Alertas minimas a configurar en el VPS o proveedor:
 PostgreSQL queda configurado con slow query logging:
 
 - `POSTGRES_SLOW_QUERY_MS`, default 500 ms.
-- logs en `logs/postgresql-YYYY-MM-DD.log`.
+- logs por stdout/stderr del contenedor, visibles con `docker compose logs -f db`.
 
 La migracion `AddOperationalIndexes` agrega indices para reservas, pagos, pasajeros, clientes, vouchers, auditoria, mensajes, adjuntos y entregas WhatsApp.
 

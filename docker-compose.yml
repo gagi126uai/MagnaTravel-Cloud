@@ -9,7 +9,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./logs:/var/lib/postgresql/logs # Optional db logs
     command:
       - postgres
       - -c
@@ -20,12 +19,6 @@ services:
       - deadlock_timeout=1s
       - -c
       - log_checkpoints=on
-      - -c
-      - logging_collector=on
-      - -c
-      - log_directory=/var/lib/postgresql/logs
-      - -c
-      - log_filename=postgresql-%Y-%m-%d.log
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-traveluser} -d ${POSTGRES_DB:-travel}"]
       interval: 10s
