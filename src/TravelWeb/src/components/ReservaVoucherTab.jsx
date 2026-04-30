@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Ban, CheckCircle2, Download, FilePlus2, FileText, Loader2, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Download, Eye, FilePlus2, FileText, Loader2, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
@@ -87,6 +87,24 @@ function downloadBlob(blob, fileName) {
   link.click();
   link.remove();
   window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+}
+
+function getPreviewKind(fileName, contentType) {
+  const normalizedType = (contentType || "").toLowerCase();
+  const normalizedName = (fileName || "").toLowerCase();
+
+  if (normalizedType.includes("pdf") || normalizedName.endsWith(".pdf")) {
+    return "pdf";
+  }
+
+  if (
+    normalizedType.startsWith("image/") ||
+    [".png", ".jpg", ".jpeg", ".webp", ".gif"].some((extension) => normalizedName.endsWith(extension))
+  ) {
+    return "image";
+  }
+
+  return "unsupported";
 }
 
 function ScopeSelector({ label, value, selectedPassengerIds, passengers, onScopeChange, onPassengersChange }) {
@@ -177,6 +195,8 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   const [uploading, setUploading] = useState(false);
   const [issuingId, setIssuingId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [previewingId, setPreviewingId] = useState(null);
+  const [previewDocument, setPreviewDocument] = useState(null);
   const [processingAuthId, setProcessingAuthId] = useState(null);
 
   // Form states
@@ -231,6 +251,12 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   useEffect(() => {
     fetchVouchers();
   }, [fetchVouchers]);
+
+  useEffect(() => () => {
+    if (previewDocument?.url) {
+      window.URL.revokeObjectURL(previewDocument.url);
+    }
+  }, [previewDocument?.url]);
 
   const validateScope = () => {
     if (scope === "PasajerosSeleccionados" && selectedPassengerIds.length === 0) {
@@ -416,6 +442,36 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
     }
   };
 
+  const closePreview = () => {
+    if (previewDocument?.url) {
+      window.URL.revokeObjectURL(previewDocument.url);
+    }
+    setPreviewDocument(null);
+  };
+
+  const handlePreview = async (voucher) => {
+    try {
+      setPreviewingId(voucher.publicId);
+      if (previewDocument?.url) {
+        window.URL.revokeObjectURL(previewDocument.url);
+      }
+
+      const blob = await api.get(`/vouchers/${voucher.publicId}/download`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(blob);
+      const contentType = blob.type || voucher.contentType;
+      setPreviewDocument({
+        voucher,
+        url,
+        contentType,
+        kind: getPreviewKind(voucher.fileName, contentType),
+      });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "No se pudo abrir la vista previa."));
+    } finally {
+      setPreviewingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* HEADER LIMPIO */}
@@ -519,6 +575,15 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                   </div>
 
                   <div className="flex flex-wrap gap-2 lg:justify-end shrink-0 pt-2 lg:pt-0">
+                    <button
+                      type="button"
+                      onClick={() => handlePreview(voucher)}
+                      disabled={previewingId === voucher.publicId}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      {previewingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                      Ver
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleDownload(voucher)}
@@ -838,6 +903,74 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
           </div>
         </div>
       </Modal>
+
+      {previewDocument ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5">
+          <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" />
+          <div className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900 dark:ring-slate-50/10">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-black text-slate-900 dark:text-white">
+                  {previewDocument.voucher.fileName}
+                </h2>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  {formatStatus(previewDocument.voucher.status)} · {formatScope(previewDocument.voucher.scope)}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDownload(previewDocument.voucher)}
+                  disabled={downloadingId === previewDocument.voucher.publicId}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  {downloadingId === previewDocument.voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  Descargar
+                </button>
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 bg-slate-100 dark:bg-slate-950">
+              {previewDocument.kind === "pdf" ? (
+                <iframe
+                  src={previewDocument.url}
+                  title={previewDocument.voucher.fileName}
+                  className="h-full w-full border-0 bg-white"
+                />
+              ) : null}
+
+              {previewDocument.kind === "image" ? (
+                <div className="flex h-full items-center justify-center p-4">
+                  <img
+                    src={previewDocument.url}
+                    alt={previewDocument.voucher.fileName}
+                    className="max-h-full max-w-full rounded-lg bg-white object-contain shadow-xl"
+                  />
+                </div>
+              ) : null}
+
+              {previewDocument.kind === "unsupported" ? (
+                <div className="flex h-full items-center justify-center p-6 text-center">
+                  <div className="max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <FileText className="mx-auto mb-3 h-10 w-10 text-slate-400" />
+                    <h3 className="text-base font-black text-slate-900 dark:text-white">Vista previa no disponible</h3>
+                    <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400">
+                      Este formato no se puede previsualizar en el navegador. Puedes descargarlo para revisarlo.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
