@@ -186,6 +186,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   const passengers = useMemo(() => (Array.isArray(reserva?.passengers) ? reserva.passengers : []), [reserva]);
   const [vouchers, setVouchers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [documentView, setDocumentView] = useState("active");
 
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -225,6 +226,9 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   const [revokingId, setRevokingId] = useState(null);
 
   const outstandingBalance = Number(reserva?.balance ?? 0) > 0;
+  const activeVouchers = useMemo(() => vouchers.filter((voucher) => voucher.status !== "Revoked"), [vouchers]);
+  const revokedVouchers = useMemo(() => vouchers.filter((voucher) => voucher.status === "Revoked"), [vouchers]);
+  const visibleVouchers = documentView === "revoked" ? revokedVouchers : activeVouchers;
 
   useEffect(() => {
     if (outstandingBalance) {
@@ -251,6 +255,12 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   useEffect(() => {
     fetchVouchers();
   }, [fetchVouchers]);
+
+  useEffect(() => {
+    if (documentView === "revoked" && revokedVouchers.length === 0) {
+      setDocumentView("active");
+    }
+  }, [documentView, revokedVouchers.length]);
 
   useEffect(() => () => {
     if (previewDocument?.url) {
@@ -496,20 +506,61 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
       </div>
 
       {/* LISTA PRINCIPAL (GESTIÓN DOCUMENTAL) */}
+      {revokedVouchers.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setDocumentView("active")}
+            className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-widest transition ${
+              documentView === "active"
+                ? "bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900"
+                : "bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+            }`}
+          >
+            Vigentes ({activeVouchers.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setDocumentView("revoked")}
+            className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-widest transition ${
+              documentView === "revoked"
+                ? "bg-rose-600 text-white shadow-sm"
+                : "bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300 dark:hover:bg-rose-900/30"
+            }`}
+          >
+            Anulados ({revokedVouchers.length})
+          </button>
+        </div>
+      ) : null}
+
+      {documentView === "revoked" ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
+          Estos documentos estan anulados y se conservan solo como trazabilidad. No se pueden emitir, aprobar, rechazar ni enviar.
+        </div>
+      ) : null}
+
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         {loading ? (
           <div className="flex justify-center p-12">
             <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
           </div>
-        ) : vouchers.length === 0 ? (
+        ) : visibleVouchers.length === 0 ? (
           <div className="py-16 text-center text-sm text-slate-500">
             <FileText className="mx-auto mb-4 h-12 w-12 text-slate-300" />
-            <span className="font-semibold">No hay documentos en esta reserva.</span>
-            <p className="mt-1 text-xs">Añade uno usando el botón superior derecho.</p>
+            <span className="font-semibold">
+              {documentView === "revoked" ? "No hay documentos anulados." : "No hay documentos vigentes en esta reserva."}
+            </span>
+            <p className="mt-1 text-xs">
+              {documentView === "revoked"
+                ? "Los documentos anulados se mostraran aca cuando existan."
+                : revokedVouchers.length > 0
+                ? "Revisa la solapa Anulados para ver documentos historicos."
+                : "Añade uno usando el botón superior derecho."}
+            </p>
           </div>
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {vouchers.map((voucher) => (
+            {visibleVouchers.map((voucher) => (
               <div key={voucher.publicId} className={`p-5 transition hover:bg-slate-50/50 dark:hover:bg-slate-800/30 ${voucher.status === "Revoked" ? "bg-rose-50/30 dark:bg-rose-950/10" : ""}`}>
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0 space-y-2.5">
