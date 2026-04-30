@@ -438,7 +438,9 @@ public class VoucherService : IVoucherService
     {
         await EnsureActorCanAsync(actor, Permissions.VouchersRevoke, cancellationToken);
 
-        var reason = NormalizeRequiredReason(request.Reason, "Debe indicar un motivo de anulacion de al menos 10 caracteres.");
+        var reason = actor.IsAdmin
+            ? NormalizeOptionalReason(request.Reason)
+            : NormalizeRequiredReason(request.Reason, "Debe indicar un motivo de anulacion de al menos 10 caracteres.");
         var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
         if (voucher.Reserva is null)
         {

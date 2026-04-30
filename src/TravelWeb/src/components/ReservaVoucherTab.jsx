@@ -421,7 +421,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   };
 
   const handleRevokeSubmit = async () => {
-    if (revokeReason.trim().length < 10) {
+    if (!isAdmin() && revokeReason.trim().length < 10) {
       toast.error("Indica un motivo de anulacion de al menos 10 caracteres.");
       return;
     }
@@ -925,13 +925,15 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
             </div>
           </div>
           <div>
-            <label className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400">Motivo de Anulacion</label>
+            <label className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400">
+              Motivo de Anulacion {isAdmin() ? <span className="text-slate-400 font-normal normal-case tracking-normal">(opcional para administradores)</span> : null}
+            </label>
             <textarea
               value={revokeReason}
               onChange={(event) => setRevokeReason(event.target.value)}
               rows={3}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-              placeholder="Ej. Se genero con datos incorrectos, se subio el archivo equivocado..."
+              placeholder={isAdmin() ? "Opcional: indica el motivo de la anulación..." : "Ej. Se genero con datos incorrectos, se subio el archivo equivocado..."}
             />
           </div>
           <div className="flex justify-end gap-3 pt-3">
