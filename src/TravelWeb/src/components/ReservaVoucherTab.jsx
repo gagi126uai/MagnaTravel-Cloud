@@ -368,7 +368,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
     try {
       setIssuingId(voucherId);
       setIsAuthModalOpen(false);
-      await api.post(`/vouchers/${voucherId}/issue`, {
+      const updated = await api.post(`/vouchers/${voucherId}/issue`, {
         reason: normalReason || null,
         exceptionalReason: exReason || null,
         authorizedBySuperiorUserId: authUserId || null,
@@ -378,7 +378,12 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
       } else {
         toast.success("Documento emitido correctamente.");
       }
-      await fetchVouchers();
+      if (updated) {
+        const normalized = normalizeVoucher(updated);
+        setVouchers(prev => prev.map(v => v.publicId === normalized.publicId ? normalized : v));
+      } else {
+        await fetchVouchers();
+      }
     } catch (error) {
       toast.error(getApiErrorMessage(error, "No se pudo procesar la emisión."));
     } finally {
@@ -390,9 +395,14 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   const handleApprove = async (voucher) => {
     try {
       setProcessingAuthId(voucher.publicId);
-      await api.post(`/vouchers/${voucher.publicId}/approve`);
+      const updated = await api.post(`/vouchers/${voucher.publicId}/approve`);
       toast.success("Emisión autorizada correctamente.");
-      await fetchVouchers();
+      if (updated) {
+        const normalized = normalizeVoucher(updated);
+        setVouchers(prev => prev.map(v => v.publicId === normalized.publicId ? normalized : v));
+      } else {
+        await fetchVouchers();
+      }
     } catch (error) {
       toast.error(getApiErrorMessage(error, "No se pudo autorizar."));
     } finally {
@@ -408,9 +418,14 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
     try {
       setProcessingAuthId(voucherToReject.publicId);
       setIsRejectModalOpen(false);
-      await api.post(`/vouchers/${voucherToReject.publicId}/reject`, { reason: rejectReason.trim() });
+      const updated = await api.post(`/vouchers/${voucherToReject.publicId}/reject`, { reason: rejectReason.trim() });
       toast.success("Solicitud rechazada correctamente.");
-      await fetchVouchers();
+      if (updated) {
+        const normalized = normalizeVoucher(updated);
+        setVouchers(prev => prev.map(v => v.publicId === normalized.publicId ? normalized : v));
+      } else {
+        await fetchVouchers();
+      }
     } catch (error) {
       toast.error(getApiErrorMessage(error, "No se pudo rechazar."));
     } finally {
@@ -428,9 +443,14 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
     try {
       setRevokingId(voucherToRevoke.publicId);
       setIsRevokeModalOpen(false);
-      await api.post(`/vouchers/${voucherToRevoke.publicId}/revoke`, { reason: revokeReason.trim() });
+      const updated = await api.post(`/vouchers/${voucherToRevoke.publicId}/revoke`, { reason: revokeReason.trim() });
       toast.success("Documento anulado correctamente.");
-      await fetchVouchers();
+      if (updated) {
+        const normalized = normalizeVoucher(updated);
+        setVouchers(prev => prev.map(v => v.publicId === normalized.publicId ? normalized : v));
+      } else {
+        await fetchVouchers();
+      }
     } catch (error) {
       toast.error(getApiErrorMessage(error, "No se pudo anular el documento."));
     } finally {
