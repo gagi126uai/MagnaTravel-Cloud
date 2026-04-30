@@ -148,7 +148,11 @@ public class VoucherService : IVoucherService
 
         var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
         var reserva = await LoadReservaWithPassengersAsync(reservaId, cancellationToken);
+
+        EnsureReservaHasPassengers(reserva);
+
         var passengers = await ResolvePassengerAssignmentsAsync(reserva, request.Scope, request.PassengerIds, cancellationToken);
+        await EnsureNoPassengerDuplicateAsync(reserva.Id, passengers, NormalizeScope(request.Scope), cancellationToken);
 
         var pdfBytes = await GenerateVoucherPdfAsync(reserva.PublicId.ToString(), cancellationToken);
         var fileName = BuildVoucherFileName(reserva);
@@ -202,7 +206,11 @@ public class VoucherService : IVoucherService
 
         var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
         var reserva = await LoadReservaWithPassengersAsync(reservaId, cancellationToken);
+
+        EnsureReservaHasPassengers(reserva);
+
         var passengers = await ResolvePassengerAssignmentsAsync(reserva, request.Scope, request.PassengerIds, cancellationToken);
+        await EnsureNoPassengerDuplicateAsync(reserva.Id, passengers, NormalizeScope(request.Scope), cancellationToken);
 
         var safeFileName = SanitizeOriginalFileName(fileName);
         var normalizedContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType.Trim();
@@ -712,6 +720,52 @@ public class VoucherService : IVoucherService
         }
 
         return passengers.OrderBy(p => p.FullName).ToList();
+    }
+
+    private static void EnsureReservaHasPassengers(Reserva reserva)
+    {
+        if (reserva.Passengers.Count == 0)
+        {
+            throw new InvalidOperationException("No se puede crear un voucher en una reserva sin pasajeros.");
+        }
+    }
+
+    private async Task EnsureNoPassengerDuplicateAsync(
+        int reservaId,
+        IReadOnlyCollection<Passenger> passengers,
+        string scope,
+        CancellationToken cancellationToken)
+    {
+        // Para scopes que asignan pasajeros específicos, verificar que ninguno ya tenga
+        // un voucher activo (no anulado) en la misma reserva.
+        if (scope == VoucherScopes.Reservation)
+        {
+            return;
+        }
+
+        // Obtener todos los PassengerIds activos ya asignados en esta reserva
+        var alreadyAssignedPassengerIds = await _db.Vouchers
+            .AsNoTracking()
+            .Where(v => v.ReservaId == reservaId && v.Status != VoucherStatuses.Revoked)
+            .SelectMany(v => v.PassengerAssignments.Select(a => a.PassengerId))
+            .ToListAsync(cancellationToken);
+
+        if (alreadyAssignedPassengerIds.Count == 0)
+        {
+            return;
+        }
+
+        var alreadyAssigned = passengers
+            .Where(p => alreadyAssignedPassengerIds.Contains(p.Id))
+            .Select(p => p.FullName)
+            .ToList();
+
+        if (alreadyAssigned.Count > 0)
+        {
+            var names = string.Join(", ", alreadyAssigned);
+            throw new InvalidOperationException(
+                $"Los siguientes pasajeros ya tienen un voucher activo en esta reserva: {names}.");
+        }
     }
 
     private async Task EnsureActorCanAsync(OperationActor actor, string permission, CancellationToken cancellationToken)
