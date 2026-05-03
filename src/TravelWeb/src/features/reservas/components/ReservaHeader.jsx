@@ -33,7 +33,9 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                 <p className="text-xl text-slate-900 dark:text-white mt-2 font-bold flex items-center gap-2">
                     {reserva.customerName}
                 </p>
-                <p className="text-lg text-slate-500 dark:text-slate-400 font-medium italic">{reserva.name}</p>
+                {reserva.name && reserva.name !== `Reserva ${reserva.numeroReserva}` && (
+                    <p className="text-lg text-slate-500 dark:text-slate-400 font-medium italic">{reserva.name}</p>
+                )}
             </div>
 
             {isArchived ? (

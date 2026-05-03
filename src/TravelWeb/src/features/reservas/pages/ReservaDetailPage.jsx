@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2 } from "lucide-react";
 import { api } from "../../../api";
@@ -243,6 +243,12 @@ export default function ReservaDetailPage() {
 
   const isBudget = reserva?.status === "Presupuesto";
 
+  useEffect(() => {
+    if (isBudget && (activeTab === "voucher" || activeTab === "attachments" || activeTab === "account")) {
+      setActiveTab("services");
+    }
+  }, [isBudget, activeTab]);
+
   if (!reserva) {
     return (
       <div className="m-8 rounded-2xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
@@ -343,8 +349,8 @@ export default function ReservaDetailPage() {
                 : { id: "passengers", label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
               { id: "history", label: "Historial", icon: Clock },
               isBudget ? null : { id: "account", label: "Estado de Cuenta", icon: CreditCard },
-              { id: "voucher", label: "Vouchers", icon: FileText },
-              { id: "attachments", label: "Documentos", icon: Paperclip },
+              isBudget ? null : { id: "voucher", label: "Vouchers", icon: FileText },
+              isBudget ? null : { id: "attachments", label: "Documentos", icon: Paperclip },
             ].filter(Boolean).map((tab) => (
               <button
                 key={tab.id}
