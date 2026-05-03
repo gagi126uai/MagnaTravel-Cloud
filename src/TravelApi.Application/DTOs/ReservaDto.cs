@@ -17,6 +17,7 @@ public class ReservaDto
     public bool CanEmitVoucher { get; set; }
     public bool CanEmitAfipInvoice { get; set; }
     public string? EconomicBlockReason { get; set; }
+    public bool IsInProgress { get; set; }
 
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience

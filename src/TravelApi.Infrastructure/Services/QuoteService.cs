@@ -265,6 +265,8 @@ public class QuoteService : IQuoteService
             TotalCost = quote.TotalCost,
             TotalSale = quote.TotalSale,
             Balance = quote.TotalSale,
+            AdultCount = quote.Adults,
+            ChildCount = quote.Children,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -297,8 +299,8 @@ public class QuoteService : IQuoteService
                     CheckOut = quote.TravelEndDate ?? DateTime.UtcNow.AddDays(1),
                     RoomType = rate?.RoomType ?? "Standard",
                     MealPlan = rate?.MealPlan ?? "RO",
-                    Adults = 2, // Defaults for quote conversion
-                    Children = 0,
+                    Adults = quote.Adults > 0 ? quote.Adults : 2,
+                    Children = quote.Children,
                     Rooms = item.Quantity,
                     Status = "Solicitado",
                     NetCost = item.TotalCost,
@@ -368,6 +370,8 @@ public class QuoteService : IQuoteService
                     NetCost = item.TotalCost,
                     SalePrice = item.TotalPrice,
                     Commission = item.TotalPrice - item.TotalCost,
+                    Adults = quote.Adults > 0 ? quote.Adults : 2,
+                    Children = quote.Children,
                     CreatedAt = DateTime.UtcNow
                 };
                 _db.Set<PackageBooking>().Add(package);

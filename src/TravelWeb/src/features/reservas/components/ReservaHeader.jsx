@@ -17,7 +17,7 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                 >
                     <ArrowLeft className="w-4 h-4 mr-1.5" /> Volver a Lista
                 </button>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                     <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                         Reserva <span className="text-indigo-600 dark:text-indigo-400">#{reserva.numeroReserva}</span>
                     </h1>
@@ -29,6 +29,11 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                                         reserva.status === 'Cerrado' ? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700' : 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-800'}`}>
                         {reserva.status === 'Archived' ? 'Archivada' : reserva.status}
                     </span>
+                    {reserva.isInProgress && (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border bg-emerald-600 text-white border-emerald-700 animate-pulse" title="El viaje esta en curso (entre la fecha de salida y la fecha de regreso)">
+                            • En curso
+                        </span>
+                    )}
                 </div>
                 <p className="text-xl text-slate-900 dark:text-white mt-2 font-bold flex items-center gap-2">
                     {reserva.customerName}

@@ -429,17 +429,33 @@ export function useReservaDetail(reservaId, navigate) {
         return normalizeReservaServices(reserva);
     }, [reserva]);
 
-    const hotelCapacity = useMemo(() => {
-        if (!reserva) return 0;
-        let capacity = 0;
+    const capacity = useMemo(() => {
+        if (!reserva) return { hotel: 0, transfer: 0, package: 0, total: 0 };
+
+        let hotel = 0;
         reserva.hotelBookings?.forEach(h => {
-            const type = h.roomType?.toLowerCase() || '';
-            if (type.includes('sing')) capacity += h.rooms;
-            else if (type.includes('trip')) capacity += (3 * h.rooms);
-            else if (type.includes('quad')) capacity += (4 * h.rooms);
-            else capacity += (2 * h.rooms);
+            // Si el booking tiene Adults/Children explicitos, usar esos. Sino fallback a roomType * rooms.
+            const explicit = (h.adults || 0) + (h.children || 0);
+            if (explicit > 0) {
+                hotel += explicit;
+            } else {
+                const type = h.roomType?.toLowerCase() || '';
+                if (type.includes('sing')) hotel += h.rooms;
+                else if (type.includes('trip')) hotel += (3 * h.rooms);
+                else if (type.includes('quad')) hotel += (4 * h.rooms);
+                else hotel += (2 * h.rooms);
+            }
         });
-        return capacity;
+
+        const transfer = (reserva.transferBookings || []).reduce((max, t) => Math.max(max, t.passengers || 0), 0);
+        const pkg = (reserva.packageBookings || []).reduce((sum, p) => sum + ((p.adults || 0) + (p.children || 0)), 0);
+
+        return {
+            hotel,
+            transfer,
+            package: pkg,
+            total: Math.max(hotel, Math.max(transfer, pkg))
+        };
     }, [reserva]);
 
     return {
@@ -454,6 +470,8 @@ export function useReservaDetail(reservaId, navigate) {
         handleDeleteService,
         handleDeletePassenger,
         allServices,
-        hotelCapacity
+        capacity,
+        // Backwards compat
+        hotelCapacity: capacity.hotel
     };
 }

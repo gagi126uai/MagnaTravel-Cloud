@@ -271,6 +271,20 @@ public class ReservasController : ControllerBase
         }
     }
 
+    [HttpGet("{publicIdOrLegacyId}/transition-readiness")]
+    public async Task<ActionResult<TransitionReadinessDto>> GetTransitionReadiness(string publicIdOrLegacyId, [FromQuery] string to, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.GetTransitionReadinessAsync(publicIdOrLegacyId, to, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpPatch("{publicIdOrLegacyId}/passenger-counts")]
     public async Task<ActionResult> UpdatePassengerCounts(string publicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken cancellationToken)
     {

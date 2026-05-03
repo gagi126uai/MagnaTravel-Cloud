@@ -25,6 +25,7 @@ import { MobileRecordCard, MobileRecordList } from "../../../components/ui/Mobil
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
+import { ConfirmReservaModal } from "../components/ConfirmReservaModal";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
@@ -94,13 +95,14 @@ function PaymentReceiptActions({ payment, onView, onIssue }) {
   return <span className="text-xs text-slate-400">Sin comprobante</span>;
 }
 
-function PassengerCountsWidget({ initial, onSave }) {
+function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
   const [adultCount, setAdultCount] = useState(initial.adultCount);
   const [childCount, setChildCount] = useState(initial.childCount);
   const [infantCount, setInfantCount] = useState(initial.infantCount);
   const [saving, setSaving] = useState(false);
 
   const total = (adultCount || 0) + (childCount || 0) + (infantCount || 0);
+  const overCapacity = expectedCapacity > 0 && total > expectedCapacity;
   const dirty =
     adultCount !== initial.adultCount ||
     childCount !== initial.childCount ||
@@ -137,10 +139,19 @@ function PassengerCountsWidget({ initial, onSave }) {
         </div>
       </div>
       <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/50">
-        <div className="text-sm font-bold text-slate-700 dark:text-slate-200">Total: {total} pasajeros</div>
+        <div className="text-sm">
+          <div className="font-bold text-slate-700 dark:text-slate-200">Total: {total} pasajeros</div>
+          {expectedCapacity > 0 ? (
+            <div className={`text-xs ${overCapacity ? "text-rose-600 font-bold" : "text-slate-500"}`}>
+              Servicios cargados esperan {expectedCapacity} pasajeros{overCapacity ? " (excede!)" : ""}
+            </div>
+          ) : (
+            <div className="text-xs text-slate-400 italic">Agrega servicios para validar capacidad</div>
+          )}
+        </div>
         <button
           type="button"
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || overCapacity}
           onClick={handleSubmit}
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
         >
@@ -161,6 +172,7 @@ export default function ReservaDetailPage() {
   const [editingPassenger, setEditingPassenger] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
+  const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null });
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -194,7 +206,7 @@ export default function ReservaDetailPage() {
     handleDeleteService,
     handleDeletePassenger,
     allServices,
-    hotelCapacity,
+    capacity,
   } = useReservaDetail(publicId, navigate);
 
   const handleDeletePayment = async (payment) => {
@@ -237,6 +249,24 @@ export default function ReservaDetailPage() {
     }
   };
 
+  const handleConfirmReservation = async () => {
+    try {
+      const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=Reservado`);
+      const expected = readiness?.expectedPassengerCount || 0;
+      const blockingNonPax = (readiness?.blockingReasons || []).filter(r => !r.toLowerCase().includes("pasajero"));
+
+      if (readiness?.allowed && expected === 0 && blockingNonPax.length === 0) {
+        // Camino directo: nada que cargar, transicion inmediata.
+        await handleStatusChange("Reservado");
+        return;
+      }
+      // Modal forzado: hay pasajeros faltantes o reglas no-pax que mostrar
+      setConfirmReservaModal({ isOpen: true, readiness });
+    } catch (error) {
+      showError(getApiErrorMessage(error, "No se pudo verificar el estado de la reserva."));
+    }
+  };
+
   const isBudget = reserva?.status === "Presupuesto";
 
   useEffect(() => {
@@ -269,7 +299,9 @@ export default function ReservaDetailPage() {
         reserva={reserva}
         onBack={() => navigate("/reservas")}
         onStatusChange={(newStatus) => {
-          if (newStatus === "Presupuesto" && reserva.status === "Reservado") {
+          if (newStatus === "Reservado" && reserva.status === "Presupuesto") {
+            handleConfirmReservation();
+          } else if (newStatus === "Presupuesto" && reserva.status === "Reservado") {
             askConfirmation({
               title: "Deshacer reserva?",
               message: "Seguro que deseas volver el estado a 'Presupuesto'?",
@@ -306,7 +338,7 @@ export default function ReservaDetailPage() {
         </div>
       ) : null}
 
-      <CapacityWarning paxCount={reserva.passengers?.length || 0} hotelCapacity={hotelCapacity} />
+      <CapacityWarning paxCount={reserva.passengers?.length || 0} capacity={capacity} />
 
       {(getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") || getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId")) ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -401,6 +433,7 @@ export default function ReservaDetailPage() {
                   childCount: reserva.childCount || 0,
                   infantCount: reserva.infantCount || 0,
                 }}
+                expectedCapacity={capacity?.total || 0}
                 onSave={handleSavePassengerCounts}
               />
             ) : (
@@ -650,6 +683,18 @@ export default function ReservaDetailPage() {
         onConfirm={confirmConfig.onConfirm}
         onClose={() => setConfirmConfig((prev) => ({ ...prev, isOpen: false }))}
       />
+
+      {confirmReservaModal.isOpen && (
+        <ConfirmReservaModal
+          reserva={reserva}
+          readiness={confirmReservaModal.readiness}
+          onClose={() => setConfirmReservaModal({ isOpen: false, readiness: null })}
+          onConfirmed={() => {
+            setConfirmReservaModal({ isOpen: false, readiness: null });
+            fetchReserva({ showLoading: false, preserveOnError: true });
+          }}
+        />
+      )}
     </div>
   );
 }

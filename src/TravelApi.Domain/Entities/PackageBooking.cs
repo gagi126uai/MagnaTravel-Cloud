@@ -64,6 +64,8 @@ public class PackageBooking : IHasPublicId
     
     [MaxLength(500)]
     public string? Notes { get; set; }
-    
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public int GetExpectedPaxCount() => Adults + Children;
 }

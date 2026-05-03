@@ -141,6 +141,44 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(id);
     }
 
+    public async Task<TransitionReadinessDto> GetTransitionReadinessAsync(string publicIdOrLegacyId, string targetStatus, CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas
+            .Include(r => r.Passengers)
+            .Include(r => r.Servicios)
+            .FirstOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        var dto = new TransitionReadinessDto
+        {
+            TargetStatus = targetStatus,
+            Allowed = true,
+            ExpectedPassengerCount = reserva.AdultCount + reserva.ChildCount + reserva.InfantCount,
+            CurrentPassengerCount = reserva.Passengers?.Count ?? 0
+        };
+
+        // Reglas de transicion Budget -> Reserved
+        if (targetStatus == EstadoReserva.Reserved && reserva.Status == EstadoReserva.Budget)
+        {
+            if (!(reserva.Servicios?.Any() ?? false))
+            {
+                dto.Allowed = false;
+                dto.BlockingReasons.Add("Cargá al menos un servicio (hotel, vuelo, transfer o paquete) antes de confirmar la reserva.");
+            }
+
+            if (dto.ExpectedPassengerCount > 0 && dto.CurrentPassengerCount < dto.ExpectedPassengerCount)
+            {
+                dto.MissingPassengers = dto.ExpectedPassengerCount - dto.CurrentPassengerCount;
+                dto.Allowed = false;
+                dto.BlockingReasons.Add(
+                    $"Faltan {dto.MissingPassengers} pasajero(s) nominales (cargados: {dto.CurrentPassengerCount} / esperados: {dto.ExpectedPassengerCount}).");
+            }
+        }
+
+        return dto;
+    }
+
     public async Task<ReservaDto> ArchiveReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default)
     {
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
@@ -517,6 +555,14 @@ public class ReservaService : IReservaService
         throw new KeyNotFoundException("Servicio no encontrado en ninguna categoría.");
     }
 
+    private static int ComputeMaxExpectedPaxCount(Reserva reserva)
+    {
+        var hotel = reserva.HotelBookings?.Sum(h => h.GetExpectedPaxCount()) ?? 0;
+        var transfer = reserva.TransferBookings?.Max(t => (int?)t.GetExpectedPaxCount()) ?? 0;
+        var package = reserva.PackageBookings?.Sum(p => p.GetExpectedPaxCount()) ?? 0;
+        return Math.Max(hotel, Math.Max(transfer, package));
+    }
+
     private async Task EnsureNoPaymentsAsync(int reservaId, CancellationToken ct)
     {
         if (reservaId == 0) return;
@@ -562,7 +608,12 @@ public class ReservaService : IReservaService
 
     public async Task<PassengerDto> AddPassengerAsync(int reservaId, Passenger passenger)
     {
-        var file = await _context.Reservas.FindAsync(reservaId);
+        var file = await _context.Reservas
+            .Include(r => r.Passengers)
+            .Include(r => r.HotelBookings)
+            .Include(r => r.TransferBookings)
+            .Include(r => r.PackageBookings)
+            .FirstOrDefaultAsync(r => r.Id == reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (file.Status == EstadoReserva.Budget)
@@ -570,6 +621,14 @@ public class ReservaService : IReservaService
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (passenger.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
+
+        var maxExpected = ComputeMaxExpectedPaxCount(file);
+        if (maxExpected > 0 && file.Passengers.Count >= maxExpected)
+        {
+            throw new InvalidOperationException(
+                $"La reserva ya tiene los {maxExpected} pasajeros que esperan los servicios cargados. " +
+                "Para sumar mas, ampliá la capacidad de algun servicio o agregá uno nuevo.");
+        }
 
         if (passenger.BirthDate.HasValue)
         {
@@ -727,6 +786,18 @@ public class ReservaService : IReservaService
             var hasServices = await HasServicesAsync(id);
             if (!hasServices)
                 throw new InvalidOperationException("No se puede confirmar la reserva porque no tiene ningun servicio cargado. Agrega al menos un servicio antes de reservar.");
+
+            var expectedPax = file.AdultCount + file.ChildCount + file.InfantCount;
+            if (expectedPax > 0)
+            {
+                var currentPax = await _context.Passengers.CountAsync(p => p.ReservaId == id);
+                if (currentPax < expectedPax)
+                {
+                    throw new InvalidOperationException(
+                        $"Faltan {expectedPax - currentPax} pasajero(s) nominales para confirmar la reserva " +
+                        $"(cargados: {currentPax} / esperados: {expectedPax}). Cargá los nombres y documentos antes de continuar.");
+                }
+            }
         }
 
         if (file.Status == EstadoReserva.Reserved && status == EstadoReserva.Budget)
@@ -901,6 +972,7 @@ public class ReservaService : IReservaService
         var afip = EconomicRulesHelper.EvaluateAfip(reserva, settings);
         dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
         dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
+        dto.IsInProgress = ComputeIsInProgress(dto.Status, dto.StartDate, dto.EndDate);
     }
 
     private static void ApplyEconomicFlags(ReservaListDto dto, OperationalFinanceSettings settings)
@@ -912,6 +984,17 @@ public class ReservaService : IReservaService
         var afip = EconomicRulesHelper.EvaluateAfip(reserva, settings);
         dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
         dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
+        dto.IsInProgress = ComputeIsInProgress(dto.Status, dto.StartDate, dto.EndDate);
+    }
+
+    private static bool ComputeIsInProgress(string status, DateTime? startDate, DateTime? endDate)
+    {
+        if (status != EstadoReserva.Operational) return false;
+        if (!startDate.HasValue) return false;
+        var today = DateTime.UtcNow.Date;
+        if (startDate.Value.Date > today) return false;
+        if (endDate.HasValue && endDate.Value.Date < today) return false;
+        return true;
     }
 
     private IQueryable<Reserva> ApplyReservaSearch(IQueryable<Reserva> query, string? search)

@@ -74,6 +74,8 @@ public class HotelBooking : IHasPublicId
     
     // Planner de habitaciones: JSON con asignación de pasajeros por habitación
     public string? RoomingAssignmentsJson { get; set; }
-    
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public int GetExpectedPaxCount() => Adults + Children;
 }

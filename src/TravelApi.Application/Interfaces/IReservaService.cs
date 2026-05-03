@@ -26,6 +26,7 @@ public interface IReservaService
     Task DeletePaymentAsync(string reservaPublicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken ct = default);
 
     Task<ReservaDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken ct = default);
+    Task<TransitionReadinessDto> GetTransitionReadinessAsync(string publicIdOrLegacyId, string targetStatus, CancellationToken ct = default);
     Task UpdateBalanceAsync(int reservaId);
     Task<ReservaDto> ArchiveReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);
     Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);

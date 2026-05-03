@@ -345,6 +345,7 @@ builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IOperationalFinanceSettingsService, OperationalFinanceSettingsService>();
 builder.Services.AddScoped<ITreasuryService, TreasuryService>();
 builder.Services.AddScoped<OperationalFinanceMonitorService>();
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.ReservaLifecycleAutomationService>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
 builder.Services.AddScoped<ICountryService, CountryService>();
@@ -654,6 +655,14 @@ if (hangfireSchedulerEnabled)
         "upcoming-unpaid-reservas",
         service => service.GenerateUpcomingUnpaidReservationNotificationsAsync(),
         Cron.Daily());
+
+    // Lifecycle automation: promueve Reserved->Operational cuando arranca el viaje (o esta cobrado)
+    // y cierra Operational->Closed al dia siguiente del EndDate.
+    // Corre temprano (3am UTC) para que cuando el agente abre el sistema en la manana ya este aplicado.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.ReservaLifecycleAutomationService>(
+        "reserva-lifecycle-automation",
+        service => service.RunDailyAsync(CancellationToken.None),
+        Cron.Daily(3));
 }
 
 // 3. Health Check

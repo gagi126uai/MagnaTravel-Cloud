@@ -22,4 +22,5 @@ public class ReservaListDto
     public bool CanEmitVoucher { get; set; }
     public bool CanEmitAfipInvoice { get; set; }
     public string? EconomicBlockReason { get; set; }
+    public bool IsInProgress { get; set; }
 }
