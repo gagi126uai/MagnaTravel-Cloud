@@ -91,6 +91,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./uploads:/app/Uploads
       - ./logs:/app/logs
@@ -136,9 +138,8 @@ services:
       context: .
       dockerfile: src/TravelApi/Dockerfile
     container_name: travel_migrate
+    restart: "no"
     logging: *default-logging
-    profiles:
-      - ops
     depends_on:
       db:
         condition: service_healthy
@@ -175,6 +176,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./logs:/app/logs
     environment:
@@ -279,6 +282,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080

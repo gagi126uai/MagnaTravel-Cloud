@@ -39,12 +39,16 @@ git pull
 bash scripts/ops/deploy.sh
 ```
 
-Si se usa `docker compose up -d --build` manualmente, ejecutar antes el paso de migraciones:
+Si se usa `docker compose up -d --build` manualmente, las migraciones se aplican automaticamente: `api`, `worker` y `reservas-service` declaran `depends_on: migrate (service_completed_successfully)`, asi que `up` espera a que el job `migrate` termine con exit 0 antes de levantar los servicios.
 
 ```bash
-docker compose up -d db rabbitmq minio
-docker compose run --rm migrate
 docker compose up -d --build
+```
+
+Para forzar la migracion fuera del flujo de `up` (ej. solo aplicar SQL sin reiniciar):
+
+```bash
+docker compose run --rm migrate
 ```
 
 ### Que hace automaticamente
