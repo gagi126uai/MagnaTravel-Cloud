@@ -94,6 +94,63 @@ function PaymentReceiptActions({ payment, onView, onIssue }) {
   return <span className="text-xs text-slate-400">Sin comprobante</span>;
 }
 
+function PassengerCountsWidget({ initial, onSave }) {
+  const [adultCount, setAdultCount] = useState(initial.adultCount);
+  const [childCount, setChildCount] = useState(initial.childCount);
+  const [infantCount, setInfantCount] = useState(initial.infantCount);
+  const [saving, setSaving] = useState(false);
+
+  const total = (adultCount || 0) + (childCount || 0) + (infantCount || 0);
+  const dirty =
+    adultCount !== initial.adultCount ||
+    childCount !== initial.childCount ||
+    infantCount !== initial.infantCount;
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    try {
+      await onSave({ adultCount, childCount, infantCount });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputClass = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-center text-lg font-bold text-slate-900 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+
+  return (
+    <div className="space-y-6">
+      <div className="text-sm text-slate-500 dark:text-slate-400">
+        En estado Presupuesto solo se cargan cantidades. Al pasar a Reservado podras cargar cada pasajero con nombre y documento.
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase text-slate-500">Adultos</label>
+          <input type="number" min="0" value={adultCount} onChange={(e) => setAdultCount(Math.max(0, parseInt(e.target.value, 10) || 0))} className={inputClass} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase text-slate-500">Menores</label>
+          <input type="number" min="0" value={childCount} onChange={(e) => setChildCount(Math.max(0, parseInt(e.target.value, 10) || 0))} className={inputClass} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase text-slate-500">Infantes</label>
+          <input type="number" min="0" value={infantCount} onChange={(e) => setInfantCount(Math.max(0, parseInt(e.target.value, 10) || 0))} className={inputClass} />
+        </div>
+      </div>
+      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/50">
+        <div className="text-sm font-bold text-slate-700 dark:text-slate-200">Total: {total} pasajeros</div>
+        <button
+          type="button"
+          disabled={!dirty || saving}
+          onClick={handleSubmit}
+          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {saving ? "Guardando..." : "Guardar cantidades"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ReservaDetailPage() {
   const { publicId } = useParams();
   const navigate = useNavigate();
@@ -170,9 +227,21 @@ export default function ReservaDetailPage() {
     }
   };
 
+  const handleSavePassengerCounts = async (counts) => {
+    try {
+      await api.patch(`/reservas/${publicId}/passenger-counts`, counts);
+      showSuccess("Cantidades actualizadas");
+      await fetchReserva({ showLoading: false, preserveOnError: true });
+    } catch (error) {
+      showError(getApiErrorMessage(error, "No se pudieron actualizar las cantidades."));
+    }
+  };
+
   if (loading) {
     return <div className="animate-pulse p-8 text-center text-slate-500">Cargando reserva...</div>;
   }
+
+  const isBudget = reserva?.status === "Presupuesto";
 
   if (!reserva) {
     return (
@@ -225,6 +294,12 @@ export default function ReservaDetailPage() {
 
       <ReservaSummaryStrip reserva={reserva} />
 
+      {isBudget ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <strong className="font-bold">Reserva en modo Presupuesto.</strong> Pasala a Reservado para cargar pasajeros nominales y registrar pagos.
+        </div>
+      ) : null}
+
       <CapacityWarning paxCount={reserva.passengers?.length || 0} hotelCapacity={hotelCapacity} />
 
       {(getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") || getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId")) ? (
@@ -263,12 +338,14 @@ export default function ReservaDetailPage() {
           <nav className="scrollbar-hide flex gap-8 overflow-x-auto">
             {[
               { id: "services", label: "Servicios", icon: FileText },
-              { id: "passengers", label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
+              isBudget
+                ? { id: "passengers", label: `Cantidades (${(reserva.adultCount || 0) + (reserva.childCount || 0) + (reserva.infantCount || 0)})`, icon: Users }
+                : { id: "passengers", label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
               { id: "history", label: "Historial", icon: Clock },
-              { id: "account", label: "Estado de Cuenta", icon: CreditCard },
+              isBudget ? null : { id: "account", label: "Estado de Cuenta", icon: CreditCard },
               { id: "voucher", label: "Vouchers", icon: FileText },
               { id: "attachments", label: "Documentos", icon: Paperclip },
-            ].map((tab) => (
+            ].filter(Boolean).map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -311,25 +388,36 @@ export default function ReservaDetailPage() {
           ) : null}
 
           {activeTab === "passengers" ? (
-            <PassengerList
-              passengers={reserva.passengers}
-              onAddPassenger={() => {
-                setEditingPassenger(null);
-                setShowPassengerForm(true);
-              }}
-              onEditPassenger={(passenger) => {
-                setEditingPassenger(passenger);
-                setShowPassengerForm(true);
-              }}
-              onDeletePassenger={(passengerId) =>
-                askConfirmation({
-                  title: "Eliminar pasajero?",
-                  message: "Estas seguro de eliminar este pasajero de la reserva?",
-                  type: "danger",
-                  onConfirm: () => handleDeletePassenger(passengerId),
-                })
-              }
-            />
+            isBudget ? (
+              <PassengerCountsWidget
+                initial={{
+                  adultCount: reserva.adultCount || 0,
+                  childCount: reserva.childCount || 0,
+                  infantCount: reserva.infantCount || 0,
+                }}
+                onSave={handleSavePassengerCounts}
+              />
+            ) : (
+              <PassengerList
+                passengers={reserva.passengers}
+                onAddPassenger={() => {
+                  setEditingPassenger(null);
+                  setShowPassengerForm(true);
+                }}
+                onEditPassenger={(passenger) => {
+                  setEditingPassenger(passenger);
+                  setShowPassengerForm(true);
+                }}
+                onDeletePassenger={(passengerId) =>
+                  askConfirmation({
+                    title: "Eliminar pasajero?",
+                    message: "Estas seguro de eliminar este pasajero de la reserva?",
+                    type: "danger",
+                    onConfirm: () => handleDeletePassenger(passengerId),
+                  })
+                }
+              />
+            )
           ) : null}
 
           {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}
@@ -338,27 +426,6 @@ export default function ReservaDetailPage() {
 
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-                  <div className="mb-1 text-[10px] font-black uppercase text-slate-400">Total Venta</div>
-                  <div className="text-xl font-black text-slate-900 dark:text-white">
-                    {reserva.totalSale?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 dark:border-emerald-900/30 dark:bg-emerald-950/20">
-                  <div className="mb-1 text-[10px] font-black uppercase text-emerald-600/70 dark:text-emerald-400/70">Total Cobrado</div>
-                  <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">
-                    {(reserva.totalSale - reserva.balance)?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
-                  </div>
-                </div>
-                <div className={`rounded-xl border p-4 ${reserva.balance > 0 ? "border-rose-100 bg-rose-50/50 dark:border-rose-900/30 dark:bg-rose-950/20" : "border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/30"}`}>
-                  <div className={`mb-1 text-[10px] font-black uppercase ${reserva.balance > 0 ? "text-rose-600/70" : "text-slate-400"}`}>Saldo Pendiente</div>
-                  <div className={`text-xl font-black ${reserva.balance > 0 ? "text-rose-600" : "text-slate-500"}`}>
-                    {reserva.balance?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
-                  </div>
-                </div>
-              </div>
-
               <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
                 <button
                   onClick={() => {

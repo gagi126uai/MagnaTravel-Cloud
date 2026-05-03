@@ -22,11 +22,41 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
     const [afipResults, setAfipResults] = useState([]);
     const [loadingAfip, setLoadingAfip] = useState(false);
     const [searchingField, setSearchingField] = useState(null); // 'name' or 'taxId'
-    
+    const [similarMatches, setSimilarMatches] = useState([]);
+
     // Flag to prevent searching right after selecting a result
     const [justSelected, setJustSelected] = useState(false);
 
     const debouncedTaxId = useDebounce(formData.taxId, 500);
+    const debouncedFullName = useDebounce(formData.fullName, 500);
+    const debouncedDocumentNumber = useDebounce(formData.documentNumber, 500);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        if (customer) return; // No sugerir cuando se edita un cliente existente
+
+        const fullName = (debouncedFullName || "").trim();
+        const documentNumber = (debouncedDocumentNumber || "").trim();
+        if (fullName.length < 3 && documentNumber.length < 3) {
+            setSimilarMatches([]);
+            return;
+        }
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const params = new URLSearchParams();
+                if (fullName) params.set("fullName", fullName);
+                if (documentNumber) params.set("documentNumber", documentNumber);
+                params.set("take", "5");
+                const matches = await api.get(`/customers/search-similar?${params.toString()}`);
+                if (!cancelled) setSimilarMatches(Array.isArray(matches) ? matches : []);
+            } catch {
+                if (!cancelled) setSimilarMatches([]);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [debouncedFullName, debouncedDocumentNumber, isOpen, customer]);
 
     if (!isOpen) return null;
 
@@ -110,6 +140,34 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                         <XCircle className="h-5 w-5" />
                     </button>
                 </div>
+
+                {!customer && similarMatches.length > 0 && (
+                    <div className="px-6 pt-4">
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-950/30">
+                            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                                <Search className="h-3 w-3" /> Quizas te referis a un cliente que ya existe:
+                            </div>
+                            <div className="space-y-1">
+                                {similarMatches.map((m) => (
+                                    <button
+                                        key={m.publicId}
+                                        type="button"
+                                        onClick={() => { onClose(); window.location.href = `/customers/${m.publicId}/account`; }}
+                                        className="flex w-full items-center justify-between rounded border border-transparent bg-white/50 px-2 py-1.5 text-left text-xs hover:border-amber-300 hover:bg-white dark:bg-slate-900/40 dark:hover:bg-slate-900"
+                                    >
+                                        <div>
+                                            <div className="font-bold text-slate-900 dark:text-white">{m.fullName}{!m.isActive ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300">archivado</span> : null}</div>
+                                            <div className="text-[10px] text-slate-500">
+                                                {m.documentType ? `${m.documentType} ` : ""}{m.documentNumber || ""} {m.phone ? `• ${m.phone}` : ""} {m.email ? `• ${m.email}` : ""}
+                                            </div>
+                                        </div>
+                                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{m.score}%</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <form onSubmit={handleSubmit}>
                     <div className="p-6 space-y-4">

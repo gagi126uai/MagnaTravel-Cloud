@@ -53,9 +53,13 @@ public class CustomersController : ControllerBase
             var response = await _customerService.GetCustomerAsync(result.Id, cancellationToken);
             return CreatedAtAction(nameof(GetCustomer), new { publicIdOrLegacyId = result.PublicId }, response);
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
         catch (Microsoft.EntityFrameworkCore.DbUpdateException)
         {
-            return BadRequest(new { message = "No se pudo crear el cliente. Verifica que el documento y el email no esten duplicados." });
+            return Conflict(new { message = "No se pudo crear el cliente. Verifica que el documento y el email no esten duplicados." });
         }
         catch (Exception ex)
         {
@@ -65,6 +69,19 @@ public class CustomersController : ControllerBase
             }
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo crear el cliente.");
         }
+    }
+
+    [HttpGet("search-similar")]
+    public async Task<ActionResult<IReadOnlyList<CustomerSimilarMatchDto>>> SearchSimilar(
+        [FromQuery] string? fullName,
+        [FromQuery] string? documentType,
+        [FromQuery] string? documentNumber,
+        [FromQuery] string? phone,
+        [FromQuery] int take,
+        CancellationToken cancellationToken)
+    {
+        var matches = await _customerService.SearchSimilarAsync(fullName, documentType, documentNumber, phone, take, cancellationToken);
+        return Ok(matches);
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
@@ -96,6 +113,45 @@ public class CustomersController : ControllerBase
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
              return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el cliente.");
+        }
+    }
+
+    [HttpDelete("{publicIdOrLegacyId}")]
+    public async Task<IActionResult> DeleteOrArchive(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            var result = await _customerService.DeleteOrArchiveCustomerAsync(id, cancellationToken);
+            return Ok(new { outcome = result.Outcome.ToString(), message = result.Message });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex)
+        {
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el cliente.");
+        }
+    }
+
+    [HttpPatch("{publicIdOrLegacyId}/reactivate")]
+    public async Task<IActionResult> Reactivate(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            await _customerService.ReactivateCustomerAsync(id, cancellationToken);
+            var customer = await _customerService.GetCustomerAsync(id, cancellationToken);
+            return Ok(customer);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
     }
 
@@ -183,7 +239,8 @@ public class CustomersController : ControllerBase
             FullName = request.FullName,
             Email = request.Email,
             Phone = request.Phone,
-            DocumentNumber = request.DocumentNumber,
+            DocumentType = string.IsNullOrWhiteSpace(request.DocumentType) ? null : request.DocumentType.Trim(),
+            DocumentNumber = string.IsNullOrWhiteSpace(request.DocumentNumber) ? null : request.DocumentNumber.Trim(),
             Address = request.Address,
             Notes = request.Notes,
             TaxId = request.TaxId,
@@ -199,6 +256,7 @@ public record CustomerUpsertRequest(
     string FullName,
     string? Email,
     string? Phone,
+    string? DocumentType,
     string? DocumentNumber,
     string? Address,
     string? Notes,

@@ -76,10 +76,117 @@ public class CustomerService : ICustomerService
 
     public async Task<Customer> CreateCustomerAsync(Customer customer, CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(customer.DocumentType) && !string.IsNullOrWhiteSpace(customer.DocumentNumber))
+        {
+            var docType = customer.DocumentType.Trim();
+            var docNumber = customer.DocumentNumber.Trim();
+            var duplicate = await _dbContext.Customers
+                .AsNoTracking()
+                .Where(c => c.DocumentType == docType && c.DocumentNumber == docNumber)
+                .Select(c => new { c.PublicId, c.FullName })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (duplicate != null)
+            {
+                throw new InvalidOperationException($"Ya existe un cliente con {docType} {docNumber}: {duplicate.FullName}.");
+            }
+        }
+
         customer.IsActive = true;
         _dbContext.Customers.Add(customer);
         await _dbContext.SaveChangesAsync(cancellationToken);
         return customer;
+    }
+
+    public async Task<IReadOnlyList<CustomerSimilarMatchDto>> SearchSimilarAsync(
+        string? fullName,
+        string? documentType,
+        string? documentNumber,
+        string? phone,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var docType = documentType?.Trim();
+        var docNumber = documentNumber?.Trim();
+        var phoneNorm = NormalizePhone(phone);
+        var nameNorm = NormalizeName(fullName);
+
+        var hasAnyCriteria = !string.IsNullOrEmpty(docNumber) || !string.IsNullOrEmpty(phoneNorm) || !string.IsNullOrEmpty(nameNorm);
+        if (!hasAnyCriteria)
+        {
+            return Array.Empty<CustomerSimilarMatchDto>();
+        }
+
+        var candidates = await _dbContext.Customers
+            .AsNoTracking()
+            .Where(c =>
+                (docNumber != null && c.DocumentNumber == docNumber && (docType == null || c.DocumentType == docType)) ||
+                (phoneNorm != null && c.Phone != null && c.Phone.Replace(" ", "").Replace("+", "").Replace("-", "") == phoneNorm) ||
+                (nameNorm != null && c.FullName.ToLower().Contains(nameNorm)))
+            .Take(50)
+            .Select(c => new
+            {
+                c.PublicId,
+                c.FullName,
+                c.DocumentType,
+                c.DocumentNumber,
+                c.Phone,
+                c.Email,
+                c.IsActive
+            })
+            .ToListAsync(cancellationToken);
+
+        var matches = candidates
+            .Select(c =>
+            {
+                int score = 0;
+                if (docNumber != null && c.DocumentNumber == docNumber)
+                {
+                    score = (docType != null && c.DocumentType == docType) ? 100 : 90;
+                }
+                else if (phoneNorm != null && NormalizePhone(c.Phone) == phoneNorm)
+                {
+                    score = 80;
+                }
+                else if (nameNorm != null && NormalizeName(c.FullName) == nameNorm)
+                {
+                    score = 70;
+                }
+                else if (nameNorm != null && (c.FullName ?? "").ToLower().Contains(nameNorm))
+                {
+                    score = 60;
+                }
+
+                return new CustomerSimilarMatchDto
+                {
+                    PublicId = c.PublicId,
+                    FullName = c.FullName,
+                    DocumentType = c.DocumentType,
+                    DocumentNumber = c.DocumentNumber,
+                    Phone = c.Phone,
+                    Email = c.Email,
+                    IsActive = c.IsActive,
+                    Score = score
+                };
+            })
+            .Where(m => m.Score > 0)
+            .OrderByDescending(m => m.Score)
+            .ThenBy(m => m.FullName)
+            .Take(take > 0 ? take : 5)
+            .ToList();
+
+        return matches;
+    }
+
+    private static string? NormalizePhone(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return null;
+        return phone.Replace(" ", "").Replace("+", "").Replace("-", "").Replace("(", "").Replace(")", "");
+    }
+
+    private static string? NormalizeName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        return name.Trim().ToLowerInvariant();
     }
 
     public async Task<Customer> UpdateCustomerAsync(int id, Customer customer, CancellationToken cancellationToken)
@@ -90,6 +197,7 @@ public class CustomerService : ICustomerService
         existing.FullName = customer.FullName;
         existing.Email = customer.Email;
         existing.Phone = customer.Phone;
+        existing.DocumentType = customer.DocumentType;
         existing.DocumentNumber = customer.DocumentNumber;
         existing.Address = customer.Address;
         existing.Notes = customer.Notes;
@@ -101,6 +209,42 @@ public class CustomerService : ICustomerService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return existing;
+    }
+
+    public async Task<CustomerDeletionResult> DeleteOrArchiveCustomerAsync(int id, CancellationToken cancellationToken)
+    {
+        var customer = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
+        if (customer == null) throw new KeyNotFoundException("Cliente no encontrado");
+
+        var hasReservas = await _dbContext.Reservas.AnyAsync(r => r.PayerId == id, cancellationToken);
+        var hasPayments = await _dbContext.Payments.AnyAsync(p => p.Reserva != null && p.Reserva.PayerId == id, cancellationToken);
+        var hasInvoices = await _dbContext.Invoices.AnyAsync(i => i.Reserva != null && i.Reserva.PayerId == id, cancellationToken);
+
+        if (hasReservas || hasPayments || hasInvoices)
+        {
+            if (!customer.IsActive)
+            {
+                return new CustomerDeletionResult(CustomerDeletionOutcome.Archived, "El cliente ya estaba archivado.");
+            }
+
+            customer.IsActive = false;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return new CustomerDeletionResult(CustomerDeletionOutcome.Archived, "El cliente tiene reservas o pagos asociados, por lo que se archivo (IsActive=false) en lugar de borrarse.");
+        }
+
+        _dbContext.Customers.Remove(customer);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return new CustomerDeletionResult(CustomerDeletionOutcome.HardDeleted, "Cliente eliminado.");
+    }
+
+    public async Task<Customer> ReactivateCustomerAsync(int id, CancellationToken cancellationToken)
+    {
+        var customer = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
+        if (customer == null) throw new KeyNotFoundException("Cliente no encontrado");
+
+        customer.IsActive = true;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return customer;
     }
 
     public async Task<CustomerAccountOverviewDto> GetCustomerAccountOverviewAsync(int id, CancellationToken cancellationToken)

@@ -67,6 +67,11 @@ public class Reserva : IHasPublicId
     [Column(TypeName = "decimal(18,2)")]
     public decimal TotalPaid { get; set; } = 0;
 
+    // Passenger counts (only used while Status = Budget; replaced by individual Passengers when promoted)
+    public int AdultCount { get; set; } = 0;
+    public int ChildCount { get; set; } = 0;
+    public int InfantCount { get; set; } = 0;
+
     // Navigation
     public ICollection<ServicioReserva> Servicios { get; set; } = new List<ServicioReserva>();
     public ICollection<Passenger> Passengers { get; set; } = new List<Passenger>();

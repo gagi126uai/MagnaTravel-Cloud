@@ -9,6 +9,8 @@ public class Customer : IHasPublicId
     public string FullName { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string? Phone { get; set; }
+    [MaxLength(20)]
+    public string? DocumentType { get; set; } // DNI / Pasaporte / CUIT / CUIL / LE / LC
     public string? DocumentNumber { get; set; }
     public string? Address { get; set; }
     public string? Notes { get; set; }

@@ -326,6 +326,9 @@ public class PaymentService : IPaymentService
         if (reserva == null)
             throw new ArgumentException("Reserva no encontrada.");
 
+        if (reserva.Status == EstadoReserva.Budget)
+            throw new InvalidOperationException("No se pueden registrar pagos en una Reserva en estado Presupuesto. Pasala a Reservado primero.");
+
         if (request.Amount <= 0)
             throw new ArgumentException("El monto debe ser mayor a 0.");
 

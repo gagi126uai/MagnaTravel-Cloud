@@ -37,10 +37,14 @@ public class QuotesController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<QuoteDetailDto>> Create([FromBody] UpsertQuoteRequest request, CancellationToken cancellationToken)
+    [Obsolete("Cotizaciones discontinuadas. Crear Reserva en estado Presupuesto.")]
+    public ActionResult<QuoteDetailDto> Create([FromBody] UpsertQuoteRequest request)
     {
-        var created = await _quoteService.CreateAsync(request, cancellationToken);
-        return CreatedAtAction(nameof(GetById), new { publicIdOrLegacyId = created.PublicId }, created);
+        _ = request;
+        return StatusCode(StatusCodes.Status410Gone, new
+        {
+            message = "Las cotizaciones quedaron discontinuadas. Crear una Reserva en estado Presupuesto."
+        });
     }
 
     [HttpPut("{publicIdOrLegacyId}")]

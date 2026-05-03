@@ -90,9 +90,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
 builder.Services.AddOutputCache(options =>
 {
-    options.AddBasePolicy(builder => 
-        builder.Expire(TimeSpan.FromMinutes(10)));
-    options.AddPolicy("CatalogCache", builder => 
+    options.AddPolicy("CatalogCache", builder =>
         builder.Expire(TimeSpan.FromHours(24)).Tag("catalog"));
 });
 builder.Services.AddResponseCompression(options =>

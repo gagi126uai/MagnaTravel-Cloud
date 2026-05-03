@@ -88,6 +88,26 @@ public class ReservaService : IReservaService
         await RemovePassengerAsync(passengerId);
     }
 
+    public async Task<ReservaDto> UpdatePassengerCountsAsync(string reservaPublicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        if (reserva.Status != EstadoReserva.Budget)
+            throw new InvalidOperationException("Las cantidades de pasajeros solo se pueden editar en estado Presupuesto. Si ya pasó a Reservado, cargá los pasajeros nominales.");
+
+        if (counts.AdultCount < 0 || counts.ChildCount < 0 || counts.InfantCount < 0)
+            throw new ArgumentException("Las cantidades no pueden ser negativas.");
+
+        reserva.AdultCount = counts.AdultCount;
+        reserva.ChildCount = counts.ChildCount;
+        reserva.InfantCount = counts.InfantCount;
+
+        await _context.SaveChangesAsync(ct);
+        return await GetReservaByIdAsync(reservaId);
+    }
+
     public async Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
@@ -503,6 +523,10 @@ public class ReservaService : IReservaService
         var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
         if (hasPayments)
             throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con pagos realizados.");
+
+        var hasIssuedVoucher = await _context.Vouchers.AnyAsync(v => v.ReservaId == reservaId && v.Status == "Issued", ct);
+        if (hasIssuedVoucher)
+            throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con vouchers ya emitidos. Anula los vouchers primero.");
     }
 
     public async Task RemoveServiceAsync_OldVersion(int serviceId, CancellationToken ct = default)
@@ -540,6 +564,9 @@ public class ReservaService : IReservaService
     {
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+
+        if (file.Status == EstadoReserva.Budget)
+            throw new InvalidOperationException("No se pueden cargar pasajeros nominales en una Reserva en estado Presupuesto. Usa el contador de cantidades o pasala a Reservado primero.");
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (passenger.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
@@ -591,8 +618,23 @@ public class ReservaService : IReservaService
 
     public async Task RemovePassengerAsync(int passengerId)
     {
-        var passenger = await _context.Passengers.FindAsync(passengerId);
+        var passenger = await _context.Passengers
+            .Include(p => p.Reserva)
+            .FirstOrDefaultAsync(p => p.Id == passengerId);
         if (passenger == null) throw new KeyNotFoundException("Pasajero no encontrado");
+
+        if (passenger.Reserva != null && (passenger.Reserva.Status == EstadoReserva.Operational || passenger.Reserva.Status == EstadoReserva.Closed))
+            throw new InvalidOperationException("No se puede eliminar un pasajero de una reserva en estado Operativo o Cerrado.");
+
+        var assignedToVoucher = await _context.VoucherPassengerAssignments
+            .AnyAsync(a => a.PassengerId == passengerId);
+        if (assignedToVoucher)
+            throw new InvalidOperationException("No se puede eliminar el pasajero: esta asignado a uno o mas vouchers. Anula los vouchers primero.");
+
+        var reservaHasIssuedVoucher = await _context.Vouchers
+            .AnyAsync(v => v.ReservaId == passenger.ReservaId && v.Status == "Issued");
+        if (reservaHasIssuedVoucher)
+            throw new InvalidOperationException("No se puede eliminar el pasajero: la reserva ya tiene vouchers emitidos.");
 
         _context.Passengers.Remove(passenger);
         await _context.SaveChangesAsync();
@@ -773,12 +815,24 @@ public class ReservaService : IReservaService
 
                 if (file.Status != EstadoReserva.Reserved && file.Status != EstadoReserva.Budget)
                 {
-                    throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado.");
+                    throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado. Para reservas en otro estado, archivala (Cancelado).");
                 }
 
                 if (file.Payments.Any(payment => !payment.IsDeleted))
                 {
                     throw new InvalidOperationException("No se puede eliminar una Reserva con pagos registrados. Elimine los pagos primero.");
+                }
+
+                var hasIssuedVoucher = await _context.Vouchers.AnyAsync(v => v.ReservaId == id && v.Status == "Issued");
+                if (hasIssuedVoucher)
+                {
+                    throw new InvalidOperationException("No se puede eliminar una Reserva con vouchers emitidos. Anula los vouchers primero o cambia el estado a Cancelado.");
+                }
+
+                var hasInvoiceWithCae = await _context.Invoices.AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE));
+                if (hasInvoiceWithCae)
+                {
+                    throw new InvalidOperationException("No se puede eliminar una Reserva con facturas AFIP emitidas (CAE asignado). Marca la Reserva como Cancelada.");
                 }
 
                 if (file.Servicios.Any()) _context.Servicios.RemoveRange(file.Servicios);

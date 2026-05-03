@@ -62,6 +62,9 @@ public class ReservaServiceHttpProxy : ReservationsServiceHttpProxyBase, IReserv
     public Task RemovePassengerAsync(string passengerPublicIdOrLegacyId, CancellationToken ct = default)
         => DeleteAsync($"api/reservas/passengers/{passengerPublicIdOrLegacyId}", ct);
 
+    public Task<ReservaDto> UpdatePassengerCountsAsync(string reservaPublicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken ct = default)
+        => PatchAsync<PassengerCountsRequest, ReservaDto>($"api/reservas/{reservaPublicIdOrLegacyId}/passenger-counts", counts, ct);
+
     public Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
         => GetAsync<IEnumerable<PaymentDto>>($"api/reservas/{reservaPublicIdOrLegacyId}/payments", ct);
 

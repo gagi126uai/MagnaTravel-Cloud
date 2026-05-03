@@ -348,9 +348,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.Property(c => c.FullName).HasMaxLength(200).IsRequired();
             entity.Property(c => c.Email).HasMaxLength(200);
+            entity.Property(c => c.DocumentType).HasMaxLength(20);
             entity.Property(c => c.DocumentNumber).HasMaxLength(50);
             entity.Property(c => c.Address).HasMaxLength(300);
             entity.HasIndex(c => new { c.IsActive, c.FullName });
+
+            // Unicidad parcial: un mismo (TipoDoc, NumDoc) no puede repetirse cuando ambos estan presentes.
+            entity.HasIndex(c => new { c.DocumentType, c.DocumentNumber })
+                  .IsUnique()
+                  .HasFilter("\"DocumentNumber\" IS NOT NULL AND \"DocumentType\" IS NOT NULL");
         });
 
         // Reserva (Master) - Mapeado a TravelFiles (Legacy)

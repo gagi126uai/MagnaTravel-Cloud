@@ -24,6 +24,9 @@ public class ReservaDto
     public decimal TotalSale { get; set; }
     public decimal TotalPaid { get; set; }
     public decimal Balance { get; set; }
+    public int AdultCount { get; set; }
+    public int ChildCount { get; set; }
+    public int InfantCount { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }

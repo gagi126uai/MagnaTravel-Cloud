@@ -456,9 +456,48 @@ public class RateService : IRateService
             return false;
         }
 
+        var inUse =
+            await _db.Servicios.AnyAsync(s => s.RateId == id, ct) ||
+            await _db.HotelBookings.AnyAsync(b => b.RateId == id, ct) ||
+            await _db.TransferBookings.AnyAsync(b => b.RateId == id, ct) ||
+            await _db.PackageBookings.AnyAsync(b => b.RateId == id, ct) ||
+            await _db.FlightSegments.AnyAsync(f => f.RateId == id, ct) ||
+            await _db.QuoteItems.AnyAsync(q => q.RateId == id, ct);
+
+        if (inUse)
+            throw new InvalidOperationException("No se puede eliminar la tarifa: esta en uso por reservas, bookings o cotizaciones existentes. Desactivala en su lugar.");
+
         _db.Rates.Remove(rate);
         await _db.SaveChangesAsync(ct);
         return true;
+    }
+
+    public async Task<RateListItemDto?> DeactivateAsync(int id, CancellationToken ct)
+    {
+        var rate = await _db.Rates.FirstOrDefaultAsync(item => item.Id == id, ct);
+        if (rate == null)
+        {
+            return null;
+        }
+
+        rate.IsActive = false;
+        rate.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return await GetByIdAsync(id, ct);
+    }
+
+    public async Task<RateListItemDto?> ReactivateAsync(int id, CancellationToken ct)
+    {
+        var rate = await _db.Rates.FirstOrDefaultAsync(item => item.Id == id, ct);
+        if (rate == null)
+        {
+            return null;
+        }
+
+        rate.IsActive = true;
+        rate.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return await GetByIdAsync(id, ct);
     }
 
     private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicId, CancellationToken ct)

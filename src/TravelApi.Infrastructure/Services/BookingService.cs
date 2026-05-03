@@ -725,6 +725,10 @@ public class BookingService : IBookingService
         var hasPayments = await _db.Payments.AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
         if (hasPayments)
             throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con pagos realizados.");
+
+        var hasIssuedVoucher = await _db.Vouchers.AnyAsync(v => v.ReservaId == reservaId && v.Status == "Issued", ct);
+        if (hasIssuedVoucher)
+            throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con vouchers ya emitidos. Anula los vouchers primero.");
     }
 
     private async Task<int> ResolveSupplierIdAsync(string supplierPublicIdOrLegacyId, CancellationToken ct)

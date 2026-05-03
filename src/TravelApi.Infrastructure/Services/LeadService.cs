@@ -229,17 +229,46 @@ public class LeadService : ILeadService
         if (lead.ConvertedCustomerId.HasValue)
             throw new InvalidOperationException("Este lead ya fue convertido a cliente.");
 
-        var customer = new Customer
-        {
-            FullName = lead.FullName,
-            Email = lead.Email,
-            Phone = lead.Phone,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow
-        };
+        // Dedup: si ya existe un cliente con el mismo telefono normalizado o email exacto, reusarlo.
+        Customer? existing = null;
+        var phoneNorm = string.IsNullOrWhiteSpace(lead.Phone)
+            ? null
+            : lead.Phone.Replace(" ", "").Replace("+", "").Replace("-", "").Replace("(", "").Replace(")", "");
 
-        _db.Customers.Add(customer);
-        await _db.SaveChangesAsync(cancellationToken);
+        if (phoneNorm != null)
+        {
+            existing = await _db.Customers
+                .Where(c => c.Phone != null
+                    && c.Phone.Replace(" ", "").Replace("+", "").Replace("-", "").Replace("(", "").Replace(")", "") == phoneNorm)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (existing == null && !string.IsNullOrWhiteSpace(lead.Email))
+        {
+            var email = lead.Email.Trim().ToLower();
+            existing = await _db.Customers
+                .Where(c => c.Email != null && c.Email.ToLower() == email)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        Customer customer;
+        if (existing != null)
+        {
+            customer = existing;
+        }
+        else
+        {
+            customer = new Customer
+            {
+                FullName = lead.FullName,
+                Email = lead.Email,
+                Phone = lead.Phone,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.Customers.Add(customer);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
 
         lead.ConvertedCustomerId = customer.Id;
         await _db.SaveChangesAsync(cancellationToken);

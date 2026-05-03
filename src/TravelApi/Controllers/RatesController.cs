@@ -147,6 +147,44 @@ public class RatesController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPatch("{publicId}/deactivate")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Deactivate(string publicId, CancellationToken ct)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Rate>(publicId, ct);
+            var rate = await _rateService.DeactivateAsync(id, ct);
+            if (rate == null) return NotFound();
+            return Ok(rate);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpPatch("{publicId}/reactivate")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Reactivate(string publicId, CancellationToken ct)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Rate>(publicId, ct);
+            var rate = await _rateService.ReactivateAsync(id, ct);
+            if (rate == null) return NotFound();
+            return Ok(rate);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 
     private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicIdOrLegacyId, CancellationToken ct)

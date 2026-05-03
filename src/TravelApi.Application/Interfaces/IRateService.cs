@@ -15,6 +15,8 @@ public interface IRateService
     Task<RateListItemDto> CreateAsync(RateDto request, CancellationToken ct);
     Task<RateListItemDto?> UpdateAsync(int id, RateDto request, CancellationToken ct);
     Task<bool> DeleteAsync(int id, CancellationToken ct);
+    Task<RateListItemDto?> DeactivateAsync(int id, CancellationToken ct);
+    Task<RateListItemDto?> ReactivateAsync(int id, CancellationToken ct);
 }
 
 // Moving RateDto from controllers namespace to application layer

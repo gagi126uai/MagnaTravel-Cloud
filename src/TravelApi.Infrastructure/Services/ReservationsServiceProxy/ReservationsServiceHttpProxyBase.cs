@@ -67,6 +67,16 @@ public abstract class ReservationsServiceHttpProxyBase
         return await ReadResponseAsync<T>(response, cancellationToken);
     }
 
+    protected async Task<T> PatchAsync<TRequest, T>(string path, TRequest payload, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Patch, path)
+        {
+            Content = JsonContent.Create(payload, options: JsonOptions)
+        };
+        using var response = await HttpClient.SendAsync(request, cancellationToken);
+        return await ReadResponseAsync<T>(response, cancellationToken);
+    }
+
     protected async Task PutAsync<TRequest>(string path, TRequest payload, CancellationToken cancellationToken)
     {
         using var response = await HttpClient.PutAsJsonAsync(path, payload, JsonOptions, cancellationToken);

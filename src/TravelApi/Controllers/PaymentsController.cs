@@ -57,9 +57,13 @@ public class PaymentsController : ControllerBase
             var payment = await _paymentService.CreatePaymentAsync(request, cancellationToken);
             return CreatedAtAction(nameof(GetPaymentsForReserva), new { reservaPublicIdOrLegacyId = request.ReservaId }, payment);
         }
-        catch (ArgumentException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo registrar el pago." });
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {

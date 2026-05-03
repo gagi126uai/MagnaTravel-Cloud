@@ -206,6 +206,10 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error removing service {ServiceId}", servicePublicIdOrLegacyId);
@@ -247,9 +251,13 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
-        catch (ArgumentException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo agregar el pasajero." });
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
@@ -260,6 +268,38 @@ public class ReservasController : ControllerBase
             }
 
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo agregar el pasajero.");
+        }
+    }
+
+    [HttpPatch("{publicIdOrLegacyId}/passenger-counts")]
+    public async Task<ActionResult> UpdatePassengerCounts(string publicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.UpdatePassengerCountsAsync(publicIdOrLegacyId, counts, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error updating passenger counts for reserva {ReservaId}", publicIdOrLegacyId);
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudieron actualizar las cantidades.");
         }
     }
 
@@ -303,6 +343,10 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error removing passenger {PassengerId}", passengerPublicIdOrLegacyId);
@@ -334,9 +378,13 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
-        catch (ArgumentException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo registrar el pago." });
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {

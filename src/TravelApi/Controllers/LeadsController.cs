@@ -83,9 +83,14 @@ public class LeadsController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/quote-draft")]
-    public async Task<ActionResult<QuoteDraftResultDto>> CreateQuoteDraft(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    [Obsolete("Cotizaciones discontinuadas. Crear Reserva en estado Presupuesto desde el modulo de Reservas.")]
+    public ActionResult<QuoteDraftResultDto> CreateQuoteDraft(string publicIdOrLegacyId)
     {
-        return Ok(await _leadService.CreateQuoteDraftAsync(publicIdOrLegacyId, cancellationToken));
+        _ = publicIdOrLegacyId;
+        return StatusCode(StatusCodes.Status410Gone, new
+        {
+            message = "Las cotizaciones quedaron discontinuadas. Crear una Reserva en estado Presupuesto desde el modulo de Reservas."
+        });
     }
 
     [HttpGet("{publicIdOrLegacyId}/journey")]

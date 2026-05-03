@@ -17,3 +17,8 @@ public record ReservationPaymentUpsertRequest(
     string Method,
     string? Reference,
     string? Notes);
+
+public record PassengerCountsRequest(
+    int AdultCount,
+    int ChildCount,
+    int InfantCount);
