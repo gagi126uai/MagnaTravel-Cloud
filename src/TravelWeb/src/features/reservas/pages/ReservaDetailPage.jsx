@@ -237,10 +237,6 @@ export default function ReservaDetailPage() {
     }
   };
 
-  if (loading) {
-    return <div className="animate-pulse p-8 text-center text-slate-500">Cargando reserva...</div>;
-  }
-
   const isBudget = reserva?.status === "Presupuesto";
 
   useEffect(() => {
@@ -248,6 +244,10 @@ export default function ReservaDetailPage() {
       setActiveTab("services");
     }
   }, [isBudget, activeTab]);
+
+  if (loading) {
+    return <div className="animate-pulse p-8 text-center text-slate-500">Cargando reserva...</div>;
+  }
 
   if (!reserva) {
     return (
