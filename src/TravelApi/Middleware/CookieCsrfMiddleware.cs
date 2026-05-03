@@ -31,6 +31,14 @@ public class CookieCsrfMiddleware
             return;
         }
 
+        // Hangfire dashboard hace POST internos (stats, retry, requeue, etc.) sin CSRF header.
+        // El dashboard tiene su propia auth via HangfireAuthorizationFilter + JWT cookie.
+        if (context.Request.Path.StartsWithSegments("/hangfire", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(context);
+            return;
+        }
+
         if (context.Request.Path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
             context.Request.Path.Equals("/api/auth/register", StringComparison.OrdinalIgnoreCase))
         {
