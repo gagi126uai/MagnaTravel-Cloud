@@ -41,7 +41,8 @@ export function useReservas() {
   const [dateRange, setDateRange] = useState({
     from: "",
     to: "", // vacío = hasta hoy
-    preset: "month" // all, 90days, 365days, custom, month — default: mes en curso
+    preset: "month", // all, 90days, 365days, custom, month — default: mes en curso
+    field: "created" // created | travel — sobre qué fecha filtrar
   });
 
   const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -57,17 +58,20 @@ export function useReservas() {
         view: viewFilter,
       });
 
+      const fromKey = dateRange.field === "travel" ? "travelFrom" : "createdFrom";
+      const toKey = dateRange.field === "travel" ? "travelTo" : "createdTo";
+
       if (dateRange.preset === "month") {
         const from = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
         const to = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59, 59);
-        params.set("createdFrom", from.toISOString());
-        params.set("createdTo", to.toISOString());
+        params.set(fromKey, from.toISOString());
+        params.set(toKey, to.toISOString());
       } else if (dateRange.preset !== "all") {
         if (dateRange.from) {
-          params.set("createdFrom", new Date(`${dateRange.from}T00:00:00Z`).toISOString());
+          params.set(fromKey, new Date(`${dateRange.from}T00:00:00Z`).toISOString());
         }
         if (dateRange.to) {
-          params.set("createdTo", new Date(`${dateRange.to}T23:59:59Z`).toISOString());
+          params.set(toKey, new Date(`${dateRange.to}T23:59:59Z`).toISOString());
         }
       }
 

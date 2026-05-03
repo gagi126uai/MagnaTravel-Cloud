@@ -202,11 +202,23 @@ public class ReservaService : IReservaService
             var from = query.CreatedFrom.Value.ToUniversalTime();
             summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt >= from);
         }
-        
+
         if (query.CreatedTo.HasValue)
         {
             var to = query.CreatedTo.Value.ToUniversalTime();
             summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt <= to);
+        }
+
+        if (query.TravelFrom.HasValue)
+        {
+            var from = query.TravelFrom.Value.ToUniversalTime();
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value >= from);
+        }
+
+        if (query.TravelTo.HasValue)
+        {
+            var to = query.TravelTo.Value.ToUniversalTime();
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value <= to);
         }
 
         var filteredQuery = ApplyReservaView(summaryBaseQuery, query.View);

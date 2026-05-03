@@ -49,6 +49,8 @@ public class ReservaListQuery : PagedQuery
     public string View { get; set; } = "active";
     public DateTime? CreatedFrom { get; set; }
     public DateTime? CreatedTo { get; set; }
+    public DateTime? TravelFrom { get; set; }
+    public DateTime? TravelTo { get; set; }
 
     public ReservaListQuery()
     {
