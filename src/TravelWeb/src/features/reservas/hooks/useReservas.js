@@ -38,13 +38,12 @@ export function useReservas() {
   
   // Filtro de período por defecto: Últimos 90 días
   const today = new Date();
-  const defaultFrom = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000); // hace 90 días
   const [dateRange, setDateRange] = useState({
-    from: defaultFrom.toISOString().split("T")[0],
+    from: "",
     to: "", // vacío = hasta hoy
-    preset: "90days" // all, 90days, 365days, custom, month
+    preset: "month" // all, 90days, 365days, custom, month — default: mes en curso
   });
-  
+
   const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
 
   const debouncedSearch = useDebounce(searchTerm, 300);
