@@ -56,7 +56,7 @@ export default function LogsDashboard() {
   }, []);
 
   useEffect(() => {
-    if (activeSubTab !== "programming" || hangfireUrl || hangfireLoading) {
+    if (activeSubTab !== "programming" || hangfireUrl) {
       return;
     }
 
@@ -67,7 +67,14 @@ export default function LogsDashboard() {
       setHangfireError("");
 
       try {
-        await api.post("/auth/hangfire-session");
+        // Intentamos generar la cookie Hangfire efimera. Si falla, igual seguimos
+        // — el iframe acepta tambien la cookie mt_access regular como fallback.
+        try {
+          await api.post("/auth/hangfire-session");
+        } catch (sessionError) {
+          console.warn("Hangfire session cookie no se pudo crear, usando access cookie como fallback", sessionError);
+        }
+
         if (!cancelled) {
           setHangfireUrl(buildAppUrl("/hangfire"));
         }
@@ -87,7 +94,11 @@ export default function LogsDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [activeSubTab, hangfireLoading, hangfireUrl]);
+    // NOTA: NO incluir hangfireLoading en deps. El setHangfireLoading(true) inicial
+    // re-trigerea el effect, el cleanup setea cancelled=true y el setState final no
+    // corre nunca → componente queda en "Preparando..." para siempre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubTab, hangfireUrl]);
 
   const filteredLogs = (category) => {
     const prefix = `[${category.toUpperCase()}]`;

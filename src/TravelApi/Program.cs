@@ -198,10 +198,20 @@ builder.Services.AddAuthentication(options =>
                     return Task.CompletedTask;
                 }
 
-                if (context.Request.Path.StartsWithSegments("/hangfire") &&
-                    context.Request.Cookies.TryGetValue(AuthCookieNames.Hangfire, out var hangfireToken))
+                // /hangfire prefiere la cookie efimera "Hangfire", pero cae al "Access"
+                // regular si no esta disponible. Esto evita que el dashboard quede en
+                // "Preparando acceso seguro..." si la cookie efimera no se creo.
+                if (context.Request.Path.StartsWithSegments("/hangfire"))
                 {
-                    context.Token = hangfireToken;
+                    if (context.Request.Cookies.TryGetValue(AuthCookieNames.Hangfire, out var hangfireToken))
+                    {
+                        context.Token = hangfireToken;
+                        return Task.CompletedTask;
+                    }
+                    if (context.Request.Cookies.TryGetValue(AuthCookieNames.Access, out var fallbackAccess))
+                    {
+                        context.Token = fallbackAccess;
+                    }
                     return Task.CompletedTask;
                 }
 
