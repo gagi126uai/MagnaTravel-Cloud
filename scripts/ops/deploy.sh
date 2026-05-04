@@ -49,7 +49,11 @@ for secret_name in "${required_secrets[@]}"; do
 done
 
 echo "Building application images..."
-docker compose build api worker reservas-service web whatsapp-bot
+# IMPORTANTE: incluir 'migrate' aca. Aunque usa el mismo Dockerfile que api/worker,
+# en docker-compose.yml tiene su propio bloque build: y por lo tanto su propia
+# imagen. Si lo omitis, migrate corre con codigo viejo y no aplica las migraciones
+# nuevas — los APIs quedan en /health/ready 503 (pending migration) para siempre.
+docker compose build migrate api worker reservas-service web whatsapp-bot
 
 echo "Starting infrastructure..."
 docker compose up -d db rabbitmq minio
