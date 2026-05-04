@@ -403,8 +403,6 @@ public class SupplierService : ISupplierService
 
     private IQueryable<SupplierAccountServiceListItemDto> BuildSupplierServicesQuery(int supplierId)
     {
-        // Subquery: ultima factura AFIP aprobada para una reserva. Se proyecta como
-        // expresion para que EF la traduzca dentro de cada Select sin N+1.
         var flights = _dbContext.FlightSegments
             .AsNoTracking()
             .Where(segment => segment.SupplierId == supplierId && ValidReservationStatuses.Contains(segment.Reserva!.Status))
@@ -420,12 +418,7 @@ public class SupplierService : ISupplierService
                 Status = segment.Status,
                 NumeroReserva = segment.Reserva!.NumeroReserva,
                 FileName = segment.Reserva!.Name,
-                ReservaPublicId = segment.Reserva!.PublicId,
-                LatestInvoicePublicId = _dbContext.Invoices
-                    .Where(i => i.ReservaId == segment.ReservaId && i.Resultado == "A")
-                    .OrderByDescending(i => i.Id)
-                    .Select(i => (Guid?)i.PublicId)
-                    .FirstOrDefault()
+                ReservaPublicId = segment.Reserva!.PublicId
             });
 
         var hotels = _dbContext.HotelBookings
@@ -443,12 +436,7 @@ public class SupplierService : ISupplierService
                 Status = booking.Status,
                 NumeroReserva = booking.Reserva!.NumeroReserva,
                 FileName = booking.Reserva!.Name,
-                ReservaPublicId = booking.Reserva!.PublicId,
-                LatestInvoicePublicId = _dbContext.Invoices
-                    .Where(i => i.ReservaId == booking.ReservaId && i.Resultado == "A")
-                    .OrderByDescending(i => i.Id)
-                    .Select(i => (Guid?)i.PublicId)
-                    .FirstOrDefault()
+                ReservaPublicId = booking.Reserva!.PublicId
             });
 
         var transfers = _dbContext.TransferBookings
@@ -466,12 +454,7 @@ public class SupplierService : ISupplierService
                 Status = transfer.Status,
                 NumeroReserva = transfer.Reserva!.NumeroReserva,
                 FileName = transfer.Reserva!.Name,
-                ReservaPublicId = transfer.Reserva!.PublicId,
-                LatestInvoicePublicId = _dbContext.Invoices
-                    .Where(i => i.ReservaId == transfer.ReservaId && i.Resultado == "A")
-                    .OrderByDescending(i => i.Id)
-                    .Select(i => (Guid?)i.PublicId)
-                    .FirstOrDefault()
+                ReservaPublicId = transfer.Reserva!.PublicId
             });
 
         var packages = _dbContext.PackageBookings
@@ -489,12 +472,7 @@ public class SupplierService : ISupplierService
                 Status = package.Status,
                 NumeroReserva = package.Reserva!.NumeroReserva,
                 FileName = package.Reserva!.Name,
-                ReservaPublicId = package.Reserva!.PublicId,
-                LatestInvoicePublicId = _dbContext.Invoices
-                    .Where(i => i.ReservaId == package.ReservaId && i.Resultado == "A")
-                    .OrderByDescending(i => i.Id)
-                    .Select(i => (Guid?)i.PublicId)
-                    .FirstOrDefault()
+                ReservaPublicId = package.Reserva!.PublicId
             });
 
         var services = _dbContext.Servicios
@@ -512,12 +490,7 @@ public class SupplierService : ISupplierService
                 Status = service.Status,
                 NumeroReserva = service.Reserva!.NumeroReserva,
                 FileName = service.Reserva!.Name,
-                ReservaPublicId = service.Reserva!.PublicId,
-                LatestInvoicePublicId = _dbContext.Invoices
-                    .Where(i => i.ReservaId == service.ReservaId && i.Resultado == "A")
-                    .OrderByDescending(i => i.Id)
-                    .Select(i => (Guid?)i.PublicId)
-                    .FirstOrDefault()
+                ReservaPublicId = service.Reserva!.PublicId
             });
 
         return flights

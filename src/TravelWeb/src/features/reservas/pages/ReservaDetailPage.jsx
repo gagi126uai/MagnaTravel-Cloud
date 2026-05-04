@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2 } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2 } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -44,6 +44,78 @@ function InvoiceStatusBadge({ resultado }) {
 
 function InvoiceTypeLabel({ tipoComprobante }) {
   return <>Factura {tipoComprobante === 1 ? "A" : tipoComprobante === 6 ? "B" : "C"}</>;
+}
+
+// Botones para ver/descargar el PDF de una factura AFIP. Solo se muestran si la
+// factura fue aceptada (resultado === "A"); si falló/rechazó, no hay PDF valido.
+function InvoicePdfActions({ invoice }) {
+  const [busy, setBusy] = useState(false);
+  const publicId = getPublicId(invoice);
+  if (invoice?.resultado !== "A" || !publicId) {
+    return <span className="text-xs text-slate-400">-</span>;
+  }
+
+  const fileLabel = `Factura-${invoice.tipoComprobante === 1 ? "A" : invoice.tipoComprobante === 6 ? "B" : "C"}-${String(invoice.puntoDeVenta).padStart(5, "0")}-${String(invoice.numeroComprobante).padStart(8, "0")}.pdf`;
+
+  const fetchBlob = async () => {
+    const response = await api.get(`/invoices/${publicId}/pdf`, { responseType: "blob" });
+    return new Blob([response], { type: "application/pdf" });
+  };
+
+  const view = async () => {
+    setBusy(true);
+    try {
+      const blob = await fetchBlob();
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    } catch (error) {
+      showError(getApiErrorMessage(error) || "No se pudo abrir la factura.", "Error al abrir factura");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const blob = await fetchBlob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", fileLabel);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      showError(getApiErrorMessage(error) || "No se pudo descargar la factura.", "Error al descargar factura");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        onClick={view}
+        disabled={busy}
+        className="rounded p-1.5 text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+        title="Ver PDF"
+      >
+        <Eye className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={download}
+        disabled={busy}
+        className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+        title="Descargar PDF"
+      >
+        <Download className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
 function getPaymentReceipt(payment) {
@@ -613,7 +685,7 @@ export default function ReservaDetailPage() {
                     <FileText className="w-4 h-4 text-indigo-500" />
                     <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">Documentos Fiscales AFIP</h4>
                   </div>
-                  <DataGrid density="compact" minWidth="760px">
+                  <DataGrid density="compact" minWidth="860px">
                     <DataGridHeader>
                       <DataGridHeaderRow>
                         <DataGridHeaderCell>Tipo</DataGridHeaderCell>
@@ -621,6 +693,7 @@ export default function ReservaDetailPage() {
                         <DataGridHeaderCell>CAE</DataGridHeaderCell>
                         <DataGridHeaderCell>Estado</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
+                        <DataGridHeaderCell align="center">PDF</DataGridHeaderCell>
                       </DataGridHeaderRow>
                     </DataGridHeader>
                     <DataGridBody>
@@ -640,10 +713,13 @@ export default function ReservaDetailPage() {
                             <DataGridCell align="right" className="font-black">
                               {invoice.importeTotal?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
                             </DataGridCell>
+                            <DataGridCell align="center">
+                              <InvoicePdfActions invoice={invoice} />
+                            </DataGridCell>
                           </DataGridRow>
                         ))
                       ) : (
-                        <DataGridEmptyState colSpan={5} title="No hay facturas emitidas para esta reserva." />
+                        <DataGridEmptyState colSpan={6} title="No hay facturas emitidas para esta reserva." />
                       )}
                     </DataGridBody>
                   </DataGrid>
@@ -657,6 +733,7 @@ export default function ReservaDetailPage() {
                           subtitle={`${String(invoice.puntoDeVenta).padStart(5, "0")}-${String(invoice.numeroComprobante).padStart(8, "0")}`}
                           meta={<div className="text-xs text-slate-500 dark:text-slate-400">CAE {invoice.cae || "---"}</div>}
                           footer={<span className="text-sm font-bold text-slate-900 dark:text-white">{invoice.importeTotal?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}</span>}
+                          footerActions={<InvoicePdfActions invoice={invoice} />}
                         />
                       ))}
                     </MobileRecordList>

@@ -14,7 +14,6 @@ import {
     Trash2,
     Search,
     Filter,
-    Receipt,
     Check,
     X,
 } from "lucide-react";
@@ -213,43 +212,6 @@ function ServiceConfirmationEditor({ service, onUpdated }) {
     );
 }
 
-// Boton para abrir el PDF de la ultima factura AFIP de la reserva del servicio.
-// Solo se renderiza si el backend nos devolvio un latestInvoicePublicId (i.e.
-// ya hay una factura aprobada por AFIP para esa reserva).
-function InvoicePdfButton({ invoicePublicId }) {
-    const [loading, setLoading] = useState(false);
-
-    if (!invoicePublicId) {
-        return <span className="text-xs text-muted-foreground">-</span>;
-    }
-
-    const open = async () => {
-        setLoading(true);
-        try {
-            const response = await api.get(`/invoices/${invoicePublicId}/pdf`, { responseType: "blob" });
-            const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
-            window.open(url, "_blank");
-        } catch (error) {
-            const message = error?.response?.data?.message || error?.message || "No se pudo abrir la factura.";
-            showError(message, "Error al abrir factura");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <button
-            type="button"
-            onClick={open}
-            disabled={loading}
-            className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
-            title="Ver factura AFIP"
-        >
-            <Receipt className="h-3 w-3" />
-            Factura
-        </button>
-    );
-}
 
 export default function SupplierAccountPage() {
     const { publicId } = useParams();
@@ -557,7 +519,7 @@ export default function SupplierAccountPage() {
                     />
                 </div>
 
-                <DataGrid density="compact" minWidth="1080px">
+                <DataGrid density="compact" minWidth="1000px">
                     <DataGridHeader>
                         <DataGridHeaderRow>
                             <DataGridHeaderCell>Tipo</DataGridHeaderCell>
@@ -566,16 +528,15 @@ export default function SupplierAccountPage() {
                             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
                             <DataGridHeaderCell>Estado</DataGridHeaderCell>
                             <DataGridHeaderCell>Codigo</DataGridHeaderCell>
-                            <DataGridHeaderCell>Factura</DataGridHeaderCell>
                             <DataGridHeaderCell align="right">Costo</DataGridHeaderCell>
                             <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
                         </DataGridHeaderRow>
                     </DataGridHeader>
                     <DataGridBody>
                         {servicesLoading ? (
-                            <DataGridEmptyState colSpan={9} title="Cargando servicios..." />
+                            <DataGridEmptyState colSpan={8} title="Cargando servicios..." />
                         ) : services.length === 0 ? (
-                            <DataGridEmptyState colSpan={9} title="No hay servicios para este filtro." />
+                            <DataGridEmptyState colSpan={8} title="No hay servicios para este filtro." />
                         ) : (
                             services.map((service) => (
                                 <DataGridRow key={getPublicId(service)}>
@@ -609,9 +570,6 @@ export default function SupplierAccountPage() {
                                             service={service}
                                             onUpdated={() => { loadServices(); loadOverview(); }}
                                         />
-                                    </DataGridCell>
-                                    <DataGridCell>
-                                        <InvoicePdfButton invoicePublicId={service.latestInvoicePublicId} />
                                     </DataGridCell>
                                     <DataGridCell align="right" className="font-mono">{formatCurrency(service.netCost)}</DataGridCell>
                                     <DataGridCell align="right" className="font-mono">{formatCurrency(service.salePrice)}</DataGridCell>
@@ -652,7 +610,6 @@ export default function SupplierAccountPage() {
                                                 service={service}
                                                 onUpdated={() => { loadServices(); loadOverview(); }}
                                             />
-                                            <InvoicePdfButton invoicePublicId={service.latestInvoicePublicId} />
                                         </div>
                                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                                             Codigo:{" "}
