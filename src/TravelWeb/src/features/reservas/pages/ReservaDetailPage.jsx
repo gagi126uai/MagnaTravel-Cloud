@@ -26,6 +26,7 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
 import { ConfirmReservaModal } from "../components/ConfirmReservaModal";
+import { PassengerAssignmentsPanel } from "../components/PassengerAssignmentsPanel";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
@@ -403,26 +404,29 @@ export default function ReservaDetailPage() {
 
         <div className="p-4 sm:p-6 lg:p-8">
           {activeTab === "services" ? (
-            <ServiceList
-              services={allServices}
-              serviceCollectionErrors={serviceCollectionErrors}
-              onAddService={() => {
-                setServiceToEdit(null);
-                setShowServiceModal(true);
-              }}
-              onEditService={(service) => {
-                setServiceToEdit(service);
-                setShowServiceModal(true);
-              }}
-              onDeleteService={(service) =>
-                askConfirmation({
-                  title: "Eliminar servicio?",
-                  message: `Estas seguro de eliminar el servicio ${service.description || ""}?`,
-                  type: "danger",
-                  onConfirm: () => handleDeleteService(service),
-                })
-              }
-            />
+            <div className="space-y-6">
+              <ServiceList
+                services={allServices}
+                serviceCollectionErrors={serviceCollectionErrors}
+                onAddService={() => {
+                  setServiceToEdit(null);
+                  setShowServiceModal(true);
+                }}
+                onEditService={(service) => {
+                  setServiceToEdit(service);
+                  setShowServiceModal(true);
+                }}
+                onDeleteService={(service) =>
+                  askConfirmation({
+                    title: "Eliminar servicio?",
+                    message: `Estas seguro de eliminar el servicio ${service.description || ""}?`,
+                    type: "danger",
+                    onConfirm: () => handleDeleteService(service),
+                  })
+                }
+              />
+              <PassengerAssignmentsPanel reserva={reserva} isBudget={isBudget} />
+            </div>
           ) : null}
 
           {activeTab === "passengers" ? (
