@@ -107,71 +107,16 @@ public class BookingService : IBookingService
     private async Task RecalculateReservationScheduleAsync(int reservaId, CancellationToken ct)
     {
         var reserva = await _db.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct);
-        if (reserva == null)
+        if (reserva == null) return;
+
+        // El calculo del min/max de fechas de servicios vive en ReservaScheduleCalculator
+        // para poder reusarlo desde el lifecycle automation y al construir DTOs.
+        var (nextStart, nextEnd) = await ReservaScheduleCalculator.ComputeAsync(_db, reservaId, ct);
+
+        if (reserva.StartDate != nextStart || reserva.EndDate != nextEnd)
         {
-            return;
-        }
-
-        var startDates = new List<DateTime>();
-        var endDates = new List<DateTime>();
-
-        startDates.AddRange(await _db.FlightSegments
-            .Where(f => f.ReservaId == reservaId)
-            .Select(f => f.DepartureTime)
-            .ToListAsync(ct));
-
-        endDates.AddRange(await _db.FlightSegments
-            .Where(f => f.ReservaId == reservaId)
-            .Select(f => f.ArrivalTime)
-            .ToListAsync(ct));
-
-        startDates.AddRange(await _db.HotelBookings
-            .Where(h => h.ReservaId == reservaId)
-            .Select(h => h.CheckIn)
-            .ToListAsync(ct));
-
-        endDates.AddRange(await _db.HotelBookings
-            .Where(h => h.ReservaId == reservaId)
-            .Select(h => h.CheckOut)
-            .ToListAsync(ct));
-
-        startDates.AddRange(await _db.TransferBookings
-            .Where(t => t.ReservaId == reservaId)
-            .Select(t => t.PickupDateTime)
-            .ToListAsync(ct));
-
-        endDates.AddRange(await _db.TransferBookings
-            .Where(t => t.ReservaId == reservaId)
-            .Select(t => t.ReturnDateTime ?? t.PickupDateTime)
-            .ToListAsync(ct));
-
-        startDates.AddRange(await _db.PackageBookings
-            .Where(p => p.ReservaId == reservaId)
-            .Select(p => p.StartDate)
-            .ToListAsync(ct));
-
-        endDates.AddRange(await _db.PackageBookings
-            .Where(p => p.ReservaId == reservaId)
-            .Select(p => p.EndDate)
-            .ToListAsync(ct));
-
-        startDates.AddRange(await _db.Servicios
-            .Where(s => s.ReservaId == reservaId)
-            .Select(s => s.DepartureDate)
-            .ToListAsync(ct));
-
-        endDates.AddRange(await _db.Servicios
-            .Where(s => s.ReservaId == reservaId)
-            .Select(s => s.ReturnDate ?? s.DepartureDate)
-            .ToListAsync(ct));
-
-        DateTime? nextStartDate = startDates.Count > 0 ? startDates.Min() : null;
-        DateTime? nextEndDate = endDates.Count > 0 ? endDates.Max() : null;
-
-        if (reserva.StartDate != nextStartDate || reserva.EndDate != nextEndDate)
-        {
-            reserva.StartDate = nextStartDate;
-            reserva.EndDate = nextEndDate;
+            reserva.StartDate = nextStart;
+            reserva.EndDate = nextEnd;
             await _db.SaveChangesAsync(ct);
         }
     }
