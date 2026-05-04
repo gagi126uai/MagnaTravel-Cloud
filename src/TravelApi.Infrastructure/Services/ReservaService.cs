@@ -383,6 +383,7 @@ public class ReservaService : IReservaService
             .Include(r => r.HotelBookings)
             .Include(r => r.TransferBookings)
             .Include(r => r.PackageBookings)
+            .Include(r => r.FlightSegments)
             .FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
@@ -404,7 +405,14 @@ public class ReservaService : IReservaService
         // Reglas de transicion Budget -> Reserved
         if (targetStatus == EstadoReserva.Reserved && reserva.Status == EstadoReserva.Budget)
         {
-            if (!(reserva.Servicios?.Any() ?? false))
+            // Bug fix: chequeamos las 5 tablas de servicios (no solo Servicios genericos).
+            // El typical caso del agente es cargar un Hotel — antes daba "no hay servicios".
+            var hasAnyService = (reserva.Servicios?.Any() ?? false)
+                || (reserva.HotelBookings?.Any() ?? false)
+                || (reserva.TransferBookings?.Any() ?? false)
+                || (reserva.PackageBookings?.Any() ?? false)
+                || (reserva.FlightSegments?.Any() ?? false);
+            if (!hasAnyService)
             {
                 dto.Allowed = false;
                 dto.BlockingReasons.Add("Cargá al menos un servicio (hotel, vuelo, transfer o paquete) antes de confirmar la reserva.");
@@ -1261,6 +1269,12 @@ public class ReservaService : IReservaService
             if (!hasServices)
                 throw new InvalidOperationException("No se puede confirmar la reserva porque no tiene ningun servicio cargado. Agrega al menos un servicio antes de reservar.");
 
+            // Normalizacion defensiva: en Presupuesto cualquier servicio debe estar en
+            // "Solicitado". Si por algun bypass (API directa, data preexistente) hay
+            // alguno con otro status, lo forzamos al pasar a Reservado. El agente despues
+            // los confirma uno por uno antes de pasar a Operativo.
+            await NormalizeAllServicesToSolicitadoAsync(id);
+
             // Derivamos pax esperados de los servicios (no del campo AdultCount viejo).
             // El frontend ya hace este check via /transition-readiness y un modal forzado
             // (ConfirmReservaModal); esto es last-line defense para evitar bypass via API directa.
@@ -1556,6 +1570,33 @@ public class ReservaService : IReservaService
             || await _context.FlightSegments.AnyAsync(f => f.ReservaId == reservaId)
             || await _context.TransferBookings.AnyAsync(t => t.ReservaId == reservaId)
             || await _context.PackageBookings.AnyAsync(p => p.ReservaId == reservaId);
+    }
+
+    /// <summary>
+    /// Defensa al pasar de Presupuesto a Reservado: cualquier servicio con Status
+    /// distinto de "Solicitado" se normaliza. Esto cubre bypasses por API directa o
+    /// data preexistente. En el flujo normal, los servicios creados en Presupuesto
+    /// ya quedan en "Solicitado" gracias a ReservaCapacityRules.ShouldForceSolicitadoStatusAsync
+    /// que aplica BookingService al crear/actualizar.
+    /// </summary>
+    private async Task NormalizeAllServicesToSolicitadoAsync(int reservaId)
+    {
+        var hotels = await _context.HotelBookings.Where(h => h.ReservaId == reservaId && h.Status != "Solicitado").ToListAsync();
+        foreach (var h in hotels) h.Status = "Solicitado";
+
+        var transfers = await _context.TransferBookings.Where(t => t.ReservaId == reservaId && t.Status != "Solicitado").ToListAsync();
+        foreach (var t in transfers) t.Status = "Solicitado";
+
+        var packages = await _context.PackageBookings.Where(p => p.ReservaId == reservaId && p.Status != "Solicitado").ToListAsync();
+        foreach (var p in packages) p.Status = "Solicitado";
+
+        var flights = await _context.FlightSegments.Where(f => f.ReservaId == reservaId && f.Status != "Solicitado").ToListAsync();
+        foreach (var f in flights) f.Status = "Solicitado";
+
+        var generics = await _context.Servicios.Where(s => s.ReservaId == reservaId && s.Status != "Solicitado").ToListAsync();
+        foreach (var g in generics) g.Status = "Solicitado";
+
+        // SaveChanges sucede al final de UpdateStatusAsync.
     }
 
     private async Task<string> GenerateNumeroReservaAsync(CancellationToken cancellationToken)

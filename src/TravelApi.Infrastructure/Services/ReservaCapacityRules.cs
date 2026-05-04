@@ -205,6 +205,21 @@ public static class ReservaCapacityRules
     }
 
     /// <summary>
+    /// En reservas en estado Presupuesto, los servicios siempre deben estar en
+    /// "Solicitado" — todavia no se confirman con el proveedor (no es una reserva real).
+    /// Devuelve true si hay que forzar el status a Solicitado (segun el estado actual
+    /// de la reserva).
+    /// </summary>
+    public static async Task<bool> ShouldForceSolicitadoStatusAsync(AppDbContext db, int reservaId, CancellationToken ct = default)
+    {
+        var reservaStatus = await db.Reservas.AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => r.Status)
+            .FirstOrDefaultAsync(ct);
+        return string.Equals(reservaStatus, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Devuelve la capacidad esperada de un servicio especifico (Hotel/Transfer/Package).
     /// Devuelve null si el tipo no declara capacidad (Flight/Generic).
     /// Devuelve 0 si la entidad no fue encontrada (caller debe manejar).

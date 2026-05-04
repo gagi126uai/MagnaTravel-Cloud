@@ -235,14 +235,16 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                         ))}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>Estado *</label>
-                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} required disabled={disabled}>
-                        <option value="Solicitado">Solicitado</option>
-                        <option value="Confirmado">Confirmado</option>
-                        <option value="Cancelado">Cancelado</option>
-                    </select>
-                </div>
+                {!isBudget && (
+                    <div>
+                        <label className={labelClass}>Estado *</label>
+                        <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} required disabled={disabled}>
+                            <option value="Solicitado">Solicitado</option>
+                            <option value="Confirmado">Confirmado</option>
+                            <option value="Cancelado">Cancelado</option>
+                        </select>
+                    </div>
+                )}
             </div>
 
             <RateSelector serviceType={form.serviceType || "Aereo"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
@@ -351,20 +353,22 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                         ))}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>Estado de Reserva</label>
-                    <select 
-                        className={inputClass} 
-                        value={form.workflowStatus || "Solicitado"} 
-                        onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} 
-                        required 
-                        disabled={disabled}
-                    >
-                        <option value="Solicitado">Solicitado</option>
-                        <option value="Confirmado">Confirmado</option>
-                        <option value="Cancelado">Cancelado</option>
-                    </select>
-                </div>
+                {!isBudget && (
+                    <div>
+                        <label className={labelClass}>Estado de Reserva</label>
+                        <select
+                            className={inputClass}
+                            value={form.workflowStatus || "Solicitado"}
+                            onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })}
+                            required
+                            disabled={disabled}
+                        >
+                            <option value="Solicitado">Solicitado</option>
+                            <option value="Confirmado">Confirmado</option>
+                            <option value="Cancelado">Cancelado</option>
+                        </select>
+                    </div>
+                )}
             </div>
 
             <div className="relative">
@@ -538,14 +542,16 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                         ))}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>Estado *</label>
-                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} required disabled={disabled}>
-                        <option value="Solicitado">Solicitado</option>
-                        <option value="Confirmado">Confirmado</option>
-                        <option value="Cancelado">Cancelado</option>
-                    </select>
-                </div>
+                {!isBudget && (
+                    <div>
+                        <label className={labelClass}>Estado *</label>
+                        <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} required disabled={disabled}>
+                            <option value="Solicitado">Solicitado</option>
+                            <option value="Confirmado">Confirmado</option>
+                            <option value="Cancelado">Cancelado</option>
+                        </select>
+                    </div>
+                )}
             </div>
 
             <RateSelector serviceType={form.serviceType || "Traslado"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
@@ -587,14 +593,16 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled }) {
                         ))}
                     </select>
                 </div>
-                <div>
-                    <label className={labelClass}>Estado *</label>
-                    <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} required disabled={disabled}>
-                        <option value="Solicitado">Solicitado</option>
-                        <option value="Confirmado">Confirmado</option>
-                        <option value="Cancelado">Cancelado</option>
-                    </select>
-                </div>
+                {!isBudget && (
+                    <div>
+                        <label className={labelClass}>Estado *</label>
+                        <select className={inputClass} value={form.workflowStatus || "Solicitado"} onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })} required disabled={disabled}>
+                            <option value="Solicitado">Solicitado</option>
+                            <option value="Confirmado">Confirmado</option>
+                            <option value="Cancelado">Cancelado</option>
+                        </select>
+                    </div>
+                )}
             </div>
 
             <RateSelector serviceType={form.serviceType || "Paquete"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
@@ -774,6 +782,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
     const isGenericEdit = serviceToEdit?.recordKind === SERVICE_RECORD_KIND.GENERIC;
     const isLocked = reservaStatus === "Operativo" || reservaStatus === "Cerrado";
+    // En Presupuesto el agente NO elige el estado del servicio — siempre queda en
+    // "Solicitado" hasta que la reserva pase a Reservado (regla de negocio: en
+    // Presupuesto los servicios todavia no se confirman con el proveedor).
+    const isBudget = reservaStatus === "Presupuesto";
     const showPricingForm = true;
 
     const serviceTabClassMap = {

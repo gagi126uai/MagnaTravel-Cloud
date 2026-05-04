@@ -237,6 +237,10 @@ public class BookingService : IBookingService
             flight.Tax = rate.Tax;
         }
 
+        // En Presupuesto el status siempre es "Solicitado".
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            flight.Status = "Solicitado";
+
         // Guard: si la reserva esta en Operativo/Closed, el servicio nuevo debe estar confirmado
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
             _db, reservaId, $"Vuelo {flight.AirlineCode}{flight.FlightNumber}", flight.Status, ct);
@@ -278,6 +282,10 @@ public class BookingService : IBookingService
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             flight.RateId = rateId.Value;
+
+        // En Presupuesto el status siempre es "Solicitado".
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            flight.Status = "Solicitado";
 
         var label = $"Vuelo {flight.AirlineCode}{flight.FlightNumber}";
         // Guard 1: en reserva Operativo/Closed el servicio debe quedar confirmado
@@ -385,6 +393,10 @@ public class BookingService : IBookingService
             ApplyHotelRateSnapshot(hotel, rate);
         }
 
+        // En Presupuesto el status siempre es "Solicitado" — no es una reserva real.
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            hotel.Status = "Solicitado";
+
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
             _db, reservaId, $"Hotel {hotel.HotelName ?? "sin nombre"}", hotel.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
@@ -452,6 +464,10 @@ public class BookingService : IBookingService
             hotel.RoomType = oldRoomType;
             hotel.MealPlan = oldMealPlan;
         }
+
+        // En Presupuesto el status siempre es "Solicitado".
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            hotel.Status = "Solicitado";
 
         var label = $"Hotel {hotel.HotelName ?? "sin nombre"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, hotel.Status, ct);
@@ -546,6 +562,9 @@ public class BookingService : IBookingService
             package.Commission = rate.Commission;
         }
 
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            package.Status = "Solicitado";
+
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
             _db, reservaId, $"Paquete {package.PackageName ?? "sin nombre"}", package.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
@@ -586,6 +605,9 @@ public class BookingService : IBookingService
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             package.RateId = rateId.Value;
+
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            package.Status = "Solicitado";
 
         var label = $"Paquete {package.PackageName ?? "sin nombre"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, package.Status, ct);
@@ -680,6 +702,9 @@ public class BookingService : IBookingService
             transfer.Commission = rate.Commission;
         }
 
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            transfer.Status = "Solicitado";
+
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
             _db, reservaId, $"Transfer {transfer.VehicleType ?? ""}".Trim(), transfer.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
@@ -720,6 +745,9 @@ public class BookingService : IBookingService
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             transfer.RateId = rateId.Value;
+
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            transfer.Status = "Solicitado";
 
         var label = $"Transfer {transfer.VehicleType ?? ""}".Trim();
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, transfer.Status, ct);
