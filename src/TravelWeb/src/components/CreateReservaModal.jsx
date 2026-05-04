@@ -60,7 +60,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
                 name: "", // Backend will auto-generate
                 payerId: formData.payerId || null,
                 startDate: formData.startDate ? new Date(formData.startDate).toISOString() : null,
-                status: formData.isBudget ? 'Presupuesto' : 'Reservado'
+                status: formData.isBudget ? 'Budget' : 'Confirmed'
             });
             showSuccess("Reserva creada exitosamente");
             onSuccess(getPublicId(res));

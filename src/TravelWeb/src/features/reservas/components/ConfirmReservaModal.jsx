@@ -74,7 +74,7 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed }
                 });
             }
             // 2) Disparar la transicion
-            await api.put(`/reservas/${reserva.publicId}/status`, { status: "Reservado" });
+            await api.put(`/reservas/${reserva.publicId}/status`, { status: "Confirmed" });
             showSuccess("Reserva confirmada");
             onConfirmed();
         } catch (error) {

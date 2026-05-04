@@ -3,12 +3,7 @@ import { X, AlertTriangle, Loader2, Undo2 } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
-
-const TARGET_LABELS = {
-    Reservado: "Reservado",
-    Presupuesto: "Presupuesto",
-    Operativo: "Operativo",
-};
+import { translateStatus } from "./ReservaStatusBadge";
 
 /**
  * Modal para revertir el status de una Reserva.
@@ -57,7 +52,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted }) {
                 authorizedBySuperiorUserId: supervisorId || null,
                 reason: reason.trim() || null,
             });
-            showSuccess(`Reserva revertida a ${targetStatus}`);
+            showSuccess(`Reserva revertida a ${translateStatus(targetStatus)}`);
             onReverted();
         } catch (error) {
             showError(getApiErrorMessage(error, "No se pudo revertir la reserva."));
@@ -74,7 +69,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted }) {
                         <Undo2 className="h-5 w-5 text-amber-600" />
                         <div>
                             <h3 className="text-lg font-bold text-slate-900 dark:text-white">Revertir estado de la reserva</h3>
-                            <p className="text-xs text-muted-foreground">{reserva.numeroReserva} - actualmente {reserva.status}</p>
+                            <p className="text-xs text-muted-foreground">{reserva.numeroReserva} - actualmente {translateStatus(reserva.status)}</p>
                         </div>
                     </div>
                     <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -120,7 +115,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted }) {
                                         >
                                             <option value="">— Seleccionar —</option>
                                             {options.allowedTargets.map((t) => (
-                                                <option key={t} value={t}>{TARGET_LABELS[t] || t}</option>
+                                                <option key={t} value={t}>{translateStatus(t)}</option>
                                             ))}
                                         </select>
                                     </div>

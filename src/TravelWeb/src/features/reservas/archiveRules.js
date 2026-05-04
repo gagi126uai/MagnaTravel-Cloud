@@ -7,8 +7,8 @@ export function getReservaArchiveBlockReason(reserva) {
     return "La reserva ya esta archivada.";
   }
 
-  if (reserva.status !== "Operativo" && reserva.status !== "Cerrado") {
-    return "Solo se pueden archivar reservas operativas o cerradas.";
+  if (reserva.status !== "Traveling" && reserva.status !== "Closed") {
+    return "Solo se pueden archivar reservas en viaje o finalizadas.";
   }
 
   const balance = Number(reserva.balance || 0);

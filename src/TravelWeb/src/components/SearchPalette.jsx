@@ -4,6 +4,7 @@ import { Search, FolderOpen, User, CreditCard, X, Loader2 } from "lucide-react";
 import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
 import { getPublicId } from "../lib/publicIds";
+import { translateStatus } from "../features/reservas/components/ReservaStatusBadge";
 
 export default function SearchPalette({ isOpen, onClose }) {
     const [query, setQuery] = useState("");
@@ -135,11 +136,11 @@ export default function SearchPalette({ isOpen, onClose }) {
                                                 {reserva.payerName && <span className="truncate">· {reserva.payerName}</span>}
                                             </div>
                                         </div>
-                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${reserva.status === 'Operativo' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                                            reserva.status === 'Reservado' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${reserva.status === 'Traveling' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                                            reserva.status === 'Confirmed' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
                                                 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                                             }`}>
-                                            {reserva.status}
+                                            {translateStatus(reserva.status)}
                                         </span>
                                     </button>
                                 ))}

@@ -18,9 +18,9 @@ import { ReservaMobileList } from "../components/ReservaMobileList";
 const tabs = [
   { value: "budget", label: "Presupuestos" },
   { value: "active", label: "Activas" },
-  { value: "reserved", label: "Reservadas" },
-  { value: "operative", label: "Operativas" },
-  { value: "closed", label: "Cerradas" },
+  { value: "reserved", label: "Confirmadas" },
+  { value: "operative", label: "En viaje" },
+  { value: "closed", label: "Finalizadas" },
   { value: "archived", label: "Archivadas" },
 ];
 

@@ -781,11 +781,11 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     const [manualHotelPricing, setManualHotelPricing] = useState({ netCost: false, salePrice: false });
 
     const isGenericEdit = serviceToEdit?.recordKind === SERVICE_RECORD_KIND.GENERIC;
-    const isLocked = reservaStatus === "Operativo" || reservaStatus === "Cerrado";
+    const isLocked = reservaStatus === "Traveling" || reservaStatus === "Closed";
     // En Presupuesto el agente NO elige el estado del servicio — siempre queda en
-    // "Solicitado" hasta que la reserva pase a Reservado (regla de negocio: en
+    // "Solicitado" hasta que la reserva sea Confirmed (regla de negocio: en
     // Presupuesto los servicios todavia no se confirman con el proveedor).
-    const isBudget = reservaStatus === "Presupuesto";
+    const isBudget = reservaStatus === "Budget";
     const showPricingForm = true;
 
     const serviceTabClassMap = {

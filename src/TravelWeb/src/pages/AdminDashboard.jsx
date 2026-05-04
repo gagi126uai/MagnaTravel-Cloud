@@ -76,13 +76,16 @@ export default function DashboardPage() {
         );
     }
 
-    // Prepare data for charts
+    // Prepare data for charts. Los labels son los nombres del refactor de ciclo
+    // de vida (Confirmada / En viaje / Finalizada). Los keys del backend siguen
+    // siendo budgets/reserved/operational/closed/cancelled por compatibilidad con
+    // el endpoint de dashboard.
     const statusData = [
         { name: 'Presupuesto', value: dashboard.distribucionEstados?.budgets ?? dashboard.distribucionEstados?.Budgets ?? 0, color: '#94a3b8' }, // Slate-400
-        { name: 'Reservado', value: dashboard.distribucionEstados?.reserved ?? dashboard.distribucionEstados?.Reserved ?? 0, color: '#f59e0b' }, // Amber-500
-        { name: 'Operativo', value: dashboard.distribucionEstados?.operational ?? dashboard.distribucionEstados?.Operational ?? 0, color: '#10b981' }, // Emerald-500
-        { name: 'Cerrado', value: dashboard.distribucionEstados?.closed ?? dashboard.distribucionEstados?.Closed ?? 0, color: '#6366f1' }, // Indigo-500
-        { name: 'Cancelado', value: dashboard.distribucionEstados?.cancelled ?? dashboard.distribucionEstados?.Cancelled ?? 0, color: '#ef4444' }, // Red-500
+        { name: 'Confirmada', value: dashboard.distribucionEstados?.reserved ?? dashboard.distribucionEstados?.Reserved ?? 0, color: '#f59e0b' }, // Amber-500
+        { name: 'En viaje', value: dashboard.distribucionEstados?.operational ?? dashboard.distribucionEstados?.Operational ?? 0, color: '#10b981' }, // Emerald-500
+        { name: 'Finalizada', value: dashboard.distribucionEstados?.closed ?? dashboard.distribucionEstados?.Closed ?? 0, color: '#6366f1' }, // Indigo-500
+        { name: 'Cancelada', value: dashboard.distribucionEstados?.cancelled ?? dashboard.distribucionEstados?.Cancelled ?? 0, color: '#ef4444' }, // Red-500
     ].filter(item => item.value > 0);
 
     return (
@@ -369,26 +372,21 @@ function EmptyState({ message }) {
 }
 
 function BadgeStatus({ status }) {
-    const styles = {
-        'Presupuesto': 'bg-slate-100 text-slate-600',
-        'Reservado': 'bg-amber-100 text-amber-700',
-        'Operativo': 'bg-emerald-100 text-emerald-700',
-        'Cerrado': 'bg-indigo-100 text-indigo-700',
-        'Cancelado': 'bg-red-100 text-red-700'
+    // Mapeo de estados (en ingles, alineado con el enum EstadoReserva del backend)
+    // a (label en espanol + clases tailwind para el chip).
+    const config = {
+        Budget: { label: 'Presupuesto', className: 'bg-slate-100 text-slate-600' },
+        Confirmed: { label: 'Confirmada', className: 'bg-amber-100 text-amber-700' },
+        Traveling: { label: 'En viaje', className: 'bg-emerald-100 text-emerald-700' },
+        Closed: { label: 'Finalizada', className: 'bg-indigo-100 text-indigo-700' },
+        Cancelled: { label: 'Cancelada', className: 'bg-red-100 text-red-700' },
+        Archived: { label: 'Archivada', className: 'bg-slate-100 text-slate-500' },
     };
-
-    // Map English status if necessary or just default
-    const mapStatus = {
-        'Budget': 'Presupuesto',
-        'Reserved': 'Reservado',
-        'Operational': 'Operativo',
-        'Closed': 'Cerrado',
-        'Cancelled': 'Cancelado'
-    }[status] || status;
+    const cfg = config[status] || { label: status, className: 'bg-slate-100' };
 
     return (
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${styles[mapStatus] || 'bg-slate-100'}`}>
-            {mapStatus}
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cfg.className}`}>
+            {cfg.label}
         </span>
     );
 }

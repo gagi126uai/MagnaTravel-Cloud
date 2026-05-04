@@ -380,7 +380,7 @@ export default function CustomerAccountPage() {
   const customer = overview?.customer;
 
   const availableReservas = useMemo(
-    () => reservaOptions.filter((reserva) => reserva.status !== "Cancelado"),
+    () => reservaOptions.filter((reserva) => reserva.status !== "Cancelled"),
     [reservaOptions]
   );
 

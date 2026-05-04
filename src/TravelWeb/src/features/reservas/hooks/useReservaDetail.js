@@ -349,7 +349,7 @@ export function useReservaDetail(reservaId, navigate) {
     };
 
     const handleStatusChange = async (newStatus) => {
-        if (reserva?.status === 'Reservado' && newStatus === 'Presupuesto') {
+        if (reserva?.status === 'Confirmed' && newStatus === 'Budget') {
             if (reserva.payments?.length > 0) {
                 showError("No se puede volver a Presupuesto: hay pagos registrados.");
                 return;
@@ -363,7 +363,7 @@ export function useReservaDetail(reservaId, navigate) {
         try {
             await api.put(`/reservas/${reservaId}/status`, { status: newStatus });
             await fetchReserva();
-            showSuccess(`Estado actualizado a ${newStatus}`);
+            showSuccess(`Estado actualizado`);
             return true;
         } catch (error) {
             showError(getApiErrorMessage(error, "Error al cambiar estado"));

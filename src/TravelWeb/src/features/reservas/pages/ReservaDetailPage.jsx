@@ -175,9 +175,9 @@ function PaymentReceiptActions({ payment, onView, onIssue }) {
 const CONFIRMED_SERVICE_STATUSES = new Set(["Confirmado", "Emitido", "HK", "TK", "KK", "KL"]);
 
 function UnconfirmedServicesBanner({ reserva }) {
-  // Solo relevante en Reservado: en Operativo ya no se puede pasar (bloqueado), en
-  // Presupuesto no aplica todavia.
-  if (reserva.status !== "Reservado") return null;
+  // Solo relevante en Confirmed: cuando ya esta En viaje no se puede cambiar
+  // servicios, y en Presupuesto no aplica todavia.
+  if (reserva.status !== "Confirmed") return null;
 
   const all = [
     ...(reserva.hotelBookings || []).map(b => ({ label: `Hotel ${b.hotelName || ""}`, status: b.status })),
@@ -195,7 +195,7 @@ function UnconfirmedServicesBanner({ reserva }) {
         {unconfirmed.length} servicio(s) sin confirmar con el proveedor
       </div>
       <div className="text-xs text-amber-800 dark:text-amber-300 mb-2">
-        Confirma todos los servicios antes de pasar a Operativo. Los servicios sin confirmar no entran al balance del proveedor y dejarian la cuenta corriente con datos sucios.
+        Confirma todos los servicios antes de marcar la reserva en viaje. Los servicios sin confirmar no entran al balance del proveedor y dejarian la cuenta corriente con datos sucios.
       </div>
       <ul className="text-xs space-y-0.5">
         {unconfirmed.slice(0, 8).map((s, i) => (
@@ -236,7 +236,7 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
   return (
     <div className="space-y-6">
       <div className="text-sm text-slate-500 dark:text-slate-400">
-        En estado Presupuesto solo se cargan cantidades. Al pasar a Reservado podras cargar cada pasajero con nombre y documento.
+        En estado Presupuesto solo se cargan cantidades. Al confirmar la reserva podras cargar cada pasajero con nombre y documento.
       </div>
       <div className="grid grid-cols-3 gap-4">
         <div>
@@ -381,13 +381,13 @@ export default function ReservaDetailPage() {
 
   const handleConfirmReservation = async () => {
     try {
-      const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=Reservado`);
+      const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=Confirmed`);
       const expected = readiness?.expectedPassengerCount || 0;
       const blockingNonPax = (readiness?.blockingReasons || []).filter(r => !r.toLowerCase().includes("pasajero"));
 
       if (readiness?.allowed && expected === 0 && blockingNonPax.length === 0) {
         // Camino directo: nada que cargar, transicion inmediata.
-        await handleStatusChange("Reservado");
+        await handleStatusChange("Confirmed");
         return;
       }
       // Modal forzado: hay pasajeros faltantes o reglas no-pax que mostrar
@@ -397,7 +397,7 @@ export default function ReservaDetailPage() {
     }
   };
 
-  const isBudget = reserva?.status === "Presupuesto";
+  const isBudget = reserva?.status === "Budget";
 
   useEffect(() => {
     if (isBudget && (activeTab === "voucher" || activeTab === "attachments" || activeTab === "account" || activeTab === "passengers")) {
@@ -429,7 +429,7 @@ export default function ReservaDetailPage() {
         reserva={reserva}
         onBack={() => navigate("/reservas")}
         onStatusChange={(newStatus) => {
-          if (newStatus === "Reservado" && reserva.status === "Presupuesto") {
+          if (newStatus === "Confirmed" && reserva.status === "Budget") {
             handleConfirmReservation();
           } else {
             handleStatusChange(newStatus);
@@ -459,7 +459,7 @@ export default function ReservaDetailPage() {
 
       {isBudget ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-          <strong className="font-bold">Reserva en modo Presupuesto.</strong> Pasala a Reservado para cargar pasajeros nominales y registrar pagos.
+          <strong className="font-bold">Reserva en modo Presupuesto.</strong> Confirma la reserva para cargar pasajeros nominales y registrar pagos.
         </div>
       ) : null}
 

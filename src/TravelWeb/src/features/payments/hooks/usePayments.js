@@ -23,7 +23,7 @@ const getAfipStatus = (reserva, pendingAfipAmount) => {
     return "done";
   }
 
-  if (reserva.status === "Presupuesto" || reserva.status === "Cancelado") {
+  if (reserva.status === "Budget" || reserva.status === "Cancelled") {
     return "blocked";
   }
 
