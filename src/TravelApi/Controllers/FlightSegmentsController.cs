@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 
@@ -73,6 +74,20 @@ public class FlightSegmentsController : ControllerBase
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el vuelo.");
         }
+    }
+
+    [HttpPatch]
+    [Route("/api/flight-segments/{publicIdOrLegacyId}/status")]
+    [Authorize]
+    public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _bookingService.UpdateFlightStatusAsync(publicIdOrLegacyId, req.Status, ct));
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [HttpDelete("{id}")]

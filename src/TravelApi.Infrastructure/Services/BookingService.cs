@@ -821,4 +821,102 @@ public class BookingService : IBookingService
     }
 
     #endregion
+
+    // ==================== Status-only updates (cuenta corriente del proveedor) ====================
+    // Permiten al operador confirmar/cambiar el status de un servicio sin entrar a la reserva,
+    // desde el listado de servicios del proveedor. Reusan los guards existentes de
+    // ReservaCapacityRules para mantener coherencia (Operativo requiere Confirmado, Presupuesto
+    // fuerza Solicitado, no degradar si hay SupplierPayments).
+
+    public async Task<HotelBookingDto> UpdateHotelStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
+        var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        var hotel = await _hotelRepo.GetByIdAsync(hotelId, ct)
+            ?? throw new KeyNotFoundException("Hotel no encontrado");
+
+        var oldStatus = hotel.Status;
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, hotel.ReservaId, ct))
+            newStatus = "Solicitado";
+
+        var label = $"Hotel {hotel.HotelName ?? "sin nombre"}";
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, hotel.ReservaId, label, newStatus, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, hotel.ReservaId, label, oldStatus, newStatus, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        hotel.Status = newStatus;
+        await _hotelRepo.UpdateAsync(hotel, ct);
+        if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
+        return _mapper.Map<HotelBookingDto>(hotel);
+    }
+
+    public async Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
+        var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        var transfer = await _transferRepo.GetByIdAsync(transferId, ct)
+            ?? throw new KeyNotFoundException("Transfer no encontrado");
+
+        var oldStatus = transfer.Status;
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, transfer.ReservaId, ct))
+            newStatus = "Solicitado";
+
+        var label = $"Transfer {transfer.VehicleType ?? ""}".Trim();
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, transfer.ReservaId, label, newStatus, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, transfer.ReservaId, label, oldStatus, newStatus, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        transfer.Status = newStatus;
+        await _transferRepo.UpdateAsync(transfer, ct);
+        if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
+        return _mapper.Map<TransferBookingDto>(transfer);
+    }
+
+    public async Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
+        var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        var package = await _packageRepo.GetByIdAsync(packageId, ct)
+            ?? throw new KeyNotFoundException("Paquete no encontrado");
+
+        var oldStatus = package.Status;
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, package.ReservaId, ct))
+            newStatus = "Solicitado";
+
+        var label = $"Paquete {package.PackageName ?? "sin nombre"}";
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, package.ReservaId, label, newStatus, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, package.ReservaId, label, oldStatus, newStatus, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        package.Status = newStatus;
+        await _packageRepo.UpdateAsync(package, ct);
+        if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
+        return _mapper.Map<PackageBookingDto>(package);
+    }
+
+    public async Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
+        var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        var flight = await _flightRepo.GetByIdAsync(flightId, ct)
+            ?? throw new KeyNotFoundException("Vuelo no encontrado");
+
+        var oldStatus = flight.Status;
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, flight.ReservaId, ct))
+            newStatus = "Solicitado";
+
+        var label = $"Vuelo {flight.AirlineCode}{flight.FlightNumber}";
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, flight.ReservaId, label, newStatus, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, flight.ReservaId, label, oldStatus, newStatus, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        flight.Status = newStatus;
+        await _flightRepo.UpdateAsync(flight, ct);
+        if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
+        return _mapper.Map<FlightSegmentDto>(flight);
+    }
 }

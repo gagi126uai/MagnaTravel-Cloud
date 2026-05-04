@@ -50,6 +50,76 @@ const emptyPage = {
     hasNextPage: false,
 };
 
+// Mapeo de Type (en espanol, viene del backend) -> endpoint de status update.
+// Si no esta mapeado (servicios genericos), no se permite editar inline aca.
+const STATUS_ENDPOINT_BY_TYPE = {
+    "Hotel": "hotel-bookings",
+    "Vuelo": "flight-segments",
+    "Traslado": "transfer-bookings",
+    "Paquete": "package-bookings",
+};
+
+const STATUS_OPTIONS = ["Solicitado", "Confirmado", "Cancelado"];
+
+function ServiceStatusEditor({ service, onUpdated }) {
+    const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
+    const [value, setValue] = useState(service.status || "Solicitado");
+    const [saving, setSaving] = useState(false);
+
+    if (!endpoint) {
+        // Servicio generico — no editable desde aca, mostramos texto plano
+        return <span className="text-sm">{service.status || "-"}</span>;
+    }
+
+    const handleChange = async (e) => {
+        const newStatus = e.target.value;
+        if (newStatus === value) return;
+        const previous = value;
+        setValue(newStatus);
+        setSaving(true);
+        try {
+            await api.patch(`/${endpoint}/${service.publicId}/status`, { status: newStatus });
+            await Swal.fire({
+                toast: true,
+                position: "top-end",
+                icon: "success",
+                title: `Estado actualizado a "${newStatus}"`,
+                showConfirmButton: false,
+                timer: 2200,
+                timerProgressBar: true,
+            });
+            if (onUpdated) onUpdated();
+        } catch (error) {
+            // Revertir en UI
+            setValue(previous);
+            const message = error?.response?.data?.message || error?.message || "No se pudo actualizar el estado.";
+            await Swal.fire({ icon: "error", title: "No se pudo cambiar el estado", text: message });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const colorClass = value === "Confirmado"
+        ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800"
+        : value === "Cancelado"
+            ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/30 dark:text-rose-300 dark:border-rose-800"
+            : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800";
+
+    return (
+        <select
+            value={value}
+            onChange={handleChange}
+            disabled={saving}
+            className={`rounded-md border text-xs font-bold px-2 py-1 ${colorClass} disabled:opacity-50`}
+            title="Cambiar estado del servicio"
+        >
+            {STATUS_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+            ))}
+        </select>
+    );
+}
+
 export default function SupplierAccountPage() {
     const { publicId } = useParams();
     const navigate = useNavigate();
@@ -395,7 +465,12 @@ export default function SupplierAccountPage() {
                                         )}
                                     </DataGridCell>
                                     <DataGridCell>{formatDate(service.date)}</DataGridCell>
-                                    <DataGridCell>{service.status}</DataGridCell>
+                                    <DataGridCell>
+                                        <ServiceStatusEditor
+                                            service={service}
+                                            onUpdated={() => { loadServices(); loadOverview(); }}
+                                        />
+                                    </DataGridCell>
                                     <DataGridCell align="right" className="font-mono">{formatCurrency(service.netCost)}</DataGridCell>
                                     <DataGridCell align="right" className="font-mono">{formatCurrency(service.salePrice)}</DataGridCell>
                                 </DataGridRow>
@@ -430,7 +505,12 @@ export default function SupplierAccountPage() {
                                                 service.numeroReserva || "Sin expediente"
                                             )}
                                         </div>
-                                        <div className="text-xs text-slate-500 dark:text-slate-400">{service.status}</div>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                            <ServiceStatusEditor
+                                                service={service}
+                                                onUpdated={() => { loadServices(); loadOverview(); }}
+                                            />
+                                        </div>
                                     </>
                                 }
                                 footer={<span className="text-xs text-slate-500">Costo {formatCurrency(service.netCost)}</span>}

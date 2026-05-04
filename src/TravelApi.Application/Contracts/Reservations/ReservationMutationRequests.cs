@@ -22,3 +22,10 @@ public record PassengerCountsRequest(
     int AdultCount,
     int ChildCount,
     int InfantCount);
+
+/// <summary>
+/// Request para cambiar SOLO el Status de un servicio (Hotel/Transfer/Package/Flight/
+/// ServicioReserva). Usado desde la cuenta corriente del proveedor para permitir al
+/// operador confirmar servicios sin entrar a cada reserva.
+/// </summary>
+public record ServiceStatusUpdateRequest(string Status);

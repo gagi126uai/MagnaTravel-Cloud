@@ -1,3 +1,4 @@
+using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 
@@ -60,4 +61,16 @@ public class BookingServiceHttpProxy : ReservationsServiceHttpProxyBase, IBookin
 
     public Task DeleteTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
         => DeleteAsync($"api/reservas/{reservaPublicIdOrLegacyId}/transfers/{publicIdOrLegacyId}", ct);
+
+    public Task<HotelBookingDto> UpdateHotelStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+        => PatchAsync<ServiceStatusUpdateRequest, HotelBookingDto>($"api/hotel-bookings/{publicIdOrLegacyId}/status", new ServiceStatusUpdateRequest(newStatus), ct);
+
+    public Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+        => PatchAsync<ServiceStatusUpdateRequest, TransferBookingDto>($"api/transfer-bookings/{publicIdOrLegacyId}/status", new ServiceStatusUpdateRequest(newStatus), ct);
+
+    public Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+        => PatchAsync<ServiceStatusUpdateRequest, PackageBookingDto>($"api/package-bookings/{publicIdOrLegacyId}/status", new ServiceStatusUpdateRequest(newStatus), ct);
+
+    public Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+        => PatchAsync<ServiceStatusUpdateRequest, FlightSegmentDto>($"api/flight-segments/{publicIdOrLegacyId}/status", new ServiceStatusUpdateRequest(newStatus), ct);
 }
