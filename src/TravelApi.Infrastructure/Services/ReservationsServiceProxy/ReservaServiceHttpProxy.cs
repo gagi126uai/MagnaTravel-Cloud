@@ -68,6 +68,18 @@ public class ReservaServiceHttpProxy : ReservationsServiceHttpProxyBase, IReserv
     public Task<TransitionReadinessDto> GetTransitionReadinessAsync(string reservaPublicIdOrLegacyId, string targetStatus, CancellationToken ct = default)
         => GetAsync<TransitionReadinessDto>($"api/reservas/{reservaPublicIdOrLegacyId}/transition-readiness?to={Uri.EscapeDataString(targetStatus)}", ct);
 
+    public async Task<IReadOnlyList<PassengerServiceAssignmentDto>> GetAssignmentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var list = await GetAsync<List<PassengerServiceAssignmentDto>>($"api/reservas/{reservaPublicIdOrLegacyId}/assignments", ct);
+        return list;
+    }
+
+    public Task<PassengerServiceAssignmentDto> CreateAssignmentAsync(string reservaPublicIdOrLegacyId, CreatePassengerAssignmentRequest request, CancellationToken ct = default)
+        => PostAsync<CreatePassengerAssignmentRequest, PassengerServiceAssignmentDto>($"api/reservas/{reservaPublicIdOrLegacyId}/assignments", request, ct);
+
+    public Task RemoveAssignmentAsync(string assignmentPublicIdOrLegacyId, CancellationToken ct = default)
+        => DeleteAsync($"api/reservas/assignments/{assignmentPublicIdOrLegacyId}", ct);
+
     public Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
         => GetAsync<IEnumerable<PaymentDto>>($"api/reservas/{reservaPublicIdOrLegacyId}/payments", ct);
 

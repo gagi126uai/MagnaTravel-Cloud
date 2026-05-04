@@ -108,6 +108,139 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(reservaId);
     }
 
+    // ============= Phase 2.1 — Pasajero <-> Servicio =============
+
+    public async Task<IReadOnlyList<PassengerServiceAssignmentDto>> GetAssignmentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+
+        var passengerIds = await _context.Passengers
+            .AsNoTracking()
+            .Where(p => p.ReservaId == reservaId)
+            .Select(p => p.Id)
+            .ToListAsync(ct);
+
+        if (passengerIds.Count == 0) return Array.Empty<PassengerServiceAssignmentDto>();
+
+        var assignments = await _context.PassengerServiceAssignments
+            .AsNoTracking()
+            .Include(a => a.Passenger)
+            .Where(a => passengerIds.Contains(a.PassengerId))
+            .OrderBy(a => a.ServiceType).ThenBy(a => a.ServiceId).ThenBy(a => a.Id)
+            .ToListAsync(ct);
+
+        return assignments.Select(a => new PassengerServiceAssignmentDto
+        {
+            PublicId = a.PublicId,
+            PassengerPublicId = a.Passenger?.PublicId ?? Guid.Empty,
+            PassengerFullName = a.Passenger?.FullName ?? string.Empty,
+            ServiceType = a.ServiceType,
+            ServiceId = a.ServiceId,
+            ServicePublicId = null, // resolverlo aca implica N queries — el frontend ya tiene el contexto
+            RoomNumber = a.RoomNumber,
+            SeatNumber = a.SeatNumber,
+            Notes = a.Notes,
+            CreatedAt = a.CreatedAt
+        }).ToList();
+    }
+
+    public async Task<PassengerServiceAssignmentDto> CreateAssignmentAsync(string reservaPublicIdOrLegacyId, CreatePassengerAssignmentRequest request, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+
+        if (string.IsNullOrWhiteSpace(request.ServiceType) || !AssignmentServiceType.All.Contains(request.ServiceType))
+            throw new ArgumentException($"ServiceType invalido. Valores aceptados: {string.Join(", ", AssignmentServiceType.All)}.");
+
+        // Resolver passenger y validar que pertenezca a la Reserva
+        var passengerId = await ResolveRequiredIdAsync<Passenger>(request.PassengerPublicIdOrLegacyId, ct);
+        var passenger = await _context.Passengers
+            .FirstOrDefaultAsync(p => p.Id == passengerId, ct)
+            ?? throw new KeyNotFoundException("Pasajero no encontrado");
+        if (passenger.ReservaId != reservaId)
+            throw new InvalidOperationException("El pasajero no pertenece a esta reserva.");
+
+        // Resolver el ServiceId segun tipo (cada tipo tiene su tabla)
+        var serviceId = request.ServiceType switch
+        {
+            AssignmentServiceType.Hotel => await ResolveRequiredIdAsync<HotelBooking>(request.ServicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Transfer => await ResolveRequiredIdAsync<TransferBooking>(request.ServicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Package => await ResolveRequiredIdAsync<PackageBooking>(request.ServicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Flight => await ResolveRequiredIdAsync<FlightSegment>(request.ServicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Generic => await ResolveRequiredIdAsync<ServicioReserva>(request.ServicePublicIdOrLegacyId, ct),
+            _ => throw new ArgumentException("ServiceType no soportado.")
+        };
+
+        // Validar que el servicio pertenezca a la Reserva (defensa en profundidad)
+        var serviceBelongsToReserva = request.ServiceType switch
+        {
+            AssignmentServiceType.Hotel => await _context.HotelBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
+            AssignmentServiceType.Transfer => await _context.TransferBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
+            AssignmentServiceType.Package => await _context.PackageBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
+            AssignmentServiceType.Flight => await _context.FlightSegments.AnyAsync(f => f.Id == serviceId && f.ReservaId == reservaId, ct),
+            AssignmentServiceType.Generic => await _context.Servicios.AnyAsync(s => s.Id == serviceId && s.ReservaId == reservaId, ct),
+            _ => false
+        };
+        if (!serviceBelongsToReserva)
+            throw new InvalidOperationException("El servicio no pertenece a esta reserva.");
+
+        // Idempotencia: si ya existe la asignacion, devolver la existente
+        var existing = await _context.PassengerServiceAssignments
+            .Include(a => a.Passenger)
+            .FirstOrDefaultAsync(a => a.PassengerId == passengerId && a.ServiceType == request.ServiceType && a.ServiceId == serviceId, ct);
+        if (existing != null)
+        {
+            return MapAssignment(existing);
+        }
+
+        var assignment = new PassengerServiceAssignment
+        {
+            PassengerId = passengerId,
+            ServiceType = request.ServiceType,
+            ServiceId = serviceId,
+            RoomNumber = request.RoomNumber,
+            SeatNumber = request.SeatNumber?.Trim(),
+            Notes = request.Notes?.Trim(),
+            CreatedAt = DateTime.UtcNow
+        };
+        _context.PassengerServiceAssignments.Add(assignment);
+        await _context.SaveChangesAsync(ct);
+
+        // Re-cargar con Passenger include para el mapeo
+        var saved = await _context.PassengerServiceAssignments
+            .Include(a => a.Passenger)
+            .FirstAsync(a => a.Id == assignment.Id, ct);
+        return MapAssignment(saved);
+    }
+
+    public async Task RemoveAssignmentAsync(string assignmentPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var assignmentId = await ResolveRequiredIdAsync<PassengerServiceAssignment>(assignmentPublicIdOrLegacyId, ct);
+        var assignment = await _context.PassengerServiceAssignments
+            .FirstOrDefaultAsync(a => a.Id == assignmentId, ct);
+        if (assignment == null) throw new KeyNotFoundException("Asignacion no encontrada");
+
+        _context.PassengerServiceAssignments.Remove(assignment);
+        await _context.SaveChangesAsync(ct);
+    }
+
+    private static PassengerServiceAssignmentDto MapAssignment(PassengerServiceAssignment a)
+    {
+        return new PassengerServiceAssignmentDto
+        {
+            PublicId = a.PublicId,
+            PassengerPublicId = a.Passenger?.PublicId ?? Guid.Empty,
+            PassengerFullName = a.Passenger?.FullName ?? string.Empty,
+            ServiceType = a.ServiceType,
+            ServiceId = a.ServiceId,
+            RoomNumber = a.RoomNumber,
+            SeatNumber = a.SeatNumber,
+            Notes = a.Notes,
+            CreatedAt = a.CreatedAt
+        };
+    }
+
+    // ============= /Phase 2.1 =============
+
     public async Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);

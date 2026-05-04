@@ -21,6 +21,7 @@ public class ReservationsDbContext : DbContext
     public DbSet<PackageBooking> PackageBookings { get; set; } = null!;
     public DbSet<Payment> Payments { get; set; } = null!;
     public DbSet<PaymentReceipt> PaymentReceipts { get; set; } = null!;
+    public DbSet<PassengerServiceAssignment> PassengerServiceAssignments { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -121,6 +122,17 @@ public class ReservationsDbContext : DbContext
         {
             entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
             entity.Property(p => p.ServicioReservaId).HasColumnName("ReservationId");
+        });
+
+        // PassengerServiceAssignment — mismo mapeo que AppDbContext (tabla compartida)
+        modelBuilder.Entity<PassengerServiceAssignment>(entity =>
+        {
+            entity.ToTable("PassengerServiceAssignments");
+            entity.HasIndex(a => a.PublicId).IsUnique();
+            entity.HasOne(a => a.Passenger)
+                  .WithMany()
+                  .HasForeignKey(a => a.PassengerId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

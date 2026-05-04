@@ -271,6 +271,60 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // ============= Phase 2.1 — Pasajero <-> Servicio =============
+
+    [HttpGet("{publicIdOrLegacyId}/assignments")]
+    public async Task<ActionResult<IReadOnlyList<PassengerServiceAssignmentDto>>> GetAssignments(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var list = await _reservaService.GetAssignmentsAsync(publicIdOrLegacyId, cancellationToken);
+            return Ok(list);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpPost("{publicIdOrLegacyId}/assignments")]
+    public async Task<ActionResult<PassengerServiceAssignmentDto>> CreateAssignment(string publicIdOrLegacyId, [FromBody] CreatePassengerAssignmentRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.CreateAssignmentAsync(publicIdOrLegacyId, request, cancellationToken);
+            return Created($"/api/reservas/assignments/{dto.PublicId}", dto);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpDelete("assignments/{assignmentPublicIdOrLegacyId}")]
+    public async Task<IActionResult> RemoveAssignment(string assignmentPublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _reservaService.RemoveAssignmentAsync(assignmentPublicIdOrLegacyId, cancellationToken);
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    // ============= /Phase 2.1 =============
+
     [HttpGet("{publicIdOrLegacyId}/transition-readiness")]
     public async Task<ActionResult<TransitionReadinessDto>> GetTransitionReadiness(string publicIdOrLegacyId, [FromQuery] string to, CancellationToken cancellationToken)
     {

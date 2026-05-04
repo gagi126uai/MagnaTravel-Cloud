@@ -284,6 +284,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Voucher> Vouchers => Set<Voucher>();
     public DbSet<VoucherPassengerAssignment> VoucherPassengerAssignments => Set<VoucherPassengerAssignment>();
     public DbSet<VoucherAuditEntry> VoucherAuditEntries => Set<VoucherAuditEntry>();
+    public DbSet<PassengerServiceAssignment> PassengerServiceAssignments => Set<PassengerServiceAssignment>();
 
     // Pilar 1: Cotizador + CRM
     public DbSet<Quote> Quotes => Set<Quote>();
@@ -333,6 +334,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<SupplierPayment>(modelBuilder);
         ConfigurePublicEntity<ManualCashMovement>(modelBuilder);
         ConfigurePublicEntity<PaymentReceipt>(modelBuilder);
+        ConfigurePublicEntity<PassengerServiceAssignment>(modelBuilder);
 
         // Supplier
         modelBuilder.Entity<Supplier>(entity =>
@@ -755,6 +757,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany(v => v.PassengerAssignments)
                   .HasForeignKey(a => a.VoucherId)
                   .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(a => a.Passenger)
+                  .WithMany()
+                  .HasForeignKey(a => a.PassengerId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PassengerServiceAssignment>(entity =>
+        {
+            entity.ToTable("PassengerServiceAssignments");
+            entity.Property(a => a.ServiceType).HasMaxLength(20).IsRequired();
+            entity.Property(a => a.SeatNumber).HasMaxLength(20);
+            entity.Property(a => a.Notes).HasMaxLength(500);
+            // Un pasajero no puede estar asignado dos veces al mismo servicio.
+            entity.HasIndex(a => new { a.PassengerId, a.ServiceType, a.ServiceId }).IsUnique();
+            // Indice por servicio para listar pasajeros de un booking eficientemente.
+            entity.HasIndex(a => new { a.ServiceType, a.ServiceId });
 
             entity.HasOne(a => a.Passenger)
                   .WithMany()
