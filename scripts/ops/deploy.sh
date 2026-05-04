@@ -54,8 +54,20 @@ docker compose build api worker reservas-service web whatsapp-bot
 echo "Starting infrastructure..."
 docker compose up -d db rabbitmq minio
 
-echo "Running one-shot database migrations..."
-docker compose run --rm migrate
+echo "Running one-shot database migrations (waiting for completion)..."
+# Importante: NO usar `docker compose run --rm migrate` aqui — eso crea un
+# container con nombre random que no satisface el `depends_on: migrate
+# (service_completed_successfully)` que tienen api/worker/reservas-service en
+# docker-compose.yml. Hay que usar el container `travel_migrate` real.
+docker compose up -d --force-recreate --no-deps migrate
+echo "Waiting for migrate container to finish..."
+migrate_exit=$(docker wait travel_migrate)
+if [ "$migrate_exit" != "0" ]; then
+  echo "Migration failed (exit code $migrate_exit). Last logs:" >&2
+  docker logs --tail=80 travel_migrate >&2
+  exit 1
+fi
+echo "Migrations applied successfully."
 
 echo "Starting application services..."
 docker compose up -d api worker reservas-service web whatsapp-bot postgres-backup
