@@ -27,17 +27,30 @@ function toDateInputValue(value) {
 export function EditReservaDatesModal({ isOpen, reserva, onClose, onSave }) {
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
+    const [startDateFromSuggestion, setStartDateFromSuggestion] = useState(false);
+    const [endDateFromSuggestion, setEndDateFromSuggestion] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
 
+    const suggestedStart = toDateInputValue(reserva?.suggestedStartDate);
+    const suggestedEnd = toDateInputValue(reserva?.suggestedEndDate);
+
     useEffect(() => {
         if (isOpen) {
-            setStartDate(toDateInputValue(reserva?.startDate));
-            setEndDate(toDateInputValue(reserva?.endDate));
+            // Si la reserva ya tiene fecha cargada, usarla. Si no, pre-rellenar
+            // con la sugerencia computada del ultimo servicio (si existe).
+            const initialStart = toDateInputValue(reserva?.startDate);
+            const initialEnd = toDateInputValue(reserva?.endDate);
+            const startToUse = initialStart || suggestedStart;
+            const endToUse = initialEnd || suggestedEnd;
+            setStartDate(startToUse);
+            setEndDate(endToUse);
+            setStartDateFromSuggestion(!initialStart && Boolean(suggestedStart));
+            setEndDateFromSuggestion(!initialEnd && Boolean(suggestedEnd));
             setError(null);
             setSaving(false);
         }
-    }, [isOpen, reserva?.startDate, reserva?.endDate]);
+    }, [isOpen, reserva?.startDate, reserva?.endDate, suggestedStart, suggestedEnd]);
 
     if (!isOpen) return null;
 
@@ -96,10 +109,18 @@ export function EditReservaDatesModal({ isOpen, reserva, onClose, onSave }) {
                         <input
                             type="date"
                             value={startDate}
-                            onChange={(e) => setStartDate(e.target.value)}
+                            onChange={(e) => {
+                                setStartDate(e.target.value);
+                                setStartDateFromSuggestion(false);
+                            }}
                             disabled={saving}
                             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         />
+                        {startDateFromSuggestion && (
+                            <p className="mt-1 text-xs italic text-indigo-500 dark:text-indigo-400">
+                                Sugerido del primer servicio cargado
+                            </p>
+                        )}
                     </div>
 
                     <div>
@@ -109,11 +130,20 @@ export function EditReservaDatesModal({ isOpen, reserva, onClose, onSave }) {
                         <input
                             type="date"
                             value={endDate}
-                            onChange={(e) => setEndDate(e.target.value)}
+                            onChange={(e) => {
+                                setEndDate(e.target.value);
+                                setEndDateFromSuggestion(false);
+                            }}
                             disabled={saving}
                             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         />
-                        <p className="mt-1 text-xs text-slate-400">Dejar vacio borra la fecha.</p>
+                        {endDateFromSuggestion ? (
+                            <p className="mt-1 text-xs italic text-indigo-500 dark:text-indigo-400">
+                                Sugerido del ultimo servicio cargado
+                            </p>
+                        ) : (
+                            <p className="mt-1 text-xs text-slate-400">Dejar vacio borra la fecha.</p>
+                        )}
                     </div>
 
                     {error && (

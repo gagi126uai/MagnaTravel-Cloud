@@ -31,6 +31,16 @@ public class ReservaDto
     public DateTime CreatedAt { get; set; }
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }
+    /// <summary>
+    /// Fecha de salida computada del primer servicio cargado (min de fechas).
+    /// Se expone para que la UI pueda sugerir un valor cuando StartDate este vacio.
+    /// </summary>
+    public DateTime? SuggestedStartDate { get; set; }
+    /// <summary>
+    /// Fecha de regreso computada del ultimo servicio cargado (max de fechas).
+    /// Se expone para que la UI pueda sugerir un valor cuando EndDate este vacio.
+    /// </summary>
+    public DateTime? SuggestedEndDate { get; set; }
     public DateTime? ClosedAt { get; set; }
     
     // Collections

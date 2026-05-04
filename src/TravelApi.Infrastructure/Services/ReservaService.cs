@@ -864,6 +864,14 @@ public class ReservaService : IReservaService
 
         var dto = _mapper.Map<ReservaDto>(file);
         ApplyEconomicFlags(dto, settings);
+
+        // Sugerencia de fechas computadas desde los servicios cargados — la UI las
+        // usa para pre-rellenar inputs cuando StartDate/EndDate estan en null.
+        // Costo: 5 queries chicas en una operacion de detalle (no es hot path).
+        var (suggestedStart, suggestedEnd) = await ReservaScheduleCalculator.ComputeAsync(_context, file.Id);
+        dto.SuggestedStartDate = suggestedStart;
+        dto.SuggestedEndDate = suggestedEnd;
+
         return dto;
     }
 
