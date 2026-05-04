@@ -25,11 +25,13 @@ public interface IBookingService
     Task<TransferBookingDto> UpdateTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateTransferRequest req, CancellationToken ct);
     Task DeleteTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct);
 
-    // Updates de SOLO el Status — usados desde la cuenta corriente del proveedor para
-    // confirmar servicios sin entrar a cada reserva. Aplican los mismos guards que
-    // los Update* completos via ReservaCapacityRules.
-    Task<HotelBookingDto> UpdateHotelStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct);
-    Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct);
-    Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct);
-    Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct);
+    // Updates de Status (y opcionalmente ConfirmationNumber/PNR) — usados desde la
+    // cuenta corriente del proveedor para confirmar servicios sin entrar a cada reserva.
+    // Aplican los mismos guards que los Update* completos via ReservaCapacityRules.
+    // Si confirmationNumber == null, el codigo NO se modifica (para no pisar valores
+    // existentes cuando el operador solo cambia el estado).
+    Task<HotelBookingDto> UpdateHotelStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
+    Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
+    Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
+    Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
 }

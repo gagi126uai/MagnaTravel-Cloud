@@ -100,7 +100,7 @@ public class HotelBookingsController : ControllerBase
     {
         try
         {
-            return Ok(await _bookingService.UpdateHotelStatusAsync(publicIdOrLegacyId, req.Status, ct));
+            return Ok(await _bookingService.UpdateHotelStatusAsync(publicIdOrLegacyId, req.Status, req.ConfirmationNumber, ct));
         }
         catch (KeyNotFoundException)
         {

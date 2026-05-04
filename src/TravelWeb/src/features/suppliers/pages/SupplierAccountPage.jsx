@@ -14,6 +14,9 @@ import {
     Trash2,
     Search,
     Filter,
+    Receipt,
+    Check,
+    X,
 } from "lucide-react";
 import { api } from "../../../api";
 import SupplierPaymentModal from "../../../components/SupplierPaymentModal";
@@ -36,6 +39,7 @@ import { MobileRecordCard, MobileRecordList } from "../../../components/ui/Mobil
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import Swal from "sweetalert2";
+import { showSuccess, showError } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { isDatabaseUnavailableError } from "../../../lib/errors";
@@ -79,21 +83,13 @@ function ServiceStatusEditor({ service, onUpdated }) {
         setSaving(true);
         try {
             await api.patch(`/${endpoint}/${service.publicId}/status`, { status: newStatus });
-            await Swal.fire({
-                toast: true,
-                position: "top-end",
-                icon: "success",
-                title: `Estado actualizado a "${newStatus}"`,
-                showConfirmButton: false,
-                timer: 2200,
-                timerProgressBar: true,
-            });
+            showSuccess(`Estado actualizado a "${newStatus}"`);
             if (onUpdated) onUpdated();
         } catch (error) {
             // Revertir en UI
             setValue(previous);
             const message = error?.response?.data?.message || error?.message || "No se pudo actualizar el estado.";
-            await Swal.fire({ icon: "error", title: "No se pudo cambiar el estado", text: message });
+            showError(message, "No se pudo cambiar el estado");
         } finally {
             setSaving(false);
         }
@@ -117,6 +113,141 @@ function ServiceStatusEditor({ service, onUpdated }) {
                 <option key={opt} value={opt}>{opt}</option>
             ))}
         </select>
+    );
+}
+
+// Editor inline del codigo de confirmacion del proveedor (PNR para vuelos,
+// ConfirmationNumber para el resto). Misma logica de edicion que el status:
+// click para entrar en modo edit, blur o Enter para guardar, Esc para cancelar.
+function ServiceConfirmationEditor({ service, onUpdated }) {
+    const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
+    const [editing, setEditing] = useState(false);
+    const [value, setValue] = useState(service.confirmation || "");
+    const [saving, setSaving] = useState(false);
+
+    // Mantener sincronizado si cambia el dato externo (refresh)
+    useEffect(() => {
+        if (!editing) setValue(service.confirmation || "");
+    }, [service.confirmation, editing]);
+
+    if (!endpoint) {
+        return <span className="font-mono text-xs">{service.confirmation || "-"}</span>;
+    }
+
+    const save = async () => {
+        const trimmed = value.trim();
+        const previous = service.confirmation || "";
+        if (trimmed === previous) {
+            setEditing(false);
+            return;
+        }
+        setSaving(true);
+        try {
+            await api.patch(`/${endpoint}/${service.publicId}/status`, {
+                status: service.status || "Solicitado",
+                confirmationNumber: trimmed,
+            });
+            showSuccess(trimmed ? `Codigo guardado: ${trimmed}` : "Codigo eliminado");
+            setEditing(false);
+            if (onUpdated) onUpdated();
+        } catch (error) {
+            const message = error?.response?.data?.message || error?.message || "No se pudo guardar el codigo.";
+            showError(message, "No se pudo guardar el codigo");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const cancel = () => {
+        setValue(service.confirmation || "");
+        setEditing(false);
+    };
+
+    if (!editing) {
+        return (
+            <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="font-mono text-xs text-left hover:bg-accent px-1.5 py-0.5 rounded transition-colors"
+                title="Editar codigo de confirmacion"
+            >
+                {service.confirmation || <span className="text-muted-foreground italic">(agregar)</span>}
+            </button>
+        );
+    }
+
+    return (
+        <div className="inline-flex items-center gap-1">
+            <input
+                type="text"
+                autoFocus
+                value={value}
+                disabled={saving}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") save();
+                    if (e.key === "Escape") cancel();
+                }}
+                placeholder="Codigo..."
+                className="rounded border border-input bg-background px-1.5 py-0.5 text-xs font-mono w-28 focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button
+                type="button"
+                onClick={save}
+                disabled={saving}
+                className="rounded p-0.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"
+                title="Guardar"
+            >
+                <Check className="h-3 w-3" />
+            </button>
+            <button
+                type="button"
+                onClick={cancel}
+                disabled={saving}
+                className="rounded p-0.5 text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+                title="Cancelar"
+            >
+                <X className="h-3 w-3" />
+            </button>
+        </div>
+    );
+}
+
+// Boton para abrir el PDF de la ultima factura AFIP de la reserva del servicio.
+// Solo se renderiza si el backend nos devolvio un latestInvoicePublicId (i.e.
+// ya hay una factura aprobada por AFIP para esa reserva).
+function InvoicePdfButton({ invoicePublicId }) {
+    const [loading, setLoading] = useState(false);
+
+    if (!invoicePublicId) {
+        return <span className="text-xs text-muted-foreground">-</span>;
+    }
+
+    const open = async () => {
+        setLoading(true);
+        try {
+            const response = await api.get(`/invoices/${invoicePublicId}/pdf`, { responseType: "blob" });
+            const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
+            window.open(url, "_blank");
+        } catch (error) {
+            const message = error?.response?.data?.message || error?.message || "No se pudo abrir la factura.";
+            showError(message, "Error al abrir factura");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <button
+            type="button"
+            onClick={open}
+            disabled={loading}
+            className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
+            title="Ver factura AFIP"
+        >
+            <Receipt className="h-3 w-3" />
+            Factura
+        </button>
     );
 }
 
@@ -426,7 +557,7 @@ export default function SupplierAccountPage() {
                     />
                 </div>
 
-                <DataGrid density="compact" minWidth="920px">
+                <DataGrid density="compact" minWidth="1080px">
                     <DataGridHeader>
                         <DataGridHeaderRow>
                             <DataGridHeaderCell>Tipo</DataGridHeaderCell>
@@ -434,15 +565,17 @@ export default function SupplierAccountPage() {
                             <DataGridHeaderCell>Reserva</DataGridHeaderCell>
                             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
                             <DataGridHeaderCell>Estado</DataGridHeaderCell>
+                            <DataGridHeaderCell>Codigo</DataGridHeaderCell>
+                            <DataGridHeaderCell>Factura</DataGridHeaderCell>
                             <DataGridHeaderCell align="right">Costo</DataGridHeaderCell>
                             <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
                         </DataGridHeaderRow>
                     </DataGridHeader>
                     <DataGridBody>
                         {servicesLoading ? (
-                            <DataGridEmptyState colSpan={7} title="Cargando servicios..." />
+                            <DataGridEmptyState colSpan={9} title="Cargando servicios..." />
                         ) : services.length === 0 ? (
-                            <DataGridEmptyState colSpan={7} title="No hay servicios para este filtro." />
+                            <DataGridEmptyState colSpan={9} title="No hay servicios para este filtro." />
                         ) : (
                             services.map((service) => (
                                 <DataGridRow key={getPublicId(service)}>
@@ -470,6 +603,15 @@ export default function SupplierAccountPage() {
                                             service={service}
                                             onUpdated={() => { loadServices(); loadOverview(); }}
                                         />
+                                    </DataGridCell>
+                                    <DataGridCell>
+                                        <ServiceConfirmationEditor
+                                            service={service}
+                                            onUpdated={() => { loadServices(); loadOverview(); }}
+                                        />
+                                    </DataGridCell>
+                                    <DataGridCell>
+                                        <InvoicePdfButton invoicePublicId={service.latestInvoicePublicId} />
                                     </DataGridCell>
                                     <DataGridCell align="right" className="font-mono">{formatCurrency(service.netCost)}</DataGridCell>
                                     <DataGridCell align="right" className="font-mono">{formatCurrency(service.salePrice)}</DataGridCell>
@@ -505,8 +647,16 @@ export default function SupplierAccountPage() {
                                                 service.numeroReserva || "Sin expediente"
                                             )}
                                         </div>
-                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                        <div className="flex flex-wrap items-center gap-2 mt-1">
                                             <ServiceStatusEditor
+                                                service={service}
+                                                onUpdated={() => { loadServices(); loadOverview(); }}
+                                            />
+                                            <InvoicePdfButton invoicePublicId={service.latestInvoicePublicId} />
+                                        </div>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                            Codigo:{" "}
+                                            <ServiceConfirmationEditor
                                                 service={service}
                                                 onUpdated={() => { loadServices(); loadOverview(); }}
                                             />

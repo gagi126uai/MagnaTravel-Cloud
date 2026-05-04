@@ -83,7 +83,7 @@ public class FlightSegmentsController : ControllerBase
     {
         try
         {
-            return Ok(await _bookingService.UpdateFlightStatusAsync(publicIdOrLegacyId, req.Status, ct));
+            return Ok(await _bookingService.UpdateFlightStatusAsync(publicIdOrLegacyId, req.Status, req.ConfirmationNumber, ct));
         }
         catch (KeyNotFoundException) { return NotFound(); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }

@@ -57,6 +57,11 @@ public class SupplierAccountServiceListItemDto
     public string? NumeroReserva { get; set; }
     public string? FileName { get; set; }
     public Guid? ReservaPublicId { get; set; }
+    /// <summary>
+    /// PublicId de la ultima factura AFIP emitida para la reserva del servicio (si existe).
+    /// Permite que la cuenta corriente del proveedor linkee directo al PDF de AFIP.
+    /// </summary>
+    public Guid? LatestInvoicePublicId { get; set; }
 }
 
 public class SupplierPaymentDto

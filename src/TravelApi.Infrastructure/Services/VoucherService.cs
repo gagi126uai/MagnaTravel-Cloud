@@ -1088,7 +1088,9 @@ public class VoucherService : IVoucherService
                         $"{h.HotelName} ({h.City})",
                         $"{FormatDate(h.CheckIn)} - {FormatDate(h.CheckOut)}",
                         $"{h.RoomType} / {h.MealPlan}",
-                        h.ConfirmationNumber ?? "Pendiente"
+                        // Si no hay codigo de confirmacion mostramos el estado real del servicio
+                        // (ej. "Confirmado", "Solicitado", "Cancelado") en vez de "Pendiente".
+                        h.ConfirmationNumber ?? h.Status ?? "-"
                     })));
 
             if (reserva.FlightSegments.Any())
@@ -1108,7 +1110,8 @@ public class VoucherService : IVoucherService
                         t.VehicleType,
                         $"{t.PickupLocation} -> {t.DropoffLocation}",
                         t.PickupDateTime.ToString("dd/MM/yyyy HH:mm"),
-                        t.ConfirmationNumber ?? "Pendiente"
+                        // Sin codigo => mostramos el estado real del servicio en vez de "Pendiente".
+                        t.ConfirmationNumber ?? t.Status ?? "-"
                     })));
 
             if (reserva.PackageBookings.Any())
@@ -1118,7 +1121,8 @@ public class VoucherService : IVoucherService
                         p.PackageName,
                         p.Destination,
                         $"{FormatDate(p.StartDate)} - {FormatDate(p.EndDate)}",
-                        p.ConfirmationNumber ?? "Pendiente"
+                        // Sin codigo => mostramos el estado real del servicio en vez de "Pendiente".
+                        p.ConfirmationNumber ?? p.Status ?? "-"
                     })));
 
             column.Item().PaddingTop(6).Text("Este documento no tiene validez como comprobante fiscal.")
@@ -1185,7 +1189,7 @@ public class VoucherService : IVoucherService
         {
             var isConfirmed = h.Status == "Confirmed" || h.Status == "Confirmado";
             html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(h.HotelName)}<br/><span style='font-size:11px;color:#64748b;font-weight:400'>{EscapeHtml(h.City)}</span></td><td>{h.CheckIn:dd/MM/yyyy} - {h.CheckOut:dd/MM/yyyy}</td><td>{h.Nights}</td><td>{EscapeHtml($"{h.RoomType} ({h.MealPlan})")}</td>");
-            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(h.Status ?? "Pendiente")}</span></td></tr>");
+            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(h.Status ?? "-")}</span></td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }
@@ -1209,7 +1213,7 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Traslados</h2><div class='table-container'><table><thead><tr><th>Tipo de Servicio</th><th>Recogida</th><th>Destino</th><th>Fecha y Hora</th><th>Confirmación</th></tr></thead><tbody>");
         foreach (var t in reserva.TransferBookings)
         {
-            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(t.VehicleType)}</td><td>{EscapeHtml(t.PickupLocation)}</td><td>{EscapeHtml(t.DropoffLocation)}</td><td>{t.PickupDateTime:dd/MM/yyyy HH:mm}</td><td style='font-weight:600'>{EscapeHtml(t.ConfirmationNumber ?? "Pendiente")}</td></tr>");
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(t.VehicleType)}</td><td>{EscapeHtml(t.PickupLocation)}</td><td>{EscapeHtml(t.DropoffLocation)}</td><td>{t.PickupDateTime:dd/MM/yyyy HH:mm}</td><td style='font-weight:600'>{EscapeHtml(t.ConfirmationNumber ?? t.Status ?? "-")}</td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }
@@ -1223,7 +1227,7 @@ public class VoucherService : IVoucherService
         {
             var isConfirmed = p.Status == "Confirmed" || p.Status == "Confirmado";
             html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(p.PackageName)}</td><td>{EscapeHtml(p.Destination)}</td><td>{p.StartDate:dd/MM/yyyy} - {p.EndDate:dd/MM/yyyy}</td><td>{p.Nights}</td>");
-            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(p.Status ?? "Pendiente")}</span></td></tr>");
+            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(p.Status ?? "-")}</span></td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }

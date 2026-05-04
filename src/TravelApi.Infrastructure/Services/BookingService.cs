@@ -828,7 +828,7 @@ public class BookingService : IBookingService
     // ReservaCapacityRules para mantener coherencia (Operativo requiere Confirmado, Presupuesto
     // fuerza Solicitado, no degradar si hay SupplierPayments).
 
-    public async Task<HotelBookingDto> UpdateHotelStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    public async Task<HotelBookingDto> UpdateHotelStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
         var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
@@ -846,12 +846,14 @@ public class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         hotel.Status = newStatus;
+        if (confirmationNumber != null)
+            hotel.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _hotelRepo.UpdateAsync(hotel, ct);
         if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         return _mapper.Map<HotelBookingDto>(hotel);
     }
 
-    public async Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    public async Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
         var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
@@ -869,12 +871,14 @@ public class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         transfer.Status = newStatus;
+        if (confirmationNumber != null)
+            transfer.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _transferRepo.UpdateAsync(transfer, ct);
         if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         return _mapper.Map<TransferBookingDto>(transfer);
     }
 
-    public async Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    public async Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
         var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
@@ -892,12 +896,14 @@ public class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         package.Status = newStatus;
+        if (confirmationNumber != null)
+            package.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _packageRepo.UpdateAsync(package, ct);
         if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         return _mapper.Map<PackageBookingDto>(package);
     }
 
-    public async Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, CancellationToken ct)
+    public async Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
         var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
@@ -915,6 +921,10 @@ public class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         flight.Status = newStatus;
+        // FlightSegment no tiene ConfirmationNumber; el codigo de confirmacion del proveedor
+        // se almacena en PNR (ver SupplierService.BuildSupplierServicesQuery).
+        if (confirmationNumber != null)
+            flight.PNR = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _flightRepo.UpdateAsync(flight, ct);
         if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         return _mapper.Map<FlightSegmentDto>(flight);
