@@ -96,6 +96,45 @@ function PaymentReceiptActions({ payment, onView, onIssue }) {
   return <span className="text-xs text-slate-400">Sin comprobante</span>;
 }
 
+// Lista de Status considerados "confirmados" — espejo de SupplierService:205 y
+// ReservaCapacityRules.ConfirmedServiceStatuses. Si cambia uno, hay que sincronizar.
+const CONFIRMED_SERVICE_STATUSES = new Set(["Confirmado", "Emitido", "HK", "TK", "KK", "KL"]);
+
+function UnconfirmedServicesBanner({ reserva }) {
+  // Solo relevante en Reservado: en Operativo ya no se puede pasar (bloqueado), en
+  // Presupuesto no aplica todavia.
+  if (reserva.status !== "Reservado") return null;
+
+  const all = [
+    ...(reserva.hotelBookings || []).map(b => ({ label: `Hotel ${b.hotelName || ""}`, status: b.status })),
+    ...(reserva.transferBookings || []).map(b => ({ label: `Transfer ${b.vehicleType || ""}`, status: b.status })),
+    ...(reserva.packageBookings || []).map(b => ({ label: `Paquete ${b.packageName || ""}`, status: b.status })),
+    ...(reserva.flightSegments || []).map(b => ({ label: `Vuelo ${b.airlineCode || ""}${b.flightNumber || ""}`, status: b.status })),
+    ...(reserva.servicios || []).map(b => ({ label: `${b.description || "Servicio"}`, status: b.status })),
+  ];
+  const unconfirmed = all.filter(s => s.status && !CONFIRMED_SERVICE_STATUSES.has(s.status));
+  if (unconfirmed.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+      <div className="font-bold mb-1">
+        {unconfirmed.length} servicio(s) sin confirmar con el proveedor
+      </div>
+      <div className="text-xs text-amber-800 dark:text-amber-300 mb-2">
+        Confirma todos los servicios antes de pasar a Operativo. Los servicios sin confirmar no entran al balance del proveedor y dejarian la cuenta corriente con datos sucios.
+      </div>
+      <ul className="text-xs space-y-0.5">
+        {unconfirmed.slice(0, 8).map((s, i) => (
+          <li key={i}>
+            • <strong>{s.label.trim()}</strong> — estado: <span className="font-mono">{s.status}</span>
+          </li>
+        ))}
+        {unconfirmed.length > 8 && <li className="italic">y {unconfirmed.length - 8} mas...</li>}
+      </ul>
+    </div>
+  );
+}
+
 function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
   const [adultCount, setAdultCount] = useState(initial.adultCount);
   const [childCount, setChildCount] = useState(initial.childCount);
@@ -271,7 +310,7 @@ export default function ReservaDetailPage() {
   const isBudget = reserva?.status === "Presupuesto";
 
   useEffect(() => {
-    if (isBudget && (activeTab === "voucher" || activeTab === "attachments" || activeTab === "account")) {
+    if (isBudget && (activeTab === "voucher" || activeTab === "attachments" || activeTab === "account" || activeTab === "passengers")) {
       setActiveTab("services");
     }
   }, [isBudget, activeTab]);
@@ -339,6 +378,8 @@ export default function ReservaDetailPage() {
         </div>
       ) : null}
 
+      <UnconfirmedServicesBanner reserva={reserva} />
+
       <CapacityWarning paxCount={reserva.passengers?.length || 0} capacity={capacity} />
 
       {(getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") || getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId")) ? (
@@ -377,8 +418,11 @@ export default function ReservaDetailPage() {
           <nav className="scrollbar-hide flex gap-8 overflow-x-auto">
             {[
               { id: "services", label: "Servicios", icon: FileText },
+              // En Presupuesto no mostramos tab de Pasajeros/Cantidades — la cantidad se
+              // deriva de los servicios (Hotel.Adults+Children, Package.Adults+Children, etc.)
+              // y se confirma/ajusta en el modal de "Confirmar reserva".
               isBudget
-                ? { id: "passengers", label: `Cantidades (${(reserva.adultCount || 0) + (reserva.childCount || 0) + (reserva.infantCount || 0)})`, icon: Users }
+                ? null
                 : { id: "passengers", label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
               { id: "history", label: "Historial", icon: Clock },
               isBudget ? null : { id: "account", label: "Estado de Cuenta", icon: CreditCard },
@@ -429,38 +473,26 @@ export default function ReservaDetailPage() {
             </div>
           ) : null}
 
-          {activeTab === "passengers" ? (
-            isBudget ? (
-              <PassengerCountsWidget
-                initial={{
-                  adultCount: reserva.adultCount || 0,
-                  childCount: reserva.childCount || 0,
-                  infantCount: reserva.infantCount || 0,
-                }}
-                expectedCapacity={capacity?.total || 0}
-                onSave={handleSavePassengerCounts}
-              />
-            ) : (
-              <PassengerList
-                passengers={reserva.passengers}
-                onAddPassenger={() => {
-                  setEditingPassenger(null);
-                  setShowPassengerForm(true);
-                }}
-                onEditPassenger={(passenger) => {
-                  setEditingPassenger(passenger);
-                  setShowPassengerForm(true);
-                }}
-                onDeletePassenger={(passengerId) =>
-                  askConfirmation({
-                    title: "Eliminar pasajero?",
-                    message: "Estas seguro de eliminar este pasajero de la reserva?",
-                    type: "danger",
-                    onConfirm: () => handleDeletePassenger(passengerId),
-                  })
-                }
-              />
-            )
+          {activeTab === "passengers" && !isBudget ? (
+            <PassengerList
+              passengers={reserva.passengers}
+              onAddPassenger={() => {
+                setEditingPassenger(null);
+                setShowPassengerForm(true);
+              }}
+              onEditPassenger={(passenger) => {
+                setEditingPassenger(passenger);
+                setShowPassengerForm(true);
+              }}
+              onDeletePassenger={(passengerId) =>
+                askConfirmation({
+                  title: "Eliminar pasajero?",
+                  message: "Estas seguro de eliminar este pasajero de la reserva?",
+                  type: "danger",
+                  onConfirm: () => handleDeletePassenger(passengerId),
+                })
+              }
+            />
           ) : null}
 
           {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}

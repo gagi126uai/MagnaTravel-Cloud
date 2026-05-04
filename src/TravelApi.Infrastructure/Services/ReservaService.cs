@@ -350,14 +350,24 @@ public class ReservaService : IReservaService
         var reserva = await _context.Reservas
             .Include(r => r.Passengers)
             .Include(r => r.Servicios)
+            .Include(r => r.HotelBookings)
+            .Include(r => r.TransferBookings)
+            .Include(r => r.PackageBookings)
             .FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // Composicion derivada de los servicios cargados.
+        var (adults, children, infants, ambiguous) = ComputePaxCompositionFromServices(reserva);
 
         var dto = new TransitionReadinessDto
         {
             TargetStatus = targetStatus,
             Allowed = true,
-            ExpectedPassengerCount = reserva.AdultCount + reserva.ChildCount + reserva.InfantCount,
+            ExpectedAdults = adults,
+            ExpectedChildren = children,
+            ExpectedInfants = infants,
+            AmbiguousComposition = ambiguous,
+            ExpectedPassengerCount = adults + children + infants,
             CurrentPassengerCount = reserva.Passengers?.Count ?? 0
         };
 
@@ -380,6 +390,51 @@ public class ReservaService : IReservaService
         }
 
         return dto;
+    }
+
+    /// <summary>
+    /// Deriva la composicion de pasajeros (adultos/menores/infantes) a partir de los
+    /// servicios cargados. El servicio con mayor total (Adults+Children) es el "anchor"
+    /// y su composicion se considera la default. Si OTRO servicio tiene mismo total
+    /// pero distinta composicion, AmbiguousComposition=true (warning para el agente,
+    /// no bloqueo).
+    ///
+    /// Solo HotelBooking y PackageBooking declaran composicion explicita (Adults +
+    /// Children). TransferBooking solo tiene Passengers (total). FlightSegment no
+    /// declara nada. Por eso esos dos no se usan como "anchor" — solo extienden el
+    /// total minimo via fallback. Infants nunca viene de servicios; queda en 0 a
+    /// menos que el agente lo ajuste manualmente en el modal.
+    /// </summary>
+    private static (int adults, int children, int infants, bool ambiguous) ComputePaxCompositionFromServices(Reserva reserva)
+    {
+        var candidates = new List<(int adults, int children, int total)>();
+
+        foreach (var h in reserva.HotelBookings ?? Enumerable.Empty<HotelBooking>())
+        {
+            candidates.Add((h.Adults, h.Children, h.Adults + h.Children));
+        }
+        foreach (var p in reserva.PackageBookings ?? Enumerable.Empty<PackageBooking>())
+        {
+            candidates.Add((p.Adults, p.Children, p.Adults + p.Children));
+        }
+
+        if (candidates.Count == 0)
+        {
+            // Sin servicios con composicion explicita. Si hay transfer, usar su Passengers
+            // como cantidad de adultos (no se sabe distribucion).
+            var transferMax = reserva.TransferBookings?.Max(t => (int?)t.Passengers) ?? 0;
+            return (transferMax, 0, 0, false);
+        }
+
+        // Anchor: candidato con mayor total. En empate, el primero (orden Hotel -> Package).
+        var anchor = candidates.OrderByDescending(c => c.total).First();
+
+        // Ambiguedad: hay otro candidato con mismo total pero distinta composicion?
+        var ambiguous = candidates.Any(c =>
+            (c.adults != anchor.adults || c.children != anchor.children)
+            && c.total == anchor.total);
+
+        return (anchor.adults, anchor.children, 0, ambiguous);
     }
 
     public async Task<ReservaDto> ArchiveReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default)
@@ -1005,7 +1060,17 @@ public class ReservaService : IReservaService
             if (!hasServices)
                 throw new InvalidOperationException("No se puede confirmar la reserva porque no tiene ningun servicio cargado. Agrega al menos un servicio antes de reservar.");
 
-            var expectedPax = file.AdultCount + file.ChildCount + file.InfantCount;
+            // Derivamos pax esperados de los servicios (no del campo AdultCount viejo).
+            // El frontend ya hace este check via /transition-readiness y un modal forzado
+            // (ConfirmReservaModal); esto es last-line defense para evitar bypass via API directa.
+            var fullForPax = await _context.Reservas
+                .AsNoTracking()
+                .Include(r => r.HotelBookings)
+                .Include(r => r.PackageBookings)
+                .Include(r => r.TransferBookings)
+                .FirstAsync(r => r.Id == id);
+            var (adA, adC, adI, _) = ComputePaxCompositionFromServices(fullForPax);
+            var expectedPax = adA + adC + adI;
             if (expectedPax > 0)
             {
                 var currentPax = await _context.Passengers.CountAsync(p => p.ReservaId == id);
@@ -1049,6 +1114,11 @@ public class ReservaService : IReservaService
             var capacityReason = await ReservaCapacityRules.GetBlockReasonAsync(_context, id, CancellationToken.None);
             if (!string.IsNullOrWhiteSpace(capacityReason))
                 throw new InvalidOperationException($"No se puede pasar a Operativo: {capacityReason}");
+
+            // Servicios sin confirmar con el proveedor — no entran al balance, datos sucios.
+            var unconfirmedReason = await ReservaCapacityRules.GetUnconfirmedServicesBlockReasonAsync(_context, id, CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(unconfirmedReason))
+                throw new InvalidOperationException($"No se puede pasar a Operativo: {unconfirmedReason}");
 
             var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
             var blockReason = EconomicRulesHelper.GetOperativeBlockReason(file, settings);

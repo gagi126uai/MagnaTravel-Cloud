@@ -60,6 +60,17 @@ public class ReservaLifecycleAutomationService
                 continue;
             }
 
+            // Servicios sin confirmar con el proveedor.
+            var unconfirmedReason = await ReservaCapacityRules.GetUnconfirmedServicesBlockReasonAsync(_db, reserva.Id, ct);
+            if (!string.IsNullOrWhiteSpace(unconfirmedReason))
+            {
+                blocked++;
+                _logger.LogWarning(
+                    "Reserva {ReservaId} ({NumeroReserva}) NO promovida automaticamente Reserved->Operational por servicios sin confirmar: {Reason}",
+                    reserva.Id, reserva.NumeroReserva, unconfirmedReason);
+                continue;
+            }
+
             reserva.Status = EstadoReserva.Operational;
             promoted++;
         }

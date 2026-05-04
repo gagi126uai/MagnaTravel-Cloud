@@ -5,12 +5,28 @@ using TravelApi.Infrastructure.Persistence;
 namespace TravelApi.Infrastructure.Services;
 
 /// <summary>
-/// Reglas compartidas de validacion de capacidad pasajeros vs servicios.
+/// Reglas compartidas de validacion de Reservas para transiciones de estado.
 /// Usado por ReservaService (transicion manual) y ReservaLifecycleAutomationService
-/// (transicion automatica del job diario), para que la regla viva en un solo lugar.
+/// (transicion automatica del job diario), para que las reglas vivan en un solo lugar.
+///
+/// Reglas implementadas:
+/// - Capacidad pasajeros vs servicios (GetBlockReasonAsync).
+/// - Estados de servicio: ningun servicio puede estar en "Solicitado" al pasar a
+///   Operativo, porque esos no entran al balance del proveedor (ver SupplierService:205)
+///   y dejarian la cuenta corriente con datos sucios (GetUnconfirmedServicesBlockReasonAsync).
 /// </summary>
 public static class ReservaCapacityRules
 {
+    /// <summary>
+    /// Estados de servicio considerados "confirmados" para fines de balance con
+    /// proveedor y para pasar la Reserva a Operativo. Refleja la misma lista que
+    /// SupplierService usa para computar TotalPurchases.
+    /// </summary>
+    private static readonly HashSet<string> ConfirmedServiceStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Confirmado", "Emitido", "HK", "TK", "KK", "KL"
+    };
+
     /// <summary>
     /// Devuelve un mensaje de bloqueo si hay inconsistencia entre cantidad de pasajeros
     /// nominales y capacidad de los servicios cargados. Si todo coherente, devuelve null.
@@ -104,5 +120,61 @@ public static class ReservaCapacityRules
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Bloquea pase a Operativo si algun servicio no esta en estado "Confirmado" (o
+    /// equivalente). Razon: servicios no confirmados NO entran al balance del
+    /// proveedor (SupplierService:205) y su confirmacion posterior haria que el
+    /// balance pegue un salto retroactivo. Ademas, operativamente no deberian
+    /// ejecutarse servicios no confirmados con el proveedor.
+    ///
+    /// Devuelve mensaje accionable o null si todos los servicios estan confirmados.
+    /// </summary>
+    public static async Task<string?> GetUnconfirmedServicesBlockReasonAsync(AppDbContext db, int reservaId, CancellationToken ct = default)
+    {
+        var unconfirmed = new List<string>();
+
+        var hotels = await db.HotelBookings.AsNoTracking()
+            .Where(b => b.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(b.Status))
+            .Select(b => new { b.HotelName, b.Status })
+            .ToListAsync(ct);
+        foreach (var h in hotels)
+            unconfirmed.Add($"Hotel '{h.HotelName ?? "sin nombre"}' ({h.Status})");
+
+        var transfers = await db.TransferBookings.AsNoTracking()
+            .Where(b => b.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(b.Status))
+            .Select(b => new { b.VehicleType, b.Status })
+            .ToListAsync(ct);
+        foreach (var t in transfers)
+            unconfirmed.Add($"Transfer {t.VehicleType ?? ""} ({t.Status})".Trim());
+
+        var packages = await db.PackageBookings.AsNoTracking()
+            .Where(b => b.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(b.Status))
+            .Select(b => new { b.PackageName, b.Status })
+            .ToListAsync(ct);
+        foreach (var p in packages)
+            unconfirmed.Add($"Paquete '{p.PackageName ?? "sin nombre"}' ({p.Status})");
+
+        var flights = await db.FlightSegments.AsNoTracking()
+            .Where(f => f.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(f.Status))
+            .Select(f => new { f.AirlineCode, f.FlightNumber, f.Status })
+            .ToListAsync(ct);
+        foreach (var f in flights)
+            unconfirmed.Add($"Vuelo {f.AirlineCode}{f.FlightNumber} ({f.Status})");
+
+        var generics = await db.Servicios.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(s.Status))
+            .Select(s => new { s.Description, s.Status })
+            .ToListAsync(ct);
+        foreach (var g in generics)
+            unconfirmed.Add($"Servicio '{g.Description ?? "sin descripcion"}' ({g.Status})");
+
+        if (unconfirmed.Count == 0) return null;
+
+        var detail = string.Join(", ", unconfirmed.Take(5));
+        var more = unconfirmed.Count > 5 ? $" y {unconfirmed.Count - 5} mas" : "";
+        return $"Hay servicio(s) sin confirmar con el proveedor: {detail}{more}. " +
+               "Confirma todos los servicios antes de pasar a Operativo (los servicios no confirmados no entran al balance del proveedor).";
     }
 }
