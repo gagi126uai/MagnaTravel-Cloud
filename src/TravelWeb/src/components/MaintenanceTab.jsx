@@ -23,21 +23,29 @@ export default function MaintenanceTab() {
         setRunning(true);
         try {
             const result = await api.post("/admin/maintenance/lifecycle-run");
+            const repaired = result?.repaired ?? 0;
+            const promoted = result?.promoted ?? 0;
+            const closed = result?.closed ?? 0;
             setLastResult({
-                promoted: result?.promoted ?? 0,
-                closed: result?.closed ?? 0,
+                repaired,
+                promoted,
+                closed,
                 ranAt: new Date(),
                 error: null,
             });
-            const total = (result?.promoted ?? 0) + (result?.closed ?? 0);
+            const total = repaired + promoted + closed;
             if (total === 0) {
-                showSuccess("Lifecycle ejecutado: no habia reservas para promover ni cerrar");
+                showSuccess("Lifecycle ejecutado: no habia reservas para reparar, promover ni cerrar");
             } else {
-                showSuccess(`Lifecycle ejecutado: ${result?.promoted ?? 0} promovidas, ${result?.closed ?? 0} cerradas`);
+                const parts = [];
+                if (repaired > 0) parts.push(`${repaired} reparadas`);
+                if (promoted > 0) parts.push(`${promoted} promovidas`);
+                if (closed > 0) parts.push(`${closed} cerradas`);
+                showSuccess(`Lifecycle ejecutado: ${parts.join(", ")}`);
             }
         } catch (error) {
             const message = getApiErrorMessage(error, "No se pudo ejecutar el lifecycle.");
-            setLastResult({ promoted: 0, closed: 0, ranAt: new Date(), error: message });
+            setLastResult({ repaired: 0, promoted: 0, closed: 0, ranAt: new Date(), error: message });
             showError(message, "Error en lifecycle");
         } finally {
             setRunning(false);
@@ -70,7 +78,7 @@ export default function MaintenanceTab() {
                             </h3>
                         </div>
                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                            Promueve <span className="font-semibold">Reservado &rarr; Operativo</span> cuando arranca el viaje o se cobro toda la reserva, y cierra <span className="font-semibold">Operativo &rarr; Cerrado</span> para reservas cuyo viaje ya termino.
+                            Repara fechas faltantes computandolas desde los servicios cargados (vuelos, hoteles, transfers), promueve <span className="font-semibold">Reservado &rarr; Operativo</span> cuando arranca el viaje o se cobro toda la reserva, y cierra <span className="font-semibold">Operativo &rarr; Cerrado</span> para reservas cuyo viaje ya termino.
                         </p>
                         <div className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                             <Clock className="h-3 w-3" />
@@ -109,11 +117,17 @@ export default function MaintenanceTab() {
                                 ) : (
                                     <>
                                         <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
-                                            {lastResult.promoted + lastResult.closed === 0
+                                            {(lastResult.repaired + lastResult.promoted + lastResult.closed) === 0
                                                 ? "No habia nada para procesar"
                                                 : "Lifecycle aplicado"}
                                         </p>
-                                        <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
+                                        <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
+                                            <div className="rounded-lg bg-white/70 px-3 py-2 dark:bg-slate-900/40">
+                                                <div className="text-emerald-700 dark:text-emerald-300">Fechas reparadas</div>
+                                                <div className="mt-0.5 text-lg font-black text-emerald-900 dark:text-emerald-100">
+                                                    {lastResult.repaired}
+                                                </div>
+                                            </div>
                                             <div className="rounded-lg bg-white/70 px-3 py-2 dark:bg-slate-900/40">
                                                 <div className="text-emerald-700 dark:text-emerald-300">Promovidas a Operativo</div>
                                                 <div className="mt-0.5 text-lg font-black text-emerald-900 dark:text-emerald-100">
