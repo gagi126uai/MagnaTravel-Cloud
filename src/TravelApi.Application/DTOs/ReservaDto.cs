@@ -5,7 +5,7 @@ public class ReservaDto
     public Guid PublicId { get; set; }
     public string NumeroReserva { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string Status { get; set; } = "Presupuesto";
+    public string Status { get; set; } = "Budget";
     public Guid? CustomerPublicId { get; set; }
     public Guid? SourceLeadPublicId { get; set; }
     public Guid? SourceQuotePublicId { get; set; }
@@ -18,6 +18,10 @@ public class ReservaDto
     public bool CanEmitAfipInvoice { get; set; }
     public string? EconomicBlockReason { get; set; }
     public bool IsInProgress { get; set; }
+    /// <summary>True si el cliente no debe nada (Balance == 0). Chip verde "Pagada".</summary>
+    public bool IsFullyPaid { get; set; }
+    /// <summary>True si el viaje termino y todavia hay deuda (EndDate &lt; hoy AND Balance &gt; 0). Chip rojo "Vencida con deuda".</summary>
+    public bool HasOverdueDebt { get; set; }
 
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience

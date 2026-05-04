@@ -1541,6 +1541,10 @@ public class ReservaService : IReservaService
         dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
         dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
         dto.IsInProgress = ComputeIsInProgress(dto.Status, dto.StartDate, dto.EndDate);
+        dto.IsFullyPaid = dto.Balance == 0m;
+        dto.HasOverdueDebt = dto.EndDate.HasValue
+            && dto.EndDate.Value.Date < DateTime.UtcNow.Date
+            && dto.Balance > 0m;
     }
 
     private static void ApplyEconomicFlags(ReservaListDto dto, OperationalFinanceSettings settings)
@@ -1553,6 +1557,10 @@ public class ReservaService : IReservaService
         dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
         dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
         dto.IsInProgress = ComputeIsInProgress(dto.Status, dto.StartDate, dto.EndDate);
+        dto.IsFullyPaid = dto.Balance == 0m;
+        dto.HasOverdueDebt = dto.EndDate.HasValue
+            && dto.EndDate.Value.Date < DateTime.UtcNow.Date
+            && dto.Balance > 0m;
     }
 
     private static bool ComputeIsInProgress(string status, DateTime? startDate, DateTime? endDate)
