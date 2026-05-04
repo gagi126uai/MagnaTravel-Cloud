@@ -26,6 +26,7 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
 import { ConfirmReservaModal } from "../components/ConfirmReservaModal";
+import { EditReservaDatesModal } from "../components/EditReservaDatesModal";
 import { PassengerAssignmentsPanel } from "../components/PassengerAssignmentsPanel";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
@@ -287,6 +288,7 @@ export default function ReservaDetailPage() {
   const [paymentToEdit, setPaymentToEdit] = useState(null);
   const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null });
   const [showRevertModal, setShowRevertModal] = useState(false);
+  const [showEditDatesModal, setShowEditDatesModal] = useState(false);
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -363,6 +365,20 @@ export default function ReservaDetailPage() {
     }
   };
 
+  const handleSaveReservaDates = async (payload) => {
+    // Lanza si falla para que el modal muestre el error inline.
+    try {
+      await api.patch(`/reservas/${publicId}/dates`, payload);
+      showSuccess("Fechas actualizadas");
+      setShowEditDatesModal(false);
+      await fetchReserva({ showLoading: false, preserveOnError: true });
+    } catch (error) {
+      const message = getApiErrorMessage(error, "No se pudieron actualizar las fechas.");
+      showError(message);
+      throw new Error(message);
+    }
+  };
+
   const handleConfirmReservation = async () => {
     try {
       const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=Reservado`);
@@ -420,6 +436,7 @@ export default function ReservaDetailPage() {
           }
         }}
         onRevert={() => setShowRevertModal(true)}
+        onEditDates={() => setShowEditDatesModal(true)}
         onDelete={() =>
           askConfirmation({
             title: "Eliminar reserva?",
@@ -815,6 +832,13 @@ export default function ReservaDetailPage() {
           }}
         />
       )}
+
+      <EditReservaDatesModal
+        isOpen={showEditDatesModal}
+        reserva={reserva}
+        onClose={() => setShowEditDatesModal(false)}
+        onSave={handleSaveReservaDates}
+      />
     </div>
   );
 }

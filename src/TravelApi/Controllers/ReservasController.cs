@@ -388,6 +388,28 @@ public class ReservasController : ControllerBase
         }
     }
 
+    [HttpPatch("{publicIdOrLegacyId}/dates")]
+    public async Task<ActionResult> UpdateDates(string publicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.UpdateDatesAsync(publicIdOrLegacyId, request, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     [HttpPatch("{publicIdOrLegacyId}/passenger-counts")]
     public async Task<ActionResult> UpdatePassengerCounts(string publicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken cancellationToken)
     {

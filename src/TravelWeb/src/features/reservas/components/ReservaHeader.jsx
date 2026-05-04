@@ -1,14 +1,29 @@
 import React from 'react';
-import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2 } from "lucide-react";
+import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 
-export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert }) {
+function formatTripDate(value) {
+    if (!value) return null;
+    try {
+        const d = new Date(value);
+        if (isNaN(d.getTime())) return null;
+        return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    } catch {
+        return null;
+    }
+}
+
+export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert, onEditDates }) {
     const isArchived = reserva.status === 'Archived';
     const canDelete = (reserva.status === 'Presupuesto' || reserva.status === 'Reservado');
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
     // Estados desde los que se puede revertir hacia atras (con autorizacion si no es admin).
     const canRevert = ['Reservado', 'Operativo', 'Cerrado'].includes(reserva.status);
+    // Las fechas se pueden editar en estados activos (no archivada/cancelada).
+    const canEditDates = !isArchived && reserva.status !== 'Cancelado';
+    const startLabel = formatTripDate(reserva.startDate);
+    const endLabel = formatTripDate(reserva.endDate);
 
     return (
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -43,6 +58,35 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                 {reserva.name && reserva.name !== `Reserva ${reserva.numeroReserva}` && (
                     <p className="text-lg text-slate-500 dark:text-slate-400 font-medium italic">{reserva.name}</p>
                 )}
+
+                {/* Fechas del viaje. Visibles en cualquier estado; editables si la
+                    reserva no esta archivada/cancelada. Si todavia no hay fechas
+                    cargadas mostramos un CTA para que el operador las complete. */}
+                <div className="mt-3 flex items-center gap-3 flex-wrap">
+                    <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-800 dark:bg-slate-900">
+                        <Calendar className="w-4 h-4 text-indigo-500" />
+                        <span className="font-medium text-slate-500 dark:text-slate-400">Salida:</span>
+                        <span className={startLabel ? "font-bold text-slate-900 dark:text-white" : "italic text-slate-400"}>
+                            {startLabel || "sin cargar"}
+                        </span>
+                        <span className="text-slate-300 dark:text-slate-700">·</span>
+                        <span className="font-medium text-slate-500 dark:text-slate-400">Regreso:</span>
+                        <span className={endLabel ? "font-bold text-slate-900 dark:text-white" : "italic text-slate-400"}>
+                            {endLabel || "sin cargar"}
+                        </span>
+                    </div>
+                    {canEditDates && onEditDates && (
+                        <button
+                            onClick={onEditDates}
+                            type="button"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            title="Editar fechas del viaje"
+                        >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Editar fechas
+                        </button>
+                    )}
+                </div>
             </div>
 
             {isArchived ? (

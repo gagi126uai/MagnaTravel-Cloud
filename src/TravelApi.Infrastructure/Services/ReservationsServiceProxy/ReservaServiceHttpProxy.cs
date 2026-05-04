@@ -65,6 +65,9 @@ public class ReservaServiceHttpProxy : ReservationsServiceHttpProxyBase, IReserv
     public Task<ReservaDto> UpdatePassengerCountsAsync(string reservaPublicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken ct = default)
         => PatchAsync<PassengerCountsRequest, ReservaDto>($"api/reservas/{reservaPublicIdOrLegacyId}/passenger-counts", counts, ct);
 
+    public Task<ReservaDto> UpdateDatesAsync(string reservaPublicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken ct = default)
+        => PatchAsync<UpdateReservaDatesRequest, ReservaDto>($"api/reservas/{reservaPublicIdOrLegacyId}/dates", request, ct);
+
     public Task<TransitionReadinessDto> GetTransitionReadinessAsync(string reservaPublicIdOrLegacyId, string targetStatus, CancellationToken ct = default)
         => GetAsync<TransitionReadinessDto>($"api/reservas/{reservaPublicIdOrLegacyId}/transition-readiness?to={Uri.EscapeDataString(targetStatus)}", ct);
 

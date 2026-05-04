@@ -108,6 +108,34 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(reservaId);
     }
 
+    public async Task<ReservaDto> UpdateDatesAsync(string reservaPublicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // Permite editar StartDate/EndDate explicitamente. Pasar `clearXxxDate=true`
+        // borra el valor; pasar la fecha en el campo lo setea; null sin clear no toca.
+        if (request.ClearStartDate)
+            reserva.StartDate = null;
+        else if (request.StartDate.HasValue)
+            reserva.StartDate = request.StartDate.Value;
+
+        if (request.ClearEndDate)
+            reserva.EndDate = null;
+        else if (request.EndDate.HasValue)
+            reserva.EndDate = request.EndDate.Value;
+
+        if (reserva.StartDate.HasValue && reserva.EndDate.HasValue
+            && reserva.EndDate.Value.Date < reserva.StartDate.Value.Date)
+        {
+            throw new ArgumentException("La fecha de regreso no puede ser anterior a la fecha de salida.");
+        }
+
+        await _context.SaveChangesAsync(ct);
+        return await GetReservaByIdAsync(reservaId);
+    }
+
     // ============= Phase 2.1 — Pasajero <-> Servicio =============
 
     public async Task<IReadOnlyList<PassengerServiceAssignmentDto>> GetAssignmentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
@@ -1501,9 +1529,13 @@ public class ReservaService : IReservaService
     {
         if (status != EstadoReserva.Operational) return false;
         if (!startDate.HasValue) return false;
+        // Sin fecha de fin no podemos saber si esta en curso. Antes retornabamos true
+        // y dejaba reservas marcadas "• En curso" indefinidamente (bug observado en
+        // reservas viejas con EndDate=null cuyas fechas ya habian pasado).
+        if (!endDate.HasValue) return false;
         var today = DateTime.UtcNow.Date;
         if (startDate.Value.Date > today) return false;
-        if (endDate.HasValue && endDate.Value.Date < today) return false;
+        if (endDate.Value.Date < today) return false;
         return true;
     }
 
