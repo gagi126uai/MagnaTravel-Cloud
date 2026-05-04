@@ -231,7 +231,9 @@ public class ReservaService : IReservaService
         if (!serviceBelongsToReserva)
             throw new InvalidOperationException("El servicio no pertenece a esta reserva.");
 
-        // Idempotencia: si ya existe la asignacion, devolver la existente
+        // Idempotencia: si ya existe la asignacion, devolver la existente.
+        // El check de capacidad va DESPUES — sino una re-asignacion idempotente
+        // bloquearia indebidamente cuando el servicio ya esta lleno con ESTE mismo pax.
         var existing = await _context.PassengerServiceAssignments
             .Include(a => a.Passenger)
             .FirstOrDefaultAsync(a => a.PassengerId == passengerId && a.ServiceType == request.ServiceType && a.ServiceId == serviceId, ct);
@@ -240,6 +242,13 @@ public class ReservaService : IReservaService
             var existingPublicId = await ResolveServicePublicIdAsync(request.ServiceType, serviceId, ct);
             return MapAssignment(existing, existingPublicId);
         }
+
+        // Phase 2.3: bloquear si el servicio ya esta lleno (capacidad por servicio).
+        // Solo aplica a Hotel/Transfer/Package — Flight/Generic no declaran capacidad.
+        var serviceLabel = await BuildServiceLabelAsync(request.ServiceType, serviceId, ct);
+        var fullBlockReason = await ReservaCapacityRules.GetServiceFullBlockReasonAsync(
+            _context, request.ServiceType, serviceId, serviceLabel, ct);
+        if (fullBlockReason != null) throw new InvalidOperationException(fullBlockReason);
 
         var assignment = new PassengerServiceAssignment
         {
@@ -278,6 +287,27 @@ public class ReservaService : IReservaService
             AssignmentServiceType.Generic => await _context.Servicios.AsNoTracking()
                 .Where(s => s.Id == serviceId).Select(s => (Guid?)s.PublicId).FirstOrDefaultAsync(ct),
             _ => null
+        };
+    }
+
+    /// <summary>Construye un label legible del servicio para mensajes de error.</summary>
+    private async Task<string> BuildServiceLabelAsync(string serviceType, int serviceId, CancellationToken ct)
+    {
+        return serviceType switch
+        {
+            AssignmentServiceType.Hotel => await _context.HotelBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => $"Hotel {b.HotelName ?? "sin nombre"}")
+                .FirstOrDefaultAsync(ct) ?? "Hotel",
+            AssignmentServiceType.Transfer => await _context.TransferBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => $"Transfer {b.VehicleType ?? ""}".Trim())
+                .FirstOrDefaultAsync(ct) ?? "Transfer",
+            AssignmentServiceType.Package => await _context.PackageBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => $"Paquete {b.PackageName ?? "sin nombre"}")
+                .FirstOrDefaultAsync(ct) ?? "Paquete",
+            _ => serviceType
         };
     }
 

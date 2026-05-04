@@ -205,6 +205,61 @@ public static class ReservaCapacityRules
     }
 
     /// <summary>
+    /// Devuelve la capacidad esperada de un servicio especifico (Hotel/Transfer/Package).
+    /// Devuelve null si el tipo no declara capacidad (Flight/Generic).
+    /// Devuelve 0 si la entidad no fue encontrada (caller debe manejar).
+    /// </summary>
+    public static async Task<int?> GetServiceCapacityAsync(AppDbContext db, string serviceType, int serviceId, CancellationToken ct = default)
+    {
+        return serviceType switch
+        {
+            AssignmentServiceType.Hotel => await db.HotelBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => (int?)(b.Adults + b.Children))
+                .FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Transfer => await db.TransferBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => (int?)b.Passengers)
+                .FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Package => await db.PackageBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => (int?)(b.Adults + b.Children))
+                .FirstOrDefaultAsync(ct),
+            // Flight y Generic no declaran capacidad — devolvemos null para que el caller no bloquee.
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Bloquea asignar un pasajero NUEVO a un servicio que ya esta lleno.
+    /// "Lleno" = count(assignments existentes para ese servicio) >= capacidad declarada.
+    /// Si capacidad es 0 o null (no declarada), no bloquea — permite asignar libremente.
+    ///
+    /// IMPORTANTE: el caller debe garantizar que el pasajero NO esta ya asignado al
+    /// servicio (es decir, llamar despues del check de idempotencia). Sino bloquea
+    /// re-asignaciones que deberian ser no-op.
+    ///
+    /// Devuelve mensaje accionable o null si esta permitido.
+    /// </summary>
+    public static async Task<string?> GetServiceFullBlockReasonAsync(
+        AppDbContext db,
+        string serviceType,
+        int serviceId,
+        string serviceLabel,
+        CancellationToken ct = default)
+    {
+        var cap = await GetServiceCapacityAsync(db, serviceType, serviceId, ct);
+        if (cap is null or <= 0) return null; // sin capacidad declarada → no bloqueo
+
+        var currentCount = await db.PassengerServiceAssignments.AsNoTracking()
+            .CountAsync(a => a.ServiceType == serviceType && a.ServiceId == serviceId, ct);
+        if (currentCount < cap.Value) return null;
+
+        return $"El servicio '{serviceLabel}' ya tiene {currentCount} pasajero(s) asignado(s) y su capacidad es {cap.Value}. " +
+               "Ampliá la capacidad del servicio o quitá una asignación existente antes de agregar uno nuevo.";
+    }
+
+    /// <summary>
     /// Bloquea pase a Operativo si algun servicio no esta en estado "Confirmado" (o
     /// equivalente). Razon: servicios no confirmados NO entran al balance del
     /// proveedor (SupplierService:205) y su confirmacion posterior haria que el
