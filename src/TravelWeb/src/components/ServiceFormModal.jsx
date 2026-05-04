@@ -220,7 +220,7 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
     );
 }
 
-function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
+function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -271,7 +271,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled }) {
     );
 }
 
-function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPax }) {
+function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPax, isBudget }) {
     const [searchQuery, setSearchQuery] = useState(form.hotelName || "");
     const [hotelGroups, setHotelGroups] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -527,7 +527,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
     );
 }
 
-function TransferForm({ form, setForm, suppliers, onRateSelect, disabled }) {
+function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -578,7 +578,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled }) {
     );
 }
 
-function PackageForm({ form, setForm, suppliers, onRateSelect, disabled }) {
+function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1101,12 +1101,12 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     ) : null}
 
                     {isGenericEdit ? <GenericServiceForm form={form} setForm={setForm} suppliers={sortedSuppliers} disabled={isLocked} /> : null}
-                    {!isGenericEdit && serviceType === "Aereo" ? <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} /> : null}
+                    {!isGenericEdit && serviceType === "Aereo" ? <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
                     {!isGenericEdit && serviceType === "Hotel" ? (
-                        <HotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} reservaPax={reservaPax} />
+                        <HotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} reservaPax={reservaPax} isBudget={isBudget} />
                     ) : null}
-                    {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} /> : null}
-                    {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} /> : null}
+                    {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
+                    {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
 
                     {showPricingForm ? (
                         <PricingForm
