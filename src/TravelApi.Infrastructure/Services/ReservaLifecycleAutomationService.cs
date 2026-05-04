@@ -43,18 +43,37 @@ public class ReservaLifecycleAutomationService
                 && (r.Balance <= 0 || (r.StartDate.HasValue && r.StartDate.Value.Date <= today)))
             .ToListAsync(ct);
 
+        var promoted = 0;
+        var blocked = 0;
+
         foreach (var reserva in candidates)
         {
+            // Inconsistencia de capacidad pasajeros vs servicios bloquea el pase
+            // (independiente del saldo). Igual que el flujo manual.
+            var capacityReason = await ReservaCapacityRules.GetBlockReasonAsync(_db, reserva.Id, ct);
+            if (!string.IsNullOrWhiteSpace(capacityReason))
+            {
+                blocked++;
+                _logger.LogWarning(
+                    "Reserva {ReservaId} ({NumeroReserva}) NO promovida automaticamente Reserved->Operational por inconsistencia de capacidad: {Reason}",
+                    reserva.Id, reserva.NumeroReserva, capacityReason);
+                continue;
+            }
+
             reserva.Status = EstadoReserva.Operational;
+            promoted++;
         }
 
-        if (candidates.Count > 0)
+        if (promoted > 0)
         {
             await _db.SaveChangesAsync(ct);
-            _logger.LogInformation("Auto-promoted {Count} Reserva(s) Reserved->Operational.", candidates.Count);
         }
 
-        return candidates.Count;
+        _logger.LogInformation(
+            "Auto-promoted {Promoted} Reserva(s) Reserved->Operational. Skipped {Blocked} por inconsistencia de capacidad.",
+            promoted, blocked);
+
+        return promoted;
     }
 
     public async Task<int> AutoTransitionOperationalToClosedAsync(CancellationToken ct = default)

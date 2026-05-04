@@ -778,6 +778,9 @@ public class ReservaService : IReservaService
         return Math.Max(hotel, Math.Max(transfer, package));
     }
 
+    // La logica de capacidad pasajeros vs servicios vive en ReservaCapacityRules
+    // (clase estatica compartida con ReservaLifecycleAutomationService).
+
     private async Task EnsureNoPaymentsAsync(int reservaId, CancellationToken ct)
     {
         if (reservaId == 0) return;
@@ -1041,6 +1044,11 @@ public class ReservaService : IReservaService
             var emptyReason = EconomicRulesHelper.GetEmptyReservaBlockReason(fullReserva);
             if (!string.IsNullOrWhiteSpace(emptyReason))
                 throw new InvalidOperationException($"No se puede pasar a Operativo: {emptyReason}");
+
+            // Inconsistencia de capacidad pasajeros vs servicios — bloqueo independiente del estado financiero.
+            var capacityReason = await ReservaCapacityRules.GetBlockReasonAsync(_context, id, CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(capacityReason))
+                throw new InvalidOperationException($"No se puede pasar a Operativo: {capacityReason}");
 
             var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
             var blockReason = EconomicRulesHelper.GetOperativeBlockReason(file, settings);
