@@ -255,7 +255,7 @@ public class QuoteService : IQuoteService
             NumeroReserva = $"RES-{(fileCount + 1).ToString().PadLeft(5, '0')}",
             Name = quote.Title,
             Description = quote.Description,
-            Status = EstadoReserva.Reserved,
+            Status = EstadoReserva.Confirmed,
             PayerId = quote.CustomerId,
             SourceLeadId = quote.LeadId,
             SourceQuoteId = quote.Id,

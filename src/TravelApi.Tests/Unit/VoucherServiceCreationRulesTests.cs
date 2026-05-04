@@ -168,7 +168,7 @@ public class VoucherServiceCreationRulesTests
             PublicId = Guid.NewGuid(),
             NumeroReserva = "R-TEST",
             Name = "Reserva test",
-            Status = EstadoReserva.Reserved,
+            Status = EstadoReserva.Confirmed,
             Balance = 0m
         };
 
@@ -200,7 +200,7 @@ public class VoucherServiceCreationRulesTests
             PublicId = Guid.NewGuid(),
             NumeroReserva = "R-TEST2",
             Name = "Reserva test 2",
-            Status = EstadoReserva.Reserved,
+            Status = EstadoReserva.Confirmed,
             Balance = 0m
         };
         reserva.Passengers.Add(passenger);

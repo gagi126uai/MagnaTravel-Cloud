@@ -10,8 +10,8 @@ public class SupplierService : ISupplierService
 {
     private static readonly string[] ValidReservationStatuses =
     {
-        EstadoReserva.Reserved,
-        EstadoReserva.Operational,
+        EstadoReserva.Confirmed,
+        EstadoReserva.Traveling,
         EstadoReserva.Closed
     };
 

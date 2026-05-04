@@ -35,7 +35,7 @@ public static class ReservaCapacityRules
     /// </summary>
     public static readonly HashSet<string> ReservaStatusesRequiringConfirmedServices = new(StringComparer.OrdinalIgnoreCase)
     {
-        EstadoReserva.Operational, EstadoReserva.Closed
+        EstadoReserva.Traveling, EstadoReserva.Closed
     };
 
     /// <summary>

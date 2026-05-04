@@ -25,7 +25,7 @@ internal static class EconomicRulesHelper
             return "No se puede emitir el voucher mientras la reserva siga en Presupuesto.";
 
         var isOperationallyConfirmed =
-            string.Equals(reserva.Status, EstadoReserva.Operational, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(reserva.Status, EstadoReserva.Traveling, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(reserva.Status, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase);
 
         if (!isOperationallyConfirmed)
@@ -72,7 +72,7 @@ internal static class EconomicRulesHelper
 
     public static string? GetArchiveBlockReason(Reserva reserva)
     {
-        if (reserva.Status != EstadoReserva.Operational && reserva.Status != EstadoReserva.Closed)
+        if (reserva.Status != EstadoReserva.Traveling && reserva.Status != EstadoReserva.Closed)
             return "Solo se pueden archivar reservas que hayan pasado a Operativo o estén Cerradas.";
 
         if (Math.Round(reserva.Balance, 2, MidpointRounding.AwayFromZero) > 0m)

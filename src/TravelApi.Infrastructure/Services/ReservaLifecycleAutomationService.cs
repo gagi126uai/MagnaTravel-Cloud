@@ -63,7 +63,7 @@ public class ReservaLifecycleAutomationService
         // Limite defensivo: si por alguna razon hay miles de reservas en este
         // estado, evitamos un OOM. La proxima corrida levanta el resto.
         var orphans = await _db.Reservas
-            .Where(r => r.Status == EstadoReserva.Operational && r.EndDate == null)
+            .Where(r => r.Status == EstadoReserva.Traveling && r.EndDate == null)
             .Take(500)
             .ToListAsync(ct);
 
@@ -90,7 +90,7 @@ public class ReservaLifecycleAutomationService
     {
         var today = DateTime.UtcNow.Date;
         var candidates = await _db.Reservas
-            .Where(r => r.Status == EstadoReserva.Reserved
+            .Where(r => r.Status == EstadoReserva.Confirmed
                 && (r.Balance <= 0 || (r.StartDate.HasValue && r.StartDate.Value.Date <= today)))
             .ToListAsync(ct);
 
@@ -122,7 +122,7 @@ public class ReservaLifecycleAutomationService
                 continue;
             }
 
-            reserva.Status = EstadoReserva.Operational;
+            reserva.Status = EstadoReserva.Traveling;
             promoted++;
         }
 
@@ -142,7 +142,7 @@ public class ReservaLifecycleAutomationService
     {
         var today = DateTime.UtcNow.Date;
         var candidates = await _db.Reservas
-            .Where(r => r.Status == EstadoReserva.Operational
+            .Where(r => r.Status == EstadoReserva.Traveling
                 && r.EndDate.HasValue
                 && r.EndDate.Value.Date < today)
             .ToListAsync(ct);

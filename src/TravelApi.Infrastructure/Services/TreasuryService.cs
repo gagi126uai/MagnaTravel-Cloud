@@ -20,7 +20,7 @@ public class TreasuryService : ITreasuryService
     public async Task<TreasurySummaryDto> GetSummaryAsync(CancellationToken cancellationToken)
     {
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var activeStatuses = new[] { EstadoReserva.Reserved, EstadoReserva.Operational };
+        var activeStatuses = new[] { EstadoReserva.Confirmed, EstadoReserva.Traveling };
 
         var accountsReceivable = await _dbContext.Reservas
             .Where(r => activeStatuses.Contains(r.Status) && r.Balance > 0)

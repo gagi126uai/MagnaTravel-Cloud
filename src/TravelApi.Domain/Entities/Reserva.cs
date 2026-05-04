@@ -3,13 +3,28 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
 
+/// <summary>
+/// Estados del ciclo de vida de una Reserva. Los strings se persisten asi en BD
+/// y los nombres de los miembros (ingles) reflejan la semantica funcional:
+///  - Budget: presupuesto entregado al cliente, sin compromisos con proveedor.
+///  - Confirmed: confirmada con proveedor, en gestion (cobro, vouchers, etc).
+///  - Traveling: el cliente ya esta viajando (StartDate <= hoy <= EndDate).
+///  - Closed: viaje terminado y cierre administrativo completo (Balance == 0).
+///  - Cancelled: cancelada antes de viajar.
+///
+/// "Archived" es un estado adicional usado para soft-delete de reservas viejas
+/// y se referencia como literal "Archived" (legacy) — no esta en este enum.
+///
+/// La UI muestra los labels en espanol (ver ReservaStatusBadge.statusConfig
+/// en el frontend): Presupuesto / Confirmada / En viaje / Finalizada / Cancelada.
+/// </summary>
 public static class EstadoReserva
 {
-    public const string Budget = "Presupuesto";
-    public const string Reserved = "Reservado";
-    public const string Operational = "Operativo";
-    public const string Closed = "Cerrado";
-    public const string Cancelled = "Cancelado";
+    public const string Budget = "Budget";
+    public const string Confirmed = "Confirmed";
+    public const string Traveling = "Traveling";
+    public const string Closed = "Closed";
+    public const string Cancelled = "Cancelled";
 }
 
 public class Reserva : IHasPublicId

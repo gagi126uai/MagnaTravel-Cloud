@@ -20,8 +20,8 @@ public class PaymentService : IPaymentService
 
     private static readonly string[] ActiveCollectionStatuses =
     {
-        EstadoReserva.Reserved,
-        EstadoReserva.Operational
+        EstadoReserva.Confirmed,
+        EstadoReserva.Traveling
     };
 
     public PaymentService(

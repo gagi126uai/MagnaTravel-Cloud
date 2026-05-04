@@ -80,19 +80,19 @@ public class ReservaServiceTests
 
         var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
 
-        var result = await service.UpdateStatusAsync(1, EstadoReserva.Reserved);
+        var result = await service.UpdateStatusAsync(1, EstadoReserva.Confirmed);
 
-        Assert.Equal(EstadoReserva.Reserved, result.Status);
+        Assert.Equal(EstadoReserva.Confirmed, result.Status);
         var dbReserva = await context.Reservas.FindAsync(1);
         Assert.NotNull(dbReserva);
-        Assert.Equal(EstadoReserva.Reserved, dbReserva.Status);
+        Assert.Equal(EstadoReserva.Confirmed, dbReserva.Status);
     }
 
     [Fact]
     public async Task UpdateStatusAsync_ShouldThrowException_WhenReturningToBudgetWithPayments()
     {
         using var context = new AppDbContext(_dbOptions);
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Reserved });
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Confirmed });
         context.Payments.Add(new Payment { Id = 1, ReservaId = 1, Amount = 100, Status = "Paid" });
         await context.SaveChangesAsync();
 
@@ -105,7 +105,7 @@ public class ReservaServiceTests
     public async Task UpdateStatusAsync_ShouldBlockOperational_WhenReservationHasDebt()
     {
         using var context = new AppDbContext(_dbOptions);
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Reserved });
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Confirmed });
         context.Servicios.Add(new ServicioReserva
         {
             Id = 1,
@@ -132,14 +132,14 @@ public class ReservaServiceTests
 
         var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Operational));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Traveling));
     }
 
     [Fact]
     public async Task UpdateStatusAsync_ShouldAllowOperational_WhenReservationIsFullyPaid()
     {
         using var context = new AppDbContext(_dbOptions);
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Reserved });
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Confirmed });
         context.Servicios.Add(new ServicioReserva
         {
             Id = 1,
@@ -169,8 +169,8 @@ public class ReservaServiceTests
 
         var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
 
-        var result = await service.UpdateStatusAsync(1, EstadoReserva.Operational);
+        var result = await service.UpdateStatusAsync(1, EstadoReserva.Traveling);
 
-        Assert.Equal(EstadoReserva.Operational, result.Status);
+        Assert.Equal(EstadoReserva.Traveling, result.Status);
     }
 }

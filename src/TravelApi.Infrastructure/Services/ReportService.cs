@@ -29,8 +29,8 @@ public class ReportService : IReportService
             .ToListAsync(cancellationToken);
 
         var presupuestos = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Budget)?.Count ?? 0;
-        var reservados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Reserved)?.Count ?? 0;
-        var operativos = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Operational)?.Count ?? 0;
+        var reservados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Confirmed)?.Count ?? 0;
+        var operativos = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Traveling)?.Count ?? 0;
         var cerrados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Closed)?.Count ?? 0;
         var cancelados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Cancelled)?.Count ?? 0;
 

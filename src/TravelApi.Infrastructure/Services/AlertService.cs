@@ -23,7 +23,7 @@ public class AlertService : IAlertService
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
         var urgentTrips = await _context.Reservas
-            .Where(f => (f.Status == EstadoReserva.Reserved || f.Status == EstadoReserva.Operational) &&
+            .Where(f => (f.Status == EstadoReserva.Confirmed || f.Status == EstadoReserva.Traveling) &&
                         f.StartDate >= today && 
                         f.StartDate <= threshold && 
                         f.Balance > 0)

@@ -198,7 +198,7 @@ public class VoucherServiceIssueTests
             PublicId = Guid.NewGuid(),
             NumeroReserva = "R-TEST",
             Name = "Reserva test",
-            Status = EstadoReserva.Reserved,
+            Status = EstadoReserva.Confirmed,
             Balance = balance
         };
         var voucher = new Voucher

@@ -54,7 +54,7 @@ public class WhatsAppConversationsControllerTests
         {
             NumeroReserva = "F-2026-1011",
             Name = "Viaje Brasil",
-            Status = EstadoReserva.Reserved,
+            Status = EstadoReserva.Confirmed,
             Payer = customer,
             SourceLeadId = 99
         };

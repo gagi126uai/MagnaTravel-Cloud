@@ -453,7 +453,7 @@ public class ReservaService : IReservaService
         };
 
         // Reglas de transicion Budget -> Reserved
-        if (targetStatus == EstadoReserva.Reserved && reserva.Status == EstadoReserva.Budget)
+        if (targetStatus == EstadoReserva.Confirmed && reserva.Status == EstadoReserva.Budget)
         {
             // Bug fix: chequeamos las 5 tablas de servicios (no solo Servicios genericos).
             // El typical caso del agente es cargar un Hotel — antes daba "no hay servicios".
@@ -537,9 +537,9 @@ public class ReservaService : IReservaService
     /// <summary>Mapeo de transiciones hacia atras permitidas por current status.</summary>
     private static readonly Dictionary<string, string[]> AllowedRevertTransitions = new(StringComparer.OrdinalIgnoreCase)
     {
-        [EstadoReserva.Operational] = new[] { EstadoReserva.Reserved },
-        [EstadoReserva.Reserved] = new[] { EstadoReserva.Budget },
-        [EstadoReserva.Closed] = new[] { EstadoReserva.Operational },
+        [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
+        [EstadoReserva.Confirmed] = new[] { EstadoReserva.Budget },
+        [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
     };
 
     public async Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default)
@@ -680,7 +680,7 @@ public class ReservaService : IReservaService
 
         var fromStatus = reserva.Status;
         reserva.Status = request.TargetStatus;
-        if (request.TargetStatus == EstadoReserva.Operational && reserva.ClosedAt.HasValue)
+        if (request.TargetStatus == EstadoReserva.Traveling && reserva.ClosedAt.HasValue)
             reserva.ClosedAt = null; // re-abrir borra el ClosedAt
 
         _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
@@ -744,11 +744,11 @@ public class ReservaService : IReservaService
         {
             BudgetCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Budget, cancellationToken),
             ActiveCount = await summaryBaseQuery.CountAsync(r =>
-                r.Status == EstadoReserva.Reserved ||
-                r.Status == EstadoReserva.Operational,
+                r.Status == EstadoReserva.Confirmed ||
+                r.Status == EstadoReserva.Traveling,
                 cancellationToken),
-            ReservedCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Reserved, cancellationToken),
-            OperativeCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Operational, cancellationToken),
+            ReservedCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Confirmed, cancellationToken),
+            OperativeCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Traveling, cancellationToken),
             ClosedCount = await summaryBaseQuery.CountAsync(r =>
                 r.Status == EstadoReserva.Closed ||
                 r.Status == EstadoReserva.Cancelled ||
@@ -1224,7 +1224,7 @@ public class ReservaService : IReservaService
             .FirstOrDefaultAsync(p => p.Id == passengerId);
         if (passenger == null) throw new KeyNotFoundException("Pasajero no encontrado");
 
-        if (passenger.Reserva != null && (passenger.Reserva.Status == EstadoReserva.Operational || passenger.Reserva.Status == EstadoReserva.Closed))
+        if (passenger.Reserva != null && (passenger.Reserva.Status == EstadoReserva.Traveling || passenger.Reserva.Status == EstadoReserva.Closed))
             throw new InvalidOperationException("No se puede eliminar un pasajero de una reserva en estado Operativo o Cerrado.");
 
         var assignedToVoucher = await _context.VoucherPassengerAssignments
@@ -1320,10 +1320,10 @@ public class ReservaService : IReservaService
         file = await _context.Reservas.FindAsync(id);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-        var validStatuses = new[] { EstadoReserva.Budget, EstadoReserva.Reserved, EstadoReserva.Operational, EstadoReserva.Closed, EstadoReserva.Cancelled };
+        var validStatuses = new[] { EstadoReserva.Budget, EstadoReserva.Confirmed, EstadoReserva.Traveling, EstadoReserva.Closed, EstadoReserva.Cancelled };
         if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no vÃ¡lido");
 
-        if (file.Status == EstadoReserva.Budget && status == EstadoReserva.Reserved)
+        if (file.Status == EstadoReserva.Budget && status == EstadoReserva.Confirmed)
         {
             var hasServices = await HasServicesAsync(id);
             if (!hasServices)
@@ -1358,7 +1358,7 @@ public class ReservaService : IReservaService
             }
         }
 
-        if (file.Status == EstadoReserva.Reserved && status == EstadoReserva.Budget)
+        if (file.Status == EstadoReserva.Confirmed && status == EstadoReserva.Budget)
         {
              var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted);
              if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. ElimÃ­nalos primero.");
@@ -1370,7 +1370,7 @@ public class ReservaService : IReservaService
              if (hasServices) throw new InvalidOperationException("No se puede volver a Presupuesto porque tiene servicios cargados. ElimÃ­nalos primero.");
         }
 
-        if (status == EstadoReserva.Operational)
+        if (status == EstadoReserva.Traveling)
         {
             var fullReserva = await _context.Reservas
                 .Include(r => r.Servicios)
@@ -1452,7 +1452,7 @@ public class ReservaService : IReservaService
 
                 if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-                if (file.Status != EstadoReserva.Reserved && file.Status != EstadoReserva.Budget)
+                if (file.Status != EstadoReserva.Confirmed && file.Status != EstadoReserva.Budget)
                 {
                     throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado. Para reservas en otro estado, archivala (Cancelado).");
                 }
@@ -1557,7 +1557,7 @@ public class ReservaService : IReservaService
 
     private static bool ComputeIsInProgress(string status, DateTime? startDate, DateTime? endDate)
     {
-        if (status != EstadoReserva.Operational) return false;
+        if (status != EstadoReserva.Traveling) return false;
         if (!startDate.HasValue) return false;
         // Sin fecha de fin no podemos saber si esta en curso. Antes retornabamos true
         // y dejaba reservas marcadas "• En curso" indefinidamente (bug observado en
@@ -1588,16 +1588,16 @@ public class ReservaService : IReservaService
         return (view ?? "active").Trim().ToLowerInvariant() switch
         {
             "budget" => query.Where(r => r.Status == EstadoReserva.Budget),
-            "reserved" => query.Where(r => r.Status == EstadoReserva.Reserved),
-            "operative" => query.Where(r => r.Status == EstadoReserva.Operational),
+            "reserved" => query.Where(r => r.Status == EstadoReserva.Confirmed),
+            "operative" => query.Where(r => r.Status == EstadoReserva.Traveling),
             "closed" => query.Where(r =>
                 r.Status == EstadoReserva.Closed ||
                 r.Status == EstadoReserva.Cancelled),
             "archived" => query.Where(r => r.Status == "Archived"),
             // "active" = Reservado + Operativo (Presupuesto tiene su propio tab)
             _ => query.Where(r =>
-                r.Status == EstadoReserva.Reserved ||
-                r.Status == EstadoReserva.Operational)
+                r.Status == EstadoReserva.Confirmed ||
+                r.Status == EstadoReserva.Traveling)
         };
     }
 

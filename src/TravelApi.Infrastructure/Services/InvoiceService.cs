@@ -25,8 +25,8 @@ public class InvoiceService : IInvoiceService
     private readonly UserManager<ApplicationUser> _userManager;
     private static readonly string[] ActiveInvoicingStatuses =
     {
-        EstadoReserva.Reserved,
-        EstadoReserva.Operational
+        EstadoReserva.Confirmed,
+        EstadoReserva.Traveling
     };
 
     public InvoiceService(
