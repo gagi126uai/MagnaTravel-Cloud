@@ -1098,8 +1098,10 @@ public class ReservaService : IReservaService
             .FirstOrDefaultAsync(r => r.Id == reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-        if (file.Status == EstadoReserva.Budget)
-            throw new InvalidOperationException("No se pueden cargar pasajeros nominales en una Reserva en estado Presupuesto. Usa el contador de cantidades o pasala a Reservado primero.");
+        // Nota: NO se bloquea la carga en estado Presupuesto. El modal de Confirmar
+        // Reserva (Phase 1.2) carga los pasajeros nominales JUSTO ANTES de transicionar
+        // a Reservado. La transicion misma valida via UpdateStatusAsync que la cantidad
+        // de pasajeros == cantidad esperada por los servicios — eso garantiza coherencia.
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (passenger.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
