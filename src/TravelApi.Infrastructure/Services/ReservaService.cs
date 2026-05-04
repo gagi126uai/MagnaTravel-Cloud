@@ -129,19 +129,67 @@ public class ReservaService : IReservaService
             .OrderBy(a => a.ServiceType).ThenBy(a => a.ServiceId).ThenBy(a => a.Id)
             .ToListAsync(ct);
 
-        return assignments.Select(a => new PassengerServiceAssignmentDto
+        var publicIdLookup = await BuildServicePublicIdLookupAsync(assignments, ct);
+
+        return assignments.Select(a => MapAssignment(a, ResolveServicePublicId(publicIdLookup, a.ServiceType, a.ServiceId))).ToList();
+    }
+
+    /// <summary>
+    /// Construye un lookup (serviceType, serviceId) -> publicId con 1 query por tipo presente.
+    /// Ej: si hay assignments contra 3 hoteles y 2 transfers, hace 2 queries totales (no 5).
+    /// </summary>
+    private async Task<Dictionary<string, Dictionary<int, Guid>>> BuildServicePublicIdLookupAsync(
+        IReadOnlyCollection<PassengerServiceAssignment> assignments,
+        CancellationToken ct)
+    {
+        var byType = assignments
+            .GroupBy(a => a.ServiceType)
+            .ToDictionary(g => g.Key, g => g.Select(a => a.ServiceId).Distinct().ToList());
+
+        var result = new Dictionary<string, Dictionary<int, Guid>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (serviceType, ids) in byType)
         {
-            PublicId = a.PublicId,
-            PassengerPublicId = a.Passenger?.PublicId ?? Guid.Empty,
-            PassengerFullName = a.Passenger?.FullName ?? string.Empty,
-            ServiceType = a.ServiceType,
-            ServiceId = a.ServiceId,
-            ServicePublicId = null, // resolverlo aca implica N queries — el frontend ya tiene el contexto
-            RoomNumber = a.RoomNumber,
-            SeatNumber = a.SeatNumber,
-            Notes = a.Notes,
-            CreatedAt = a.CreatedAt
-        }).ToList();
+            if (ids.Count == 0) continue;
+
+            var lookup = serviceType switch
+            {
+                AssignmentServiceType.Hotel => await _context.HotelBookings.AsNoTracking()
+                    .Where(b => ids.Contains(b.Id))
+                    .Select(b => new { b.Id, b.PublicId })
+                    .ToDictionaryAsync(x => x.Id, x => x.PublicId, ct),
+                AssignmentServiceType.Transfer => await _context.TransferBookings.AsNoTracking()
+                    .Where(b => ids.Contains(b.Id))
+                    .Select(b => new { b.Id, b.PublicId })
+                    .ToDictionaryAsync(x => x.Id, x => x.PublicId, ct),
+                AssignmentServiceType.Package => await _context.PackageBookings.AsNoTracking()
+                    .Where(b => ids.Contains(b.Id))
+                    .Select(b => new { b.Id, b.PublicId })
+                    .ToDictionaryAsync(x => x.Id, x => x.PublicId, ct),
+                AssignmentServiceType.Flight => await _context.FlightSegments.AsNoTracking()
+                    .Where(f => ids.Contains(f.Id))
+                    .Select(f => new { f.Id, f.PublicId })
+                    .ToDictionaryAsync(x => x.Id, x => x.PublicId, ct),
+                AssignmentServiceType.Generic => await _context.Servicios.AsNoTracking()
+                    .Where(s => ids.Contains(s.Id))
+                    .Select(s => new { s.Id, s.PublicId })
+                    .ToDictionaryAsync(x => x.Id, x => x.PublicId, ct),
+                _ => new Dictionary<int, Guid>()
+            };
+
+            result[serviceType] = lookup;
+        }
+
+        return result;
+    }
+
+    private static Guid? ResolveServicePublicId(
+        Dictionary<string, Dictionary<int, Guid>> lookup,
+        string serviceType,
+        int serviceId)
+    {
+        if (!lookup.TryGetValue(serviceType, out var byId)) return null;
+        return byId.TryGetValue(serviceId, out var publicId) ? publicId : (Guid?)null;
     }
 
     public async Task<PassengerServiceAssignmentDto> CreateAssignmentAsync(string reservaPublicIdOrLegacyId, CreatePassengerAssignmentRequest request, CancellationToken ct = default)
@@ -189,7 +237,8 @@ public class ReservaService : IReservaService
             .FirstOrDefaultAsync(a => a.PassengerId == passengerId && a.ServiceType == request.ServiceType && a.ServiceId == serviceId, ct);
         if (existing != null)
         {
-            return MapAssignment(existing);
+            var existingPublicId = await ResolveServicePublicIdAsync(request.ServiceType, serviceId, ct);
+            return MapAssignment(existing, existingPublicId);
         }
 
         var assignment = new PassengerServiceAssignment
@@ -209,7 +258,27 @@ public class ReservaService : IReservaService
         var saved = await _context.PassengerServiceAssignments
             .Include(a => a.Passenger)
             .FirstAsync(a => a.Id == assignment.Id, ct);
-        return MapAssignment(saved);
+
+        var servicePublicId = await ResolveServicePublicIdAsync(request.ServiceType, serviceId, ct);
+        return MapAssignment(saved, servicePublicId);
+    }
+
+    private async Task<Guid?> ResolveServicePublicIdAsync(string serviceType, int serviceId, CancellationToken ct)
+    {
+        return serviceType switch
+        {
+            AssignmentServiceType.Hotel => await _context.HotelBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId).Select(b => (Guid?)b.PublicId).FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Transfer => await _context.TransferBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId).Select(b => (Guid?)b.PublicId).FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Package => await _context.PackageBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId).Select(b => (Guid?)b.PublicId).FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Flight => await _context.FlightSegments.AsNoTracking()
+                .Where(f => f.Id == serviceId).Select(f => (Guid?)f.PublicId).FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Generic => await _context.Servicios.AsNoTracking()
+                .Where(s => s.Id == serviceId).Select(s => (Guid?)s.PublicId).FirstOrDefaultAsync(ct),
+            _ => null
+        };
     }
 
     public async Task RemoveAssignmentAsync(string assignmentPublicIdOrLegacyId, CancellationToken ct = default)
@@ -223,7 +292,7 @@ public class ReservaService : IReservaService
         await _context.SaveChangesAsync(ct);
     }
 
-    private static PassengerServiceAssignmentDto MapAssignment(PassengerServiceAssignment a)
+    private static PassengerServiceAssignmentDto MapAssignment(PassengerServiceAssignment a, Guid? servicePublicId = null)
     {
         return new PassengerServiceAssignmentDto
         {
@@ -232,6 +301,7 @@ public class ReservaService : IReservaService
             PassengerFullName = a.Passenger?.FullName ?? string.Empty,
             ServiceType = a.ServiceType,
             ServiceId = a.ServiceId,
+            ServicePublicId = servicePublicId,
             RoomNumber = a.RoomNumber,
             SeatNumber = a.SeatNumber,
             Notes = a.Notes,
