@@ -116,15 +116,17 @@ public class ReservaService : IReservaService
 
         // Permite editar StartDate/EndDate explicitamente. Pasar `clearXxxDate=true`
         // borra el valor; pasar la fecha en el campo lo setea; null sin clear no toca.
+        // Las fechas se normalizan a Kind=Utc porque las columnas Postgres son
+        // 'timestamp with time zone' y Npgsql exige Kind=Utc al persistir.
         if (request.ClearStartDate)
             reserva.StartDate = null;
         else if (request.StartDate.HasValue)
-            reserva.StartDate = request.StartDate.Value;
+            reserva.StartDate = NormalizeUtcOrNull(request.StartDate);
 
         if (request.ClearEndDate)
             reserva.EndDate = null;
         else if (request.EndDate.HasValue)
-            reserva.EndDate = request.EndDate.Value;
+            reserva.EndDate = NormalizeUtcOrNull(request.EndDate);
 
         if (reserva.StartDate.HasValue && reserva.EndDate.HasValue
             && reserva.EndDate.Value.Date < reserva.StartDate.Value.Date)
@@ -134,6 +136,26 @@ public class ReservaService : IReservaService
 
         await _context.SaveChangesAsync(ct);
         return await GetReservaByIdAsync(reservaId);
+    }
+
+    /// <summary>
+    /// Normaliza un DateTime opcional a Kind=Utc para persistirlo en columnas
+    /// 'timestamp with time zone' de Postgres. Tambien actua como guard contra
+    /// inputs vacios serializados como DateTime.MinValue ("0001-01-01").
+    /// </summary>
+    private static DateTime? NormalizeUtcOrNull(DateTime? value)
+    {
+        if (!value.HasValue) return null;
+        if (value.Value == DateTime.MinValue) return null;
+        return value.Value.Kind switch
+        {
+            DateTimeKind.Utc => value.Value,
+            DateTimeKind.Local => value.Value.ToUniversalTime(),
+            // Unspecified (caso tipico del binder JSON con "yyyy-mm-dd"): asumimos
+            // que el operador eligio una fecha calendario en su zona, no un instante.
+            // Tomamos solo la parte Date y la marcamos Utc para evitar offsets.
+            _ => DateTime.SpecifyKind(value.Value.Date, DateTimeKind.Utc)
+        };
     }
 
     // ============= Phase 2.1 — Pasajero <-> Servicio =============
