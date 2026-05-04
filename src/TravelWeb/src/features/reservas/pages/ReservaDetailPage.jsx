@@ -30,6 +30,7 @@ import { PassengerAssignmentsPanel } from "../components/PassengerAssignmentsPan
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
+import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 
@@ -213,6 +214,7 @@ export default function ReservaDetailPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
   const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null });
+  const [showRevertModal, setShowRevertModal] = useState(false);
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -341,17 +343,11 @@ export default function ReservaDetailPage() {
         onStatusChange={(newStatus) => {
           if (newStatus === "Reservado" && reserva.status === "Presupuesto") {
             handleConfirmReservation();
-          } else if (newStatus === "Presupuesto" && reserva.status === "Reservado") {
-            askConfirmation({
-              title: "Deshacer reserva?",
-              message: "Seguro que deseas volver el estado a 'Presupuesto'?",
-              type: "warning",
-              onConfirm: () => handleStatusChange(newStatus),
-            });
           } else {
             handleStatusChange(newStatus);
           }
         }}
+        onRevert={() => setShowRevertModal(true)}
         onDelete={() =>
           askConfirmation({
             title: "Eliminar reserva?",
@@ -727,6 +723,17 @@ export default function ReservaDetailPage() {
           onClose={() => setConfirmReservaModal({ isOpen: false, readiness: null })}
           onConfirmed={() => {
             setConfirmReservaModal({ isOpen: false, readiness: null });
+            fetchReserva({ showLoading: false, preserveOnError: true });
+          }}
+        />
+      )}
+
+      {showRevertModal && (
+        <RevertStatusModal
+          reserva={reserva}
+          onClose={() => setShowRevertModal(false)}
+          onReverted={() => {
+            setShowRevertModal(false);
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
         />

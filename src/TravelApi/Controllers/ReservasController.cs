@@ -325,6 +325,55 @@ public class ReservasController : ControllerBase
 
     // ============= /Phase 2.1 =============
 
+    // ============= Phase 2.4 — Revert status con autorizacion =============
+
+    [HttpGet("{publicIdOrLegacyId}/revert-options")]
+    public async Task<ActionResult<RevertOptionsDto>> GetRevertOptions(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "System";
+            var isAdmin = User.IsInRole("Admin");
+            var dto = await _reservaService.GetRevertOptionsAsync(publicIdOrLegacyId, actorUserId, isAdmin, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpPost("{publicIdOrLegacyId}/revert-status")]
+    public async Task<ActionResult<ReservaDto>> RevertStatus(string publicIdOrLegacyId, [FromBody] RevertStatusRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "System";
+            var actorUserName = User.FindFirstValue("FullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name;
+            var isAdmin = User.IsInRole("Admin");
+            var dto = await _reservaService.RevertStatusAsync(publicIdOrLegacyId, request, actorUserId, actorUserName, isAdmin, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    // ============= /Phase 2.4 =============
+
     [HttpGet("{publicIdOrLegacyId}/transition-readiness")]
     public async Task<ActionResult<TransitionReadinessDto>> GetTransitionReadiness(string publicIdOrLegacyId, [FromQuery] string to, CancellationToken cancellationToken)
     {

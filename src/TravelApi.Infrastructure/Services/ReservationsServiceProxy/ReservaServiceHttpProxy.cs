@@ -68,6 +68,12 @@ public class ReservaServiceHttpProxy : ReservationsServiceHttpProxyBase, IReserv
     public Task<TransitionReadinessDto> GetTransitionReadinessAsync(string reservaPublicIdOrLegacyId, string targetStatus, CancellationToken ct = default)
         => GetAsync<TransitionReadinessDto>($"api/reservas/{reservaPublicIdOrLegacyId}/transition-readiness?to={Uri.EscapeDataString(targetStatus)}", ct);
 
+    public Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default)
+        => GetAsync<RevertOptionsDto>($"api/reservas/{publicIdOrLegacyId}/revert-options", ct);
+
+    public Task<ReservaDto> RevertStatusAsync(string publicIdOrLegacyId, RevertStatusRequest request, string actorUserId, string? actorUserName, bool actorIsAdmin, CancellationToken ct = default)
+        => PostAsync<RevertStatusRequest, ReservaDto>($"api/reservas/{publicIdOrLegacyId}/revert-status", request, ct);
+
     public async Task<IReadOnlyList<PassengerServiceAssignmentDto>> GetAssignmentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
     {
         var list = await GetAsync<List<PassengerServiceAssignmentDto>>($"api/reservas/{reservaPublicIdOrLegacyId}/assignments", ct);

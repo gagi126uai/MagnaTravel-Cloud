@@ -237,6 +237,11 @@ public class BookingService : IBookingService
             flight.Tax = rate.Tax;
         }
 
+        // Guard: si la reserva esta en Operativo/Closed, el servicio nuevo debe estar confirmado
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
+            _db, reservaId, $"Vuelo {flight.AirlineCode}{flight.FlightNumber}", flight.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+
         await _flightRepo.AddAsync(flight, ct);
 
         if (flight.SupplierId > 0)
@@ -263,6 +268,7 @@ public class BookingService : IBookingService
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
         var oldSupplierId = flight.SupplierId;
+        var oldStatus = flight.Status;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, flight);
@@ -272,6 +278,14 @@ public class BookingService : IBookingService
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             flight.RateId = rateId.Value;
+
+        var label = $"Vuelo {flight.AirlineCode}{flight.FlightNumber}";
+        // Guard 1: en reserva Operativo/Closed el servicio debe quedar confirmado
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, flight.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        // Guard 2: no degradar de confirmado a no-confirmado si hay pagos al proveedor
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, flight.Status, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         await _flightRepo.UpdateAsync(flight, ct);
         if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
@@ -371,6 +385,10 @@ public class BookingService : IBookingService
             ApplyHotelRateSnapshot(hotel, rate);
         }
 
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
+            _db, reservaId, $"Hotel {hotel.HotelName ?? "sin nombre"}", hotel.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+
         await _hotelRepo.AddAsync(hotel, ct);
 
         if (hotel.SupplierId > 0)
@@ -398,6 +416,7 @@ public class BookingService : IBookingService
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
         var oldSupplierId = hotel.SupplierId;
+        var oldStatus = hotel.Status;
         var oldRateId = hotel.RateId;
         var oldHotelName = hotel.HotelName;
         var oldCity = hotel.City;
@@ -433,6 +452,12 @@ public class BookingService : IBookingService
             hotel.RoomType = oldRoomType;
             hotel.MealPlan = oldMealPlan;
         }
+
+        var label = $"Hotel {hotel.HotelName ?? "sin nombre"}";
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, hotel.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, hotel.Status, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         await _hotelRepo.UpdateAsync(hotel, ct);
         if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
@@ -521,6 +546,10 @@ public class BookingService : IBookingService
             package.Commission = rate.Commission;
         }
 
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
+            _db, reservaId, $"Paquete {package.PackageName ?? "sin nombre"}", package.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+
         await _packageRepo.AddAsync(package, ct);
 
         if (package.SupplierId > 0)
@@ -548,6 +577,7 @@ public class BookingService : IBookingService
 
         var oldNetCost = package.NetCost;
         var oldSupplierId = package.SupplierId;
+        var oldStatus = package.Status;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, package);
@@ -556,6 +586,12 @@ public class BookingService : IBookingService
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             package.RateId = rateId.Value;
+
+        var label = $"Paquete {package.PackageName ?? "sin nombre"}";
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, package.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, package.Status, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         await _packageRepo.UpdateAsync(package, ct);
         if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
@@ -644,6 +680,10 @@ public class BookingService : IBookingService
             transfer.Commission = rate.Commission;
         }
 
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
+            _db, reservaId, $"Transfer {transfer.VehicleType ?? ""}".Trim(), transfer.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+
         await _transferRepo.AddAsync(transfer, ct);
 
         if (transfer.SupplierId > 0)
@@ -671,6 +711,7 @@ public class BookingService : IBookingService
 
         var oldNetCost = transfer.NetCost;
         var oldSupplierId = transfer.SupplierId;
+        var oldStatus = transfer.Status;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, transfer);
@@ -679,6 +720,12 @@ public class BookingService : IBookingService
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             transfer.RateId = rateId.Value;
+
+        var label = $"Transfer {transfer.VehicleType ?? ""}".Trim();
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, transfer.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, transfer.Status, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         await _transferRepo.UpdateAsync(transfer, ct);
         if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)

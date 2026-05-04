@@ -285,6 +285,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<VoucherPassengerAssignment> VoucherPassengerAssignments => Set<VoucherPassengerAssignment>();
     public DbSet<VoucherAuditEntry> VoucherAuditEntries => Set<VoucherAuditEntry>();
     public DbSet<PassengerServiceAssignment> PassengerServiceAssignments => Set<PassengerServiceAssignment>();
+    public DbSet<ReservaStatusChangeLog> ReservaStatusChangeLogs => Set<ReservaStatusChangeLog>();
 
     // Pilar 1: Cotizador + CRM
     public DbSet<Quote> Quotes => Set<Quote>();
@@ -335,6 +336,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<ManualCashMovement>(modelBuilder);
         ConfigurePublicEntity<PaymentReceipt>(modelBuilder);
         ConfigurePublicEntity<PassengerServiceAssignment>(modelBuilder);
+        ConfigurePublicEntity<ReservaStatusChangeLog>(modelBuilder);
 
         // Supplier
         modelBuilder.Entity<Supplier>(entity =>
@@ -778,6 +780,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(a => a.Passenger)
                   .WithMany()
                   .HasForeignKey(a => a.PassengerId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ReservaStatusChangeLog>(entity =>
+        {
+            entity.ToTable("ReservaStatusChangeLogs");
+            entity.HasIndex(l => new { l.ReservaId, l.OccurredAt });
+            entity.HasOne(l => l.Reserva)
+                  .WithMany()
+                  .HasForeignKey(l => l.ReservaId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 

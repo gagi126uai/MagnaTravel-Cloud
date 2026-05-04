@@ -1,12 +1,14 @@
 import React from 'react';
-import { ArrowLeft, Trash2, Archive, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2 } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 
-export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive }) {
+export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert }) {
     const isArchived = reserva.status === 'Archived';
     const canDelete = (reserva.status === 'Presupuesto' || reserva.status === 'Reservado');
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
+    // Estados desde los que se puede revertir hacia atras (con autorizacion si no es admin).
+    const canRevert = ['Reservado', 'Operativo', 'Cerrado'].includes(reserva.status);
 
     return (
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -57,14 +59,9 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                         </button>
                     )}
                     {reserva.status === 'Reservado' && (
-                        <div className="flex gap-2">
-                            <button onClick={() => onStatusChange('Operativo')} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95">
-                                Pasar a Operativo
-                            </button>
-                            <button onClick={() => onStatusChange('Presupuesto')} className="bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300 px-5 py-2.5 rounded-xl font-bold text-sm transition-all active:scale-95">
-                                Deshacer Reserva
-                            </button>
-                        </div>
+                        <button onClick={() => onStatusChange('Operativo')} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95">
+                            Pasar a Operativo
+                        </button>
                     )}
                     {reserva.status === 'Operativo' && (
                         <button
@@ -79,6 +76,11 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
 
                     {/* ADMIN ACTIONS */}
                     <div className="flex gap-2 ml-2 pl-4 border-l border-slate-200 dark:border-slate-800">
+                        {canRevert && onRevert && (
+                            <button onClick={onRevert} className="p-2.5 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors" title="Revertir estado (requiere autorizacion si no sos admin)">
+                                <Undo2 className="w-5 h-5" />
+                            </button>
+                        )}
                         {canDelete && (
                             <button onClick={onDelete} className="p-2.5 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-400 rounded-xl transition-colors" title="Eliminar Reserva">
                                 <Trash2 className="w-5 h-5" />

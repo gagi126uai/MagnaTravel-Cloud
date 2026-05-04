@@ -444,6 +444,177 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(id);
     }
 
+    // ============= Phase 2.4 — Reversion de Status con autorizacion =============
+
+    /// <summary>Mapeo de transiciones hacia atras permitidas por current status.</summary>
+    private static readonly Dictionary<string, string[]> AllowedRevertTransitions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [EstadoReserva.Operational] = new[] { EstadoReserva.Reserved },
+        [EstadoReserva.Reserved] = new[] { EstadoReserva.Budget },
+        [EstadoReserva.Closed] = new[] { EstadoReserva.Operational },
+    };
+
+    public async Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.AsNoTracking()
+            .Where(r => r.Id == id)
+            .Select(r => new { r.Status })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        var dto = new RevertOptionsDto
+        {
+            CurrentStatus = reserva.Status,
+            ActorIsAdmin = actorIsAdmin,
+            RequiresAuthorization = !actorIsAdmin
+        };
+
+        // Targets posibles segun current
+        if (AllowedRevertTransitions.TryGetValue(reserva.Status, out var targets))
+        {
+            dto.AllowedTargets.AddRange(targets);
+        }
+
+        // Hard blockers (no se saltean ni siendo admin):
+        // - Reserva con factura AFIP con CAE asignado: revertir rompe historia fiscal.
+        var hasInvoiceWithCae = await _context.Invoices.AsNoTracking()
+            .AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE), ct);
+        if (hasInvoiceWithCae)
+        {
+            dto.HardBlockers.Add("La reserva tiene facturas AFIP emitidas con CAE. No se puede revertir el estado (rompe la historia fiscal). Si necesitas anular, emiti una Nota de Credito primero.");
+            dto.AllowedTargets.Clear();
+        }
+
+        // Si requiere autorizacion, listar supervisores con permiso
+        if (!actorIsAdmin && dto.AllowedTargets.Count > 0)
+        {
+            var superiors = await _context.Users.AsNoTracking()
+                .Where(u => u.IsActive)
+                .ToListAsync(ct);
+            var allUserRoles = await _context.UserRoles.AsNoTracking()
+                .Join(_context.Roles.AsNoTracking(), ur => ur.RoleId, r => r.Id, (ur, r) => new { ur.UserId, RoleName = r.Name! })
+                .ToListAsync(ct);
+            var allRolePerms = await _context.RolePermissions.AsNoTracking()
+                .Where(rp => rp.Permission == Permissions.VouchersAuthorizeException)
+                .Select(rp => rp.RoleName)
+                .ToListAsync(ct);
+            var rolesWithAuth = new HashSet<string>(allRolePerms, StringComparer.OrdinalIgnoreCase);
+            rolesWithAuth.Add("Admin"); // admin siempre puede
+
+            foreach (var u in superiors)
+            {
+                if (u.Id == actorUserId) continue; // no se autoriza a si mismo
+                var roles = allUserRoles.Where(r => r.UserId == u.Id).Select(r => r.RoleName);
+                if (roles.Any(r => rolesWithAuth.Contains(r)))
+                {
+                    dto.Supervisors.Add(new SupervisorOptionDto
+                    {
+                        UserId = u.Id,
+                        FullName = u.FullName ?? u.UserName ?? u.Email ?? u.Id
+                    });
+                }
+            }
+        }
+
+        return dto;
+    }
+
+    public async Task<ReservaDto> RevertStatusAsync(
+        string publicIdOrLegacyId,
+        RevertStatusRequest request,
+        string actorUserId,
+        string? actorUserName,
+        bool actorIsAdmin,
+        CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // Validar transicion permitida
+        if (!AllowedRevertTransitions.TryGetValue(reserva.Status, out var allowedTargets) || !allowedTargets.Contains(request.TargetStatus, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"No se puede revertir desde {reserva.Status} a {request.TargetStatus}. " +
+                $"Transiciones permitidas desde {reserva.Status}: {(allowedTargets == null ? "(ninguna)" : string.Join(", ", allowedTargets))}.");
+        }
+
+        // Hard blockers
+        var hasInvoiceWithCae = await _context.Invoices.AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE), ct);
+        if (hasInvoiceWithCae)
+            throw new InvalidOperationException("La reserva tiene facturas AFIP emitidas con CAE. No se puede revertir (rompe la historia fiscal).");
+
+        // Validaciones de coherencia segun el target
+        if (request.TargetStatus == EstadoReserva.Budget)
+        {
+            // No retroceder a Presupuesto si hay pagos o facturas (mismo criterio que UpdateStatusAsync).
+            var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted, ct);
+            if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. Eliminalos primero.");
+            var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id, ct);
+            if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Anulalas primero.");
+        }
+
+        // Autorizacion
+        string? authSuperiorId = null;
+        string? authSuperiorName = null;
+        var reason = (request.Reason ?? "").Trim();
+
+        if (!actorIsAdmin)
+        {
+            if (string.IsNullOrWhiteSpace(request.AuthorizedBySuperiorUserId))
+                throw new InvalidOperationException("Necesitas autorizacion de un supervisor para revertir el estado de la reserva. Selecciona un supervisor en el formulario.");
+            if (reason.Length < 10)
+                throw new InvalidOperationException("Indica un motivo de la reversion (al menos 10 caracteres).");
+
+            var superior = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == request.AuthorizedBySuperiorUserId && u.IsActive, ct)
+                ?? throw new InvalidOperationException("El supervisor seleccionado no existe o esta inactivo.");
+
+            var superiorRoles = await _context.UserRoles.AsNoTracking()
+                .Where(ur => ur.UserId == superior.Id)
+                .Join(_context.Roles.AsNoTracking(), ur => ur.RoleId, r => r.Id, (_, r) => r.Name!)
+                .ToListAsync(ct);
+            var isSuperiorAdmin = superiorRoles.Any(r => string.Equals(r, "Admin", StringComparison.OrdinalIgnoreCase));
+            var canAuthorize = isSuperiorAdmin || await _context.RolePermissions.AsNoTracking()
+                .AnyAsync(p => superiorRoles.Contains(p.RoleName) && p.Permission == Permissions.VouchersAuthorizeException, ct);
+            if (!canAuthorize)
+                throw new InvalidOperationException("El supervisor seleccionado no tiene permiso para autorizar reversiones.");
+
+            authSuperiorId = superior.Id;
+            authSuperiorName = superior.FullName ?? superior.UserName ?? superior.Id;
+        }
+        else
+        {
+            // Admin: la reason es opcional pero se loguea si vino.
+            if (string.IsNullOrWhiteSpace(reason)) reason = "(reversion por admin sin motivo declarado)";
+        }
+
+        var fromStatus = reserva.Status;
+        reserva.Status = request.TargetStatus;
+        if (request.TargetStatus == EstadoReserva.Operational && reserva.ClosedAt.HasValue)
+            reserva.ClosedAt = null; // re-abrir borra el ClosedAt
+
+        _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+        {
+            ReservaId = id,
+            FromStatus = fromStatus,
+            ToStatus = request.TargetStatus,
+            Direction = "Revert",
+            ByUserId = actorUserId,
+            ByUserName = actorUserName,
+            AuthorizedBySuperiorUserId = authSuperiorId,
+            AuthorizedBySuperiorUserName = authSuperiorName,
+            Reason = reason,
+            OccurredAt = DateTime.UtcNow
+        });
+
+        await _context.SaveChangesAsync(ct);
+        return await GetReservaByIdAsync(id);
+    }
+
+    // ============= /Phase 2.4 =============
+
     public async Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default)
     {
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);

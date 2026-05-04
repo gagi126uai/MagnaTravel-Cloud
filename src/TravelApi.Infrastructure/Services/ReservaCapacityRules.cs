@@ -22,10 +22,92 @@ public static class ReservaCapacityRules
     /// proveedor y para pasar la Reserva a Operativo. Refleja la misma lista que
     /// SupplierService usa para computar TotalPurchases.
     /// </summary>
-    private static readonly HashSet<string> ConfirmedServiceStatuses = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly HashSet<string> ConfirmedServiceStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
         "Confirmado", "Emitido", "HK", "TK", "KK", "KL"
     };
+
+    /// <summary>
+    /// Estados de Reserva en los que NO se permite cargar/modificar servicios con
+    /// estado distinto de "confirmado". El motivo: en Operativo/Closed la cuenta
+    /// corriente del proveedor ya quedo cerrada en base a los confirmados; meter
+    /// un servicio Solicitado nuevo o degradar uno confirmado romperia la coherencia.
+    /// </summary>
+    public static readonly HashSet<string> ReservaStatusesRequiringConfirmedServices = new(StringComparer.OrdinalIgnoreCase)
+    {
+        EstadoReserva.Operational, EstadoReserva.Closed
+    };
+
+    /// <summary>
+    /// Bloquea agregar o modificar un servicio con Status no-confirmado si la
+    /// Reserva esta en Operativo o Cerrado. Aplica a Hotel/Transfer/Package/Flight
+    /// y al ServicioReserva generico.
+    ///
+    /// Devuelve mensaje accionable o null si el cambio es coherente.
+    /// </summary>
+    public static async Task<string?> GetServiceStatusBlockReasonAsync(
+        AppDbContext db,
+        int reservaId,
+        string serviceLabel,
+        string? newServiceStatus,
+        CancellationToken ct = default)
+    {
+        var reserva = await db.Reservas.AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => new { r.Status })
+            .FirstOrDefaultAsync(ct);
+        if (reserva == null) return null;
+
+        if (!ReservaStatusesRequiringConfirmedServices.Contains(reserva.Status))
+            return null; // Reserva en Presupuesto/Reservado/Cancelado: no aplica este check
+
+        if (string.IsNullOrWhiteSpace(newServiceStatus))
+            return $"El estado del servicio es obligatorio cuando la reserva esta en {reserva.Status}.";
+
+        if (ConfirmedServiceStatuses.Contains(newServiceStatus))
+            return null; // OK, esta confirmado
+
+        return $"La reserva esta en estado {reserva.Status}. No se puede cargar/modificar el servicio '{serviceLabel}' " +
+               $"con estado '{newServiceStatus}' — debe estar confirmado con el proveedor (alguno de: {string.Join(", ", ConfirmedServiceStatuses)}).";
+    }
+
+    /// <summary>
+    /// Bloquea cambio de Status confirmado -> no-confirmado si la Reserva tiene
+    /// SupplierPayments registrados. Razon: el balance del proveedor ya cuenta esos
+    /// pagos contra el servicio confirmado; degradarlo a Solicitado/Cancelado
+    /// rompe la coherencia (pagos colgando, balance sucio).
+    ///
+    /// Granularidad: a nivel Reserva (limitacion del modelo, SupplierPayment no
+    /// apunta a HotelBooking/TransferBooking/etc. especifico). Si hay 2 hoteles y
+    /// solo se pago uno, igual no podras des-confirmar el otro hasta anular los pagos.
+    ///
+    /// Devuelve mensaje accionable o null si el cambio es permitido.
+    /// </summary>
+    public static async Task<string?> GetStatusDowngradeBlockReasonAsync(
+        AppDbContext db,
+        int reservaId,
+        string serviceLabel,
+        string? oldServiceStatus,
+        string? newServiceStatus,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(oldServiceStatus) || string.IsNullOrWhiteSpace(newServiceStatus))
+            return null;
+
+        // Solo aplica si: pasaba de confirmado a no-confirmado.
+        var wasConfirmed = ConfirmedServiceStatuses.Contains(oldServiceStatus);
+        var willBeConfirmed = ConfirmedServiceStatuses.Contains(newServiceStatus);
+        if (!wasConfirmed || willBeConfirmed) return null;
+
+        var totalPaid = await db.SupplierPayments.AsNoTracking()
+            .Where(p => p.ReservaId == reservaId)
+            .SumAsync(p => (decimal?)p.Amount, ct) ?? 0m;
+        if (totalPaid <= 0m) return null;
+
+        return $"No se puede degradar el estado del servicio '{serviceLabel}' (de '{oldServiceStatus}' a '{newServiceStatus}'): " +
+               $"esta reserva tiene pagos al proveedor registrados por ${totalPaid:N2}. " +
+               "Anula los pagos al proveedor antes de des-confirmar.";
+    }
 
     /// <summary>
     /// Devuelve un mensaje de bloqueo si hay inconsistencia entre cantidad de pasajeros
