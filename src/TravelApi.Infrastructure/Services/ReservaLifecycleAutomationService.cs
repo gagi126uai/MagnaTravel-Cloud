@@ -27,12 +27,22 @@ public class ReservaLifecycleAutomationService
 
     public async Task<int> RunDailyAsync(CancellationToken ct = default)
     {
+        var result = await RunDailyDetailedAsync(ct);
+        return result.Promoted + result.Closed;
+    }
+
+    /// <summary>
+    /// Variante de RunDailyAsync que devuelve los counts separados (promoted/closed)
+    /// para que el endpoint admin de mantenimiento muestre feedback util al operador.
+    /// </summary>
+    public async Task<LifecycleRunResult> RunDailyDetailedAsync(CancellationToken ct = default)
+    {
         var promoted = await AutoTransitionReservedToOperationalAsync(ct);
         var closed = await AutoTransitionOperationalToClosedAsync(ct);
         _logger.LogInformation(
             "Lifecycle automation finished. Reserved->Operational: {Promoted}. Operational->Closed: {Closed}.",
             promoted, closed);
-        return promoted + closed;
+        return new LifecycleRunResult(promoted, closed);
     }
 
     public async Task<int> AutoTransitionReservedToOperationalAsync(CancellationToken ct = default)
@@ -111,3 +121,10 @@ public class ReservaLifecycleAutomationService
         return candidates.Count;
     }
 }
+
+/// <summary>
+/// Resultado de una corrida de lifecycle automation.
+/// Promoted = cantidad de reservas que pasaron Reserved -> Operational.
+/// Closed = cantidad que pasaron Operational -> Closed.
+/// </summary>
+public record LifecycleRunResult(int Promoted, int Closed);

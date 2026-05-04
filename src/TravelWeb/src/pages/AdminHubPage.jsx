@@ -28,7 +28,8 @@ import {
   Smartphone,
   TerminalSquare,
   Settings2,
-  ShieldAlert
+  ShieldAlert,
+  Wrench
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
@@ -38,6 +39,7 @@ import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
 import RolesPermissionsTab from "../components/RolesPermissionsTab";
+import MaintenanceTab from "../components/MaintenanceTab";
 import AuditPage from "./AuditPage";
 import { getPublicId } from "../lib/publicIds";
 
@@ -163,7 +165,8 @@ const tabs = [
   { id: "users", label: "Usuarios", icon: User },
   { id: "roles", label: "Roles y Permisos", icon: Shield },
   { id: "commissions", label: "Comisiones", icon: Briefcase },
-  { id: "audit", label: "Auditoría Central", icon: ShieldAlert }
+  { id: "audit", label: "Auditoría Central", icon: ShieldAlert },
+  { id: "maintenance", label: "Mantenimiento", icon: Wrench }
 ];
 
 export default function AdminHubPage() {
@@ -233,7 +236,7 @@ export default function AdminHubPage() {
   const [showAdvancedBot, setShowAdvancedBot] = useState(false);
 
   const isTabVisible = (tabId) => {
-    if (["users", "roles", "logs", "programming"].includes(tabId)) {
+    if (["users", "roles", "logs", "programming", "maintenance"].includes(tabId)) {
       return adminUser;
     }
 
@@ -963,6 +966,9 @@ export default function AdminHubPage() {
 
         {/* --- OPERATIONS TAB --- */}
         {activeTab === "audit" && <AuditPage />}
+
+        {/* --- MAINTENANCE TAB --- */}
+        {activeTab === "maintenance" && <MaintenanceTab />}
     </div>
   );
 }
