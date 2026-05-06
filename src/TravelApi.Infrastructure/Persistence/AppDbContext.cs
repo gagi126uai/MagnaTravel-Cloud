@@ -518,6 +518,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany(r => r.FlightSegments)
                   .HasForeignKey(s => s.ReservaId)
                   .OnDelete(DeleteBehavior.Cascade);
+
+            // C24: bloquear el delete fisico del Supplier mientras existan segmentos
+            // de vuelo asociados. La validacion de negocio vive en SupplierService;
+            // este Restrict es la red de seguridad a nivel BD.
+            entity.HasOne(s => s.Supplier)
+                  .WithMany()
+                  .HasForeignKey(s => s.SupplierId)
+                  .IsRequired()
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // FlightSegment -> Rate (Tarifario)
@@ -554,6 +563,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<HotelBooking>(entity =>
         {
             entity.Property(h => h.ReservaId).HasColumnName("TravelFileId");
+
+            // C24: ver nota en FlightSegment.
+            entity.HasOne(h => h.Supplier)
+                  .WithMany()
+                  .HasForeignKey(h => h.SupplierId)
+                  .IsRequired()
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // HotelBooking -> Rate (Tarifario)
@@ -567,6 +583,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<TransferBooking>(entity =>
         {
             entity.Property(t => t.ReservaId).HasColumnName("TravelFileId");
+
+            // C24: ver nota en FlightSegment.
+            entity.HasOne(t => t.Supplier)
+                  .WithMany()
+                  .HasForeignKey(t => t.SupplierId)
+                  .IsRequired()
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // TransferBooking -> Rate (Tarifario)
@@ -580,6 +603,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<PackageBooking>(entity =>
         {
             entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
+
+            // C24: ver nota en FlightSegment.
+            entity.HasOne(p => p.Supplier)
+                  .WithMany()
+                  .HasForeignKey(p => p.SupplierId)
+                  .IsRequired()
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // PackageBooking -> Rate (Tarifario)

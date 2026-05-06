@@ -10,7 +10,6 @@ public interface ISupplierService
     Task<Supplier> CreateSupplierAsync(Supplier supplier, CancellationToken cancellationToken);
     Task<Supplier> UpdateSupplierAsync(int id, Supplier supplier, CancellationToken cancellationToken);
     Task DeleteSupplierAsync(int id, CancellationToken cancellationToken);
-    Task ForceDeleteSupplierAsync(int id, CancellationToken cancellationToken);
     Task RecalculateAllBalancesAsync(CancellationToken cancellationToken);
     Task UpdateBalanceAsync(int id, CancellationToken cancellationToken);
     Task<SupplierAccountOverviewDto> GetSupplierAccountOverviewAsync(int id, CancellationToken cancellationToken);

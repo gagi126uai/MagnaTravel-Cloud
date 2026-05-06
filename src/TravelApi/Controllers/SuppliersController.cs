@@ -104,21 +104,10 @@ public class SuppliersController : ControllerBase
         }
     }
 
-    [HttpDelete("{publicIdOrLegacyId}/force")]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult> ForceDeleteSupplier(string publicIdOrLegacyId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
-            await _supplierService.ForceDeleteSupplierAsync(id, cancellationToken);
-            return Ok(new { Message = "Proveedor eliminado (forzado)" });
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound();
-        }
-    }
+    // C24: el endpoint DELETE /suppliers/{id}/force fue eliminado por completo.
+    // Reemplazado por el flujo unico DeleteSupplier que valida referencias antes
+    // de borrar. Si el cliente recibia 200 con "(forzado)", ahora recibe 404 al
+    // pegarle al path; eso es intencional — antes podia dejar la BD inconsistente.
 
     [HttpGet("{publicIdOrLegacyId}/account")]
     public async Task<ActionResult<SupplierAccountOverviewDto>> GetSupplierAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)

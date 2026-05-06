@@ -116,6 +116,7 @@ public class SupplierService : ISupplierService
             throw new KeyNotFoundException("Proveedor no encontrado");
         }
 
+        // Checks legacy preexistentes.
         var hasServices = await _dbContext.Servicios.AnyAsync(service => service.SupplierId == id, cancellationToken);
         if (hasServices)
         {
@@ -128,25 +129,30 @@ public class SupplierService : ISupplierService
             throw new InvalidOperationException("No se puede eliminar: el proveedor tiene pagos registrados");
         }
 
-        _dbContext.Suppliers.Remove(supplier);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-    }
-
-    public async Task ForceDeleteSupplierAsync(int id, CancellationToken cancellationToken)
-    {
-        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
-        if (supplier == null)
+        // C24: tambien chequear bookings tipados (Hotel/Transfer/Package/Flight).
+        // Antes se podia ELIMINAR un supplier con bookings activos porque la FK
+        // estaba en Cascade por convencion EF y arrastraba todo. Ahora se bloquea
+        // explicitamente desde el servicio (mensaje de negocio claro) y la BD
+        // mantiene Restrict como red de seguridad.
+        if (await _dbContext.HotelBookings.AnyAsync(booking => booking.SupplierId == id, cancellationToken))
         {
-            throw new KeyNotFoundException("Proveedor no encontrado");
+            throw new InvalidOperationException("No se puede eliminar: el proveedor tiene reservas de hotel asociadas");
         }
 
-        await _dbContext.Servicios
-            .Where(service => service.SupplierId == id)
-            .ExecuteUpdateAsync(update => update.SetProperty(service => service.SupplierId, (int?)null), cancellationToken);
+        if (await _dbContext.TransferBookings.AnyAsync(booking => booking.SupplierId == id, cancellationToken))
+        {
+            throw new InvalidOperationException("No se puede eliminar: el proveedor tiene transfers asociados");
+        }
 
-        await _dbContext.SupplierPayments
-            .Where(payment => payment.SupplierId == id)
-            .ExecuteDeleteAsync(cancellationToken);
+        if (await _dbContext.PackageBookings.AnyAsync(booking => booking.SupplierId == id, cancellationToken))
+        {
+            throw new InvalidOperationException("No se puede eliminar: el proveedor tiene paquetes asociados");
+        }
+
+        if (await _dbContext.FlightSegments.AnyAsync(segment => segment.SupplierId == id, cancellationToken))
+        {
+            throw new InvalidOperationException("No se puede eliminar: el proveedor tiene segmentos de vuelo asociados");
+        }
 
         _dbContext.Suppliers.Remove(supplier);
         await _dbContext.SaveChangesAsync(cancellationToken);
