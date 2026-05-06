@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# C21: bloquear commits que incluyan archivos de log .txt rotados por Serilog.
+# Activacion (una sola vez por clon):
+#   git config core.hooksPath scripts/git-hooks
+# o crear un symlink manual desde .git/hooks/pre-commit a este archivo.
+#
+# Si en algun caso justificado hace falta saltearlo:
+#   git commit --no-verify
+# (solo despues de revisar manualmente que el .txt no contiene PII/secretos).
+
+set -euo pipefail
+
+staged_logs=$(git diff --cached --name-only --diff-filter=AM | grep -E '(^|/)logs/.*\.txt$' || true)
+
+if [ -n "$staged_logs" ]; then
+  echo "ERROR: hay archivos de log .txt en el staging. No se commitean (ver C21):" >&2
+  echo "$staged_logs" >&2
+  exit 1
+fi
+
+exit 0

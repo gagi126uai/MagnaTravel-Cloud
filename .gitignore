@@ -8,6 +8,12 @@
 *.sln.docstates
 *.swp
 *.log
+# C21: Serilog rolling files (.txt) deben quedar fuera del repo.
+# El sufijo .log lo cubre el patron de arriba; los .txt requieren reglas explicitas.
+**/logs/*.txt
+src/TravelApi/logs/
+src/TravelReservations.Api/logs/
+src/WhatsAppBot/logs/
 *.db
 *.db-shm
 *.db-wal
@@ -34,3 +40,8 @@ tests_corecompile.txt
 !.gitignore
 
 .env
+
+# Claude Code workspace local — no se versiona la carpeta entera.
+# Si en el futuro se quiere compartir CLAUDE.md u otros archivos,
+# agregar excepciones explicitas con `!.claude/<archivo>` debajo.
+.claude/
