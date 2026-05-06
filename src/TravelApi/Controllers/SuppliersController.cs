@@ -98,9 +98,9 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo eliminar el proveedor." });
+            return BadRequest(new { message = ex.Message });
         }
     }
 

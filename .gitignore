@@ -41,7 +41,8 @@ tests_corecompile.txt
 
 .env
 
-# Claude Code workspace local — no se versiona la carpeta entera.
-# Si en el futuro se quiere compartir CLAUDE.md u otros archivos,
-# agregar excepciones explicitas con `!.claude/<archivo>` debajo.
-.claude/
+# Claude Code workspace local — no se versiona el contenido por default.
+# CLAUDE.MD si se versiona porque define el routing de agentes del repo.
+# Si en el futuro se quiere compartir otros archivos, agregar excepciones aca.
+.claude/*
+!.claude/CLAUDE.MD
