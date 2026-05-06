@@ -36,7 +36,16 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .WriteTo.File("logs/log-.txt", rollingInterval: RollingInterval.Day, outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
+    // C21: rolling diario + retencion de 14 archivos + tope de 50MB por archivo.
+    // Ojo: la rotacion solo controla cuanto disco se usa; los logs siguen pudiendo
+    // contener datos sensibles, por eso ademas estan ignorados por gitignore.
+    .WriteTo.File(
+        "logs/log-.txt",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 14,
+        fileSizeLimitBytes: 50L * 1024L * 1024L,
+        rollOnFileSizeLimit: true,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
     .WriteTo.Sink(new SignalRSink())
     .CreateLogger();
 
