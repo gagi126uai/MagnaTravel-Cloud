@@ -87,7 +87,8 @@ export function useSuppliers() {
             showSuccess(`Proveedor ${newStatus ? 'activado' : 'desactivado'}`);
             fetchSuppliers();
         } catch (error) {
-            showError("No se pudo cambiar el estado");
+            const message = error?.response?.data?.message || error?.message || "No se pudo cambiar el estado.";
+            showError(message, "No se pudo cambiar el estado");
         }
     };
 
