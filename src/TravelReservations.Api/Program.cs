@@ -2,11 +2,13 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Interfaces;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Repositories;
 using TravelApi.Infrastructure.Services;
@@ -62,6 +64,15 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         o.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
     });
 });
+
+// C16-fix: ReservaService (link-compilado desde TravelApi) ahora depende de
+// UserManager<ApplicationUser> para popular ResponsibleUserName al crear reservas.
+// Registramos IdentityCore minimo para que el DI resuelva UserManager. Sin esto,
+// la instanciacion de ReservaService falla y el endpoint /api/reservas devuelve 500.
+builder.Services.AddIdentityCore<ApplicationUser>()
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<AppDbContext>()
+    .AddDefaultTokenProviders();
 
 builder.Services.AddMassTransit(x =>
 {
