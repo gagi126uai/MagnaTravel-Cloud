@@ -1,5 +1,6 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
 using TravelApi.Application.Contracts.Files;
@@ -7,6 +8,7 @@ using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -16,15 +18,18 @@ public class ReservaService : IReservaService
     private readonly AppDbContext _context;
     private readonly IMapper _mapper;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
+    private readonly UserManager<ApplicationUser> _userManager;
 
     public ReservaService(
         AppDbContext context,
         IMapper mapper,
-        IOperationalFinanceSettingsService operationalFinanceSettingsService)
+        IOperationalFinanceSettingsService operationalFinanceSettingsService,
+        UserManager<ApplicationUser> userManager)
     {
         _context = context;
         _mapper = mapper;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
+        _userManager = userManager;
     }
 
     public async Task<ReservaDto> GetReservaByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
@@ -775,7 +780,7 @@ public class ReservaService : IReservaService
                 Status = f.Status,
                 CustomerName = f.Payer != null ? f.Payer.FullName : string.Empty,
                 ResponsibleUserId = f.ResponsibleUserId,
-                ResponsibleUserName = f.ResponsibleUser != null ? f.ResponsibleUser.FullName : null,
+                ResponsibleUserName = f.ResponsibleUserName,
                 CreatedAt = f.CreatedAt,
                 StartDate = f.StartDate,
                 EndDate = f.EndDate,
@@ -845,7 +850,6 @@ public class ReservaService : IReservaService
         var file = await _context.Reservas
             .AsNoTracking()
             .Include(f => f.Payer)
-            .Include(f => f.ResponsibleUser)
             .Include(f => f.Passengers)
             .Include(f => f.Payments)
             .ThenInclude(p => p.Receipt)
@@ -877,6 +881,16 @@ public class ReservaService : IReservaService
 
     public async Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId)
     {
+        // C16: ApplicationUser ya no es nav prop de Reserva — denormalizamos el FullName del
+        // responsable al crear. Si el lookup no encuentra usuario, dejamos null (no rompemos
+        // la creacion por un nombre faltante; el FK se valida igual al persistir).
+        string? responsibleUserName = null;
+        if (!string.IsNullOrWhiteSpace(createdByUserId))
+        {
+            var responsibleUser = await _userManager.FindByIdAsync(createdByUserId);
+            responsibleUserName = responsibleUser?.FullName;
+        }
+
         var strategy = _context.Database.CreateExecutionStrategy();
 
         return await strategy.ExecuteAsync(async () =>
@@ -899,9 +913,9 @@ public class ReservaService : IReservaService
                 }
 
                 var numeroReserva = await GenerateNumeroReservaAsync(CancellationToken.None);
-                
-                var fileName = !string.IsNullOrWhiteSpace(request.Name) 
-                    ? request.Name 
+
+                var fileName = !string.IsNullOrWhiteSpace(request.Name)
+                    ? request.Name
                     : $"Reserva {numeroReserva}";
 
                 var file = new Reserva
@@ -910,10 +924,11 @@ public class ReservaService : IReservaService
                     NumeroReserva = numeroReserva,
                     PayerId = payerId,
                     ResponsibleUserId = createdByUserId,
+                    ResponsibleUserName = responsibleUserName,
                     StartDate = request.StartDate,
                     Description = request.Description,
-                    Status = string.IsNullOrWhiteSpace(request.Status) 
-                        ? EstadoReserva.Budget 
+                    Status = string.IsNullOrWhiteSpace(request.Status)
+                        ? EstadoReserva.Budget
                         : request.Status
                 };
                 

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using MassTransit;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 
 namespace TravelApi.Infrastructure.Persistence;
 
@@ -389,10 +390,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(f => f.SourceQuoteId)
                   .OnDelete(DeleteBehavior.SetNull);
 
-            entity.HasOne(f => f.ResponsibleUser)
+            // FK formal a AspNetUsers se declara desde Infrastructure (sin nav prop en Domain)
+            // para mantener Reserva libre de dependencias de ASP.NET Identity.
+            entity.HasOne<ApplicationUser>()
                   .WithMany()
                   .HasForeignKey(f => f.ResponsibleUserId)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            entity.Property(f => f.ResponsibleUserName).HasMaxLength(200);
 
             entity.HasMany(f => f.Servicios)
                   .WithOne(r => r.Reserva)
@@ -894,7 +899,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(token => token.UserAgent).HasMaxLength(512);
             entity.Property(token => token.ReplacedByTokenHash).HasMaxLength(256);
 
-            entity.HasOne(token => token.User)
+            // FK formal a AspNetUsers se declara desde Infrastructure. La coleccion inversa
+            // (ApplicationUser.RefreshTokens) tambien vive en Infrastructure, por lo que
+            // RefreshToken (Domain) no tiene nav prop al usuario.
+            entity.HasOne<ApplicationUser>()
                   .WithMany(user => user.RefreshTokens)
                   .HasForeignKey(token => token.UserId)
                   .OnDelete(DeleteBehavior.Cascade);

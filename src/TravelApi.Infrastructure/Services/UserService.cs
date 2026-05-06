@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.Contracts.Users;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;

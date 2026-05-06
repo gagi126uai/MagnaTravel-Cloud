@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Audit;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;

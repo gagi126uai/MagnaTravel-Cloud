@@ -12,6 +12,7 @@ using TravelApi.Application.Contracts.Auth;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Options;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -102,7 +103,6 @@ public class AuthService : IAuthService
 
         var tokenHash = ComputeTokenHash(refreshToken);
         var storedToken = await _dbContext.RefreshTokens
-            .Include(token => token.User)
             .FirstOrDefaultAsync(token => token.TokenHash == tokenHash);
 
         if (storedToken is null)
@@ -116,14 +116,19 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException(GenericAuthFailureMessage);
         }
 
-        if (storedToken.IsExpired || storedToken.User is null || !storedToken.User.IsActive)
+        // C16: ApplicationUser ya no es nav prop de RefreshToken — buscamos el usuario por Id
+        // contra UserManager (camino oficial de Identity). Esto preserva el contrato anterior:
+        // si el token expiro, el usuario no existe o esta inactivo, revocamos y devolvemos 401.
+        var user = await _userManager.FindByIdAsync(storedToken.UserId);
+
+        if (storedToken.IsExpired || user is null || !user.IsActive)
         {
             storedToken.RevokedAt = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync();
             throw new UnauthorizedAccessException(GenericAuthFailureMessage);
         }
 
-        var replacementToken = await IssueSessionAsync(storedToken.User, ipAddress, userAgent, storedToken.IsPersistent);
+        var replacementToken = await IssueSessionAsync(user, ipAddress, userAgent, storedToken.IsPersistent);
         storedToken.RevokedAt = DateTime.UtcNow;
         storedToken.ReplacedByTokenHash = ComputeTokenHash(replacementToken.RefreshToken);
         await _dbContext.SaveChangesAsync();

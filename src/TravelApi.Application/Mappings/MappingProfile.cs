@@ -140,7 +140,7 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.SourceLeadPublicId, opt => opt.MapFrom(src => src.SourceLead != null ? (Guid?)src.SourceLead.PublicId : null))
             .ForMember(dest => dest.SourceQuotePublicId, opt => opt.MapFrom(src => src.SourceQuote != null ? (Guid?)src.SourceQuote.PublicId : null))
             .ForMember(dest => dest.ResponsibleUserId, opt => opt.MapFrom(src => src.ResponsibleUserId))
-            .ForMember(dest => dest.ResponsibleUserName, opt => opt.MapFrom(src => src.ResponsibleUser != null ? src.ResponsibleUser.FullName : null))
+            .ForMember(dest => dest.ResponsibleUserName, opt => opt.MapFrom(src => src.ResponsibleUserName))
             .ForMember(dest => dest.WhatsAppPhoneOverride, opt => opt.MapFrom(src => src.WhatsAppPhoneOverride))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.Payer, opt => opt.MapFrom(src => src.Payer))
@@ -156,7 +156,7 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.ResponsibleUserId, opt => opt.MapFrom(src => src.ResponsibleUserId))
-            .ForMember(dest => dest.ResponsibleUserName, opt => opt.MapFrom(src => src.ResponsibleUser != null ? src.ResponsibleUser.FullName : null))
+            .ForMember(dest => dest.ResponsibleUserName, opt => opt.MapFrom(src => src.ResponsibleUserName))
             .ForMember(dest => dest.TotalSale, opt => opt.MapFrom(src => 
                 (src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
                 (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +

@@ -98,7 +98,7 @@ public class PaymentService : IPaymentService
             reservationsQuery = reservationsQuery.Where(reserva =>
                 reserva.NumeroReserva.ToLower().Contains(normalized) ||
                 (reserva.Payer != null && reserva.Payer.FullName.ToLower().Contains(normalized)) ||
-                (reserva.ResponsibleUser != null && reserva.ResponsibleUser.FullName.ToLower().Contains(normalized)));
+                (reserva.ResponsibleUserName != null && reserva.ResponsibleUserName.ToLower().Contains(normalized)));
         }
 
         var blocksOperational = settings.RequireFullPaymentForOperativeStatus;
@@ -125,7 +125,7 @@ public class PaymentService : IPaymentService
             NumeroReserva = reserva.NumeroReserva,
             CustomerName = reserva.Payer != null ? reserva.Payer.FullName : "Consumidor Final",
             StartDate = reserva.StartDate,
-            ResponsibleUserName = reserva.ResponsibleUser != null ? reserva.ResponsibleUser.FullName : null,
+            ResponsibleUserName = reserva.ResponsibleUserName,
             TotalSale = reserva.TotalSale,
             TotalPaid = reserva.TotalPaid,
             Balance = reserva.Balance,

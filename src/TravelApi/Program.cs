@@ -12,6 +12,7 @@ using System.Threading.RateLimiting;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Interfaces;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Repositories;
 using TravelApi.Domain.Options;
 using TravelApi.Infrastructure.Services;

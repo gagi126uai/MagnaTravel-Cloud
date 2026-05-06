@@ -14,8 +14,6 @@ public class RefreshToken
     [MaxLength(450)]
     public string UserId { get; set; } = string.Empty;
 
-    public ApplicationUser? User { get; set; }
-
     [MaxLength(64)]
     public string? CreatedByIp { get; set; }
 

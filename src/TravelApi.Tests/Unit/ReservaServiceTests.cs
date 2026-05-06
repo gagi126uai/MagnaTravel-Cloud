@@ -1,11 +1,13 @@
 using System;
 using System.Threading.Tasks;
 using AutoMapper;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -31,6 +33,28 @@ public class ReservaServiceTests
             .ReturnsAsync(new OperationalFinanceSettings());
     }
 
+    private static UserManager<ApplicationUser> BuildUserManager()
+    {
+        // UserManager mock minimo: el unico camino que lo usa en estos tests es
+        // CreateReservaAsync (lookup de FullName del responsable). Configuramos
+        // FindByIdAsync para devolver null y dejar ResponsibleUserName en null,
+        // lo cual es valido para los asserts actuales.
+        var store = new Mock<IUserStore<ApplicationUser>>();
+        store
+            .Setup(s => s.FindByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApplicationUser?)null);
+        return new UserManager<ApplicationUser>(
+            store.Object,
+            null!,
+            null!,
+            Array.Empty<IUserValidator<ApplicationUser>>(),
+            Array.Empty<IPasswordValidator<ApplicationUser>>(),
+            null!,
+            null!,
+            null!,
+            null!);
+    }
+
     [Fact]
     public async Task CreateReservaAsync_ShouldCreateReserva_WithCorrectInitialValues()
     {
@@ -38,7 +62,7 @@ public class ReservaServiceTests
         context.Customers.Add(new Customer { Id = 1, PublicId = Guid.Parse("00000000-0000-0000-0000-000000000001"), FullName = "Test" });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
         var request = new CreateReservaRequest
         {
             Name = "Test Trip",
@@ -78,7 +102,7 @@ public class ReservaServiceTests
         });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
 
         var result = await service.UpdateStatusAsync(1, EstadoReserva.Confirmed);
 
@@ -96,7 +120,7 @@ public class ReservaServiceTests
         context.Payments.Add(new Payment { Id = 1, ReservaId = 1, Amount = 100, Status = "Paid" });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Budget));
     }
@@ -130,7 +154,7 @@ public class ReservaServiceTests
                 RequireFullPaymentForOperativeStatus = true
             });
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Traveling));
     }
@@ -167,7 +191,7 @@ public class ReservaServiceTests
         });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object);
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
 
         var result = await service.UpdateStatusAsync(1, EstadoReserva.Traveling);
 

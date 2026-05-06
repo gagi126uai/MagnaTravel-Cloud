@@ -5,6 +5,7 @@ using System.Globalization;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;

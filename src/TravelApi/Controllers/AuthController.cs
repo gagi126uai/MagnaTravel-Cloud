@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.Contracts.Auth;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 
 namespace TravelApi.Controllers;
 

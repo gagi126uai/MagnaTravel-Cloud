@@ -64,7 +64,15 @@ public class Reserva : IHasPublicId
     public Lead? SourceLead { get; set; }
 
     public string? ResponsibleUserId { get; set; }
-    public ApplicationUser? ResponsibleUser { get; set; }
+
+    /// <summary>
+    /// Snapshot denormalizado del FullName del usuario responsable al momento de
+    /// asignacion. Se mantiene aca para evitar que Domain dependa de
+    /// ASP.NET Identity (ApplicationUser vive en Infrastructure). Patron consistente
+    /// con Voucher.CreatedByUserName.
+    /// </summary>
+    [MaxLength(200)]
+    public string? ResponsibleUserName { get; set; }
 
     [MaxLength(50)]
     public string? WhatsAppPhoneOverride { get; set; }
