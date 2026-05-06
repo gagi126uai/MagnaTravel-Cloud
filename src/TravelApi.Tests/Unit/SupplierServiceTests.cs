@@ -165,4 +165,335 @@ public class SupplierServiceTests
         Assert.Contains("vuelo", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await context.Suppliers.CountAsync());
     }
+
+    // ----------------------------------------------------------------------
+    // C29: guard de desactivacion (IsActive: true -> false) cuando el supplier
+    // tiene reservas activas (Status in {Budget, Confirmed, Traveling}) con al
+    // menos un booking tipado referenciandolo.
+    // ----------------------------------------------------------------------
+
+    private static async Task<(Supplier supplier, Reserva reserva)> SeedSupplierAndReservaWithStatusAsync(
+        AppDbContext context,
+        string status,
+        bool supplierIsActive = true)
+    {
+        var supplier = new Supplier { Name = "Proveedor C29", IsActive = supplierIsActive };
+        var reserva = new Reserva
+        {
+            NumeroReserva = $"F-2026-C29-{Guid.NewGuid():N}".Substring(0, 20),
+            Name = "Reserva C29",
+            Status = status
+        };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+        return (supplier, reserva);
+    }
+
+    private static Supplier BuildIncomingSupplier(Supplier existing, bool isActive, string? overrideName = null) => new()
+    {
+        Name = overrideName ?? existing.Name,
+        ContactName = existing.ContactName,
+        Email = existing.Email,
+        Phone = existing.Phone,
+        TaxId = existing.TaxId,
+        TaxCondition = existing.TaxCondition,
+        Address = existing.Address,
+        IsActive = isActive
+    };
+
+    [Fact]
+    public async Task UpdateSupplierAsync_DeactivateWithActiveHotelBooking_Throws()
+    {
+        await using var context = CreateContext();
+        var (supplier, reserva) = await SeedSupplierAndReservaWithStatusAsync(context, EstadoReserva.Budget);
+
+        context.HotelBookings.Add(new HotelBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel C29",
+            City = "Bariloche",
+            CheckIn = DateTime.UtcNow.AddDays(10),
+            CheckOut = DateTime.UtcNow.AddDays(12),
+            Nights = 2
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: false);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+        Assert.Contains("1 reservas activas", ex.Message);
+        Assert.Contains("no se puede desactivar", ex.Message);
+
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.NotNull(stored);
+        Assert.True(stored!.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_DeactivateWithActiveTransferBooking_Throws()
+    {
+        await using var context = CreateContext();
+        var (supplier, reserva) = await SeedSupplierAndReservaWithStatusAsync(context, EstadoReserva.Confirmed);
+
+        context.TransferBookings.Add(new TransferBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            PickupLocation = "EZE",
+            DropoffLocation = "Hotel",
+            PickupDateTime = DateTime.UtcNow.AddDays(10)
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: false);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+        Assert.Contains("1 reservas activas", ex.Message);
+
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.True(stored!.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_DeactivateWithActivePackageBooking_Throws()
+    {
+        await using var context = CreateContext();
+        var (supplier, reserva) = await SeedSupplierAndReservaWithStatusAsync(context, EstadoReserva.Traveling);
+
+        context.PackageBookings.Add(new PackageBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            PackageName = "Paquete C29",
+            Destination = "Bariloche",
+            StartDate = DateTime.UtcNow.AddDays(1),
+            EndDate = DateTime.UtcNow.AddDays(5),
+            Nights = 4
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: false);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+        Assert.Contains("1 reservas activas", ex.Message);
+
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.True(stored!.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_DeactivateWithActiveFlightSegment_Throws()
+    {
+        await using var context = CreateContext();
+        var (supplier, reserva) = await SeedSupplierAndReservaWithStatusAsync(context, EstadoReserva.Confirmed);
+
+        context.FlightSegments.Add(new FlightSegment
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            AirlineCode = "AR",
+            FlightNumber = "1234",
+            Origin = "EZE",
+            Destination = "BRC",
+            DepartureTime = DateTime.UtcNow.AddDays(10),
+            ArrivalTime = DateTime.UtcNow.AddDays(10).AddHours(2)
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: false);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+        Assert.Contains("1 reservas activas", ex.Message);
+
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.True(stored!.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_DeactivateWithMultipleBookingsSameReserva_CountsOnce()
+    {
+        await using var context = CreateContext();
+        var (supplier, reserva) = await SeedSupplierAndReservaWithStatusAsync(context, EstadoReserva.Confirmed);
+
+        // 1 reserva con 2 hoteles + 1 transfer del mismo proveedor.
+        context.HotelBookings.AddRange(
+            new HotelBooking
+            {
+                ReservaId = reserva.Id,
+                SupplierId = supplier.Id,
+                HotelName = "Hotel A",
+                City = "BRC",
+                CheckIn = DateTime.UtcNow.AddDays(10),
+                CheckOut = DateTime.UtcNow.AddDays(11),
+                Nights = 1
+            },
+            new HotelBooking
+            {
+                ReservaId = reserva.Id,
+                SupplierId = supplier.Id,
+                HotelName = "Hotel B",
+                City = "BRC",
+                CheckIn = DateTime.UtcNow.AddDays(12),
+                CheckOut = DateTime.UtcNow.AddDays(13),
+                Nights = 1
+            });
+        context.TransferBookings.Add(new TransferBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            PickupLocation = "EZE",
+            DropoffLocation = "Hotel A",
+            PickupDateTime = DateTime.UtcNow.AddDays(10)
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: false);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+        Assert.Contains("1 reservas activas", ex.Message);
+        Assert.DoesNotContain("3 reservas", ex.Message);
+        Assert.DoesNotContain("2 reservas", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_DeactivateWithBookingsInClosedReserva_Succeeds()
+    {
+        await using var context = CreateContext();
+        var supplier = new Supplier { Name = "Proveedor C29 closed" };
+        var closedReserva = new Reserva
+        {
+            NumeroReserva = "F-2026-C29-CL",
+            Name = "Reserva cerrada",
+            Status = EstadoReserva.Closed
+        };
+        var cancelledReserva = new Reserva
+        {
+            NumeroReserva = "F-2026-C29-CA",
+            Name = "Reserva cancelada",
+            Status = EstadoReserva.Cancelled
+        };
+        context.Suppliers.Add(supplier);
+        context.Reservas.AddRange(closedReserva, cancelledReserva);
+        await context.SaveChangesAsync();
+
+        context.HotelBookings.Add(new HotelBooking
+        {
+            ReservaId = closedReserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel cerrado",
+            City = "BRC",
+            CheckIn = DateTime.UtcNow.AddDays(-10),
+            CheckOut = DateTime.UtcNow.AddDays(-8),
+            Nights = 2
+        });
+        context.FlightSegments.Add(new FlightSegment
+        {
+            ReservaId = cancelledReserva.Id,
+            SupplierId = supplier.Id,
+            AirlineCode = "AR",
+            FlightNumber = "9999",
+            Origin = "EZE",
+            Destination = "BRC",
+            DepartureTime = DateTime.UtcNow.AddDays(-10),
+            ArrivalTime = DateTime.UtcNow.AddDays(-10).AddHours(2)
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: false);
+
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.False(result.IsActive);
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.False(stored!.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_DeactivateWithoutBookings_Succeeds()
+    {
+        await using var context = CreateContext();
+        var supplier = new Supplier { Name = "Proveedor sin bookings" };
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: false);
+
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.False(result.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_ReactivateWithActiveBookings_Succeeds()
+    {
+        await using var context = CreateContext();
+        var (supplier, reserva) = await SeedSupplierAndReservaWithStatusAsync(
+            context,
+            EstadoReserva.Confirmed,
+            supplierIsActive: false);
+
+        context.HotelBookings.Add(new HotelBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel reactivar",
+            City = "BRC",
+            CheckIn = DateTime.UtcNow.AddDays(10),
+            CheckOut = DateTime.UtcNow.AddDays(12),
+            Nights = 2
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+
+        // false -> true es transicion permitida sin chequeo, aunque haya reservas activas.
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.True(result.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_NoChangeInIsActive_NoGuardCheck()
+    {
+        await using var context = CreateContext();
+        var (supplier, reserva) = await SeedSupplierAndReservaWithStatusAsync(context, EstadoReserva.Confirmed);
+
+        // Reserva activa con booking que normalmente bloquearia desactivar,
+        // pero como NO se cambia IsActive el guard no debe dispararse.
+        context.HotelBookings.Add(new HotelBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel sin cambio",
+            City = "BRC",
+            CheckIn = DateTime.UtcNow.AddDays(10),
+            CheckOut = DateTime.UtcNow.AddDays(12),
+            Nights = 2
+        });
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: true, overrideName: "Nombre nuevo");
+
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.Equal("Nombre nuevo", result.Name);
+        Assert.True(result.IsActive);
+    }
 }

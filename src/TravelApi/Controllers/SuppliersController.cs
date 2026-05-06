@@ -82,6 +82,13 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            // C29: el guard de desactivacion (IsActive: true -> false con
+            // reservas activas) se reporta tal cual al cliente porque incluye
+            // el conteo de reservas, que la UI muestra al operador.
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]

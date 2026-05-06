@@ -95,6 +95,23 @@ public class SupplierService : ISupplierService
             throw new KeyNotFoundException("Proveedor no encontrado");
         }
 
+        // C29: guard de desactivacion. La regla de negocio operativa es "no se
+        // borran proveedores, se desactivan", pero hasta este hotfix se podia
+        // marcar IsActive=false aunque el proveedor tuviera reservas activas
+        // (Budget/Confirmed/Traveling), dejando estado inconsistente.
+        // Solo bloqueamos la transicion true -> false; reactivacion (false -> true)
+        // y updates que no tocan IsActive pasan sin chequeo.
+        var deactivating = existing.IsActive && !supplier.IsActive;
+        if (deactivating)
+        {
+            var activeReservasCount = await CountActiveReservasForSupplierAsync(id, cancellationToken);
+            if (activeReservasCount > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Tiene {activeReservasCount} reservas activas, no se puede desactivar.");
+            }
+        }
+
         existing.Name = supplier.Name;
         existing.ContactName = supplier.ContactName;
         existing.Email = supplier.Email;
@@ -106,6 +123,54 @@ public class SupplierService : ISupplierService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return existing;
+    }
+
+    /// <summary>
+    /// Cuenta cuantas RESERVAS DISTINTAS tienen al menos un booking tipado
+    /// (HotelBooking/TransferBooking/PackageBooking/FlightSegment) referenciando
+    /// al supplier indicado, filtrando por reservas en estado "activo" segun la
+    /// regla de C29 (Budget, Confirmed, Traveling). Closed/Cancelled NO cuentan.
+    ///
+    /// El servicio legacy ServicioReserva queda fuera a proposito (SupplierId
+    /// nullable, esta deprecado).
+    /// </summary>
+    private async Task<int> CountActiveReservasForSupplierAsync(int supplierId, CancellationToken cancellationToken)
+    {
+        var hotelReservaIds = _dbContext.HotelBookings
+            .AsNoTracking()
+            .Where(booking => booking.SupplierId == supplierId)
+            .Select(booking => booking.ReservaId);
+
+        var transferReservaIds = _dbContext.TransferBookings
+            .AsNoTracking()
+            .Where(booking => booking.SupplierId == supplierId)
+            .Select(booking => booking.ReservaId);
+
+        var packageReservaIds = _dbContext.PackageBookings
+            .AsNoTracking()
+            .Where(booking => booking.SupplierId == supplierId)
+            .Select(booking => booking.ReservaId);
+
+        var flightReservaIds = _dbContext.FlightSegments
+            .AsNoTracking()
+            .Where(segment => segment.SupplierId == supplierId)
+            .Select(segment => segment.ReservaId);
+
+        var bookedReservaIds = hotelReservaIds
+            .Concat(transferReservaIds)
+            .Concat(packageReservaIds)
+            .Concat(flightReservaIds);
+
+        return await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(reserva =>
+                (reserva.Status == EstadoReserva.Budget
+                    || reserva.Status == EstadoReserva.Confirmed
+                    || reserva.Status == EstadoReserva.Traveling)
+                && bookedReservaIds.Contains(reserva.Id))
+            .Select(reserva => reserva.Id)
+            .Distinct()
+            .CountAsync(cancellationToken);
     }
 
     public async Task DeleteSupplierAsync(int id, CancellationToken cancellationToken)
