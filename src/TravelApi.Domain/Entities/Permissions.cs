@@ -9,6 +9,11 @@ public static class Permissions
     public const string ReservasView = "reservas.view";
     public const string ReservasEdit = "reservas.edit";
     public const string ReservasDelete = "reservas.delete";
+    // B1.15: granularidad fina sobre reservas.
+    public const string ReservasViewAll = "reservas.view_all";
+    public const string ReservasCancel = "reservas.cancel";
+    public const string ReservasCancelWithPayment = "reservas.cancel_with_payment";
+    public const string ReservasDiscountAboveThreshold = "reservas.discount_above_threshold";
 
     // Vouchers
     public const string VouchersGenerate = "vouchers.generate";
@@ -29,10 +34,18 @@ public static class Permissions
     // Proveedores
     public const string ProveedoresView = "proveedores.view";
     public const string ProveedoresEdit = "proveedores.edit";
+    // B1.15: editar datos fiscales sensibles del proveedor (CUIT, condicion ARCA, etc.).
+    public const string ProveedoresEditFiscal = "proveedores.edit_fiscal";
 
     // Cobranzas y Facturación
     public const string CobranzasView = "cobranzas.view";
     public const string CobranzasEdit = "cobranzas.edit";
+    // B1.15: granularidad fina sobre cobranzas + facturacion.
+    public const string CobranzasViewAll = "cobranzas.view_all";
+    public const string CobranzasAnnul = "cobranzas.annul";
+    public const string CobranzasInvoice = "cobranzas.invoice";
+    public const string CobranzasInvoiceAnnul = "cobranzas.invoice_annul";
+    public const string CobranzasSeeCost = "cobranzas.see_cost";
 
     // Caja
     public const string CajaView = "caja.view";
@@ -67,12 +80,20 @@ public static class Permissions
     /// </summary>
     public static readonly Dictionary<string, string[]> AllByModule = new()
     {
-        ["Reservas"] = new[] { ReservasView, ReservasEdit, ReservasDelete },
+        ["Reservas"] = new[]
+        {
+            ReservasView, ReservasEdit, ReservasDelete,
+            ReservasViewAll, ReservasCancel, ReservasCancelWithPayment, ReservasDiscountAboveThreshold,
+        },
         ["Vouchers"] = new[] { VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersAuthorizeException, VouchersRevoke },
         ["Mensajes"] = new[] { MessagesView, MessagesSend },
         ["Clientes"] = new[] { ClientesView, ClientesEdit },
-        ["Proveedores"] = new[] { ProveedoresView, ProveedoresEdit },
-        ["Cobranzas"] = new[] { CobranzasView, CobranzasEdit },
+        ["Proveedores"] = new[] { ProveedoresView, ProveedoresEdit, ProveedoresEditFiscal },
+        ["Cobranzas"] = new[]
+        {
+            CobranzasView, CobranzasEdit,
+            CobranzasViewAll, CobranzasAnnul, CobranzasInvoice, CobranzasInvoiceAnnul, CobranzasSeeCost,
+        },
         ["Caja"] = new[] { CajaView, CajaEdit },
         ["Reportes"] = new[] { ReportesView },
         ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip },
@@ -91,11 +112,15 @@ public static class Permissions
     public static readonly string[] DefaultColaborador = new[]
     {
         ReservasView, ReservasEdit,
+        // B1.15: el Colaborador opera reservas globalmente, puede cancelar (incluso con pagos)
+        // y opera cobranzas/facturacion completas. NO discount_above_threshold (Admin-only por seguridad).
+        ReservasViewAll, ReservasCancel, ReservasCancelWithPayment,
         VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersRevoke,
         MessagesView, MessagesSend,
         ClientesView, ClientesEdit,
-        ProveedoresView,
+        ProveedoresView, ProveedoresEditFiscal,
         CobranzasView,
+        CobranzasViewAll, CobranzasAnnul, CobranzasInvoice, CobranzasInvoiceAnnul, CobranzasSeeCost,
         CajaView,
         TarifarioView,
         PaquetesView,
@@ -105,11 +130,14 @@ public static class Permissions
     public static readonly string[] DefaultVendedor = new[]
     {
         ReservasView, ReservasEdit,
+        // B1.15 (Decisión 1 de Gaston): el Vendedor SI puede cancelar reservas propias y SI puede facturar.
+        // NO permisos *_all, *_annul, see_cost, edit_fiscal, discount_above_threshold.
+        ReservasCancel,
         VouchersGenerate, VouchersSend,
         MessagesView, MessagesSend,
         ClientesView, ClientesEdit,
         CrmView, CrmEdit,
-        CobranzasView,
+        CobranzasView, CobranzasInvoice,
         TarifarioView,
         PaquetesView,
     };

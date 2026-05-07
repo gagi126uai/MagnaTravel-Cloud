@@ -28,6 +28,13 @@ public class Payment : IHasPublicId
     public string EntryType { get; set; } = PaymentEntryTypes.Payment;
     public bool AffectsCash { get; set; } = true;
 
+    // B1.15 Fase 1: trazabilidad de quien y cuando se registro el pago.
+    // CreatedAt es NOT NULL (default DateTime.UtcNow / CURRENT_TIMESTAMP).
+    // CreatedBy* es nullable para soportar backfill de historicos.
+    public string? CreatedByUserId { get; set; }
+    public string? CreatedByUserName { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
     // Soft Delete
     public bool IsDeleted { get; set; } = false;
     public DateTime? DeletedAt { get; set; }

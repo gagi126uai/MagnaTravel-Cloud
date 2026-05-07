@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using MassTransit;
 using Minio.AspNetCore;
 using Microsoft.AspNetCore.Identity;
@@ -24,6 +25,8 @@ using TravelApi.Filters;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Contracts.Auth;
 
+using TravelApi.Authorization;
+using TravelApi.Infrastructure.Authorization;
 using TravelApi.Infrastructure.Logging;
 using TravelApi.Hubs;
 using TravelApi.Services;
@@ -276,6 +279,20 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
 });
+
+// B1.15 Fase 1: infra de autorizacion por permisos. Los attributes existen
+// pero NINGUN endpoint los usa todavia (la migracion de controllers es Fase 2).
+// FallbackPolicy/DefaultPolicy se mantienen sin cambios.
+//
+// Scopes:
+//  - PolicyProvider: Singleton (no depende de servicios scoped).
+//  - Handler: Scoped (consume IUserPermissionResolver que es Scoped por DbContext).
+//  - Resolvers: Scoped (consumen AppDbContext y UserManager).
+builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionAuthorizationPolicyProvider>();
+builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+builder.Services.AddScoped<IUserPermissionResolver, UserPermissionResolver>();
+builder.Services.AddScoped<IOwnershipResolver, OwnershipResolver>();
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;

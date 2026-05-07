@@ -37,6 +37,12 @@ public class Invoice : IHasPublicId
     public string? ForcedByUserName { get; set; }
     public DateTime? ForcedAt { get; set; }
 
+    // B1.15 Fase 1: trazabilidad de quien y cuando se emitio la factura.
+    // Nullable para soportar backfill de historicos (Name="(legacy)", Id=null).
+    public string? IssuedByUserId { get; set; }
+    public string? IssuedByUserName { get; set; }
+    public DateTime? IssuedAt { get; set; }
+
     [Column(TypeName = "decimal(18,2)")]
     public decimal OutstandingBalanceAtIssuance { get; set; }
 

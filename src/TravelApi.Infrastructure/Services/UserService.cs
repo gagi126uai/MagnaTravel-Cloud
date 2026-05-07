@@ -13,15 +13,20 @@ public class UserService : IUserService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
     private readonly AppDbContext _dbContext;
+    private readonly IUserPermissionResolver? _userPermissionResolver;
 
     public UserService(
         UserManager<ApplicationUser> userManager,
         RoleManager<IdentityRole> roleManager,
-        AppDbContext dbContext)
+        AppDbContext dbContext,
+        IUserPermissionResolver? userPermissionResolver = null)
     {
         _userManager = userManager;
         _roleManager = roleManager;
         _dbContext = dbContext;
+        // Optional para no romper tests existentes que construyen UserService a mano.
+        // El resolver es scoped y siempre se inyecta desde DI en runtime.
+        _userPermissionResolver = userPermissionResolver;
     }
 
     public async Task<IEnumerable<UserSummaryResponse>> GetUsersAsync()
@@ -162,12 +167,16 @@ public class UserService : IUserService
             if (rolesChanged)
             {
                 await RevokeAllRefreshTokensAsync(user.Id);
+                // B1.15 Fase 1: invalidar cache de permisos al cambiar de rol.
+                _userPermissionResolver?.Invalidate(user.Id);
             }
         }
 
         if (wasActive && !request.IsActive)
         {
             await RevokeAllRefreshTokensAsync(user.Id);
+            // B1.15 Fase 1: invalidar cache al desactivar usuario.
+            _userPermissionResolver?.Invalidate(user.Id);
         }
 
         var roles = await _userManager.GetRolesAsync(user);
@@ -267,6 +276,17 @@ public class UserService : IUserService
         }
 
         await _dbContext.SaveChangesAsync();
+
+        // B1.15 Fase 1: cuando cambian los permisos de un rol, invalidar el cache
+        // de permisos y revocar los refresh tokens de TODOS los usuarios con ese
+        // rol. Esto evita ventanas con permisos viejos en sesiones activas.
+        var usersInRole = await _userManager.GetUsersInRoleAsync(roleName);
+        foreach (var user in usersInRole)
+        {
+            await RevokeAllRefreshTokensAsync(user.Id);
+            _userPermissionResolver?.Invalidate(user.Id);
+        }
+
         return new UserServiceResult(true);
     }
 

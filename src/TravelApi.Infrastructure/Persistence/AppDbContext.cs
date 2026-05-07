@@ -506,6 +506,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithOne(r => r.Payment)
                   .HasForeignKey<PaymentReceipt>(r => r.PaymentId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            // B1.15 Fase 1: trazabilidad de quien creo el pago.
+            entity.Property(p => p.CreatedByUserId).HasMaxLength(450);
+            entity.Property(p => p.CreatedByUserName).HasMaxLength(200);
+
+            entity.HasOne<ApplicationUser>()
+                  .WithMany()
+                  .HasForeignKey(p => p.CreatedByUserId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // FlightSegment
@@ -550,6 +559,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(i => i.ForcedByUserName).HasMaxLength(200);
             entity.Property(i => i.OutstandingBalanceAtIssuance).HasPrecision(18, 2);
             entity.HasIndex(i => i.CreatedAt);
+
+            // B1.15 Fase 1: trazabilidad de quien emitio la factura.
+            entity.Property(i => i.IssuedByUserId).HasMaxLength(450);
+            entity.Property(i => i.IssuedByUserName).HasMaxLength(200);
+
+            entity.HasOne<ApplicationUser>()
+                  .WithMany()
+                  .HasForeignKey(i => i.IssuedByUserId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // InvoiceItem (Singular table from Program.cs)
