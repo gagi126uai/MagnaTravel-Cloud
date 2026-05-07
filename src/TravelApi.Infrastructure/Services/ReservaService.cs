@@ -2,6 +2,7 @@ using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Data;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Contracts.Reservations;
@@ -20,17 +21,20 @@ public class ReservaService : IReservaService
     private readonly IMapper _mapper;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly ILogger<ReservaService> _logger;
 
     public ReservaService(
         AppDbContext context,
         IMapper mapper,
         IOperationalFinanceSettingsService operationalFinanceSettingsService,
-        UserManager<ApplicationUser> userManager)
+        UserManager<ApplicationUser> userManager,
+        ILogger<ReservaService> logger)
     {
         _context = context;
         _mapper = mapper;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
         _userManager = userManager;
+        _logger = logger;
     }
 
     public async Task<ReservaDto> GetReservaByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
@@ -1422,6 +1426,19 @@ public class ReservaService : IReservaService
 
     public async Task DeleteReservaAsync(int id)
     {
+        // Pre-flight guard antes de abrir transaccion: si esta bloqueado, evitamos
+        // tocar la BD. Las consultas son AsNoTracking, asi que no interfieren con
+        // el SaveChanges posterior.
+        var blockReason = await DeleteGuards.GetReservaDeleteBlockReasonAsync(_context, id);
+        if (blockReason != null)
+        {
+            // Information: rechazo benigno por estado/contenido. No hay riesgo fiscal.
+            _logger.LogInformation(
+                "DeleteReservaAsync rejected. ReservaId={ReservaId}. Reason={Reason}",
+                id, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
+
         var strategy = _context.Database.CreateExecutionStrategy();
 
         await strategy.ExecuteAsync(async () =>
@@ -1430,7 +1447,6 @@ public class ReservaService : IReservaService
             try
             {
                 var file = await _context.Reservas
-                    .Include(f => f.Payments)
                     .Include(f => f.Servicios)
                     .Include(f => f.Passengers)
                     .Include(f => f.FlightSegments)
@@ -1441,28 +1457,6 @@ public class ReservaService : IReservaService
 
                 if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-                if (file.Status != EstadoReserva.Confirmed && file.Status != EstadoReserva.Budget)
-                {
-                    throw new InvalidOperationException("Solo se pueden eliminar reservas en estado Presupuesto o Reservado. Para reservas en otro estado, archivala (Cancelado).");
-                }
-
-                if (file.Payments.Any(payment => !payment.IsDeleted))
-                {
-                    throw new InvalidOperationException("No se puede eliminar una Reserva con pagos registrados. Elimine los pagos primero.");
-                }
-
-                var hasIssuedVoucher = await _context.Vouchers.AnyAsync(v => v.ReservaId == id && v.Status == "Issued");
-                if (hasIssuedVoucher)
-                {
-                    throw new InvalidOperationException("No se puede eliminar una Reserva con vouchers emitidos. Anula los vouchers primero o cambia el estado a Cancelado.");
-                }
-
-                var hasInvoiceWithCae = await _context.Invoices.AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE));
-                if (hasInvoiceWithCae)
-                {
-                    throw new InvalidOperationException("No se puede eliminar una Reserva con facturas AFIP emitidas (CAE asignado). Marca la Reserva como Cancelada.");
-                }
-
                 if (file.Servicios.Any()) _context.Servicios.RemoveRange(file.Servicios);
                 if (file.Passengers.Any()) _context.Passengers.RemoveRange(file.Passengers);
                 if (file.FlightSegments.Any()) _context.FlightSegments.RemoveRange(file.FlightSegments);
@@ -1471,7 +1465,7 @@ public class ReservaService : IReservaService
                 if (file.PackageBookings.Any()) _context.PackageBookings.RemoveRange(file.PackageBookings);
 
                 _context.Reservas.Remove(file);
-                
+
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
             }

@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Interfaces;
@@ -62,7 +63,7 @@ public class ReservaServiceTests
         context.Customers.Add(new Customer { Id = 1, PublicId = Guid.Parse("00000000-0000-0000-0000-000000000001"), FullName = "Test" });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
         var request = new CreateReservaRequest
         {
             Name = "Test Trip",
@@ -102,7 +103,7 @@ public class ReservaServiceTests
         });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
         var result = await service.UpdateStatusAsync(1, EstadoReserva.Confirmed);
 
@@ -120,7 +121,7 @@ public class ReservaServiceTests
         context.Payments.Add(new Payment { Id = 1, ReservaId = 1, Amount = 100, Status = "Paid" });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Budget));
     }
@@ -154,7 +155,7 @@ public class ReservaServiceTests
                 RequireFullPaymentForOperativeStatus = true
             });
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Traveling));
     }
@@ -191,7 +192,7 @@ public class ReservaServiceTests
         });
         await context.SaveChangesAsync();
 
-        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
         var result = await service.UpdateStatusAsync(1, EstadoReserva.Traveling);
 

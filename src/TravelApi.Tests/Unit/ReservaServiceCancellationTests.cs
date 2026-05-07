@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -61,7 +62,7 @@ public class ReservaServiceCancellationTests
     }
 
     private ReservaService BuildService(AppDbContext context)
-        => new(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager());
+        => new(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
     [Fact]
     public async Task UpdateStatusAsync_CancelFromBudget_IsAllowed()

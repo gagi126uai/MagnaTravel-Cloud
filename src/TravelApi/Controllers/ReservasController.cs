@@ -667,7 +667,9 @@ public class ReservasController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // 409 Conflict: el recurso existe pero su estado actual impide la operacion
+            // (estado de la reserva no es Budget, hay pagos, vouchers o facturas).
+            return Conflict(new { message = ex.Message });
         }
         catch (Exception ex)
         {
