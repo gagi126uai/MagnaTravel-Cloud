@@ -1300,11 +1300,22 @@ public class ReservaService : IReservaService
     {
         var payment = await _context.Payments.FindAsync(paymentId);
         if (payment == null) throw new KeyNotFoundException("Pago no encontrado");
-        
+
         if (payment.ReservaId != reservaId) throw new ArgumentException("El pago no corresponde a la Reserva");
 
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+
+        // C28: mismo guard que PaymentService.DeletePaymentAsync — este es el path
+        // legacy "via reserva nested" (ReservasController.DeletePayment).
+        var blockReason = await DeleteGuards.GetPaymentDeleteBlockReasonAsync(_context, paymentId);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync (legacy via reserva) rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
+                paymentId, reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
 
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;

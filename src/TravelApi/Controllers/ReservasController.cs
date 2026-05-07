@@ -581,6 +581,11 @@ public class ReservasController : ControllerBase
         {
             return BadRequest(new { message = "No se pudo eliminar el pago." });
         }
+        catch (InvalidOperationException ex)
+        {
+            // 409 Conflict: el pago tiene recibo o factura asociada (C28).
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error deleting payment {PaymentId} for reserva {ReservaId}", paymentPublicIdOrLegacyId, publicIdOrLegacyId);

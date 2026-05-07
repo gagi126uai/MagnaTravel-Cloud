@@ -1,6 +1,7 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -8,6 +9,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -17,6 +19,7 @@ public class PaymentService : IPaymentService
     private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly IMapper _mapper;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
+    private readonly ILogger<PaymentService> _logger;
 
     private static readonly string[] ActiveCollectionStatuses =
     {
@@ -28,12 +31,14 @@ public class PaymentService : IPaymentService
         AppDbContext dbContext,
         IEntityReferenceResolver entityReferenceResolver,
         IMapper mapper,
-        IOperationalFinanceSettingsService operationalFinanceSettingsService)
+        IOperationalFinanceSettingsService operationalFinanceSettingsService,
+        ILogger<PaymentService> logger)
     {
         _dbContext = dbContext;
         _entityReferenceResolver = entityReferenceResolver;
         _mapper = mapper;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
+        _logger = logger;
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
@@ -624,6 +629,18 @@ public class PaymentService : IPaymentService
 
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
+
+        // C28: bloquear si tiene Receipt (Issued/Voided) o RelatedInvoiceId.
+        // Voided tambien bloquea: el recibo ocupa numeracion correlativa y debe
+        // preservarse para auditoria — ARCA + Contable 2026-05-06.
+        var blockReason = await DeleteGuards.GetPaymentDeleteBlockReasonAsync(_dbContext, paymentId, cancellationToken);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
+                paymentId, payment.ReservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
 
         // Soft delete
         payment.IsDeleted = true;

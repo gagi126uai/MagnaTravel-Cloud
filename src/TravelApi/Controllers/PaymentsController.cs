@@ -172,6 +172,12 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            // 409 Conflict: el pago tiene un recibo (Issued/Voided) o esta vinculado
+            // a una factura. Antes de C28 esto caia a 500 sin guard.
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());

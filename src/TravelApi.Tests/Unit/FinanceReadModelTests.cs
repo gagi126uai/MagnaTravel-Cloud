@@ -6,6 +6,7 @@ using Hangfire;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -81,7 +82,7 @@ public class FinanceReadModelTests
                 UpcomingUnpaidReservationAlertDays = 7
             });
 
-        var service = new PaymentService(context, null!, Mock.Of<IMapper>(), settingsMock.Object);
+        var service = new PaymentService(context, null!, Mock.Of<IMapper>(), settingsMock.Object, NullLogger<PaymentService>.Instance);
 
         var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
 

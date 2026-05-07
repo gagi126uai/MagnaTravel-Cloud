@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
@@ -53,7 +54,8 @@ public class PaymentServiceRegistrationTests
             context,
             new EntityReferenceResolver(context),
             _mapper,
-            _settingsServiceMock.Object);
+            _settingsServiceMock.Object,
+            NullLogger<PaymentService>.Instance);
     }
 
     private static async Task<Reserva> SeedConfirmedReservaAsync(
