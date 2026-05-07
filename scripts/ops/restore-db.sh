@@ -78,7 +78,7 @@ if [ "$RESTORE_TARGET" = "primary" ]; then
 
   target_db="$POSTGRES_DB"
   echo "Stopping app services before primary restore..."
-  docker compose stop api worker reservas-service >/dev/null
+  docker compose stop api worker >/dev/null
 else
   target_db="$RESTORE_SHADOW_DB"
   echo "Preparing shadow database: $target_db"
@@ -105,5 +105,5 @@ docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$POSTGRES_CONTAINER" \
 
 echo "Restore completed in database: $target_db"
 if [ "$RESTORE_TARGET" = "primary" ]; then
-  echo "Start services again with: docker compose up -d api worker reservas-service"
+  echo "Start services again with: docker compose up -d api worker"
 fi

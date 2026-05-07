@@ -24,7 +24,6 @@ Este repo queda preparado para levantar todo con Docker Compose:
 - `SECURITY_ENCRYPTION_KEY`
 - `WHATSAPP_WEBHOOK_SECRET`
 - `METRICS_TOKEN`
-- `RESERVATIONS_INTERNAL_TOKEN`
 - `RABBITMQ_PASSWORD`
 - `MINIO_ROOT_USER`
 - `MINIO_ROOT_PASSWORD`
@@ -39,7 +38,7 @@ git pull
 bash scripts/ops/deploy.sh
 ```
 
-Si se usa `docker compose up -d --build` manualmente, las migraciones se aplican automaticamente: `api`, `worker` y `reservas-service` declaran `depends_on: migrate (service_completed_successfully)`, asi que `up` espera a que el job `migrate` termine con exit 0 antes de levantar los servicios.
+Si se usa `docker compose up -d --build` manualmente, las migraciones se aplican automaticamente: `api` y `worker` declaran `depends_on: migrate (service_completed_successfully)`, asi que `up` espera a que el job `migrate` termine con exit 0 antes de levantar los servicios.
 
 ```bash
 docker compose up -d --build
@@ -59,7 +58,7 @@ docker compose run --rm migrate
 - `postgres-backup` genera un backup diario por fecha en `backups/postgres/daily` y copia semanal en `backups/postgres/weekly` los domingos.
 - El frontend espera al backend saludable antes de iniciar.
 - El bot espera al backend saludable antes de iniciar.
-- Los healthchecks quedan definidos para `db`, `api`, `worker`, `web`, `reservas-service`, `minio` y `whatsapp-bot`.
+- Los healthchecks quedan definidos para `db`, `api`, `worker`, `web`, `minio` y `whatsapp-bot`.
 
 ### Primer arranque del bot
 
@@ -124,10 +123,10 @@ bash scripts/ops/docker-cleanup.sh --execute
 
 Los logs de contenedores quedan rotados por Compose con `DOCKER_LOG_MAX_SIZE` y `DOCKER_LOG_MAX_FILE`.
 
-Si Vouchers o Mensajes devuelven 500 desde `reservas-service`, revisar primero:
+Si Vouchers o Mensajes devuelven 500, revisar primero:
 
 ```bash
 docker compose run --rm migrate
-docker compose logs --tail=200 reservas-service
-docker compose exec -T reservas-service curl -fsS http://127.0.0.1:8080/health/ready
+docker compose logs --tail=200 api
+docker compose exec -T api curl -fsS http://127.0.0.1:8080/health/ready
 ```

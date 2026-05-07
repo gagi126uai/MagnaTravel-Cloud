@@ -108,8 +108,6 @@ services:
       Cors__Origins__0: ${WEB_ORIGIN:-http://localhost:3000}
       WhatsApp__WebhookSecret: ${WHATSAPP_WEBHOOK_SECRET:?WHATSAPP_WEBHOOK_SECRET is required}
       WhatsApp__BotUrl: http://whatsapp-bot:3001
-      Services__Reservations__BaseUrl: http://reservas-service:8080
-      Services__Reservations__InternalToken: ${RESERVATIONS_INTERNAL_TOKEN:?RESERVATIONS_INTERNAL_TOKEN is required}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
@@ -192,8 +190,6 @@ services:
       Cors__Origins__0: ${WEB_ORIGIN:-http://localhost:3000}
       WhatsApp__WebhookSecret: ${WHATSAPP_WEBHOOK_SECRET:?WHATSAPP_WEBHOOK_SECRET is required}
       WhatsApp__BotUrl: http://whatsapp-bot:3001
-      Services__Reservations__BaseUrl: http://reservas-service:8080
-      Services__Reservations__InternalToken: ${RESERVATIONS_INTERNAL_TOKEN:?RESERVATIONS_INTERNAL_TOKEN is required}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
@@ -204,6 +200,7 @@ services:
       Hangfire__ServerEnabled: "true"
       Hangfire__SchedulerEnabled: "true"
       HostedServices__RealtimeEnabled: "false"
+      MassTransit__Enabled: "true"
       Metrics__Token: ${METRICS_TOKEN:?METRICS_TOKEN is required}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
@@ -269,43 +266,6 @@ services:
       start_period: 30s
     networks:
       - frontend
-
-  reservas-service:
-    build:
-      context: .
-      dockerfile: src/TravelReservations.Api/Dockerfile
-    container_name: travel_reservas_service
-    restart: unless-stopped
-    logging: *default-logging
-    depends_on:
-      db:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY:?SECURITY_ENCRYPTION_KEY is required}
-      Services__Reservations__InternalToken: ${RESERVATIONS_INTERNAL_TOKEN:?RESERVATIONS_INTERNAL_TOKEN is required}
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 40s
-    expose:
-      - "8080"
-    networks:
-      - backend
 
   rabbitmq:
     image: rabbitmq:3-management

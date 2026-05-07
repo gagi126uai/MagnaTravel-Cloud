@@ -34,7 +34,6 @@ docker compose ps
 require_health travel_db
 require_health travel_api
 require_health travel_worker
-require_health travel_reservas_service
 require_health travel_whatsapp_bot
 require_health travel_minio
 require_health travel_postgres_backup
@@ -44,9 +43,6 @@ docker compose exec -T api curl -fsS http://127.0.0.1:8080/health/ready >/dev/nu
 
 echo "Checking worker readiness..."
 docker compose exec -T worker curl -fsS http://127.0.0.1:8080/health/ready >/dev/null
-
-echo "Checking reservations service readiness..."
-docker compose exec -T reservas-service curl -fsS http://127.0.0.1:8080/health/ready >/dev/null
 
 if ! is_placeholder "${METRICS_TOKEN:-}"; then
   echo "Checking protected internal metrics..."

@@ -38,7 +38,6 @@ required_secrets=(
   SECURITY_ENCRYPTION_KEY
   WHATSAPP_WEBHOOK_SECRET
   METRICS_TOKEN
-  RESERVATIONS_INTERNAL_TOKEN
   RABBITMQ_PASSWORD
   MINIO_ROOT_USER
   MINIO_ROOT_PASSWORD
@@ -53,7 +52,7 @@ echo "Building application images..."
 # en docker-compose.yml tiene su propio bloque build: y por lo tanto su propia
 # imagen. Si lo omitis, migrate corre con codigo viejo y no aplica las migraciones
 # nuevas — los APIs quedan en /health/ready 503 (pending migration) para siempre.
-docker compose build migrate api worker reservas-service web whatsapp-bot
+docker compose build migrate api worker web whatsapp-bot
 
 echo "Starting infrastructure..."
 docker compose up -d db rabbitmq minio
@@ -61,7 +60,7 @@ docker compose up -d db rabbitmq minio
 echo "Running one-shot database migrations (waiting for completion)..."
 # Importante: NO usar `docker compose run --rm migrate` aqui — eso crea un
 # container con nombre random que no satisface el `depends_on: migrate
-# (service_completed_successfully)` que tienen api/worker/reservas-service en
+# (service_completed_successfully)` que tienen api/worker en
 # docker-compose.yml. Hay que usar el container `travel_migrate` real.
 docker compose up -d --force-recreate --no-deps migrate
 echo "Waiting for migrate container to finish..."
@@ -74,7 +73,9 @@ fi
 echo "Migrations applied successfully."
 
 echo "Starting application services..."
-docker compose up -d api worker reservas-service web whatsapp-bot postgres-backup
+# --remove-orphans: limpia containers de servicios que ya no existen en el compose
+# (ej. travel_reservas_service tras Fase A C17). Seguro: no toca volumenes ni imagenes.
+docker compose up -d --remove-orphans api worker web whatsapp-bot postgres-backup
 
 echo "Checking production readiness..."
 bash scripts/ops/check-prod.sh

@@ -12,7 +12,6 @@
 # El sufijo .log lo cubre el patron de arriba; los .txt requieren reglas explicitas.
 **/logs/*.txt
 src/TravelApi/logs/
-src/TravelReservations.Api/logs/
 src/WhatsAppBot/logs/
 *.db
 *.db-shm

@@ -28,7 +28,6 @@ using TravelApi.Infrastructure.Logging;
 using TravelApi.Hubs;
 using TravelApi.Services;
 using TravelApi.Errors;
-using TravelApi.Infrastructure.Services.ReservationsServiceProxy;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -57,8 +56,6 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
     builder.Host.UseSerilog(); // Use Serilog for logging
-
-    static string AppendTrailingSlash(string value) => value.EndsWith("/") ? value : $"{value}/";
 
     static bool IsPlaceholderSecret(string? value)
     {
@@ -147,6 +144,47 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     });
 });
 
+// C17: MassTransit + EntityFramework Outbox.
+// Migrado desde el ex sub-servicio TravelReservations.Api (eliminado en Fase A C17).
+// Las tablas Inbox/Outbox ya estan declaradas en AppDbContext.OnModelCreating.
+//
+// Gating por env var MassTransit__Enabled:
+//  - docker-compose `worker` (y opcionalmente `api`) deben setearla en "true".
+//  - Tests / desarrollo local sin Rabbit la dejan sin setear -> bus NO se registra
+//    y el host levanta normalmente. Esto evita que el smoke test intente abrir
+//    una conexion a RabbitMQ.
+//
+// Hoy no hay consumers ni publishers en el codigo (verificado: cero IConsumer,
+// cero Publish/Send). El bus queda registrado para no perder la infra que ya
+// existia en el sub-servicio, sin habilitar comportamiento nuevo.
+var massTransitEnabled = builder.Configuration.GetValue("MassTransit:Enabled", false);
+if (massTransitEnabled)
+{
+    builder.Services.AddMassTransit(x =>
+    {
+        x.AddEntityFrameworkOutbox<AppDbContext>(o =>
+        {
+            o.UsePostgres();
+            o.UseBusOutbox();
+        });
+
+        x.UsingRabbitMq((context, cfg) =>
+        {
+            var host = builder.Configuration["RABBITMQ_HOST"] ?? "localhost";
+            var user = builder.Configuration["RABBITMQ_USER"] ?? "guest";
+            var pass = builder.Configuration["RABBITMQ_PASSWORD"] ?? "guest";
+
+            cfg.Host(host, "/", h =>
+            {
+                h.Username(user);
+                h.Password(pass);
+            });
+
+            cfg.ConfigureEndpoints(context);
+        });
+    });
+}
+
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
     {
         options.Password.RequireDigit = true;
@@ -164,7 +202,6 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddDefaultTokenProviders();
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
-builder.Services.Configure<ReservationsServiceOptions>(builder.Configuration.GetSection(ReservationsServiceOptions.SectionName));
 
 builder.Services.AddAuthentication(options =>
     {
@@ -399,66 +436,14 @@ builder.Services.AddScoped<IQuoteService, QuoteService>();
 builder.Services.AddScoped<ILeadService, LeadService>();
 builder.Services.AddScoped<IWhatsAppDeliveryService, WhatsAppDeliveryService>();
 
-var reservationsServiceBaseUrl = builder.Configuration[$"{ReservationsServiceOptions.SectionName}:BaseUrl"];
-var reservationsProxyEnabled = !string.IsNullOrWhiteSpace(reservationsServiceBaseUrl);
-var reservationsInternalToken = builder.Configuration[$"{ReservationsServiceOptions.SectionName}:InternalToken"];
-
-if (reservationsProxyEnabled)
-{
-    if (IsPlaceholderSecret(reservationsInternalToken))
-    {
-        throw new InvalidOperationException(
-            "Reservations proxy startup blocked because Services:Reservations:InternalToken is missing or still uses a placeholder value.");
-    }
-
-    builder.Services.AddTransient<ReservationsServiceAuthHandler>();
-
-    builder.Services.AddHttpClient<ReservaServiceHttpProxy>(client =>
-    {
-        client.BaseAddress = new Uri(AppendTrailingSlash(reservationsServiceBaseUrl!));
-    }).AddHttpMessageHandler<ReservationsServiceAuthHandler>();
-
-    builder.Services.AddHttpClient<PaymentServiceHttpProxy>(client =>
-    {
-        client.BaseAddress = new Uri(AppendTrailingSlash(reservationsServiceBaseUrl!));
-    }).AddHttpMessageHandler<ReservationsServiceAuthHandler>();
-
-    builder.Services.AddHttpClient<BookingServiceHttpProxy>(client =>
-    {
-        client.BaseAddress = new Uri(AppendTrailingSlash(reservationsServiceBaseUrl!));
-    }).AddHttpMessageHandler<ReservationsServiceAuthHandler>();
-
-    builder.Services.AddHttpClient<TimelineServiceHttpProxy>(client =>
-    {
-        client.BaseAddress = new Uri(AppendTrailingSlash(reservationsServiceBaseUrl!));
-    }).AddHttpMessageHandler<ReservationsServiceAuthHandler>();
-
-    builder.Services.AddHttpClient<VoucherServiceHttpProxy>(client =>
-    {
-        client.BaseAddress = new Uri(AppendTrailingSlash(reservationsServiceBaseUrl!));
-    }).AddHttpMessageHandler<ReservationsServiceAuthHandler>();
-
-    builder.Services.AddHttpClient<AttachmentServiceHttpProxy>(client =>
-    {
-        client.BaseAddress = new Uri(AppendTrailingSlash(reservationsServiceBaseUrl!));
-    }).AddHttpMessageHandler<ReservationsServiceAuthHandler>();
-
-    builder.Services.AddScoped<IReservaService>(sp => sp.GetRequiredService<ReservaServiceHttpProxy>());
-    builder.Services.AddScoped<IPaymentService>(sp => sp.GetRequiredService<PaymentServiceHttpProxy>());
-    builder.Services.AddScoped<IBookingService>(sp => sp.GetRequiredService<BookingServiceHttpProxy>());
-    builder.Services.AddScoped<ITimelineService>(sp => sp.GetRequiredService<TimelineServiceHttpProxy>());
-    builder.Services.AddScoped<IVoucherService>(sp => sp.GetRequiredService<VoucherServiceHttpProxy>());
-    builder.Services.AddScoped<IAttachmentService>(sp => sp.GetRequiredService<AttachmentServiceHttpProxy>());
-}
-else
-{
-    builder.Services.AddScoped<IReservaService, ReservaService>();
-    builder.Services.AddScoped<IPaymentService, PaymentService>();
-    builder.Services.AddScoped<IBookingService, BookingService>();
-    builder.Services.AddScoped<ITimelineService, TimelineService>();
-    builder.Services.AddScoped<IVoucherService, VoucherService>();
-    builder.Services.AddScoped<IAttachmentService, AttachmentService>();
-}
+// C17 Fase A: el sub-servicio TravelReservations.Api fue eliminado.
+// Las dependencias de reservas se resuelven siempre in-process contra AppDbContext.
+builder.Services.AddScoped<IReservaService, ReservaService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<ITimelineService, TimelineService>();
+builder.Services.AddScoped<IVoucherService, VoucherService>();
+builder.Services.AddScoped<IAttachmentService, AttachmentService>();
 
 builder.Services.AddMinio(options =>
 {
