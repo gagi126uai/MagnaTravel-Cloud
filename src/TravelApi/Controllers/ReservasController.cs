@@ -224,6 +224,7 @@ public class ReservasController : ControllerBase
     }
 
     [HttpDelete("{publicIdOrLegacyId}/services/{servicePublicIdOrLegacyId}")]
+    [Authorize(Roles = "Admin")]
     public Task<IActionResult> RemoveNestedService(
         string publicIdOrLegacyId,
         string servicePublicIdOrLegacyId,
