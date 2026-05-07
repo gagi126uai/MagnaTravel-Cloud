@@ -1,6 +1,7 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -22,6 +23,7 @@ public class BookingService : IBookingService
     private readonly ISupplierService _supplierService;
     private readonly AppDbContext _db;
     private readonly IMapper _mapper;
+    private readonly ILogger<BookingService> _logger;
 
     public BookingService(
         IRepository<FlightSegment> flightRepo,
@@ -33,7 +35,8 @@ public class BookingService : IBookingService
         IReservaService reservaService,
         ISupplierService supplierService,
         AppDbContext db,
-        IMapper mapper)
+        IMapper mapper,
+        ILogger<BookingService> logger)
     {
         _flightRepo = flightRepo;
         _hotelRepo = hotelRepo;
@@ -45,6 +48,7 @@ public class BookingService : IBookingService
         _supplierService = supplierService;
         _db = db;
         _mapper = mapper;
+        _logger = logger;
     }
 
     // === RATE RESOLUTION (Snapshot) ===
@@ -744,8 +748,16 @@ public class BookingService : IBookingService
     private async Task EnsureCanRemoveServiceAsync(int reservaId, CancellationToken ct)
     {
         // Reglas de borrado de servicios viven en DeleteGuards (compartidas con ReservaService).
-        var blockReason = await DeleteGuards.GetServicePaymentsAndVoucherBlockReasonAsync(_db, reservaId, ct);
-        if (blockReason != null) throw new InvalidOperationException(blockReason);
+        // GetServiceDeleteBlockReasonAsync incluye el state guard C26 (solo Budget) ademas
+        // de los guards historicos (pagos vivos, vouchers emitidos).
+        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(_db, reservaId, ct);
+        if (blockReason != null)
+        {
+            _logger.LogInformation(
+                "DeleteService rejected (BookingService). ReservaId={ReservaId}. Reason={Reason}",
+                reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
     }
 
     private async Task<int> ResolveSupplierIdAsync(string supplierPublicIdOrLegacyId, CancellationToken ct)

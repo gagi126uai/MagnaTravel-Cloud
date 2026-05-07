@@ -197,6 +197,49 @@ public class ReservaServiceDeleteTests
         Assert.Equal(1, await context.Reservas.CountAsync());
     }
 
+    // ===== C26: RemoveServiceAsync (rama generico) state guard =====
+
+    [Fact]
+    public async Task RemoveServiceAsync_GenericOnBudget_Removes()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 11, ReservaId = 1, ServiceType = "Otros", ProductType = "Generico",
+            Description = "Servicio extra", Status = "Solicitado",
+            DepartureDate = DateTime.UtcNow.AddDays(5), CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        await service.RemoveServiceAsync(11, CancellationToken.None);
+
+        Assert.Equal(0, await context.Servicios.CountAsync());
+    }
+
+    [Fact]
+    public async Task RemoveServiceAsync_GenericOnConfirmed_Throws()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 12, ReservaId = 1, ServiceType = "Otros", ProductType = "Generico",
+            Description = "Servicio extra", Status = "Confirmado",
+            DepartureDate = DateTime.UtcNow.AddDays(5), CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RemoveServiceAsync(12, CancellationToken.None));
+        Assert.Contains("reserva esta en estado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await context.Servicios.CountAsync());
+    }
+
     // ===== C25: Pin de contrato HTTP 409 (antes 400) =====
 
     [Fact]

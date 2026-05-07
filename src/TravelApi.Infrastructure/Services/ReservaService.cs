@@ -1126,8 +1126,17 @@ public class ReservaService : IReservaService
     private async Task EnsureCanRemoveServiceAsync(int reservaId, CancellationToken ct)
     {
         // Reglas de borrado de servicios viven en DeleteGuards (compartidas con BookingService).
-        var blockReason = await DeleteGuards.GetServicePaymentsAndVoucherBlockReasonAsync(_context, reservaId, ct);
-        if (blockReason != null) throw new InvalidOperationException(blockReason);
+        // GetServiceDeleteBlockReasonAsync incluye el state guard C26 (solo Budget) ademas
+        // de los guards historicos (pagos vivos, vouchers emitidos).
+        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(_context, reservaId, ct);
+        if (blockReason != null)
+        {
+            // Information: rechazo por estado/contenido. No hay riesgo fiscal en este nivel.
+            _logger.LogInformation(
+                "RemoveServiceAsync rejected. ReservaId={ReservaId}. Reason={Reason}",
+                reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
     }
 
     public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId)

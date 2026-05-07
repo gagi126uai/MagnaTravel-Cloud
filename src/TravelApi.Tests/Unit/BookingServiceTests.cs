@@ -1,5 +1,6 @@
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -51,7 +52,8 @@ public class BookingServiceTests
             reservaService.Object,
             supplierService.Object,
             context,
-            mapper);
+            mapper,
+            NullLogger<BookingService>.Instance);
     }
 
     [Fact]
