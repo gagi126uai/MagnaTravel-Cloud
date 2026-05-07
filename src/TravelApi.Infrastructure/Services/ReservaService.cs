@@ -1221,23 +1221,23 @@ public class ReservaService : IReservaService
 
     public async Task RemovePassengerAsync(int passengerId)
     {
-        var passenger = await _context.Passengers
-            .Include(p => p.Reserva)
-            .FirstOrDefaultAsync(p => p.Id == passengerId);
+        var passenger = await _context.Passengers.FindAsync(passengerId);
         if (passenger == null) throw new KeyNotFoundException("Pasajero no encontrado");
 
-        if (passenger.Reserva != null && (passenger.Reserva.Status == EstadoReserva.Traveling || passenger.Reserva.Status == EstadoReserva.Closed))
-            throw new InvalidOperationException("No se puede eliminar un pasajero de una reserva en estado Operativo o Cerrado.");
-
-        var assignedToVoucher = await _context.VoucherPassengerAssignments
-            .AnyAsync(a => a.PassengerId == passengerId);
-        if (assignedToVoucher)
-            throw new InvalidOperationException("No se puede eliminar el pasajero: esta asignado a uno o mas vouchers. Anula los vouchers primero.");
-
-        var reservaHasIssuedVoucher = await _context.Vouchers
-            .AnyAsync(v => v.ReservaId == passenger.ReservaId && v.Status == "Issued");
-        if (reservaHasIssuedVoucher)
-            throw new InvalidOperationException("No se puede eliminar el pasajero: la reserva ya tiene vouchers emitidos.");
+        var blockReason = await DeleteGuards.GetPassengerDeleteBlockReasonAsync(_context, passengerId);
+        if (blockReason != null)
+        {
+            // Warning: el guard incluye un check fiscal (factura emitida con CAE — C27).
+            // El reviewer pidio Warning para marcar potencial riesgo fiscal/auditoria;
+            // mantenemos Warning para todos los rechazos del guard para no bifurcar
+            // por motivo (todos los demas son tambien rechazos sensibles: vouchers,
+            // estado Operativo/Cerrado).
+            // No loguear nombre/documento del pasajero (PII) — solo IDs y motivo.
+            _logger.LogWarning(
+                "RemovePassengerAsync rejected. PassengerId={PassengerId} ReservaId={ReservaId}. Reason={Reason}",
+                passengerId, passenger.ReservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
 
         _context.Passengers.Remove(passenger);
         await _context.SaveChangesAsync();

@@ -263,4 +263,111 @@ public class ReservaServiceDeleteTests
         Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
     }
 
+    // ===== C27: Passenger delete bloqueado por factura emitida (CAE) =====
+
+    [Fact]
+    public async Task RemovePassengerAsync_OnBudgetWithoutInvoice_Removes()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.Passengers.Add(new Passenger { Id = 200, ReservaId = 1, FullName = "Pax sin factura" });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        await service.RemovePassengerAsync(200);
+
+        Assert.Equal(0, await context.Passengers.CountAsync());
+    }
+
+    [Fact]
+    public async Task RemovePassengerAsync_WithIssuedInvoiceWithCae_Throws()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        context.Passengers.Add(new Passenger { Id = 201, ReservaId = 1, FullName = "Pax con factura" });
+        context.Invoices.Add(new Invoice
+        {
+            Id = 71, ReservaId = 1,
+            CAE = "01234567890123",
+            ImporteTotal = 100m, ImporteNeto = 82.64m, ImporteIva = 17.36m
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.RemovePassengerAsync(201));
+        Assert.Contains("factura", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Mensaje accionable C27: menciona nota de credito.
+        Assert.Contains("nota de credito", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(1, await context.Passengers.CountAsync());
+    }
+
+    [Fact]
+    public async Task RemovePassengerAsync_WithInvoiceWithoutCae_DoesNotBlock()
+    {
+        // Una factura sin CAE significa que no fue emitida con AFIP (rechazada o pendiente);
+        // no debe bloquear el borrado del pasajero. Granularidad reserva-level — confirmado
+        // con ARCA + Contable 2026-05-06.
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.Passengers.Add(new Passenger { Id = 202, ReservaId = 1, FullName = "Pax con factura sin CAE" });
+        context.Invoices.Add(new Invoice
+        {
+            Id = 72, ReservaId = 1, CAE = null,
+            ImporteTotal = 100m, ImporteNeto = 82.64m, ImporteIva = 17.36m
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        await service.RemovePassengerAsync(202);
+
+        Assert.Equal(0, await context.Passengers.CountAsync());
+    }
+
+    [Fact]
+    public async Task RemovePassengerAsync_OnTraveling_StillBlockedByStateGuard()
+    {
+        // Regression: el guard pre-existente de estado Operativo/Cerrado sigue activo
+        // y prevalece sobre cualquier check fiscal.
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Traveling);
+        context.Passengers.Add(new Passenger { Id = 203, ReservaId = 1, FullName = "Pax en viaje" });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.RemovePassengerAsync(203));
+        Assert.Contains("Operativo", ex.Message);
+    }
+
+    [Fact]
+    public async Task RemovePassengerAsync_WithVoucherAssignment_StillBlocked()
+    {
+        // Regression: el guard pre-existente "asignado a un voucher" se preserva.
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        context.Passengers.Add(new Passenger { Id = 204, ReservaId = 1, FullName = "Pax con voucher" });
+        var voucher = new Voucher
+        {
+            Id = 91, ReservaId = 1, Status = "Cancelled",
+            CreatedAt = DateTime.UtcNow, IssuedAt = DateTime.UtcNow,
+            CreatedByUserId = "u1", CreatedByUserName = "tester"
+        };
+        context.Vouchers.Add(voucher);
+        await context.SaveChangesAsync();
+
+        context.VoucherPassengerAssignments.Add(new VoucherPassengerAssignment
+        {
+            VoucherId = 91, PassengerId = 204
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.RemovePassengerAsync(204));
+        Assert.Contains("voucher", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }
