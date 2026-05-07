@@ -10,6 +10,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -1048,7 +1049,7 @@ public class ReservaService : IReservaService
         var service = await _context.Servicios.FindAsync(new object[] { serviceId }, ct);
         if (service != null)
         {
-            await EnsureNoPaymentsAsync(service.ReservaId ?? 0, ct);
+            await EnsureCanRemoveServiceAsync(service.ReservaId ?? 0, ct);
             _context.Servicios.Remove(service);
             var resId = service.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1060,7 +1061,7 @@ public class ReservaService : IReservaService
         var flight = await _context.FlightSegments.FindAsync(new object[] { serviceId }, ct);
         if (flight != null)
         {
-            await EnsureNoPaymentsAsync(flight.ReservaId, ct);
+            await EnsureCanRemoveServiceAsync(flight.ReservaId, ct);
             _context.FlightSegments.Remove(flight);
             var resId = flight.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1072,7 +1073,7 @@ public class ReservaService : IReservaService
         var hotel = await _context.HotelBookings.FindAsync(new object[] { serviceId }, ct);
         if (hotel != null)
         {
-            await EnsureNoPaymentsAsync(hotel.ReservaId, ct);
+            await EnsureCanRemoveServiceAsync(hotel.ReservaId, ct);
             _context.HotelBookings.Remove(hotel);
             var resId = hotel.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1084,7 +1085,7 @@ public class ReservaService : IReservaService
         var transfer = await _context.TransferBookings.FindAsync(new object[] { serviceId }, ct);
         if (transfer != null)
         {
-            await EnsureNoPaymentsAsync(transfer.ReservaId, ct);
+            await EnsureCanRemoveServiceAsync(transfer.ReservaId, ct);
             _context.TransferBookings.Remove(transfer);
             var resId = transfer.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1096,7 +1097,7 @@ public class ReservaService : IReservaService
         var package = await _context.PackageBookings.FindAsync(new object[] { serviceId }, ct);
         if (package != null)
         {
-            await EnsureNoPaymentsAsync(package.ReservaId, ct);
+            await EnsureCanRemoveServiceAsync(package.ReservaId, ct);
             _context.PackageBookings.Remove(package);
             var resId = package.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1118,38 +1119,11 @@ public class ReservaService : IReservaService
     // La logica de capacidad pasajeros vs servicios vive en ReservaCapacityRules
     // (clase estatica compartida con ReservaLifecycleAutomationService).
 
-    private async Task EnsureNoPaymentsAsync(int reservaId, CancellationToken ct)
+    private async Task EnsureCanRemoveServiceAsync(int reservaId, CancellationToken ct)
     {
-        if (reservaId == 0) return;
-        var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
-        if (hasPayments)
-            throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con pagos realizados.");
-
-        var hasIssuedVoucher = await _context.Vouchers.AnyAsync(v => v.ReservaId == reservaId && v.Status == "Issued", ct);
-        if (hasIssuedVoucher)
-            throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con vouchers ya emitidos. Anula los vouchers primero.");
-    }
-
-    public async Task RemoveServiceAsync_OldVersion(int serviceId, CancellationToken ct = default)
-
-    {
-        var service = await _context.Servicios
-            .Include(r => r.Reserva)
-            .FirstOrDefaultAsync(r => r.Id == serviceId);
-            
-        if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
-
-        if (service.ReservaId.HasValue)
-        {
-            var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == service.ReservaId && !p.IsDeleted);
-            if (hasPayments)
-                throw new InvalidOperationException("No se pueden eliminar servicios de una reserva con pagos realizados.");
-        }
-
-        _context.Servicios.Remove(service);
-        var resId = service.ReservaId;
-        await _context.SaveChangesAsync();
-        if (resId.HasValue) await UpdateBalanceAsync(resId.Value);
+        // Reglas de borrado de servicios viven en DeleteGuards (compartidas con BookingService).
+        var blockReason = await DeleteGuards.GetServicePaymentsAndVoucherBlockReasonAsync(_context, reservaId, ct);
+        if (blockReason != null) throw new InvalidOperationException(blockReason);
     }
 
     public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId)
