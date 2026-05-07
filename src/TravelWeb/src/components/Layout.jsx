@@ -8,8 +8,11 @@ import SearchPalette from "./SearchPalette";
 import NotificationBell from "./NotificationBell";
 import { api } from "../api";
 import UrgentBannerStack from "./UrgentBannerStack";
+import { useAuthState } from "../auth";
+import { getInitials } from "../lib/utils";
 
 export default function Layout({ children, onLogout, isAdmin }) {
+    const { user } = useAuthState();
     const { theme, setTheme } = useTheme();
     const [sidebarOpen, setSidebarOpen] = useState(false); // Mobile: overlay
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false); // Desktop: collapsed icons only
@@ -165,8 +168,10 @@ export default function Layout({ children, onLogout, isAdmin }) {
                                 <button
                                     onClick={() => setUserMenuOpen(!userMenuOpen)}
                                     className="h-9 w-9 rounded-full bg-primary/20 flex items-center justify-center text-xs md:text-sm font-medium text-primary border border-primary/20 hover:bg-primary/30 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                    aria-label={user?.fullName ? `Menu de usuario: ${user.fullName}` : "Menu de usuario"}
+                                    title={user?.fullName ?? undefined}
                                 >
-                                    AD
+                                    {getInitials(user?.fullName)}
                                 </button>
 
                                 {userMenuOpen && (

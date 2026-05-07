@@ -24,6 +24,21 @@ export function formatDate(date) {
 }
 
 /**
+ * Derives up to 2 uppercase initials from a full name string.
+ * Returns "?" when name is empty or not a string.
+ */
+export function getInitials(name) {
+  if (!name || typeof name !== "string") return "?";
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .substring(0, 2)
+    .toUpperCase();
+}
+
+/**
  * Deeply converts object keys to camelCase to ensure consistency
  * regardless of backend naming policy (PascalCase vs camelCase).
  */
