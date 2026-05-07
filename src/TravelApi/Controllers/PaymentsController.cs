@@ -161,6 +161,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult> DeletePayment(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try

@@ -195,6 +195,7 @@ public class ReservasController : ControllerBase
     }
 
     [HttpDelete("services/{servicePublicIdOrLegacyId}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> RemoveService(string servicePublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -471,6 +472,7 @@ public class ReservasController : ControllerBase
     }
 
     [HttpDelete("passengers/{passengerPublicIdOrLegacyId}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> RemovePassenger(string passengerPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -566,6 +568,7 @@ public class ReservasController : ControllerBase
     }
 
     [HttpDelete("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeletePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -659,6 +662,7 @@ public class ReservasController : ControllerBase
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteReserva(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try

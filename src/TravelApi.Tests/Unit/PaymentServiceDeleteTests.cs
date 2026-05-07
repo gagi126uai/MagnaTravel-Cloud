@@ -180,6 +180,59 @@ public class PaymentServiceDeleteTests
     }
 
     [Fact]
+    public async Task DeletePayment_PaymentWithVoidedAndIssuedReceipts_ShouldBlockWithIssuedMessage()
+    {
+        // Caso de defensa en profundidad: si por reemision o data legacy un payment
+        // termina con 2 receipts (Voided + Issued), el guard debe devolver el mensaje
+        // del Issued (el activo). Hoy el modelo declara 1:1 (Payment.Receipt) y el
+        // flow lo bloquea, pero el guard NO debe asumir el invariante — antes de C28+
+        // hacia FirstOrDefault sobre el set y el orden era inestable entre InMemory/Postgres.
+        //
+        // Sembrado: usamos un context aparte para insertar el segundo receipt sin que
+        // el ChangeTracker dispare el fixup de la navegacion 1:1 sobre el mismo Payment.
+        await using (var seedCtx = new AppDbContext(_dbOptions))
+        {
+            await SeedReservaWithServiceAsync(seedCtx);
+            await SeedPaymentAsync(seedCtx, id: 105, amount: 500m);
+            seedCtx.PaymentReceipts.Add(new PaymentReceipt
+            {
+                Id = 55, PaymentId = 105, ReservaId = 1,
+                ReceiptNumber = "REC-100", Amount = 500m,
+                Status = PaymentReceiptStatuses.Voided,
+                IssuedAt = DateTime.UtcNow.AddDays(-2), VoidedAt = DateTime.UtcNow.AddDays(-1)
+            });
+            await seedCtx.SaveChangesAsync();
+        }
+        await using (var seedCtx2 = new AppDbContext(_dbOptions))
+        {
+            // Forzamos el segundo receipt sin cargar el Payment en este context — asi el
+            // ChangeTracker no detecta el conflicto de la navegacion 1:1 inversa.
+            seedCtx2.PaymentReceipts.Add(new PaymentReceipt
+            {
+                Id = 56, PaymentId = 105, ReservaId = 1,
+                ReceiptNumber = "REC-101", Amount = 500m,
+                Status = PaymentReceiptStatuses.Issued, IssuedAt = DateTime.UtcNow
+            });
+            await seedCtx2.SaveChangesAsync();
+        }
+
+        await using var context = new AppDbContext(_dbOptions);
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 105);
+
+        // Verificacion del seed: hay 2 receipts persistidos.
+        Assert.Equal(2, await context.PaymentReceipts.CountAsync(r => r.PaymentId == 105));
+
+        var service = BuildPaymentService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
+        Assert.Contains("anulá el recibo", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        var refreshed = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 105);
+        Assert.False(refreshed.IsDeleted);
+    }
+
+    [Fact]
     public async Task DeletePaymentAsync_WithRelatedInvoice_Throws()
     {
         await using var context = new AppDbContext(_dbOptions);

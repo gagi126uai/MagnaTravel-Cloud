@@ -295,4 +295,48 @@ public class BookingServiceDeleteTests
         Assert.Contains("voucher", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await context.HotelBookings.CountAsync());
     }
+
+    // ===== Cascade Servicio→Payments con soft-deleted (review hallazgo Security ALTO) =====
+
+    [Fact]
+    public async Task DeleteServiceAsync_OnBudgetWithSoftDeletedPaymentLinkedToService_Throws()
+    {
+        // AppDbContext: ServicioReserva→Payments tiene DeleteBehavior.Cascade, asi que un
+        // Payment soft-deleted con ServicioReservaId apuntando a un servicio de la reserva
+        // se hard-borraria por DB cascade, saltandose el query filter !IsDeleted. Riesgo
+        // fiscal/contable — el guard debe bloquear hasta restaurar/reasignar el pago.
+        await using var context = CreateContext();
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 50, ReservaId = 1, ServiceType = "Otros", ProductType = "Generico",
+            Description = "Servicio asociado a pago borrado", Status = "Solicitado",
+            DepartureDate = DateTime.UtcNow.AddDays(5), CreatedAt = DateTime.UtcNow
+        });
+        context.Payments.Add(new Payment
+        {
+            Id = 95, ReservaId = 1, ServicioReservaId = 50,
+            Amount = 200m, IsDeleted = true, DeletedAt = DateTime.UtcNow.AddDays(-1),
+            Status = "Paid", Method = "Transfer", PaidAt = DateTime.UtcNow.AddDays(-2),
+            EntryType = PaymentEntryTypes.Payment
+        });
+        // HotelBooking que dispara EnsureCanRemoveServiceAsync (guard a nivel reserva).
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = 14, ReservaId = 1, HotelName = "Hotel", Status = "Solicitado",
+            CheckIn = DateTime.UtcNow.AddDays(10), CheckOut = DateTime.UtcNow.AddDays(13)
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, CreateMapper());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.DeleteHotelAsync(1, 14, CancellationToken.None));
+        Assert.Contains("pagos vinculados", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("incluso eliminados", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await context.HotelBookings.CountAsync());
+
+        // El servicio generico tampoco se borro.
+        Assert.Equal(1, await context.Servicios.CountAsync());
+    }
 }

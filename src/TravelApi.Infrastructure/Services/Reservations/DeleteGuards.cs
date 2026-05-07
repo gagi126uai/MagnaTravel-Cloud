@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -73,7 +74,8 @@ public static class DeleteGuards
     public static async Task<string?> GetServiceDeleteBlockReasonAsync(
         AppDbContext db,
         int reservaId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ILogger? logger = null)
     {
         if (reservaId == 0) return null; // servicios sin reserva (legacy) no aplican
 
@@ -90,7 +92,30 @@ public static class DeleteGuards
                    "y, si corresponde, cancelá la reserva.";
         }
 
-        return await GetServicePaymentsAndVoucherBlockReasonAsync(db, reservaId, ct);
+        var paymentsReason = await GetServicePaymentsAndVoucherBlockReasonAsync(db, reservaId, ct);
+        if (paymentsReason != null) return paymentsReason;
+
+        // Cascade Servicio→Payments en AppDbContext (DeleteBehavior.Cascade): si quedo
+        // algun Payment soft-deleted con ServicioReservaId apuntando a un servicio de
+        // esta reserva, borrar el servicio lo hard-borraria por DB cascade saltandose
+        // el query filter !IsDeleted. Riesgo fiscal/contable — preservamos auditoria.
+        var hasSoftDeletedPaymentLinkedToService = await db.Payments
+            .IgnoreQueryFilters()
+            .AnyAsync(p => p.IsDeleted
+                          && p.ServicioReservaId != null
+                          && db.Servicios.Any(s => s.Id == p.ServicioReservaId && s.ReservaId == reservaId),
+                      ct);
+        if (hasSoftDeletedPaymentLinkedToService)
+        {
+            logger?.LogWarning(
+                "Service delete blocked: soft-deleted payment(s) linked to service via ServicioReservaId. " +
+                "ReservaId={ReservaId}. Cascade hard-delete riesgo fiscal — restaurar o reasignar antes de continuar.",
+                reservaId);
+            return "No se puede eliminar el servicio porque tiene pagos vinculados (incluso eliminados). " +
+                   "Restaurá o reasigná los pagos primero.";
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -183,22 +208,28 @@ public static class DeleteGuards
             .FirstOrDefaultAsync(ct);
         if (payment == null) return null;
 
-        var receiptStatus = await db.PaymentReceipts.AsNoTracking()
+        // Caso real (emitido → anulado → reemitido): un payment puede tener 2 receipts.
+        // FirstOrDefault sobre la lista no garantiza orden estable entre InMemory y Postgres,
+        // asi que traemos los Status y decidimos en memoria.
+        var receiptStatuses = await db.PaymentReceipts.AsNoTracking()
             .Where(r => r.PaymentId == paymentId)
             .Select(r => r.Status)
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
 
-        if (!string.IsNullOrEmpty(receiptStatus))
+        if (receiptStatuses.Count > 0)
         {
-            // Voided tambien bloquea: el recibo ocupa numeracion correlativa
-            // y debe preservarse para auditoria — ARCA + Contable 2026-05-06.
-            if (string.Equals(receiptStatus, PaymentReceiptStatuses.Voided, StringComparison.OrdinalIgnoreCase))
+            var hasIssued = receiptStatuses.Any(s => string.Equals(s, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase));
+            if (hasIssued)
             {
-                return "No se puede eliminar el pago porque tiene un recibo anulado que debe preservarse para auditoria. " +
-                       "Contactá al administrador.";
+                // Si coexisten Issued + Voided (reemision), prevalece el mensaje del Issued:
+                // ese es el recibo activo que el usuario tiene que anular primero.
+                return "No se puede eliminar el pago porque tiene un recibo emitido. Anulá el recibo primero.";
             }
 
-            return "No se puede eliminar el pago porque tiene un recibo emitido. Anulá el recibo primero.";
+            // Solo Voided: ocupan numeracion correlativa y deben preservarse para
+            // auditoria — ARCA + Contable 2026-05-06.
+            return "No se puede eliminar el pago porque tiene un recibo anulado que debe preservarse para auditoria. " +
+                   "Contactá al administrador.";
         }
 
         if (payment.RelatedInvoiceId.HasValue)

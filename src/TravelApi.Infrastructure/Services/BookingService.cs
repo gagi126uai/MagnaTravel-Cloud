@@ -750,7 +750,7 @@ public class BookingService : IBookingService
         // Reglas de borrado de servicios viven en DeleteGuards (compartidas con ReservaService).
         // GetServiceDeleteBlockReasonAsync incluye el state guard C26 (solo Budget) ademas
         // de los guards historicos (pagos vivos, vouchers emitidos).
-        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(_db, reservaId, ct);
+        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(_db, reservaId, ct, _logger);
         if (blockReason != null)
         {
             _logger.LogInformation(
