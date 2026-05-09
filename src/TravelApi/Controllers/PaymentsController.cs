@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
+using TravelApi.Domain.Entities;
 using TravelApi.Errors;
 
 namespace TravelApi.Controllers;
@@ -18,44 +20,68 @@ public class PaymentsController : ControllerBase
         _paymentService = paymentService;
     }
 
+    // B1.15 Fase 2a (FIX 5): gating uniforme + filter mine. El service decide el
+    // scope segun cobranzas.view_all (Admin/Colaborador) vs cobranzas.view (Vendedor).
     [HttpGet("collections-summary")]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<CollectionsSummaryDto>> GetCollectionsSummary(CancellationToken cancellationToken)
     {
         return Ok(await _paymentService.GetCollectionsSummaryAsync(cancellationToken));
     }
 
     [HttpGet("collections-worklist")]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<CollectionWorkItemDto>>> GetCollectionsWorklist([FromQuery] CollectionWorklistQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _paymentService.GetCollectionsWorklistAsync(query, cancellationToken));
     }
 
     [HttpGet]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<PaymentDto>>> GetAllPayments([FromQuery] PaymentsListQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _paymentService.GetAllPaymentsAsync(query, cancellationToken));
     }
 
     [HttpGet("history")]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<FinanceHistoryItemDto>>> GetHistory([FromQuery] FinanceHistoryQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _paymentService.GetHistoryAsync(query, cancellationToken));
     }
 
+    // B1.15 Fase 2a (review final): cerrar bypass del flow nested /reservas/{id}/payments.
+    // El frontend usa POST/PUT /api/payments y GET /api/payments/reserva/{id} directamente
+    // (PaymentModal.jsx). Sin estos attributes, un Vendedor con cobranzas.edit otorgado
+    // manualmente podria operar pagos de reservas ajenas.
     [HttpGet("reserva/{reservaPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CobranzasView)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaPublicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<ActionResult<IEnumerable<PaymentDto>>> GetPaymentsForReserva(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         var payments = await _paymentService.GetPaymentsForReservaAsync(reservaPublicIdOrLegacyId, cancellationToken);
         return Ok(payments);
     }
 
+    // POST /api/payments NO recibe id en la ruta — el ownership lo valida
+    // PaymentService.CreatePaymentAsync usando request.ReservaId. Si el user no tiene
+    // cobranzas.view_all y la reserva no es propia, el service tira UnauthorizedAccessException
+    // que aca traducimos a 403.
     [HttpPost]
+    [RequirePermission(Permissions.CobranzasEdit)]
     public async Task<ActionResult<PaymentDto>> CreatePayment(CreatePaymentRequest request, CancellationToken cancellationToken)
     {
         try
         {
             var payment = await _paymentService.CreatePaymentAsync(request, cancellationToken);
             return CreatedAtAction(nameof(GetPaymentsForReserva), new { reservaPublicIdOrLegacyId = request.ReservaId }, payment);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
         }
         catch (InvalidOperationException ex)
         {
@@ -72,6 +98,8 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/receipt")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    [RequireOwnership(OwnedEntity.Payment, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<ActionResult<PaymentReceiptDto>> IssueReceipt(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -94,6 +122,8 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/receipt/pdf")]
+    [RequirePermission(Permissions.CobranzasView)]
+    [RequireOwnership(OwnedEntity.Payment, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<IActionResult> GetReceiptPdf(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -143,6 +173,8 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    [RequireOwnership(OwnedEntity.Payment, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, UpdatePaymentRequest request, CancellationToken cancellationToken)
     {
         try

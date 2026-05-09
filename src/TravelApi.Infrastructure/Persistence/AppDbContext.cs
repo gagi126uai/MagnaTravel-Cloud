@@ -568,6 +568,19 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(i => i.IssuedByUserId)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            // B1.15 Fase 2a (FIX 6): trazabilidad y estado de la anulacion.
+            entity.Property(i => i.AnnulledByUserId).HasMaxLength(450);
+            entity.Property(i => i.AnnulledByUserName).HasMaxLength(200);
+            entity.Property(i => i.AnnulmentReason).HasMaxLength(500);
+            entity.Property(i => i.AnnulmentStatus)
+                  .HasConversion<int>()
+                  .HasDefaultValue(AnnulmentStatus.None);
+
+            entity.HasOne<ApplicationUser>()
+                  .WithMany()
+                  .HasForeignKey(i => i.AnnulledByUserId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // InvoiceItem (Singular table from Program.cs)

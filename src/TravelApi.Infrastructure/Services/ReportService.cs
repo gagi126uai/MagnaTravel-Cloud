@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Security.Claims;
 using ClosedXML.Excel;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -11,17 +13,41 @@ public class ReportService : IReportService
 {
     private readonly AppDbContext _dbContext;
     private readonly IBnaExchangeRateService _bnaExchangeRateService;
+    // B1.15 Fase 2a (FIX 4): opcionales para no romper unit tests que instancian
+    // ReportService con el ctor de 2 args.
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
-    public ReportService(AppDbContext dbContext, IBnaExchangeRateService bnaExchangeRateService)
+    public ReportService(
+        AppDbContext dbContext,
+        IBnaExchangeRateService bnaExchangeRateService,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _dbContext = dbContext;
         _bnaExchangeRateService = bnaExchangeRateService;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
         var startOfMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // B1.15 Fase 2a (FIX 4): resolver scope segun permisos del user actual.
+        // - sin cobranzas.see_cost: enmascarar costos / margen / pagos a proveedores y costs/profit del trend.
+        // - sin reservas.view_all: filtrar pendientes y proximos por owner.
+        var httpUser = _httpContextAccessor?.HttpContext?.User;
+        var currentUserId = httpUser?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var isAdmin = httpUser?.IsInRole("Admin") ?? false;
+
+        var perms = (_permissionResolver is null || string.IsNullOrEmpty(currentUserId))
+            ? null
+            : await _permissionResolver.GetPermissionsAsync(currentUserId, cancellationToken);
+
+        var canSeeCost = isAdmin || (perms?.Contains(Permissions.CobranzasSeeCost) ?? false);
+        var hasReservasViewAll = isAdmin || (perms?.Contains(Permissions.ReservasViewAll) ?? false);
 
         var filesByStatus = await _dbContext.Reservas
             .GroupBy(f => f.Status)
@@ -56,23 +82,35 @@ public class ReportService : IReportService
 
         var grossMarginThisMonth = salesThisMonth - costsThisMonth;
 
-        var pendingReservas = await _dbContext.Reservas
-            .Where(f => f.Balance > 0 && f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled)
+        // Filter mine para listas operativas: si no tiene reservas.view_all,
+        // restringir por ResponsibleUserId == currentUser.
+        var pendingQuery = _dbContext.Reservas
+            .Where(f => f.Balance > 0 && f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled);
+        var upcomingQuery = _dbContext.Reservas
+            .Where(f => f.StartDate >= now && f.StartDate <= now.AddDays(7) && f.Status != EstadoReserva.Cancelled);
+
+        if (!hasReservasViewAll)
+        {
+            // Sentinel imposible si no hay user resoluble (devuelve lista vacia).
+            var ownerFilter = string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId;
+            pendingQuery = pendingQuery.Where(f => f.ResponsibleUserId == ownerFilter);
+            upcomingQuery = upcomingQuery.Where(f => f.ResponsibleUserId == ownerFilter);
+        }
+
+        var pendingReservas = await pendingQuery
             .OrderByDescending(f => f.Balance)
             .Take(5)
             .Select(f => new PendingReservaDto(f.PublicId, f.NumeroReserva, f.Name, f.Balance, f.Status.ToString()))
             .ToListAsync(cancellationToken);
 
-        var next7Days = now.AddDays(7);
-        var upcomingTrips = await _dbContext.Reservas
-            .Where(f => f.StartDate >= now && f.StartDate <= next7Days && f.Status != EstadoReserva.Cancelled)
+        var upcomingTrips = await upcomingQuery
             .OrderBy(f => f.StartDate)
             .Take(5)
             .Select(f => new UpcomingTripDto(f.PublicId, f.NumeroReserva, f.Name, f.StartDate!.Value, f.Status.ToString()))
             .ToListAsync(cancellationToken);
 
         var sixMonthsAgo = startOfMonth.AddMonths(-5);
-        
+
         var monthlyData = await _dbContext.Reservas
             .Where(f => f.CreatedAt >= sixMonthsAgo && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
             .GroupBy(f => new { f.CreatedAt.Year, f.CreatedAt.Month })
@@ -96,14 +134,23 @@ public class ReportService : IReportService
             var profit = sales - costs;
             var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(targetDate.Month);
 
-            historicalTrend.Add(new MonthlyMetricDto(monthName, sales, costs, profit));
+            // Sin cobranzas.see_cost: enmascarar costs y profit del trend.
+            // El sales sigue visible (es informacion de facturacion bruta, no costo).
+            if (!canSeeCost)
+            {
+                historicalTrend.Add(new MonthlyMetricDto(monthName, sales, 0m, 0m));
+            }
+            else
+            {
+                historicalTrend.Add(new MonthlyMetricDto(monthName, sales, costs, profit));
+            }
         }
 
         var statusDistribution = new StatusDistributionDto(
-            presupuestos, 
-            reservados, 
-            operativos, 
-            cerrados, 
+            presupuestos,
+            reservados,
+            operativos,
+            cerrados,
             cancelados
         );
 
@@ -112,6 +159,10 @@ public class ReportService : IReportService
 
         var bnaUsdSellerRate = await _bnaExchangeRateService.GetUsdSellerRateAsync(cancellationToken);
 
+        // B1.15 Fase 2a (FIX 4): si el user NO tiene cobranzas.see_cost, ocultar
+        // CostosDelMes / MargenBruto / PagosProveedores. Patron consistente con
+        // ApplyCostMaskingAsync de ReservaService (mascara con 0 — la decision de
+        // null vs 0 contractual queda diferida a B1.15.x).
         return new DashboardResponse(
             Presupuestos: presupuestos,
             Reservados: reservados,
@@ -119,9 +170,9 @@ public class ReportService : IReportService
             CobrosDelMes: paymentsThisMonth,
             SaldoPendiente: outstandingBalance,
             VentasDelMes: salesThisMonth,
-            CostosDelMes: costsThisMonth,
-            MargenBruto: grossMarginThisMonth,
-            PagosProveedores: supplierPaymentsThisMonth,
+            CostosDelMes: canSeeCost ? costsThisMonth : 0m,
+            MargenBruto: canSeeCost ? grossMarginThisMonth : 0m,
+            PagosProveedores: canSeeCost ? supplierPaymentsThisMonth : 0m,
             ReservasPendientes: pendingReservas,
             ProximosViajes: upcomingTrips,
             TendenciaHistorica: historicalTrend,

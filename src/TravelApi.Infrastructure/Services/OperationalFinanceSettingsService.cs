@@ -24,6 +24,9 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
 
     public async Task<OperationalFinanceSettingsDto> UpdateAsync(OperationalFinanceSettingsDto request, CancellationToken cancellationToken)
     {
+        // B1.15 Fase 2a: el rango 0..100 de MaxDiscountPercentWithoutOverride se valida
+        // en el DTO via [Range] (atributo de DataAnnotations). El binding de ASP.NET Core
+        // dispara ModelState invalido y devuelve 400 antes de llegar al service.
         var entity = await GetEntityAsync(cancellationToken);
         entity.RequireFullPaymentForOperativeStatus = request.RequireFullPaymentForOperativeStatus;
         entity.RequireFullPaymentForVoucher = request.RequireFullPaymentForVoucher;
@@ -32,6 +35,7 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             : request.AfipInvoiceControlMode;
         entity.EnableUpcomingUnpaidReservationNotifications = request.EnableUpcomingUnpaidReservationNotifications;
         entity.UpcomingUnpaidReservationAlertDays = Math.Clamp(request.UpcomingUnpaidReservationAlertDays, 1, 60);
+        entity.MaxDiscountPercentWithoutOverride = request.MaxDiscountPercentWithoutOverride;
         entity.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -74,7 +78,8 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             RequireFullPaymentForVoucher = entity.RequireFullPaymentForVoucher,
             AfipInvoiceControlMode = entity.AfipInvoiceControlMode,
             EnableUpcomingUnpaidReservationNotifications = entity.EnableUpcomingUnpaidReservationNotifications,
-            UpcomingUnpaidReservationAlertDays = entity.UpcomingUnpaidReservationAlertDays
+            UpcomingUnpaidReservationAlertDays = entity.UpcomingUnpaidReservationAlertDays,
+            MaxDiscountPercentWithoutOverride = entity.MaxDiscountPercentWithoutOverride
         };
     }
 }

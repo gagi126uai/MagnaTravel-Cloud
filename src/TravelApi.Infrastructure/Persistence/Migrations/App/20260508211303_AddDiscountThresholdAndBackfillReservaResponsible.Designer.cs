@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260508211303_AddDiscountThresholdAndBackfillReservaResponsible")]
+    partial class AddDiscountThresholdAndBackfillReservaResponsible
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1298,26 +1301,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<string>("AgencySnapshot")
                         .HasColumnType("text");
 
-                    b.Property<DateTime?>("AnnulledAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("AnnulledByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("AnnulledByUserName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("AnnulmentReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int>("AnnulmentStatus")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<string>("CAE")
                         .HasColumnType("text");
 
@@ -1398,8 +1381,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("AnnulledByUserId");
 
                     b.HasIndex("CreatedAt");
 
@@ -3714,11 +3695,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Invoice", b =>
                 {
-                    b.HasOne("TravelApi.Infrastructure.Identity.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("AnnulledByUserId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TravelApi.Infrastructure.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("IssuedByUserId")

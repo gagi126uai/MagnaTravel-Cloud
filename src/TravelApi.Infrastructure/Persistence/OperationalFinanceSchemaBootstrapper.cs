@@ -34,6 +34,9 @@ public static class OperationalFinanceSchemaBootstrapper
             ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
             ""UpdatedAt"" timestamp with time zone NOT NULL DEFAULT NOW()
         );",
+        // B1.15 Fase 2a: defensa en profundidad — idempotente para entornos
+        // donde la tabla ya existe sin la columna.
+        @"ALTER TABLE ""OperationalFinanceSettings"" ADD COLUMN IF NOT EXISTS ""MaxDiscountPercentWithoutOverride"" numeric(5,2) NOT NULL DEFAULT 10;",
         @"INSERT INTO ""OperationalFinanceSettings""
             (""RequireFullPaymentForOperativeStatus"", ""RequireFullPaymentForVoucher"", ""AfipInvoiceControlMode"", ""EnableUpcomingUnpaidReservationNotifications"", ""UpcomingUnpaidReservationAlertDays"", ""CreatedAt"", ""UpdatedAt"")
           SELECT TRUE, TRUE, 'AllowAgentOverrideWithReason', TRUE, 7, NOW(), NOW()

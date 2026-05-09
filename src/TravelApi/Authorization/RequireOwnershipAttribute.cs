@@ -10,9 +10,10 @@ namespace TravelApi.Authorization;
 /// entidad desde un route param y verifica con <see cref="IOwnershipResolver"/>
 /// que el usuario actual sea el responsable.
 ///
-/// Bypass Admin en handler de permisos NO aplica aca: el ownership es
-/// ortogonal — un Admin de todos modos puede ver el recurso si tiene
-/// <c>*_view_all</c>; este attribute solo se usa en endpoints de scope "mio".
+/// Bypass Admin in-filter: rol "Admin" salta el chequeo. Para usuarios no-Admin,
+/// si se especifica <see cref="BypassPermission"/> y el user lo tiene, tambien
+/// se saltea el chequeo (B1.15 Fase 2a — habilita el patron <c>view_all</c> para
+/// roles intermedios como Colaborador).
 ///
 /// Si la entidad no tiene ResponsibleUserId (legacy), <see cref="OwnershipResolver"/>
 /// rechaza. Esto fuerza al backend a backfillear antes de migrar controllers.
@@ -25,10 +26,17 @@ public sealed class RequireOwnershipAttribute : Attribute, IAsyncAuthorizationFi
     private readonly OwnedEntity _entity;
     private readonly string _routeParam;
 
-    public RequireOwnershipAttribute(OwnedEntity entity, string routeParam = DefaultRouteParam)
+    /// <summary>
+    /// Permiso opcional que, si lo posee el usuario actual, hace bypass del
+    /// chequeo de ownership. Tipico: <c>reservas.view_all</c>, <c>cobranzas.view_all</c>.
+    /// </summary>
+    public string? BypassPermission { get; }
+
+    public RequireOwnershipAttribute(OwnedEntity entity, string routeParam = DefaultRouteParam, string? bypassPermission = null)
     {
         _entity = entity;
         _routeParam = routeParam;
+        BypassPermission = bypassPermission;
     }
 
     public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
@@ -51,6 +59,21 @@ public sealed class RequireOwnershipAttribute : Attribute, IAsyncAuthorizationFi
         if (user.IsInRole("Admin"))
         {
             return;
+        }
+
+        // Bypass por permiso (ej: reservas.view_all). Consulta el resolver de
+        // permisos del DI scope. Si no esta registrado, ignora el bypass.
+        if (!string.IsNullOrEmpty(BypassPermission))
+        {
+            var permResolver = context.HttpContext.RequestServices.GetService(typeof(IUserPermissionResolver)) as IUserPermissionResolver;
+            if (permResolver is not null)
+            {
+                var perms = await permResolver.GetPermissionsAsync(userId, context.HttpContext.RequestAborted);
+                if (perms.Contains(BypassPermission))
+                {
+                    return;
+                }
+            }
         }
 
         if (!context.RouteData.Values.TryGetValue(_routeParam, out var raw) || raw is null)

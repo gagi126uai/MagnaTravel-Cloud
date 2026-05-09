@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Errors;
 using TravelApi.Infrastructure.Persistence;
@@ -25,19 +26,23 @@ public class InvoicesController : ControllerBase
         _entityReferenceResolver = entityReferenceResolver;
     }
 
+    // B1.15 Fase 2a (FIX 6): listings exigen cobranzas.view + filter mine via service.
     [HttpGet("summary")]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<InvoicingSummaryDto>> GetSummary(CancellationToken ct)
     {
         return Ok(await _invoiceService.GetInvoicingSummaryAsync(ct));
     }
 
     [HttpGet("worklist")]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<InvoicingWorkItemDto>>> GetWorklist([FromQuery] InvoicingWorklistQuery query, CancellationToken ct)
     {
         return Ok(await _invoiceService.GetInvoicingWorklistAsync(query, ct));
     }
 
     [HttpGet]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<InvoiceListDto>>> GetInvoices([FromQuery] InvoicesListQuery query, CancellationToken ct)
     {
         var invoices = await _invoiceService.GetAllAsync(query, ct);
@@ -45,6 +50,7 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpPost]
+    [RequirePermission(Permissions.CobranzasInvoice)]
     public async Task<ActionResult<InvoiceDto>> CreateInvoice([FromBody] CreateInvoiceRequest request, CancellationToken ct)
     {
         try
@@ -69,6 +75,8 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/retry")]
+    [RequirePermission(Permissions.CobranzasInvoice)]
+    [RequireOwnership(OwnedEntity.Invoice, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<IActionResult> RetryInvoice(string publicIdOrLegacyId, CancellationToken ct)
     {
         try
@@ -90,6 +98,8 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpGet("reserva/{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CobranzasView)]
+    [RequireOwnership(OwnedEntity.Reserva, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<ActionResult<IEnumerable<InvoiceListDto>>> GetByReservaId(string publicIdOrLegacyId, CancellationToken ct)
     {
         var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
@@ -98,6 +108,8 @@ public class InvoicesController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/pdf")]
+    [RequirePermission(Permissions.CobranzasView)]
+    [RequireOwnership(OwnedEntity.Invoice, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<IActionResult> GetInvoicePdf(string publicIdOrLegacyId, CancellationToken ct)
     {
         try
@@ -124,12 +136,39 @@ public class InvoicesController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// B1.15 Fase 2a (FIX 6 — fiscal critico): anular una factura emite NC en AFIP.
+    /// Requiere <c>cobranzas.invoice_annul</c> (back-office, no Vendedor) y ownership
+    /// con bypass via <c>cobranzas.view_all</c>. Persistimos AnnulledByUser*, AnnulledAt
+    /// y AnnulmentReason para auditoria fiscal del flujo CAE -> NC.
+    /// </summary>
     [HttpPost("{publicIdOrLegacyId}/annul")]
-    public async Task<IActionResult> AnnulInvoice(string publicIdOrLegacyId, CancellationToken ct)
+    [RequirePermission(Permissions.CobranzasInvoiceAnnul)]
+    [RequireOwnership(OwnedEntity.Invoice, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
+    public async Task<IActionResult> AnnulInvoice(string publicIdOrLegacyId, [FromBody] AnnulInvoiceRequest? request, CancellationToken ct)
     {
-        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
-        var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Invoice>(publicIdOrLegacyId, ct);
-        await _invoiceService.EnqueueAnnulmentAsync(id, userId, ct);
-        return Accepted(new { Message = "La anulacion se esta procesando en segundo plano. Te avisaremos cuando termine." });
+        // B1.15 Fase 2a (review final): idempotencia. EnqueueAnnulmentAsync rechaza
+        // re-encolar si la factura esta Pending o Succeeded (evita doble NC en AFIP).
+        // 409 Conflict expresa "estado actual no compatible con la operacion" mejor
+        // que 500 (que es lo que daria el GlobalExceptionHandler sin este try/catch).
+        try
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+            var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+            var reason = request?.Reason?.Trim();
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Invoice>(publicIdOrLegacyId, ct);
+            await _invoiceService.EnqueueAnnulmentAsync(id, userId, userName, reason, ct);
+            return Accepted(new { Message = "La anulacion se esta procesando en segundo plano. Te avisaremos cuando termine." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 }
+
+/// <summary>
+/// B1.15 Fase 2a (FIX 6): payload opcional para anular factura. <c>Reason</c> queda
+/// persistido en <c>Invoice.AnnulmentReason</c> para auditoria fiscal.
+/// </summary>
+public record AnnulInvoiceRequest(string? Reason);

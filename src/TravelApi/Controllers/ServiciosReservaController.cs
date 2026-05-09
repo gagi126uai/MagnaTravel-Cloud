@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
@@ -17,14 +18,28 @@ public class ServiciosReservaController : ControllerBase
         _servicioReservaService = servicioReservaService;
     }
 
+    /// <summary>
+    /// B1.15 Fase 2a (FIX 8): este endpoint devolvia la entidad cruda
+    /// <c>ServicioReserva</c> de TODOS los travel files con costo proveedor visible
+    /// y sin filtro por owner. No tiene uso conocido en el frontend (grep en
+    /// TravelWeb 2026-05-08: 0 referencias). Se deprecia con 410 Gone.
+    ///
+    /// Ruta de reemplazo: <c>GET /api/reservas/{id}</c> devuelve los servicios
+    /// embebidos con el masking y filter mine ya aplicados.
+    /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<ServicioReserva>>> GetServicios(CancellationToken cancellationToken)
+    public IActionResult GetServicios()
     {
-        var servicios = await _servicioReservaService.GetServiciosAsync(cancellationToken);
-        return Ok(servicios);
+        return StatusCode(StatusCodes.Status410Gone, new
+        {
+            message = "Este endpoint fue deprecado. Use GET /api/reservas/{id} para obtener los servicios de una reserva con masking de costos y filter mine aplicados.",
+            replacement = "GET /api/reservas/{id}"
+        });
     }
 
     [HttpGet("{id:int}")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Servicio, "id", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<ServicioReserva>> GetServicio(int id, CancellationToken cancellationToken)
     {
         var servicio = await _servicioReservaService.GetServicioByIdAsync(id, cancellationToken);
@@ -37,6 +52,8 @@ public class ServiciosReservaController : ControllerBase
     }
 
     [HttpPost("{id:int}/segments")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Servicio, "id", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<FlightSegment>> CreateSegment(
         int id,
         FlightSegmentUpsertRequest request,

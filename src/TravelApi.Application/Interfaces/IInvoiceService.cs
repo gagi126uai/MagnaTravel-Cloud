@@ -12,8 +12,11 @@ public interface IInvoiceService
     Task<bool> RetryAsync(int id, CancellationToken ct);
     Task<IEnumerable<InvoiceListDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct);
     Task<byte[]> GetPdfAsync(int id, CancellationToken ct);
-    Task EnqueueAnnulmentAsync(int id, string userId, CancellationToken ct);
-    
+    // B1.15 Fase 2a (FIX 6): se agrega userName + reason para auditoria fiscal.
+    // El service persiste AnnulledByUserId/Name, AnnulledAt, AnnulmentReason y
+    // marca AnnulmentStatus = Pending al encolar.
+    Task EnqueueAnnulmentAsync(int id, string userId, string? userName, string? reason, CancellationToken ct);
+
     // Background Job method
     Task ProcessAnnulmentJob(int invoiceId, string userId);
 }

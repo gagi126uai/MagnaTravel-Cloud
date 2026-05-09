@@ -1,5 +1,7 @@
+using System.Security.Claims;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QuestPDF.Fluent;
@@ -20,6 +22,9 @@ public class PaymentService : IPaymentService
     private readonly IMapper _mapper;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly ILogger<PaymentService> _logger;
+    // B1.15 Fase 2a (FIX 5): opcionales para no romper unit tests con ctor de 5 args.
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     private static readonly string[] ActiveCollectionStatuses =
     {
@@ -32,14 +37,46 @@ public class PaymentService : IPaymentService
         IEntityReferenceResolver entityReferenceResolver,
         IMapper mapper,
         IOperationalFinanceSettingsService operationalFinanceSettingsService,
-        ILogger<PaymentService> logger)
+        ILogger<PaymentService> logger,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _dbContext = dbContext;
         _entityReferenceResolver = entityReferenceResolver;
         _mapper = mapper;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
         _logger = logger;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
         QuestPDF.Settings.License = LicenseType.Community;
+    }
+
+    /// <summary>
+    /// B1.15 Fase 2a (FIX 5): null si Admin o user con cobranzas.view_all (=> ve todo);
+    /// si no, devuelve el currentUserId que sera usado para filtrar payments por
+    /// Reserva.ResponsibleUserId. Si no hay user resoluble, devuelve un sentinel
+    /// imposible "__no_user__".
+    /// </summary>
+    private async Task<string?> GetOwnerScopeOrNullAsync(CancellationToken ct)
+    {
+        var httpUser = _httpContextAccessor?.HttpContext?.User;
+        if (httpUser is null) return null; // tests unitarios sin HttpContext: comportamiento legacy
+        if (httpUser.IsInRole("Admin")) return null;
+
+        var currentUserId = httpUser.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (_permissionResolver is null || string.IsNullOrEmpty(currentUserId))
+        {
+            // No podemos resolver permisos => fail-safe: filtrar por user actual o sentinel.
+            return string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId;
+        }
+
+        var perms = await _permissionResolver.GetPermissionsAsync(currentUserId, ct);
+        if (perms.Contains(Permissions.CobranzasViewAll))
+        {
+            return null; // ve todo
+        }
+
+        return currentUserId; // filter mine
     }
 
     public async Task<CollectionsSummaryDto> GetCollectionsSummaryAsync(CancellationToken cancellationToken)
@@ -49,9 +86,19 @@ public class PaymentService : IPaymentService
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
         var currentMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        var pendingReservations = await _dbContext.Reservas
+        // B1.15 Fase 2a (FIX 5): si el user NO tiene cobranzas.view_all, los totales
+        // del summary se calculan sobre las reservas a su cargo unicamente.
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
+
+        var reservasQuery = _dbContext.Reservas
             .AsNoTracking()
-            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0)
+            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0);
+        if (ownerScope is not null)
+        {
+            reservasQuery = reservasQuery.Where(r => r.ResponsibleUserId == ownerScope);
+        }
+
+        var pendingReservations = await reservasQuery
             .Select(r => new
             {
                 r.Id,
@@ -66,14 +113,20 @@ public class PaymentService : IPaymentService
             .Where(r => r.StartDate.HasValue && r.StartDate.Value.Date >= today && r.StartDate.Value.Date <= threshold)
             .ToList();
 
-        var collectedThisMonth = await _dbContext.Payments
+        var collectedQuery = _dbContext.Payments
             .AsNoTracking()
             .Where(p =>
                 !p.IsDeleted &&
                 p.Status != "Cancelled" &&
                 p.EntryType == PaymentEntryTypes.Payment &&
                 p.Amount > 0 &&
-                p.PaidAt >= currentMonth)
+                p.PaidAt >= currentMonth);
+        if (ownerScope is not null)
+        {
+            collectedQuery = collectedQuery.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
+        }
+
+        var collectedThisMonth = await collectedQuery
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
 
         return new CollectionsSummaryDto
@@ -93,9 +146,16 @@ public class PaymentService : IPaymentService
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
+        // B1.15 Fase 2a (FIX 5): filter mine. Sin cobranzas.view_all el vendedor solo ve sus reservas.
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
+
         var reservationsQuery = _dbContext.Reservas
             .AsNoTracking()
             .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0);
+        if (ownerScope is not null)
+        {
+            reservationsQuery = reservationsQuery.Where(r => r.ResponsibleUserId == ownerScope);
+        }
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -151,7 +211,15 @@ public class PaymentService : IPaymentService
 
     public async Task<PagedResponse<PaymentDto>> GetAllPaymentsAsync(PaymentsListQuery query, CancellationToken cancellationToken)
     {
+        // B1.15 Fase 2a (FIX 5): filter mine. Sin cobranzas.view_all, restringimos a
+        // los pagos cuya reserva tiene al user actual como ResponsibleUserId.
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
+
         var paymentsQuery = ApplyPaymentSearch(_dbContext.Payments.AsNoTracking(), query.Search);
+        if (ownerScope is not null)
+        {
+            paymentsQuery = paymentsQuery.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
+        }
         paymentsQuery = ApplyPaymentOrdering(paymentsQuery, query);
 
         return await paymentsQuery
@@ -169,8 +237,23 @@ public class PaymentService : IPaymentService
     public async Task<PagedResponse<FinanceHistoryItemDto>> GetHistoryAsync(FinanceHistoryQuery query, CancellationToken cancellationToken)
     {
         var normalizedSearch = query.Search?.Trim().ToLowerInvariant();
-        var customerPayments = _dbContext.Payments
-            .AsNoTracking()
+        // B1.15 Fase 2a (FIX 5): filter mine. Sin cobranzas.view_all el historial expone
+        // solo eventos (payments/invoices/movements) cuya reserva esta a cargo del user.
+        // Los manualMovements con RelatedReserva null se excluyen para roles sin view_all
+        // — si Caja necesita verlos, ese permiso es independiente y futuro.
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
+
+        var customerPaymentsBase = _dbContext.Payments.AsNoTracking().AsQueryable();
+        var invoicesBase = _dbContext.Invoices.AsNoTracking().AsQueryable();
+        var manualMovementsBase = _dbContext.ManualCashMovements.AsNoTracking().Where(m => !m.IsVoided);
+        if (ownerScope is not null)
+        {
+            customerPaymentsBase = customerPaymentsBase.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
+            invoicesBase = invoicesBase.Where(i => i.Reserva != null && i.Reserva.ResponsibleUserId == ownerScope);
+            manualMovementsBase = manualMovementsBase.Where(m => m.RelatedReserva != null && m.RelatedReserva.ResponsibleUserId == ownerScope);
+        }
+
+        var customerPayments = customerPaymentsBase
             .Where(payment => string.IsNullOrWhiteSpace(normalizedSearch) ||
                 payment.Reference != null && payment.Reference.ToLower().Contains(normalizedSearch) ||
                 payment.Method.ToLower().Contains(normalizedSearch) ||
@@ -206,8 +289,7 @@ public class PaymentService : IPaymentService
                 IsManual = false
             });
 
-        var invoices = _dbContext.Invoices
-            .AsNoTracking()
+        var invoices = invoicesBase
             .Where(invoice => string.IsNullOrWhiteSpace(normalizedSearch) ||
                 invoice.ForceReason != null && invoice.ForceReason.ToLower().Contains(normalizedSearch) ||
                 invoice.Reserva != null && invoice.Reserva.NumeroReserva.ToLower().Contains(normalizedSearch) ||
@@ -254,9 +336,7 @@ public class PaymentService : IPaymentService
                 IsManual = false
             });
 
-        var manualMovements = _dbContext.ManualCashMovements
-            .AsNoTracking()
-            .Where(movement => !movement.IsVoided)
+        var manualMovements = manualMovementsBase
             .Where(movement => string.IsNullOrWhiteSpace(normalizedSearch) ||
                 movement.Description.ToLower().Contains(normalizedSearch) ||
                 movement.Reference != null && movement.Reference.ToLower().Contains(normalizedSearch) ||
@@ -330,6 +410,17 @@ public class PaymentService : IPaymentService
 
         if (reserva == null)
             throw new ArgumentException("Reserva no encontrada.");
+
+        // B1.15 Fase 2a (review final): ownership check para POST /api/payments.
+        // El attribute RequireOwnership no aplica porque la reserva viene en el body,
+        // no en la ruta. Si el user no tiene cobranzas.view_all (Admin/Colaborador) y
+        // no es responsable de la reserva, rechazar.
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
+        if (ownerScope is not null && !string.Equals(reserva.ResponsibleUserId, ownerScope, StringComparison.Ordinal))
+        {
+            // Sentinel "__no_user__" o user distinto: rechazo. Controller traduce a 403.
+            throw new UnauthorizedAccessException("La reserva no esta asignada al usuario actual.");
+        }
 
         if (reserva.Status == EstadoReserva.Budget)
             throw new InvalidOperationException("No se pueden registrar pagos en una Reserva en estado Presupuesto. Pasala a Reservado primero.");

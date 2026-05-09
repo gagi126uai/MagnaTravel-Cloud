@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
@@ -24,6 +26,9 @@ public class InvoiceService : IInvoiceService
     private readonly ILogger<InvoiceService> _logger;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly UserManager<ApplicationUser> _userManager;
+    // B1.15 Fase 2a (FIX 6): opcionales para no romper unit tests del ctor original.
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
     private static readonly string[] ActiveInvoicingStatuses =
     {
         EstadoReserva.Confirmed,
@@ -31,15 +36,17 @@ public class InvoiceService : IInvoiceService
     };
 
     public InvoiceService(
-        AppDbContext context, 
+        AppDbContext context,
         IEntityReferenceResolver entityReferenceResolver,
-        IAfipService afipService, 
+        IAfipService afipService,
         IInvoicePdfService pdfService,
         IMapper mapper,
         IBackgroundJobClient backgroundJobClient,
         ILogger<InvoiceService> logger,
         IOperationalFinanceSettingsService operationalFinanceSettingsService,
-        UserManager<ApplicationUser> userManager)
+        UserManager<ApplicationUser> userManager,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _context = context;
         _entityReferenceResolver = entityReferenceResolver;
@@ -50,11 +57,41 @@ public class InvoiceService : IInvoiceService
         _logger = logger;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
         _userManager = userManager;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    /// <summary>
+    /// B1.15 Fase 2a (FIX 6): null si Admin o user con cobranzas.view_all (=> ve todo);
+    /// si no, devuelve currentUserId (filter mine via Reserva.ResponsibleUserId).
+    /// Si no hay user resoluble, devuelve sentinel "__no_user__" (no expone nada).
+    /// </summary>
+    private async Task<string?> GetOwnerScopeOrNullAsync(CancellationToken ct)
+    {
+        var httpUser = _httpContextAccessor?.HttpContext?.User;
+        if (httpUser is null) return null;
+        if (httpUser.IsInRole("Admin")) return null;
+
+        var currentUserId = httpUser.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (_permissionResolver is null || string.IsNullOrEmpty(currentUserId))
+        {
+            return string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId;
+        }
+
+        var perms = await _permissionResolver.GetPermissionsAsync(currentUserId, ct);
+        return perms.Contains(Permissions.CobranzasViewAll) ? null : currentUserId;
     }
 
     public async Task<PagedResponse<InvoiceListDto>> GetAllAsync(InvoicesListQuery query, CancellationToken ct)
     {
+        // B1.15 Fase 2a (FIX 6): filter mine via Reserva.ResponsibleUserId.
+        var ownerScope = await GetOwnerScopeOrNullAsync(ct);
+
         var invoicesQuery = ApplyInvoiceSearch(_context.Invoices.AsNoTracking(), query.Search);
+        if (ownerScope is not null)
+        {
+            invoicesQuery = invoicesQuery.Where(i => i.Reserva != null && i.Reserva.ResponsibleUserId == ownerScope);
+        }
         invoicesQuery = ApplyInvoiceKind(invoicesQuery, query.Kind);
         invoicesQuery = ApplyInvoiceStructuredFilters(invoicesQuery, query);
         invoicesQuery = ApplyInvoiceOrdering(invoicesQuery, query);
@@ -96,9 +133,16 @@ public class InvoiceService : IInvoiceService
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
         var allowsOverride = settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason;
 
+        // B1.15 Fase 2a (FIX 6): filter mine para totales del summary.
+        var ownerScope = await GetOwnerScopeOrNullAsync(ct);
+
         var approvedInvoices = _context.Invoices
             .AsNoTracking()
             .Where(i => i.Resultado == "A");
+        if (ownerScope is not null)
+        {
+            approvedInvoices = approvedInvoices.Where(i => i.Reserva != null && i.Reserva.ResponsibleUserId == ownerScope);
+        }
 
         var invoiceTotalsByReserva = approvedInvoices
             .GroupBy(invoice => invoice.ReservaId)
@@ -111,9 +155,17 @@ public class InvoiceService : IInvoiceService
                         : invoice.ImporteTotal)
             });
 
-        var pendingFiscalQuery = _context.Reservas
+        // Filter mine para reservas dentro del summary (cuenta y montos pendientes
+        // de facturacion deben acotarse al scope del user).
+        var reservasBase = _context.Reservas
             .AsNoTracking()
-            .Where(reserva => ActiveInvoicingStatuses.Contains(reserva.Status))
+            .Where(reserva => ActiveInvoicingStatuses.Contains(reserva.Status));
+        if (ownerScope is not null)
+        {
+            reservasBase = reservasBase.Where(reserva => reserva.ResponsibleUserId == ownerScope);
+        }
+
+        var pendingFiscalQuery = reservasBase
             .GroupJoin(
                 invoiceTotalsByReserva,
                 reserva => reserva.Id,
@@ -164,7 +216,9 @@ public class InvoiceService : IInvoiceService
     public async Task<PagedResponse<InvoicingWorkItemDto>> GetInvoicingWorklistAsync(InvoicingWorklistQuery query, CancellationToken ct)
     {
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        var workItemsQuery = BuildInvoicingWorkItemsQuery(settings);
+        // B1.15 Fase 2a (FIX 6): filter mine via Reserva.ResponsibleUserId.
+        var ownerScope = await GetOwnerScopeOrNullAsync(ct);
+        var workItemsQuery = BuildInvoicingWorkItemsQuery(settings, ownerScope);
         workItemsQuery = ApplyInvoicingWorkItemSearch(workItemsQuery, query.Search);
         workItemsQuery = ApplyInvoicingWorkItemStructuredFilters(workItemsQuery, query);
         workItemsQuery = ApplyInvoicingWorkItemStatus(workItemsQuery, query.Status);
@@ -284,8 +338,36 @@ public class InvoiceService : IInvoiceService
         return _pdfService.GenerateInvoicePdf(invoice, invoice.Reserva, settings, agencySettings);
     }
 
-    public async Task EnqueueAnnulmentAsync(int id, string userId, CancellationToken ct)
+    public async Task EnqueueAnnulmentAsync(int id, string userId, string? userName, string? reason, CancellationToken ct)
     {
+        // B1.15 Fase 2a (FIX 6): persistir trazabilidad de la solicitud antes de
+        // encolar. AnnulmentStatus = Pending bloquea cancel de reserva incluso si
+        // el job tarda en ejecutar — la NC todavia no esta aprobada por AFIP.
+        var invoice = await _context.Invoices.FirstOrDefaultAsync(i => i.Id == id, ct)
+            ?? throw new KeyNotFoundException($"Factura {id} no encontrada.");
+
+        // B1.15 Fase 2a (review final — fiscal critico): idempotencia. Bloquea:
+        //  - Doble click del operador (Pending -> Pending -> 2 jobs encolados ->
+        //    potencial 2 NCs en AFIP, numeracion correlativa rota).
+        //  - Re-anulacion de una factura ya con NC aprobada (Succeeded).
+        // Permite re-intento desde Failed (util si AFIP dio timeout) y anulacion
+        // fresca desde None.
+        if (invoice.AnnulmentStatus is AnnulmentStatus.Pending or AnnulmentStatus.Succeeded)
+        {
+            throw new InvalidOperationException(
+                invoice.AnnulmentStatus == AnnulmentStatus.Succeeded
+                    ? "La factura ya fue anulada (NC aprobada). No se puede re-anular."
+                    : "La factura tiene una anulacion en curso. Espera el resultado o reintenta si quedo en Failed.");
+        }
+
+        invoice.AnnulledByUserId = userId;
+        invoice.AnnulledByUserName = userName;
+        // AnnulledAt se setea cuando el job confirma la NC con AFIP. Hasta entonces
+        // queda null; la "solicitud" se infiere por AnnulmentStatus = Pending.
+        invoice.AnnulmentReason = reason;
+        invoice.AnnulmentStatus = AnnulmentStatus.Pending;
+        await _context.SaveChangesAsync(ct);
+
         _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId));
     }
 
@@ -456,17 +538,44 @@ public class InvoiceService : IInvoiceService
 
             if (newInvoice.Resultado == "A")
             {
+                // B1.15 Fase 2a (FIX 6): NC aprobada por AFIP — la factura original
+                // queda definitivamente anulada. Levanta el bloqueo fiscal de cancel
+                // de reserva (FIX 7). AnnulledAt toma el momento de aprobacion.
+                original.AnnulmentStatus = AnnulmentStatus.Succeeded;
+                original.AnnulledAt = newInvoice.IssuedAt ?? DateTime.UtcNow;
+                await _context.SaveChangesAsync();
                 await CreateNotification(userId, $"Anulación exitosa. Se generó el comprobante {newInvoice.NumeroComprobante}.", "Success", newInvoice.Id);
             }
             else
             {
+                // AFIP rechazo la NC — marcar Failed para que el guard de cancel
+                // siga bloqueando hasta que el back-office reintente o resuelva.
+                original.AnnulmentStatus = AnnulmentStatus.Failed;
+                await _context.SaveChangesAsync();
                 await CreateNotification(userId, $"La anulación falló en AFIP: {newInvoice.Observaciones}", "Error", invoiceId);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error crítico en Job de Anulación");
-            
+
+            // B1.15 Fase 2a (FIX 6): cualquier excepcion del job marca Failed.
+            // Se hace en transaccion separada para no perder la marca si SaveChanges
+            // posterior falla (best-effort).
+            try
+            {
+                var failed = await _context.Invoices.FirstOrDefaultAsync(i => i.Id == invoiceId);
+                if (failed is not null && failed.AnnulmentStatus != AnnulmentStatus.Succeeded)
+                {
+                    failed.AnnulmentStatus = AnnulmentStatus.Failed;
+                    await _context.SaveChangesAsync();
+                }
+            }
+            catch (Exception saveEx)
+            {
+                _logger.LogError(saveEx, "No se pudo persistir AnnulmentStatus=Failed para Invoice {InvoiceId}", invoiceId);
+            }
+
             var errorMsg = ex.Message;
             if (errorMsg.Contains("AFIP RECHAZADO"))
             {
@@ -517,15 +626,21 @@ public class InvoiceService : IInvoiceService
         await _context.SaveChangesAsync(ct);
     }
 
-    private IQueryable<InvoicingWorkItemDto> BuildInvoicingWorkItemsQuery(OperationalFinanceSettings settings)
+    private IQueryable<InvoicingWorkItemDto> BuildInvoicingWorkItemsQuery(OperationalFinanceSettings settings, string? ownerScope = null)
     {
         var allowsOverride = settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason;
         var overrideBlockReason = "La reserva tiene deuda. AFIP queda bloqueado por defecto y requiere override con motivo.";
         var hardBlockReason = "La reserva no esta cancelada economicamente y no puede emitirse en AFIP.";
 
-        return _context.Reservas
+        var reservasBase = _context.Reservas
             .AsNoTracking()
-            .Where(reserva => ActiveInvoicingStatuses.Contains(reserva.Status))
+            .Where(reserva => ActiveInvoicingStatuses.Contains(reserva.Status));
+        if (ownerScope is not null)
+        {
+            reservasBase = reservasBase.Where(reserva => reserva.ResponsibleUserId == ownerScope);
+        }
+
+        return reservasBase
             .Select(reserva => new
             {
                 reserva.Id,

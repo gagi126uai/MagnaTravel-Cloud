@@ -43,6 +43,19 @@ public class Invoice : IHasPublicId
     public string? IssuedByUserName { get; set; }
     public DateTime? IssuedAt { get; set; }
 
+    // B1.15 Fase 2a (FIX 6): trazabilidad de la anulacion + estado del flujo.
+    // - AnnulledByUserId/Name: quien solicito el annul (back-office, no Vendedor).
+    // - AnnulledAt: timestamp del momento en que la NC quedo aprobada por AFIP.
+    // - AnnulmentReason: motivo declarado en el request (auditoria fiscal).
+    // - AnnulmentStatus: None/Pending/Succeeded/Failed. Solo Succeeded levanta el
+    //   bloqueo fiscal de cancelacion de reserva (ver FIX 7).
+    public string? AnnulledByUserId { get; set; }
+    public string? AnnulledByUserName { get; set; }
+    public DateTime? AnnulledAt { get; set; }
+    [MaxLength(500)]
+    public string? AnnulmentReason { get; set; }
+    public AnnulmentStatus AnnulmentStatus { get; set; } = AnnulmentStatus.None;
+
     [Column(TypeName = "decimal(18,2)")]
     public decimal OutstandingBalanceAtIssuance { get; set; }
 

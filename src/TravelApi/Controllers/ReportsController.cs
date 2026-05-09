@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
@@ -17,7 +18,15 @@ public class ReportsController : ControllerBase
         _reportService = reportService;
     }
 
+    /// <summary>
+    /// B1.15 Fase 2a (FIX 4): el dashboard exponia costos / margen / pagos a
+    /// proveedores y la lista completa de reservas pendientes a cualquier autenticado.
+    /// Ahora exige <c>reportes.view</c> y el service enmascara costos para roles sin
+    /// <c>cobranzas.see_cost</c> y filtra <c>ReservasPendientes</c> / <c>ProximosViajes</c>
+    /// para roles sin <c>reservas.view_all</c>.
+    /// </summary>
     [HttpGet("dashboard")]
+    [RequirePermission(Permissions.ReportesView)]
     public async Task<ActionResult<DashboardResponse>> GetDashboard(CancellationToken cancellationToken)
     {
         var response = await _reportService.GetDashboardAsync(cancellationToken);

@@ -1,9 +1,11 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Data;
+using System.Security.Claims;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
@@ -22,19 +24,60 @@ public class ReservaService : IReservaService
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ILogger<ReservaService> _logger;
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public ReservaService(
         AppDbContext context,
         IMapper mapper,
         IOperationalFinanceSettingsService operationalFinanceSettingsService,
         UserManager<ApplicationUser> userManager,
-        ILogger<ReservaService> logger)
+        ILogger<ReservaService> logger,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _context = context;
         _mapper = mapper;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
         _userManager = userManager;
         _logger = logger;
+        // B1.15 Fase 2a: estos dos son opcionales para no romper tests unitarios
+        // que instancian ReservaService directamente con el ctor de 5 args.
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    /// <summary>
+    /// B1.15 Fase 2a: id del usuario actual desde el HttpContext, o null si no
+    /// hay HttpContext (tests unitarios). Centralizado para los chequeos de
+    /// view_all/cobranzas.see_cost/cancel_with_payment/etc.
+    /// </summary>
+    private string? GetCurrentUserIdOrNull()
+        => _httpContextAccessor?.HttpContext?.User?.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier);
+
+    /// <summary>
+    /// B1.15 Fase 2a: chequea un permiso para el user actual. Devuelve false si
+    /// no hay user resoluble o no hay resolver inyectado (modo test).
+    /// </summary>
+    private async Task<bool> CurrentUserHasPermissionAsync(string permission, CancellationToken ct)
+    {
+        if (_permissionResolver is null) return false;
+        var userId = GetCurrentUserIdOrNull();
+        if (string.IsNullOrEmpty(userId)) return false;
+        var perms = await _permissionResolver.GetPermissionsAsync(userId, ct);
+        return perms.Contains(permission);
+    }
+
+    /// <summary>
+    /// B1.15 Fase 2a: chequea un permiso para un user explicito. Util cuando el
+    /// controller pasa el actor por parametro (ej: UpdateStatusAsync con
+    /// validacion de cancel/cancel_with_payment).
+    /// </summary>
+    private async Task<bool> UserHasPermissionAsync(string? userId, string permission, CancellationToken ct)
+    {
+        if (_permissionResolver is null || string.IsNullOrEmpty(userId)) return false;
+        var perms = await _permissionResolver.GetPermissionsAsync(userId, ct);
+        return perms.Contains(permission);
     }
 
     public async Task<ReservaDto> GetReservaByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
@@ -427,9 +470,65 @@ public class ReservaService : IReservaService
         await DeletePaymentAsync(reservaId, paymentId);
     }
 
-    public async Task<ReservaDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken ct = default)
+    public async Task<ReservaDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, string? actorUserId, CancellationToken ct = default)
     {
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+
+        // B1.15 Fase 2a (Decision 6): cancelacion exige reservas.cancel y, si la
+        // reserva tiene cobros o facturas, ademas reservas.cancel_with_payment.
+        // Admin bypass: si el user actual es Admin, ya pasa por el handler de
+        // permisos arriba; este chequeo es para el caso del Vendedor.
+        //
+        // B1.15 Fase 2a (FIX 7 — fiscal critico): bloqueo simetrico al de
+        // RevertStatusAsync. Una reserva con factura AFIP CAE vivo (no anulada
+        // via NC aprobada) NO se puede cancelar. La cancelacion sin NC dejaria
+        // un comprobante fiscal valido para una reserva inexistente. El usuario
+        // debe ejecutar primero <c>POST /api/invoices/{id}/annul</c> y esperar
+        // a que <c>AnnulmentStatus = Succeeded</c>. El controller traduce
+        // InvalidOperationException a 400/409 segun camino actual.
+        if (status == EstadoReserva.Cancelled)
+        {
+            var hasLiveCae = await _context.Invoices.AnyAsync(
+                i => i.ReservaId == id
+                    && !string.IsNullOrEmpty(i.CAE)
+                    && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
+                ct);
+            if (hasLiveCae)
+            {
+                throw new InvalidOperationException(
+                    "La reserva tiene facturas con CAE vigentes. Debe anularlas (se emitira Nota de Credito) antes de cancelar la reserva.");
+            }
+
+            // Solo aplicamos validacion B1.15 si tenemos un actor concreto.
+            // En tests unitarios sin HttpContext el actorUserId puede llegar null
+            // (camino legacy); preservamos el comportamiento previo en ese caso.
+            if (!string.IsNullOrEmpty(actorUserId))
+            {
+                var httpContextUser = _httpContextAccessor?.HttpContext?.User;
+                var isAdmin = httpContextUser?.IsInRole("Admin") ?? false;
+                if (!isAdmin)
+                {
+                    var hasCancel = await UserHasPermissionAsync(actorUserId, Permissions.ReservasCancel, ct);
+                    if (!hasCancel)
+                    {
+                        throw new UnauthorizedAccessException("No tenes permiso para cancelar reservas.");
+                    }
+
+                    var hasPaymentsOrInvoices = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted, ct)
+                        || await _context.Invoices.AnyAsync(i => i.ReservaId == id, ct);
+                    if (hasPaymentsOrInvoices)
+                    {
+                        var hasCancelWithPayment = await UserHasPermissionAsync(actorUserId, Permissions.ReservasCancelWithPayment, ct);
+                        if (!hasCancelWithPayment)
+                        {
+                            throw new UnauthorizedAccessException(
+                                "Cancelar una reserva con cobros o facturas asociadas requiere autorizacion adicional.");
+                        }
+                    }
+                }
+            }
+        }
+
         await UpdateStatusAsync(id, status);
         return await GetReservaByIdAsync(id);
     }
@@ -721,8 +820,58 @@ public class ReservaService : IReservaService
 
     public async Task<ReservaListPageDto> GetReservasAsync(ReservaListQuery query, CancellationToken cancellationToken)
     {
+        var (page, _) = await GetReservasInternalAsync(query, applyOwnerScope: false, cancellationToken);
+        return page;
+    }
+
+    /// <summary>
+    /// B1.15 Fase 2a: variante que decide el scope segun el permiso del user
+    /// actual. Si tiene <c>reservas.view_all</c>, devuelve todas. Sino, filtra
+    /// por <c>ResponsibleUserId == currentUserId</c>.
+    /// </summary>
+    public async Task<(ReservaListPageDto Page, string Scope)> GetReservasWithScopeAsync(ReservaListQuery query, CancellationToken cancellationToken)
+    {
+        // Admin: bypass total — ve todas. El handler de permisos hace lo mismo,
+        // pero aca tenemos que decidir el scope para el header X-Permission-Scope.
+        var httpContextUser = _httpContextAccessor?.HttpContext?.User;
+        var isAdmin = httpContextUser?.IsInRole("Admin") ?? false;
+        var hasViewAll = isAdmin || await CurrentUserHasPermissionAsync(Permissions.ReservasViewAll, cancellationToken);
+
+        if (hasViewAll)
+        {
+            var (allPage, _) = await GetReservasInternalAsync(query, applyOwnerScope: false, cancellationToken);
+            return (allPage, "all");
+        }
+
+        // Sin view_all: filtrar por ResponsibleUserId = currentUserId. Si no
+        // hay user resoluble, fail-safe: filtramos por una cadena vacia que no
+        // coincide con ningun ResponsibleUserId (=> 0 resultados).
+        var (minePage, _) = await GetReservasInternalAsync(query, applyOwnerScope: true, cancellationToken);
+        return (minePage, "mine");
+    }
+
+    private async Task<(ReservaListPageDto Page, string? OwnerFilterUserId)> GetReservasInternalAsync(ReservaListQuery query, bool applyOwnerScope, CancellationToken cancellationToken)
+    {
+        // B1.15 Fase 2a: si el caller pidio aplicar scope "mine" y no podemos
+        // resolver el user, devolvemos lista vacia (fail-safe). NO ejecutar
+        // queries con userId vacio que mantengan la base sin filtrar.
+        string? ownerFilterUserId = null;
+        if (applyOwnerScope)
+        {
+            ownerFilterUserId = GetCurrentUserIdOrNull();
+            if (string.IsNullOrEmpty(ownerFilterUserId))
+            {
+                // Sentinel imposible: ningun ResponsibleUserId real coincide con string.Empty.
+                ownerFilterUserId = "__no_user__";
+            }
+        }
+
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
         var summaryBaseQuery = ApplyReservaSearch(_context.Reservas.AsNoTracking(), query.Search);
+        if (ownerFilterUserId is not null)
+        {
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.ResponsibleUserId == ownerFilterUserId);
+        }
         
         if (query.CreatedFrom.HasValue)
         {
@@ -798,12 +947,36 @@ public class ReservaService : IReservaService
             .AsQueryable();
 
         var paged = await reservasQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // B1.15 Fase 2a (Decision 4): si el user actual NO tiene
+        // cobranzas.see_cost, ocultar TotalCost (solo ven precio de venta).
+        // Admin bypass: si es Admin, no se enmascara.
+        bool seeCost = true;
+        var httpContextUser = _httpContextAccessor?.HttpContext?.User;
+        var isAdmin = httpContextUser?.IsInRole("Admin") ?? false;
+        if (!isAdmin)
+        {
+            seeCost = await CurrentUserHasPermissionAsync(Permissions.CobranzasSeeCost, cancellationToken);
+        }
+
         foreach (var reserva in paged.Items)
         {
             ApplyEconomicFlags(reserva, settings);
+            if (!seeCost)
+            {
+                reserva.TotalCost = 0m;
+            }
         }
 
-        return ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
+        // El summary tambien expone costos agregados — enmascarar si no aplica.
+        if (!seeCost)
+        {
+            summary.TotalCostActive = 0m;
+            summary.GrossProfit = 0m;
+        }
+
+        var page = ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
+        return (page, ownerFilterUserId);
     }
 
     private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
@@ -881,7 +1054,59 @@ public class ReservaService : IReservaService
         dto.SuggestedStartDate = suggestedStart;
         dto.SuggestedEndDate = suggestedEnd;
 
+        // B1.15 Fase 2a (Decision 4): mascara de costos para roles sin
+        // cobranzas.see_cost. Admin bypass.
+        await ApplyCostMaskingAsync(dto, CancellationToken.None);
+
         return dto;
+    }
+
+    /// <summary>
+    /// B1.15 Fase 2a (Decision 4): si el user actual NO tiene
+    /// <c>cobranzas.see_cost</c>, oculta NetCost/TotalCost/Commission de la
+    /// reserva y de cada coleccion de servicios. Admin bypass.
+    ///
+    /// Centralizado aca para garantizar que cualquier endpoint de detalle aplique
+    /// la mascara antes de devolver el DTO al frontend.
+    /// </summary>
+    private async Task ApplyCostMaskingAsync(ReservaDto dto, CancellationToken ct)
+    {
+        var httpContextUser = _httpContextAccessor?.HttpContext?.User;
+        var isAdmin = httpContextUser?.IsInRole("Admin") ?? false;
+        if (isAdmin) return;
+
+        var seeCost = await CurrentUserHasPermissionAsync(Permissions.CobranzasSeeCost, ct);
+        if (seeCost) return;
+
+        // Reserva-level totals.
+        dto.TotalCost = 0m;
+
+        // Servicios genericos.
+        if (dto.Servicios is not null)
+        {
+            foreach (var s in dto.Servicios)
+            {
+                s.NetCost = 0m;
+                s.Commission = 0m;
+            }
+        }
+
+        if (dto.HotelBookings is not null)
+        {
+            foreach (var b in dto.HotelBookings) b.NetCost = 0m;
+        }
+        if (dto.FlightSegments is not null)
+        {
+            foreach (var f in dto.FlightSegments) f.NetCost = 0m;
+        }
+        if (dto.PackageBookings is not null)
+        {
+            foreach (var p in dto.PackageBookings) p.NetCost = 0m;
+        }
+        if (dto.TransferBookings is not null)
+        {
+            foreach (var t in dto.TransferBookings) t.NetCost = 0m;
+        }
     }
 
     public async Task<Reserva> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId)

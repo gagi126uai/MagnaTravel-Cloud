@@ -6,6 +6,7 @@ using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Errors;
 
@@ -34,12 +35,17 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet]
+    [RequirePermission(Permissions.ReservasView)]
     public async Task<IActionResult> GetReservas([FromQuery] ReservaListQuery query, CancellationToken cancellationToken)
     {
         try
         {
-            var reservas = await _reservaService.GetReservasAsync(query, cancellationToken);
-            return Ok(reservas);
+            // B1.15 Fase 2a: el service decide si filtra por owner segun permiso
+            // del usuario actual (reservas.view_all). Devuelve el scope efectivo
+            // para que el frontend pueda mostrar un banner "viendo solo tus reservas".
+            var (page, scope) = await _reservaService.GetReservasWithScopeAsync(query, cancellationToken);
+            Response.Headers["X-Permission-Scope"] = scope;
+            return Ok(page);
         }
         catch (Exception ex)
         {
@@ -54,6 +60,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> GetReserva(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -78,6 +86,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/timeline")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> GetReservaTimeline(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -102,6 +112,7 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost]
+    [RequirePermission(Permissions.ReservasEdit)]
     public async Task<IActionResult> CreateReserva(CreateReservaRequest request, CancellationToken cancellationToken)
     {
         try
@@ -123,6 +134,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/services")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> AddService(string publicIdOrLegacyId, AddServiceRequest request, CancellationToken cancellationToken)
     {
         try
@@ -155,7 +168,12 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // B1.15 Fase 2a (FIX 9): ownership por Servicio. El resolver hace el join
+    // Servicio -> Reserva.ResponsibleUserId. bypassPermission permite a Admin/
+    // Colaborador con reservas.view_all editar cualquier servicio.
     [HttpPut("services/{servicePublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Servicio, "servicePublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> UpdateService(string servicePublicIdOrLegacyId, AddServiceRequest request, CancellationToken cancellationToken)
     {
         try
@@ -184,6 +202,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}/services/{servicePublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public Task<IActionResult> UpdateNestedService(
         string publicIdOrLegacyId,
         string servicePublicIdOrLegacyId,
@@ -194,7 +214,10 @@ public class ReservasController : ControllerBase
         return UpdateService(servicePublicIdOrLegacyId, request, cancellationToken);
     }
 
+    // TODO B1.15 Fase 2a: ownership en service layer (solo serviceId en ruta).
+    // Mantenemos Admin-only como defense-in-depth hasta resolver via service.
     [HttpDelete("services/{servicePublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasDelete)]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> RemoveService(string servicePublicIdOrLegacyId, CancellationToken cancellationToken)
     {
@@ -224,6 +247,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpDelete("{publicIdOrLegacyId}/services/{servicePublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasDelete)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     [Authorize(Roles = "Admin")]
     public Task<IActionResult> RemoveNestedService(
         string publicIdOrLegacyId,
@@ -235,6 +260,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/passengers")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult> GetPassengers(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         var passengers = await _reservaService.GetPassengersAsync(publicIdOrLegacyId, cancellationToken);
@@ -242,6 +269,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/passengers")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult> AddPassenger(string publicIdOrLegacyId, PassengerUpsertRequest passenger, CancellationToken cancellationToken)
     {
         try
@@ -276,6 +305,8 @@ public class ReservasController : ControllerBase
     // ============= Phase 2.1 — Pasajero <-> Servicio =============
 
     [HttpGet("{publicIdOrLegacyId}/assignments")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<IReadOnlyList<PassengerServiceAssignmentDto>>> GetAssignments(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -290,6 +321,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/assignments")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<PassengerServiceAssignmentDto>> CreateAssignment(string publicIdOrLegacyId, [FromBody] CreatePassengerAssignmentRequest request, CancellationToken cancellationToken)
     {
         try
@@ -311,7 +344,11 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // B1.15 Fase 2a (FIX 9): ownership por Assignment. Resolver hace el doble
+    // join Assignment -> Passenger -> Reserva.ResponsibleUserId.
     [HttpDelete("assignments/{assignmentPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Assignment, "assignmentPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> RemoveAssignment(string assignmentPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -330,6 +367,8 @@ public class ReservasController : ControllerBase
     // ============= Phase 2.4 — Revert status con autorizacion =============
 
     [HttpGet("{publicIdOrLegacyId}/revert-options")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<RevertOptionsDto>> GetRevertOptions(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -346,6 +385,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/revert-status")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<ReservaDto>> RevertStatus(string publicIdOrLegacyId, [FromBody] RevertStatusRequest request, CancellationToken cancellationToken)
     {
         try
@@ -377,6 +418,8 @@ public class ReservasController : ControllerBase
     // ============= /Phase 2.4 =============
 
     [HttpGet("{publicIdOrLegacyId}/transition-readiness")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<TransitionReadinessDto>> GetTransitionReadiness(string publicIdOrLegacyId, [FromQuery] string to, CancellationToken cancellationToken)
     {
         try
@@ -391,6 +434,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/dates")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult> UpdateDates(string publicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken cancellationToken)
     {
         try
@@ -413,6 +458,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/passenger-counts")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult> UpdatePassengerCounts(string publicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken cancellationToken)
     {
         try
@@ -444,7 +491,11 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // B1.15 Fase 2a (FIX 9): ownership por Passenger. Resolver hace el join
+    // Passenger -> Reserva.ResponsibleUserId. bypassPermission para roles con view_all.
     [HttpPut("passengers/{passengerPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Passenger, "passengerPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult> UpdatePassenger(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated, CancellationToken cancellationToken)
     {
         try
@@ -472,7 +523,10 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // TODO B1.15 Fase 2a: ownership en service layer (solo passengerId en ruta).
+    // Mantenemos Admin-only como defense-in-depth hasta resolver via service.
     [HttpDelete("passengers/{passengerPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasDelete)]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> RemovePassenger(string passengerPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
@@ -502,6 +556,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/payments")]
+    [RequirePermission(Permissions.CobranzasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<ActionResult> GetReservaPayments(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         var payments = await _reservaService.GetReservaPaymentsAsync(publicIdOrLegacyId, cancellationToken);
@@ -509,6 +565,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/payments")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<ActionResult> AddPayment(string publicIdOrLegacyId, ReservationPaymentUpsertRequest payment, CancellationToken cancellationToken)
     {
         try
@@ -541,6 +599,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<ActionResult> UpdatePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, ReservationPaymentUpsertRequest updatedPayment, CancellationToken cancellationToken)
     {
         try
@@ -568,7 +628,12 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // B1.15 Fase 2a: NO tocar este endpoint. Fase 2b lo reemplaza por
+    // POST /api/payments/{id}/annul. Mantenemos Admin-only como defense-in-depth
+    // hasta entonces. RequirePermission(cobranzas.edit) + Admin role = AND.
     [HttpDelete("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.CobranzasViewAll)]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeletePayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
@@ -603,16 +668,26 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}/status")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] StatusUpdateRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var reserva = await _reservaService.UpdateStatusAsync(publicIdOrLegacyId, request.Status, cancellationToken);
+            // B1.15 Fase 2a (Decision 6): el service valida reservas.cancel y
+            // reservas.cancel_with_payment cuando target == Cancelled.
+            var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var reserva = await _reservaService.UpdateStatusAsync(publicIdOrLegacyId, request.Status, actorUserId, cancellationToken);
             return Ok(reserva);
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // B1.15 Fase 2a: el service traduce permisos faltantes a 403.
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
         }
         catch (ArgumentException ex)
         {
@@ -635,6 +710,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}/archive")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> ArchiveReserva(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -662,7 +739,12 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // B1.15 Fase 2a: defense-in-depth — el permiso reservas.delete + Admin role
+    // se requieren ambos (AND). Permite mantener compat con tests historicos
+    // que asumen Admin-only para borrado destructivo.
     [HttpDelete("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ReservasDelete)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteReserva(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
@@ -694,6 +776,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/voucher")]
+    [RequirePermission(Permissions.VouchersGenerate)]
+    [RequireOwnership(OwnedEntity.Reserva)]
     public async Task<IActionResult> GenerateVoucher(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -717,6 +801,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/voucher/preview")]
+    [RequirePermission(Permissions.VouchersGenerate)]
+    [RequireOwnership(OwnedEntity.Reserva)]
     public async Task<IActionResult> GetVoucherHtmlPreview(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -741,6 +827,8 @@ public class ReservasController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/voucher/pdf")]
+    [RequirePermission(Permissions.VouchersGenerate)]
+    [RequireOwnership(OwnedEntity.Reserva)]
     public async Task<IActionResult> GenerateVoucherPdf(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
