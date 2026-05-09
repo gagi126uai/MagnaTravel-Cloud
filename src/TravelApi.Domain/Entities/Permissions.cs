@@ -138,13 +138,21 @@ public static class Permissions
     {
         ReservasView, ReservasEdit,
         // B1.15 (Decisión 1 de Gaston): el Vendedor SI puede cancelar reservas propias y SI puede facturar.
-        // NO permisos *_all, *_annul, see_cost, edit_fiscal, discount_above_threshold.
+        // NO permisos *_all, *_annul, see_cost, edit_fiscal, discount_above_threshold,
+        // authorize_exception (Admin override), tesoreria.supplier_payments (back-office).
         ReservasCancel,
-        VouchersGenerate, VouchersSend,
+        // B1.15 smoke 2026-05-09: Vendedor opera vouchers de SUS reservas (con ownership):
+        // genera, emite, sube externos, envia y revoca. NO authorize_exception.
+        VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersRevoke,
         MessagesView, MessagesSend,
         ClientesView, ClientesEdit,
+        // B1.15 smoke 2026-05-09: necesita ver lista basica de proveedores para asociar
+        // al servicio. NO datos fiscales (eso es proveedores.edit_fiscal).
+        ProveedoresView,
         CrmView, CrmEdit,
-        CobranzasView, CobranzasInvoice,
+        // B1.15 smoke 2026-05-09: necesita CobranzasEdit para registrar pagos del cliente
+        // en SUS reservas (con ownership). CobranzasInvoice para facturar (decision 1).
+        CobranzasView, CobranzasEdit, CobranzasInvoice,
         TarifarioView,
         PaquetesView,
     };
