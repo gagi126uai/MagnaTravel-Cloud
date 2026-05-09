@@ -51,6 +51,11 @@ public static class Permissions
     public const string CajaView = "caja.view";
     public const string CajaEdit = "caja.edit";
 
+    // B1.15 Fase 0' (CODE-09): pagos a proveedores. Antes este modulo era
+    // [Authorize] sin permiso especifico — cualquier autenticado podia crear,
+    // editar y borrar pagos egresos. Ahora requiere permiso explicito.
+    public const string TesoreriaSupplierPayments = "tesoreria.supplier_payments";
+
     // Reportes
     public const string ReportesView = "reportes.view";
 
@@ -95,6 +100,7 @@ public static class Permissions
             CobranzasViewAll, CobranzasAnnul, CobranzasInvoice, CobranzasInvoiceAnnul, CobranzasSeeCost,
         },
         ["Caja"] = new[] { CajaView, CajaEdit },
+        ["Tesoreria"] = new[] { TesoreriaSupplierPayments },
         ["Reportes"] = new[] { ReportesView },
         ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip },
         ["CRM"] = new[] { CrmView, CrmEdit },
@@ -122,6 +128,7 @@ public static class Permissions
         CobranzasView,
         CobranzasViewAll, CobranzasAnnul, CobranzasInvoice, CobranzasInvoiceAnnul, CobranzasSeeCost,
         CajaView,
+        TesoreriaSupplierPayments,
         TarifarioView,
         PaquetesView,
     };

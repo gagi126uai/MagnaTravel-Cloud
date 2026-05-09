@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -16,10 +18,23 @@ public class SupplierService : ISupplierService
     };
 
     private readonly AppDbContext _dbContext;
+    // B1.15 Fase 0' (CODE-10 / INV-2): IAuditService + ILogger opcionales para no
+    // romper unit tests con ctor de 1 arg (SupplierServiceTests). Si se inyectan,
+    // SupplierPayments soft-delete escribe AuditLog con UserId/UserName del request.
+    private readonly IAuditService? _auditService;
+    private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor? _httpContextAccessor;
+    private readonly ILogger<SupplierService>? _logger;
 
-    public SupplierService(AppDbContext dbContext)
+    public SupplierService(
+        AppDbContext dbContext,
+        IAuditService? auditService = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? httpContextAccessor = null,
+        ILogger<SupplierService>? logger = null)
     {
         _dbContext = dbContext;
+        _auditService = auditService;
+        _httpContextAccessor = httpContextAccessor;
+        _logger = logger;
     }
 
     public async Task<PagedResponse<SupplierListItemDto>> GetSuppliersAsync(SupplierListQuery query, CancellationToken cancellationToken)
@@ -93,6 +108,22 @@ public class SupplierService : ISupplierService
         if (existing == null)
         {
             throw new KeyNotFoundException("Proveedor no encontrado");
+        }
+
+        // B1.15 Fase 0' (CODE-13): bloquear cambios fiscales (TaxId, TaxCondition)
+        // cuando hay reservas con factura CAE viva referenciando al proveedor.
+        // Otros campos siguen libres (Name/Email/Phone/Address/IsActive/ContactName).
+        var fiscalDataChanged =
+            !string.Equals(existing.TaxId, supplier.TaxId, StringComparison.Ordinal) ||
+            !string.Equals(existing.TaxCondition, supplier.TaxCondition, StringComparison.Ordinal);
+
+        if (fiscalDataChanged)
+        {
+            var fiscalBlock = await MutationGuards.GetSupplierTaxIdMutationBlockReasonAsync(_dbContext, id, cancellationToken);
+            if (fiscalBlock != null)
+            {
+                throw new InvalidOperationException(fiscalBlock);
+            }
         }
 
         // C29: guard de desactivacion. La regla de negocio operativa es "no se
@@ -188,7 +219,12 @@ public class SupplierService : ISupplierService
             throw new InvalidOperationException("No se puede eliminar: el proveedor tiene servicios asociados");
         }
 
-        var hasPayments = await _dbContext.SupplierPayments.AnyAsync(payment => payment.SupplierId == id, cancellationToken);
+        // IgnoreQueryFilters: hay que ver tambien soft-deleted. Si no, un Admin podria
+        // borrar el Supplier y el cascade FK hard-borraria los pagos soft-deleted,
+        // perdiendo la auditoria que el soft-delete justamente preserva (B1.15 Fase 0').
+        var hasPayments = await _dbContext.SupplierPayments
+            .IgnoreQueryFilters()
+            .AnyAsync(payment => payment.SupplierId == id, cancellationToken);
         if (hasPayments)
         {
             throw new InvalidOperationException("No se puede eliminar: el proveedor tiene pagos registrados");
@@ -457,11 +493,60 @@ public class SupplierService : ISupplierService
             throw new KeyNotFoundException("Pago no encontrado");
         }
 
+        // TODO B1.7: bloquear si el pago cae dentro de un periodo contable cerrado.
+        // Hoy NO existe modelo de periodos cerrados; cuando exista, agregar guard
+        // aca antes del soft-delete.
+
+        // B1.15 Fase 0' (CODE-10 / INV-2): soft-delete + AuditLog para preservar
+        // trazabilidad. Antes era hard-delete: el pago desaparecia y el ajuste de
+        // CurrentBalance quedaba sin registro de quien/cuando.
         var currentDebt = await CalculateSupplierDebt(id, cancellationToken);
         supplier.CurrentBalance = currentDebt + payment.Amount;
 
-        _dbContext.SupplierPayments.Remove(payment);
+        var (userId, userName) = ResolveCurrentActor();
+        payment.IsDeleted = true;
+        payment.DeletedAt = DateTime.UtcNow;
+        payment.DeletedByUserId = userId;
+
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (_auditService is not null)
+        {
+            try
+            {
+                var details = $"{{\"supplierId\":{id},\"amount\":{payment.Amount},\"method\":\"{payment.Method}\",\"reservaId\":{payment.ReservaId?.ToString() ?? "null"}}}";
+                await _auditService.LogBusinessEventAsync(
+                    action: "Delete",
+                    entityName: "SupplierPayment",
+                    entityId: payment.Id.ToString(),
+                    details: details,
+                    userId: userId,
+                    userName: userName,
+                    ct: cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex,
+                    "Audit log failed for SupplierPayment delete. PaymentId={PaymentId} SupplierId={SupplierId}",
+                    paymentId, id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resuelve el actor actual (userId, userName) para auditoria. Si no hay
+    /// HttpContext (tests unitarios o jobs), devuelve "System"/"Sistema".
+    /// </summary>
+    private (string UserId, string UserName) ResolveCurrentActor()
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        if (user is null) return ("System", "Sistema");
+
+        var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = user.FindFirst("FullName")?.Value
+                       ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+                       ?? "Sistema";
+        return (userId, userName);
     }
 
     public async Task<IEnumerable<SupplierPaymentDto>> GetSupplierPaymentsHistoryAsync(int id, CancellationToken cancellationToken)

@@ -167,6 +167,17 @@ public class ReservaService : IReservaService
         var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
+        // B1.15 Fase 0' (CODE-03): cambiar fechas con factura AFIP viva o voucher
+        // emitido rompe la coherencia con el periodo declarado en el comprobante.
+        var blockReason = await MutationGuards.GetReservaDatesMutationBlockReasonAsync(_context, reservaId, ct);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdateDatesAsync rejected. ReservaId={ReservaId}. Reason={Reason}",
+                reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
+
         // Permite editar StartDate/EndDate explicitamente. Pasar `clearXxxDate=true`
         // borra el valor; pasar la fecha en el campo lo setea; null sin clear no toca.
         // Las fechas se normalizan a Kind=Utc porque las columnas Postgres son
@@ -1239,6 +1250,17 @@ public class ReservaService : IReservaService
 
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
 
+        // B1.15 Fase 0' (CODE-05): inmutabilidad post-CAE / post-voucher. Cambiar
+        // monto/proveedor/fechas del servicio rompe la coherencia con la factura
+        // AFIP emitida o el voucher entregado al cliente.
+        var blockReason = await MutationGuards.GetServiceMutationBlockReasonAsync(_context, serviceId, ct);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdateServiceAsync rejected. ServiceId={ServiceId} ReservaId={ReservaId}. Reason={Reason}",
+                serviceId, service.ReservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
 
         int? supplierId = null;
         if (!string.IsNullOrWhiteSpace(request.SupplierId))
@@ -1421,15 +1443,40 @@ public class ReservaService : IReservaService
         if (string.IsNullOrWhiteSpace(updated.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (updated.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
 
+        // B1.15 Fase 0' (CODE-14): solo bloqueamos si el request cambia DATOS
+        // PERSONALES (nombre, documento, fecha de nacimiento, nacionalidad,
+        // genero). Email/Phone/Notes son campos de contacto y se permiten editar
+        // libremente — son parte de la operativa de la reserva, no del voucher.
+        var personalDataChanged =
+            !string.Equals(passenger.FullName, updated.FullName, StringComparison.Ordinal) ||
+            !string.Equals(passenger.DocumentType, updated.DocumentType, StringComparison.Ordinal) ||
+            !string.Equals(passenger.DocumentNumber, updated.DocumentNumber, StringComparison.Ordinal) ||
+            passenger.BirthDate != updated.BirthDate ||
+            !string.Equals(passenger.Nationality, updated.Nationality, StringComparison.Ordinal) ||
+            !string.Equals(passenger.Gender, updated.Gender, StringComparison.Ordinal);
+
+        if (personalDataChanged)
+        {
+            var blockReason = await MutationGuards.GetPassengerMutationBlockReasonAsync(_context, passengerId);
+            if (blockReason != null)
+            {
+                // PII: no logueamos nombre/documento, solo IDs.
+                _logger.LogWarning(
+                    "UpdatePassengerAsync rejected. PassengerId={PassengerId} ReservaId={ReservaId}. Reason={Reason}",
+                    passengerId, passenger.ReservaId, blockReason);
+                throw new InvalidOperationException(blockReason);
+            }
+        }
+
         passenger.FullName = updated.FullName;
         passenger.DocumentType = updated.DocumentType;
         passenger.DocumentNumber = updated.DocumentNumber;
-        
+
         if (updated.BirthDate.HasValue)
         {
             passenger.BirthDate = DateTime.SpecifyKind(updated.BirthDate.Value, DateTimeKind.Utc);
         }
-        else 
+        else
         {
             passenger.BirthDate = null;
         }
@@ -1502,14 +1549,26 @@ public class ReservaService : IReservaService
     {
         var payment = await _context.Payments.FindAsync(paymentId);
         if (payment == null) throw new KeyNotFoundException("Pago no encontrado");
-        
+
         if (payment.ReservaId != reservaId) throw new ArgumentException("El pago no corresponde a la Reserva");
 
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         if (updatedPayment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
-        
+
+        // B1.15 Fase 0' (CODE-01): mismo guard que PaymentService.UpdatePaymentAsync
+        // — este es el path legacy "via reserva nested". Sin esto, el bypass del
+        // controller nested deja editar pagos con recibo o factura AFIP viva.
+        var blockReason = await MutationGuards.GetPaymentMutationBlockReasonAsync(_context, paymentId);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync (legacy via reserva) rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
+                paymentId, reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
+
         payment.Amount = updatedPayment.Amount;
         payment.Method = updatedPayment.Method;
         payment.PaidAt = updatedPayment.PaidAt.ToUniversalTime();

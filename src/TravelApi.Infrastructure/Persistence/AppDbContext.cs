@@ -952,6 +952,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
             entity.Property(p => p.ServicioReservaId).HasColumnName("ReservationId");
+
+            // B1.15 Fase 0' (CODE-10 / INV-2): query filter para excluir pagos
+            // proveedor soft-deleted. Indices auxiliares para cuentas corrientes
+            // que ahora deben filtrar `IsDeleted = false` antes de sumar.
+            entity.HasQueryFilter(p => !p.IsDeleted);
+            entity.HasIndex(p => p.IsDeleted);
         });
 
         modelBuilder.Entity<OperationalFinanceSettings>(entity =>

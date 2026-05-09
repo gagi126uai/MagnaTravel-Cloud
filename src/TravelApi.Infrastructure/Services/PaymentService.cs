@@ -702,6 +702,19 @@ public class PaymentService : IPaymentService
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
 
+        // B1.15 Fase 0' (CODE-01): inmutabilidad post-recibo / post-CAE. Editar
+        // el monto/metodo/referencia de un pago con recibo emitido o ligado a
+        // factura AFIP viva rompe la trazabilidad fiscal y la auditoria del
+        // recibo entregado al cliente.
+        var blockReason = await MutationGuards.GetPaymentMutationBlockReasonAsync(_dbContext, paymentId, cancellationToken);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
+                paymentId, payment.ReservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
+
         payment.Amount = EconomicRulesHelper.RoundCurrency(request.Amount);
         payment.Method = request.Method;
         payment.Reference = request.Reference;

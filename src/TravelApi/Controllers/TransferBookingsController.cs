@@ -68,7 +68,8 @@ public class TransferBookingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // B1.15 Fase 0' (CODE-04): MutationGuards + guards de status. 409.
+            return Conflict(new { message = ex.Message });
         }
         catch
         {

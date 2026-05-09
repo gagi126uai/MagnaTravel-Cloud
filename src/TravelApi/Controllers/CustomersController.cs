@@ -102,6 +102,12 @@ public class CustomersController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            // B1.15 Fase 0' (CODE-06): MutationGuards rechaza cambios fiscales
+            // (TaxId/TaxCondition) cuando hay factura AFIP viva. 409 Conflict.
+            return Conflict(new { message = ex.Message });
+        }
         catch (Microsoft.EntityFrameworkCore.DbUpdateException)
         {
             return BadRequest(new { message = "No se pudo actualizar el cliente. Verifica que el documento y el email no esten duplicados." });

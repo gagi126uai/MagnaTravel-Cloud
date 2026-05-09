@@ -189,6 +189,12 @@ public class ReservasController : ControllerBase
         {
             return BadRequest(new { message = "No se pudo actualizar el servicio." });
         }
+        catch (InvalidOperationException ex)
+        {
+            // B1.15 Fase 0' (CODE-05): MutationGuards rechaza con factura AFIP
+            // viva o voucher Issued. 409 Conflict (mismo patron que DeleteGuards).
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error updating service {ServiceId}", servicePublicIdOrLegacyId);
@@ -511,6 +517,12 @@ public class ReservasController : ControllerBase
         {
             return BadRequest(new { message = "No se pudo actualizar el pasajero." });
         }
+        catch (InvalidOperationException ex)
+        {
+            // B1.15 Fase 0' (CODE-14): MutationGuards rechaza cambios de datos
+            // personales con voucher emitido o factura AFIP viva. 409 Conflict.
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error updating passenger {PassengerId}", passengerPublicIdOrLegacyId);
@@ -615,6 +627,12 @@ public class ReservasController : ControllerBase
         catch (ArgumentException)
         {
             return BadRequest(new { message = "No se pudo actualizar el pago." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // B1.15 Fase 0' (CODE-01): MutationGuards rechaza editar pagos con
+            // recibo emitido o factura AFIP viva. 409 Conflict.
+            return Conflict(new { message = ex.Message });
         }
         catch (Exception ex)
         {

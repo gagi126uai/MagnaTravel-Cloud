@@ -87,9 +87,12 @@ public class InvoicesController : ControllerBase
 
             return Accepted(new { message = "Reintento encolado." });
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "La factura no pudo reintentarse." });
+            // B1.15 Fase 0' (CODE-02): el service rechaza con motivo claro cuando
+            // hay anulacion Pending/Succeeded o cuando la factura ya esta aprobada.
+            // 409 Conflict expresa "estado actual incompatible con la operacion".
+            return Conflict(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {

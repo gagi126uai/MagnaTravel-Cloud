@@ -68,7 +68,10 @@ public class PackageBookingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // B1.15 Fase 0' (CODE-04): MutationGuards rechaza con factura AFIP
+            // viva o voucher Issued. Tambien guards de status existentes
+            // (downgrade/capacity). 409 Conflict para todos.
+            return Conflict(new { message = ex.Message });
         }
         catch
         {

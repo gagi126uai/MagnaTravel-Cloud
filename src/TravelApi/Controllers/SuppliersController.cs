@@ -3,11 +3,16 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
 
+// B1.15 Fase 0' (CODE-09): hotfix de seguridad. Antes el controller era
+// solo [Authorize] — cualquier autenticado podia crear, modificar o borrar
+// proveedores y operar pagos egresos. Ahora cada endpoint exige permiso
+// especifico (proveedores.view/edit/edit_fiscal o tesoreria.supplier_payments).
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
@@ -23,6 +28,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet]
+    [RequirePermission(Permissions.ProveedoresView)]
     public async Task<ActionResult<PagedResponse<SupplierListItemDto>>> GetSuppliers([FromQuery] SupplierListQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _supplierService.GetSuppliersAsync(query, cancellationToken));
@@ -37,6 +43,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ProveedoresView)]
     public async Task<ActionResult<Supplier>> GetSupplier(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -52,6 +59,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPost]
+    [RequirePermission(Permissions.ProveedoresEdit)]
     public async Task<ActionResult<Supplier>> CreateSupplier(SupplierUpsertRequest supplier, CancellationToken cancellationToken)
     {
         try
@@ -66,6 +74,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ProveedoresEdit)]
     public async Task<ActionResult<Supplier>> UpdateSupplier(string publicIdOrLegacyId, SupplierUpsertRequest supplier, CancellationToken cancellationToken)
     {
         try
@@ -84,14 +93,15 @@ public class SuppliersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // C29: el guard de desactivacion (IsActive: true -> false con
-            // reservas activas) se reporta tal cual al cliente porque incluye
-            // el conteo de reservas, que la UI muestra al operador.
-            return BadRequest(new { message = ex.Message });
+            // C29: guard de desactivacion (IsActive: true -> false con reservas activas).
+            // B1.15 Fase 0' (CODE-13): guard fiscal (TaxId/TaxCondition con CAE viva).
+            // Ambos casos reflejan "estado actual incompatible con la operacion" → 409.
+            return Conflict(new { message = ex.Message });
         }
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ProveedoresEdit)]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult> DeleteSupplier(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
@@ -117,6 +127,7 @@ public class SuppliersController : ControllerBase
     // pegarle al path; eso es intencional — antes podia dejar la BD inconsistente.
 
     [HttpGet("{publicIdOrLegacyId}/account")]
+    [RequirePermission(Permissions.ProveedoresView)]
     public async Task<ActionResult<SupplierAccountOverviewDto>> GetSupplierAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -131,6 +142,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/account/services")]
+    [RequirePermission(Permissions.ProveedoresView)]
     public async Task<ActionResult<PagedResponse<SupplierAccountServiceListItemDto>>> GetSupplierAccountServices(
         string publicIdOrLegacyId,
         [FromQuery] SupplierAccountServicesQuery query,
@@ -148,6 +160,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/account/payments")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult<PagedResponse<SupplierPaymentDto>>> GetSupplierAccountPayments(
         string publicIdOrLegacyId,
         [FromQuery] SupplierAccountPaymentsQuery query,
@@ -165,6 +178,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/payments")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult> AddSupplierPayment(string publicIdOrLegacyId, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
     {
         try
@@ -188,6 +202,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult> UpdateSupplierPayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, [FromBody] SupplierPaymentRequest request, CancellationToken cancellationToken)
     {
         try
@@ -212,6 +227,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpDelete("{publicIdOrLegacyId}/payments/{paymentPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult> DeleteSupplierPayment(string publicIdOrLegacyId, string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -225,9 +241,14 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpGet("{publicIdOrLegacyId}/payments")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult> GetSupplierPayments(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);

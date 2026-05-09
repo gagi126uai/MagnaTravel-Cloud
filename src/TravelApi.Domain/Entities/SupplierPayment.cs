@@ -32,4 +32,12 @@ public class SupplierPayment : IHasPublicId
     public string? Notes { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // B1.15 Fase 0' (CODE-10 / INV-2): soft-delete. Antes era hard-delete, lo
+    // que perdia auditoria — un pago a proveedor borrado dejaba al CurrentBalance
+    // restaurado pero sin registro de quien/cuando/por que. AuditLog en el
+    // delete handler captura el motivo y el actor.
+    public bool IsDeleted { get; set; } = false;
+    public DateTime? DeletedAt { get; set; }
+    public string? DeletedByUserId { get; set; }
 }

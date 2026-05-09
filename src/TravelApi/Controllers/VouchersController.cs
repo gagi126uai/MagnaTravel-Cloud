@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -22,7 +24,20 @@ public class VouchersController : ControllerBase
         _logger = logger;
     }
 
+    // B1.15 Fase 0' (CODE-08): hotfix de seguridad. Antes este controller era
+    // [Authorize] sin permission ni ownership: cualquier autenticado podia ver,
+    // generar, anular o subir vouchers de cualquier reserva. Critico — los
+    // vouchers tienen datos del pasajero, codigo de confirmacion y archivo PDF.
+    //
+    // Granularidad de permisos:
+    //  - VouchersGenerate: ver listas + generar voucher + ver/descargar PDF.
+    //  - VouchersUpload: subir voucher externo (operadores que mandan PDF).
+    //  - VouchersIssue + VouchersAuthorizeException: emitir + aprobar/rechazar.
+    //  - VouchersSend: registrar envio + ensure-send.
+    //  - VouchersRevoke: revocar.
     [HttpGet("api/reservas/{reservaPublicIdOrLegacyId}/vouchers")]
+    [RequirePermission(Permissions.VouchersGenerate)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<IReadOnlyList<VoucherDto>>> GetReservaVouchers(
         string reservaPublicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -39,6 +54,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpPost("api/reservas/{reservaPublicIdOrLegacyId}/vouchers/generate")]
+    [RequirePermission(Permissions.VouchersGenerate)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> GenerateVoucher(
         string reservaPublicIdOrLegacyId,
         [FromBody] GenerateVoucherRequest request,
@@ -73,6 +90,8 @@ public class VouchersController : ControllerBase
 
     [HttpPost("api/reservas/{reservaPublicIdOrLegacyId}/vouchers/external")]
     [EnableRateLimiting("uploads")]
+    [RequirePermission(Permissions.VouchersUpload)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> UploadExternalVoucher(
         string reservaPublicIdOrLegacyId,
         [FromForm] UploadExternalVoucherForm form,
@@ -121,6 +140,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/issue")]
+    [RequirePermission(Permissions.VouchersIssue)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> IssueVoucher(
         string voucherPublicIdOrLegacyId,
         [FromBody] IssueVoucherRequest request,
@@ -150,6 +171,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/approve")]
+    [RequirePermission(Permissions.VouchersAuthorizeException)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> ApproveVoucher(
         string voucherPublicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -178,6 +201,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/reject")]
+    [RequirePermission(Permissions.VouchersAuthorizeException)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> RejectVoucher(
         string voucherPublicIdOrLegacyId,
         [FromBody] RejectVoucherRequest request,
@@ -207,6 +232,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/revoke")]
+    [RequirePermission(Permissions.VouchersRevoke)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> RevokeVoucher(
         string voucherPublicIdOrLegacyId,
         [FromBody] RevokeVoucherRequest request,
@@ -236,6 +263,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/ensure-send")]
+    [RequirePermission(Permissions.VouchersSend)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> EnsureVoucherCanBeSent(
         string voucherPublicIdOrLegacyId,
         [FromBody] EnsureVoucherSendRequest request,
@@ -271,6 +300,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/sent")]
+    [RequirePermission(Permissions.VouchersSend)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<VoucherDto>> RecordVoucherSent(
         string voucherPublicIdOrLegacyId,
         [FromBody] RecordVoucherSentRequest request,
@@ -303,6 +334,8 @@ public class VouchersController : ControllerBase
     }
 
     [HttpGet("api/vouchers/{voucherPublicIdOrLegacyId}/download")]
+    [RequirePermission(Permissions.VouchersGenerate)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> DownloadVoucher(string voucherPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try

@@ -221,6 +221,16 @@ public class BookingService : IBookingService
         var flight = await _flightRepo.GetByIdAsync(id, ct);
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
+        // B1.15 Fase 0' (CODE-04): inmutabilidad post-CAE / post-voucher.
+        var blockReason = await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, "Flight", ct);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdateFlightAsync rejected. FlightId={FlightId} ReservaId={ReservaId}. Reason={Reason}",
+                id, reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
+
         var oldSupplierId = flight.SupplierId;
         var oldStatus = flight.Status;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -376,6 +386,16 @@ public class BookingService : IBookingService
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
+
+        // B1.15 Fase 0' (CODE-04): inmutabilidad post-CAE / post-voucher.
+        var blockReason = await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, "Hotel", ct);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdateHotelAsync rejected. HotelId={HotelId} ReservaId={ReservaId}. Reason={Reason}",
+                id, reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
 
         var oldSupplierId = hotel.SupplierId;
         var oldStatus = hotel.Status;
@@ -544,6 +564,16 @@ public class BookingService : IBookingService
         var package = await _packageRepo.GetByIdAsync(id, ct);
         if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
+        // B1.15 Fase 0' (CODE-04): inmutabilidad post-CAE / post-voucher.
+        var blockReason = await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, "Package", ct);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdatePackageAsync rejected. PackageId={PackageId} ReservaId={ReservaId}. Reason={Reason}",
+                id, reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
+
         var oldNetCost = package.NetCost;
         var oldSupplierId = package.SupplierId;
         var oldStatus = package.Status;
@@ -683,6 +713,16 @@ public class BookingService : IBookingService
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
         if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
+
+        // B1.15 Fase 0' (CODE-04): inmutabilidad post-CAE / post-voucher.
+        var blockReason = await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, "Transfer", ct);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdateTransferAsync rejected. TransferId={TransferId} ReservaId={ReservaId}. Reason={Reason}",
+                id, reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
 
         var oldNetCost = transfer.NetCost;
         var oldSupplierId = transfer.SupplierId;

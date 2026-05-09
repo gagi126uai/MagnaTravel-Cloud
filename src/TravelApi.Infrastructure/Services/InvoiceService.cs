@@ -276,6 +276,19 @@ public class InvoiceService : IInvoiceService
         if (invoice == null) return false;
         if (invoice.Resultado == "A") throw new InvalidOperationException("La factura ya está aprobada.");
 
+        // B1.15 Fase 0' (CODE-02): idempotencia con flow de anulacion. Si la
+        // factura esta en proceso de anulacion (Pending) o ya fue anulada
+        // (Succeeded), reintentar la emision rompe la coherencia fiscal — no se
+        // puede emitir una factura que ya tiene NC en AFIP. Failed permite
+        // reintento (la NC fallo, la factura sigue viva).
+        if (invoice.AnnulmentStatus is AnnulmentStatus.Pending or AnnulmentStatus.Succeeded)
+        {
+            throw new InvalidOperationException(
+                invoice.AnnulmentStatus == AnnulmentStatus.Succeeded
+                    ? "No se puede reintentar la emision de una factura ya anulada (NC aprobada)."
+                    : "No se puede reintentar la emision de una factura con anulacion en proceso. Esperá a que AFIP confirme la NC.");
+        }
+
         // Reset to PENDING so UI shows yellow
         invoice.Resultado = "PENDING";
         invoice.Observaciones = null;

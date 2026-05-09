@@ -3,6 +3,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -193,6 +194,25 @@ public class CustomerService : ICustomerService
     {
         var existing = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
         if (existing == null) throw new KeyNotFoundException("Cliente no encontrado");
+
+        // B1.15 Fase 0' (CODE-06): bloquear cambios fiscales (TaxId, TaxConditionId,
+        // TaxCondition) cuando el cliente tiene factura emitida con CAE no anulada.
+        // Otros campos (FullName, Email, Phone, Address, Notes, IsActive,
+        // CreditLimit, DocumentType, DocumentNumber) siguen libres de editar —
+        // representan datos operativos del cliente, no del comprobante AFIP.
+        var fiscalDataChanged =
+            !string.Equals(existing.TaxId, customer.TaxId, StringComparison.Ordinal) ||
+            existing.TaxConditionId != customer.TaxConditionId ||
+            !string.Equals(existing.TaxCondition, customer.TaxCondition, StringComparison.Ordinal);
+
+        if (fiscalDataChanged)
+        {
+            var blockReason = await MutationGuards.GetCustomerTaxIdMutationBlockReasonAsync(_dbContext, id, cancellationToken);
+            if (blockReason != null)
+            {
+                throw new InvalidOperationException(blockReason);
+            }
+        }
 
         existing.FullName = customer.FullName;
         existing.Email = customer.Email;

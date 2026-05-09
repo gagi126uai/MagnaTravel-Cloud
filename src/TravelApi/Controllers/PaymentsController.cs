@@ -186,6 +186,13 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
+        catch (InvalidOperationException ex)
+        {
+            // B1.15 Fase 0' (CODE-01): MutationGuards rechaza editar pagos con
+            // recibo emitido o factura AFIP viva. 409 Conflict es coherente con
+            // el patron de DeleteGuards.
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
