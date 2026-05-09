@@ -34,9 +34,12 @@ public static class OperationalFinanceSchemaBootstrapper
             ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
             ""UpdatedAt"" timestamp with time zone NOT NULL DEFAULT NOW()
         );",
-        // B1.15 Fase 2a: defensa en profundidad — idempotente para entornos
-        // donde la tabla ya existe sin la columna.
-        @"ALTER TABLE ""OperationalFinanceSettings"" ADD COLUMN IF NOT EXISTS ""MaxDiscountPercentWithoutOverride"" numeric(5,2) NOT NULL DEFAULT 10;",
+        // Eliminado en hotfix 2026-05-09: el ALTER ADD COLUMN defensivo creaba
+        // MaxDiscountPercentWithoutOverride antes que la migracion EF
+        // 20260508211303 intentara agregarla, causando "42701: column already
+        // exists" y dejando todas las migraciones pendientes sin aplicar.
+        // Las migraciones EF (con ADD COLUMN sin IF NOT EXISTS) son la unica
+        // fuente de verdad para columnas nuevas a partir de Fase 2a.
         @"INSERT INTO ""OperationalFinanceSettings""
             (""RequireFullPaymentForOperativeStatus"", ""RequireFullPaymentForVoucher"", ""AfipInvoiceControlMode"", ""EnableUpcomingUnpaidReservationNotifications"", ""UpcomingUnpaidReservationAlertDays"", ""CreatedAt"", ""UpdatedAt"")
           SELECT TRUE, TRUE, 'AllowAgentOverrideWithReason', TRUE, 7, NOW(), NOW()
