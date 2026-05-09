@@ -1,5 +1,6 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
@@ -24,6 +25,11 @@ public class BookingService : IBookingService
     private readonly AppDbContext _db;
     private readonly IMapper _mapper;
     private readonly ILogger<BookingService> _logger;
+    // B1.15 Fase 0.2: dependencias opcionales para masking de costos en POST/PUT.
+    // Mismo patron que ReservaService/InvoiceService/PaymentService — opcionales
+    // para no romper los tests unitarios que instancian con el ctor de 11 args.
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public BookingService(
         IRepository<FlightSegment> flightRepo,
@@ -36,7 +42,9 @@ public class BookingService : IBookingService
         ISupplierService supplierService,
         AppDbContext db,
         IMapper mapper,
-        ILogger<BookingService> logger)
+        ILogger<BookingService> logger,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _flightRepo = flightRepo;
         _hotelRepo = hotelRepo;
@@ -49,6 +57,8 @@ public class BookingService : IBookingService
         _db = db;
         _mapper = mapper;
         _logger = logger;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     // === RATE RESOLUTION (Snapshot) ===
@@ -370,7 +380,12 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<HotelBookingDto>(hotel);
+
+        var dto = _mapper.Map<HotelBookingDto>(hotel);
+        // B1.15 Fase 0.2: enmascarar NetCost si el caller no tiene cobranzas.see_cost.
+        // Antes el response de POST exponia el costo del proveedor a usuarios sin permiso.
+        await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<HotelBookingDto> UpdateHotelAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateHotelRequest req, CancellationToken ct)
@@ -458,7 +473,12 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<HotelBookingDto>(hotel);
+
+        var dto = _mapper.Map<HotelBookingDto>(hotel);
+        // B1.15 Fase 0.2: enmascarar NetCost si el caller no tiene cobranzas.see_cost.
+        // Antes el response de PUT exponia el costo del proveedor a usuarios sin permiso.
+        await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task DeleteHotelAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)

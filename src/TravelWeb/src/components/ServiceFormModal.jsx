@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
+import { hasPermission } from "../auth";
 import {
     X,
     Plane,
@@ -686,7 +687,12 @@ function GenericServiceForm({ form, setForm, suppliers, disabled }) {
 }
 
 function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled, onManualPriceChange }) {
-    const margin = (form.salePrice || 0) - (form.netCost || 0);
+    const canSeeCost = hasPermission("cobranzas.see_cost");
+    const margin = canSeeCost ? (form.salePrice || 0) - (form.netCost || 0) : null;
+
+    // Con permiso: 3 columnas (Costo Neto, Precio Venta, Ganancia).
+    // Sin permiso: 1 columna centrada (solo Precio Venta).
+    const gridClass = canSeeCost ? "grid grid-cols-3 gap-4" : "grid grid-cols-1 gap-4";
 
     return (
         <div className="space-y-4 rounded-xl border border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100 p-4 dark:border-slate-700 dark:from-slate-800 dark:to-slate-800/50">
@@ -694,7 +700,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                 <h4 className="flex items-center gap-2 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">
                     <DollarSign className="h-4 w-4" /> Valores Economicos
                 </h4>
-                {commissionPercent > 0 && !disabled ? (
+                {canSeeCost && commissionPercent > 0 && !disabled ? (
                     <button
                         type="button"
                         onClick={onRecalculate}
@@ -705,26 +711,28 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                 ) : null}
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
-                <div>
-                    <label className={labelClass}>Costo Neto *</label>
-                    <div className="relative">
-                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                        <input
-                            type="number"
-                            step="0.01"
-                            className={`${inputClass} pl-6`}
-                            value={form.netCost || 0}
-                            onChange={(event) => {
-                                const netCost = parseFloat(event.target.value) || 0;
-                                onManualPriceChange?.("netCost");
-                                setForm({ ...form, netCost, commission: roundMoney((form.salePrice || 0) - netCost) });
-                            }}
-                            required
-                            disabled={disabled}
-                        />
+            <div className={gridClass}>
+                {canSeeCost ? (
+                    <div>
+                        <label className={labelClass}>Costo Neto *</label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                            <input
+                                type="number"
+                                step="0.01"
+                                className={`${inputClass} pl-6`}
+                                value={form.netCost || 0}
+                                onChange={(event) => {
+                                    const netCost = parseFloat(event.target.value) || 0;
+                                    onManualPriceChange?.("netCost");
+                                    setForm({ ...form, netCost, commission: roundMoney((form.salePrice || 0) - netCost) });
+                                }}
+                                required
+                                disabled={disabled}
+                            />
+                        </div>
                     </div>
-                </div>
+                ) : null}
                 <div>
                     <label className={labelClass}>Precio Venta *</label>
                     <div className="relative">
@@ -744,12 +752,14 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                         />
                     </div>
                 </div>
-                <div>
-                    <label className={labelClass}>Ganancia</label>
-                    <div className={`rounded-xl p-2.5 text-center font-bold ${margin >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
-                        {formatMoney(margin)}
+                {canSeeCost ? (
+                    <div>
+                        <label className={labelClass}>Ganancia</label>
+                        <div className={`rounded-xl p-2.5 text-center font-bold ${margin >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
+                            {formatMoney(margin)}
+                        </div>
                     </div>
-                </div>
+                ) : null}
             </div>
         </div>
     );

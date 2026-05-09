@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -38,7 +40,8 @@ public class HotelBookingsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Create(string reservaId, [FromBody] CreateHotelRequest req, CancellationToken ct)
     {
         try
@@ -64,7 +67,8 @@ public class HotelBookingsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Update(string reservaId, string id, [FromBody] UpdateHotelRequest req, CancellationToken ct)
     {
         try
@@ -119,7 +123,8 @@ public class HotelBookingsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasDelete)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Delete(string reservaId, string id, CancellationToken ct)
     {
         try

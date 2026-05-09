@@ -1,4 +1,7 @@
+using System.Collections.Generic;
+using System.Security.Claims;
 using AutoMapper;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -42,6 +45,13 @@ public class BookingServiceTests
             .Setup(service => service.UpdateBalanceAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        // B1.15 Fase 0.2: el masking de costos en POST/PUT de hotel es fail-closed
+        // (sin HttpContext + sin resolver -> enmascara). Para preservar el contrato
+        // de estos tests legacy (assert NetCost real), inyectamos un Admin con
+        // accessor + resolver vacios — Admin bypass garantiza que se vea el costo.
+        var adminAccessor = BuildHttpContextAccessor("admin-test", "Admin");
+        var resolver = BuildResolver("admin-test"); // sin permisos (Admin no los necesita)
+
         return new BookingService(
             new Repository<FlightSegment>(context),
             new Repository<HotelBooking>(context),
@@ -53,7 +63,31 @@ public class BookingServiceTests
             supplierService.Object,
             context,
             mapper,
-            NullLogger<BookingService>.Instance);
+            NullLogger<BookingService>.Instance,
+            resolver,
+            adminAccessor);
+    }
+
+    private static IHttpContextAccessor BuildHttpContextAccessor(string userId, params string[] roles)
+    {
+        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, userId) };
+        foreach (var role in roles) claims.Add(new Claim(ClaimTypes.Role, role));
+        return new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test"))
+            }
+        };
+    }
+
+    private static IUserPermissionResolver BuildResolver(string userId, params string[] permissions)
+    {
+        var mock = new Mock<IUserPermissionResolver>();
+        IReadOnlySet<string> set = new HashSet<string>(permissions);
+        mock.Setup(r => r.GetPermissionsAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(set);
+        return mock.Object;
     }
 
     [Fact]
