@@ -411,6 +411,7 @@ builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IApprovalRequestService, ApprovalRequestService>();
 builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
+builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IReportService, ReportService>();

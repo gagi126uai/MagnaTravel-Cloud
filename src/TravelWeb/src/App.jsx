@@ -38,6 +38,7 @@ import DestinationEditorPage from "./features/packages/pages/DestinationEditorPa
 import AdminHubPage from "./pages/AdminHubPage";
 import ApprovalsInboxPage from "./features/approvals/pages/ApprovalsInboxPage";
 import MyApprovalRequestsPage from "./features/approvals/pages/MyApprovalRequestsPage";
+import MovementsPreviewPage from "./features/movements/pages/MovementsPreviewPage";
 
 function FullScreenLoader() {
   return (
@@ -243,6 +244,10 @@ export default function App() {
                     <Route
                       path="/approvals/my-requests"
                       element={hasPermission("approvals.request") ? <MyApprovalRequestsPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
+                      path="/movements"
+                      element={hasPermission("cobranzas.view") ? <MovementsPreviewPage /> : <Navigate to="/dashboard" replace />}
                     />
                                       <Route
                       path="/admin"
