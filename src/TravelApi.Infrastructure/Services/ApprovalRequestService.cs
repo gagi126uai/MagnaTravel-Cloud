@@ -25,11 +25,17 @@ public class ApprovalRequestService : IApprovalRequestService
 {
     private readonly AppDbContext _context;
     private readonly IOperationalFinanceSettingsService _settingsService;
+    // B1.15 Fase B'' (2026-05-11): opcional para no romper unit tests del ctor previo.
+    private readonly IApprovalPolicyService? _policyService;
 
-    public ApprovalRequestService(AppDbContext context, IOperationalFinanceSettingsService settingsService)
+    public ApprovalRequestService(
+        AppDbContext context,
+        IOperationalFinanceSettingsService settingsService,
+        IApprovalPolicyService? policyService = null)
     {
         _context = context;
         _settingsService = settingsService;
+        _policyService = policyService;
     }
 
     public async Task<ApprovalRequestDto> CreateAsync(
@@ -77,6 +83,10 @@ public class ApprovalRequestService : IApprovalRequestService
         }
 
         var settings = await _settingsService.GetEntityAsync(ct);
+        // B1.15 Fase B'': override por tipo si hay policy configurada.
+        var expirationDays = _policyService is not null
+            ? await _policyService.GetEffectiveExpirationDaysAsync(requestType, settings.ApprovalDefaultExpirationDays, ct)
+            : settings.ApprovalDefaultExpirationDays;
         var request = new ApprovalRequest
         {
             RequestType = requestType,
@@ -87,7 +97,7 @@ public class ApprovalRequestService : IApprovalRequestService
             EntityId = payload.EntityId,
             Reason = payload.Reason?.Trim(),
             Status = ApprovalStatus.Pending,
-            ExpiresAt = now.AddDays(Math.Max(1, settings.ApprovalDefaultExpirationDays)),
+            ExpiresAt = now.AddDays(Math.Max(1, expirationDays)),
             Metadata = payload.Metadata
         };
         _context.ApprovalRequests.Add(request);
@@ -137,12 +147,16 @@ public class ApprovalRequestService : IApprovalRequestService
             throw new InvalidOperationException($"No se puede rechazar una solicitud en estado {request.Status}.");
 
         var settings = await _settingsService.GetEntityAsync(ct);
+        // B1.15 Fase B'': override por tipo si hay policy configurada.
+        var cooldownHours = _policyService is not null
+            ? await _policyService.GetEffectiveCooldownHoursAsync(request.RequestType, settings.ApprovalRejectionCooldownHours, ct)
+            : settings.ApprovalRejectionCooldownHours;
         request.Status = ApprovalStatus.Rejected;
         request.ResolvedByUserId = resolvedByUserId;
         request.ResolvedByUserName = resolvedByUserName;
         request.ResolvedAt = DateTime.UtcNow;
         request.ResolverNotes = notes?.Trim();
-        request.CooldownUntil = DateTime.UtcNow.AddHours(Math.Max(0, settings.ApprovalRejectionCooldownHours));
+        request.CooldownUntil = DateTime.UtcNow.AddHours(Math.Max(0, cooldownHours));
         await _context.SaveChangesAsync(ct);
         return Map(request);
     }

@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState, useRef } from "react";
 import { apiRequest, api } from "../api";
 import { showError, showInfo, showSuccess, showConfirm } from "../alerts";
-import { isAdmin } from "../auth";
+import { isAdmin, hasPermission } from "../auth";
 import {
   Pencil,
   Trash2,
@@ -28,11 +28,13 @@ import {
   Smartphone,
   TerminalSquare,
   Settings2,
-  ShieldAlert
+  ShieldAlert,
+  ShieldCheck
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 import AfipSettingsTab from "../components/AfipSettingsTab";
+import ApprovalPoliciesTab from "../components/ApprovalPoliciesTab";
 import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
@@ -148,6 +150,7 @@ const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
   { id: "operations", label: "Operativa y Caja", icon: Settings2 },
   { id: "afip", label: "Facturación", icon: FileText },
+  { id: "approvals", label: "Workflows de aprobación", icon: ShieldCheck, requiredPermission: "approvals.policies" },
   { id: "whatsapp", label: "WhatsApp Bot", icon: Smartphone },
   { id: "logs", label: "Logs y Programación", icon: TerminalSquare }
 ];
@@ -221,6 +224,11 @@ export default function SettingsPage() {
   const isTabVisible = (tabId) => {
     if (["users", "roles", "logs", "programming"].includes(tabId)) {
       return adminUser;
+    }
+    // B1.15 Fase B'': tabs nuevos pueden declarar requiredPermission.
+    const tab = tabs.find((t) => t.id === tabId);
+    if (tab?.requiredPermission) {
+      return hasPermission(tab.requiredPermission);
     }
 
     return true;
@@ -706,6 +714,9 @@ export default function SettingsPage() {
 
         {/* --- AFIP TAB --- */}
         {activeTab === "afip" && <AfipSettingsTab />}
+
+        {/* --- APPROVALS TAB --- */}
+        {activeTab === "approvals" && <ApprovalPoliciesTab />}
 
         {/* --- WHATSAPP TAB --- */}
         {activeTab === "whatsapp" && <WhatsAppBotTab />}

@@ -32,6 +32,8 @@ public class InvoiceService : IInvoiceService
     private readonly IHttpContextAccessor? _httpContextAccessor;
     // B1.15 Fase D (2026-05-11): opcional para no romper unit tests del ctor previo.
     private readonly IApprovalRequestService? _approvalService;
+    // B1.15 Fase B'' (2026-05-11): opcional por la misma razon.
+    private readonly IApprovalPolicyService? _approvalPolicyService;
     private static readonly string[] ActiveInvoicingStatuses =
     {
         EstadoReserva.Confirmed,
@@ -50,7 +52,8 @@ public class InvoiceService : IInvoiceService
         UserManager<ApplicationUser> userManager,
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
-        IApprovalRequestService? approvalService = null)
+        IApprovalRequestService? approvalService = null,
+        IApprovalPolicyService? approvalPolicyService = null)
     {
         _context = context;
         _entityReferenceResolver = entityReferenceResolver;
@@ -64,6 +67,7 @@ public class InvoiceService : IInvoiceService
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
         _approvalService = approvalService;
+        _approvalPolicyService = approvalPolicyService;
     }
 
     /// <summary>
@@ -388,11 +392,27 @@ public class InvoiceService : IInvoiceService
                     : "La factura tiene una anulacion en curso. Espera el resultado o reintenta si quedo en Failed.");
         }
 
-        // B1.15 Fase D (2026-05-11): si setting on Y caller NO es Admin, requiere
-        // ApprovalRequest aprobado. Admin bypassa el workflow (puede anular directo).
+        // B1.15 Fase D (2026-05-11): si policy.RequiresApproval Y caller NO es
+        // Admin, requiere ApprovalRequest aprobado. Admin bypassa el workflow.
+        // B1.15 Fase B'' (2026-05-11): la decision se lee desde ApprovalPolicy
+        // (configurable por Admin), no desde el setting global viejo (deprecado).
+        // Fallback al setting viejo si el policy service no esta inyectado
+        // (compat unit tests). Si tampoco hay setting, fallback true (conservador).
         int? approvalRequestId = null;
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        if (settings.RequireApprovalForInvoiceAnnulment && !requesterIsAdmin)
+        bool requiresApproval;
+        if (_approvalPolicyService is not null)
+        {
+            requiresApproval = await _approvalPolicyService.RequiresApprovalAsync(
+                ApprovalRequestType.InvoiceAnnulment,
+                fallback: settings.RequireApprovalForInvoiceAnnulment,
+                ct);
+        }
+        else
+        {
+            requiresApproval = settings.RequireApprovalForInvoiceAnnulment;
+        }
+        if (requiresApproval && !requesterIsAdmin)
         {
             if (_approvalService is null)
             {

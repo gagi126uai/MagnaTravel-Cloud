@@ -301,6 +301,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<BnaExchangeRateSnapshot> BnaExchangeRateSnapshots => Set<BnaExchangeRateSnapshot>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<ApprovalPolicy> ApprovalPolicies => Set<ApprovalPolicy>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1042,6 +1043,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(a => new { a.EntityType, a.EntityId, a.Status });
             // Job nightly de expiracion: filter por ExpiresAt + Status pending/approved.
             entity.HasIndex(a => a.ExpiresAt);
+        });
+
+        // B1.15 Fase B'' (2026-05-11): policies por RequestType.
+        modelBuilder.Entity<ApprovalPolicy>(entity =>
+        {
+            entity.ToTable("ApprovalPolicies");
+            entity.HasIndex(p => p.RequestType).IsUnique();
         });
     }
 

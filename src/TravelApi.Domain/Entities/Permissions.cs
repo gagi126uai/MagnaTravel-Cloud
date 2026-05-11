@@ -85,6 +85,8 @@ public static class Permissions
     public const string ApprovalsRequest = "approvals.request";
     /// <summary>Aprobar/rechazar solicitudes desde la bandeja. Default: Admin/Colaborador.</summary>
     public const string ApprovalsReview = "approvals.review";
+    /// <summary>Editar las policies de workflow desde Configuracion. Default: Admin only.</summary>
+    public const string ApprovalsPolicies = "approvals.policies";
 
     /// <summary>
     /// Todos los permisos disponibles agrupados por módulo para la UI.
@@ -113,7 +115,7 @@ public static class Permissions
         ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
         ["Paises y destinos"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },
         ["Auditoría"] = new[] { AuditoriaView },
-        ["Aprobaciones"] = new[] { ApprovalsRequest, ApprovalsReview },
+        ["Aprobaciones"] = new[] { ApprovalsRequest, ApprovalsReview, ApprovalsPolicies },
     };
 
     public static readonly string[] All = AllByModule.Values.SelectMany(v => v).ToArray();
