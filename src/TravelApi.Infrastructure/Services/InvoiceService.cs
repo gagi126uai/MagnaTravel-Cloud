@@ -390,12 +390,20 @@ public class InvoiceService : IInvoiceService
         {
             _logger.LogInformation("Iniciando anulación de factura {InvoiceId} para usuario {UserId}", invoiceId, userId);
 
+            // B1.15 (2026-05-10 smoke): el Include(Reserva) es CRITICO. Sin el, la
+            // construccion del request mas abajo deja ReservaId = string.Empty (linea
+            // original.Reserva?.PublicId.ToString() ?? string.Empty), y entonces
+            // ResolveRequiredIdAsync<Reserva>("") tira "Reserva no encontrado",
+            // Hangfire reintenta 10 veces, y la NC nunca se emite.
             var original = await _context.Invoices
                 .Include(i => i.Items)
                 .Include(i => i.Tributes)
+                .Include(i => i.Reserva)
                 .FirstOrDefaultAsync(i => i.Id == invoiceId);
 
             if (original == null) throw new Exception("Comprobante original no encontrado");
+            if (original.Reserva == null)
+                throw new Exception($"La factura {invoiceId} no tiene reserva asociada (ReservaId={original.ReservaId}). No se puede emitir NC.");
 
             // Avoid double processing
             if (await _context.Invoices.AnyAsync(i => i.OriginalInvoiceId == invoiceId && i.Resultado == "A"))
