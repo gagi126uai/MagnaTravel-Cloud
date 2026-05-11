@@ -80,6 +80,12 @@ public static class Permissions
     public const string AuditoriaView = "auditoria.view";
     public const string PaquetesPublish = "paquetes.publish";
 
+    // Aprobaciones (B1.15 Fase B')
+    /// <summary>Crear solicitudes de aprobacion (Vendedor pide override). Default: Admin/Colaborador/Vendedor.</summary>
+    public const string ApprovalsRequest = "approvals.request";
+    /// <summary>Aprobar/rechazar solicitudes desde la bandeja. Default: Admin/Colaborador.</summary>
+    public const string ApprovalsReview = "approvals.review";
+
     /// <summary>
     /// Todos los permisos disponibles agrupados por módulo para la UI.
     /// </summary>
@@ -107,6 +113,7 @@ public static class Permissions
         ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
         ["Paises y destinos"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },
         ["Auditoría"] = new[] { AuditoriaView },
+        ["Aprobaciones"] = new[] { ApprovalsRequest, ApprovalsReview },
     };
 
     public static readonly string[] All = AllByModule.Values.SelectMany(v => v).ToArray();
@@ -131,6 +138,11 @@ public static class Permissions
         TesoreriaSupplierPayments,
         TarifarioView,
         PaquetesView,
+        // B1.15 Fase B': el Colaborador es reviewer principal de la bandeja
+        // (decision 31). Tambien puede crear sus propias solicitudes si necesita
+        // override (ej. cancel-with-payment ya esta en su default, pero por
+        // consistencia con el workflow generico).
+        ApprovalsRequest, ApprovalsReview,
     };
 
     /// <summary>Permisos default para Vendedor (CRM + reservas + clientes).</summary>
@@ -160,5 +172,9 @@ public static class Permissions
         CobranzasView, CobranzasEdit, CobranzasInvoice, CobranzasInvoiceAnnul,
         TarifarioView,
         PaquetesView,
+        // B1.15 Fase B' (2026-05-11): el Vendedor crea solicitudes de aprobacion
+        // para acciones que no puede ejecutar directamente (override deadline,
+        // descuento alto, etc.). NO tiene ApprovalsReview — eso es back-office.
+        ApprovalsRequest,
     };
 }

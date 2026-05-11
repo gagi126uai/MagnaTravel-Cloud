@@ -29,6 +29,20 @@ public class OperationalFinanceSettings
     [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(5,2)")]
     public decimal MaxDiscountPercentWithoutOverride { get; set; } = 10m;
 
+    /// <summary>
+    /// B1.15 Fase B' (2026-05-11): dias hasta que una <c>ApprovalRequest</c>
+    /// aprobada/pending expira automaticamente. Si pasan, el solicitante debe
+    /// re-pedir. Default 7. Configurable por tipo via override.
+    /// </summary>
+    public int ApprovalDefaultExpirationDays { get; set; } = 7;
+
+    /// <summary>
+    /// B1.15 Fase B' (2026-05-11): horas durante las cuales el solicitante NO
+    /// puede re-pedir la misma combinacion <c>(RequestType, EntityId)</c> tras
+    /// un rechazo. Anti-spam. Default 1 hora.
+    /// </summary>
+    public int ApprovalRejectionCooldownHours { get; set; } = 1;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

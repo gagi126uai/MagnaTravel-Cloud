@@ -300,6 +300,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<BusinessSequence> BusinessSequences => Set<BusinessSequence>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<BnaExchangeRateSnapshot> BnaExchangeRateSnapshots => Set<BnaExchangeRateSnapshot>();
+    public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1024,6 +1025,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(snapshot => snapshot.PublishedDate).HasMaxLength(20).IsRequired();
             entity.Property(snapshot => snapshot.PublishedTime).HasMaxLength(10).IsRequired();
             entity.Property(snapshot => snapshot.Source).HasMaxLength(500).IsRequired();
+        });
+
+        // B1.15 Fase B' (2026-05-11): solicitudes de aprobacion polimorficas.
+        ConfigurePublicEntity<ApprovalRequest>(modelBuilder);
+        modelBuilder.Entity<ApprovalRequest>(entity =>
+        {
+            entity.ToTable("ApprovalRequests");
+            entity.Property(a => a.RequestType).HasConversion<int>();
+            entity.Property(a => a.Status).HasConversion<int>();
+            // Indice principal: bandeja por estado (lista pending para reviewer).
+            entity.HasIndex(a => a.Status);
+            // "Mis solicitudes": filtrar por usuario + estado.
+            entity.HasIndex(a => new { a.RequestedByUserId, a.Status });
+            // Idempotencia + cooldown: matchea por entidad objetivo.
+            entity.HasIndex(a => new { a.EntityType, a.EntityId, a.Status });
+            // Job nightly de expiracion: filter por ExpiresAt + Status pending/approved.
+            entity.HasIndex(a => a.ExpiresAt);
         });
     }
 
