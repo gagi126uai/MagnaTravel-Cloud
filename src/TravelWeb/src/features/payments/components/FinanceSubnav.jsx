@@ -1,10 +1,13 @@
 import { NavLink } from "react-router-dom";
-import { Banknote, FileText, Clock } from "lucide-react";
+import { Activity, ClipboardList, FolderOpen } from "lucide-react";
 
+// B1.15 Fase D'.B (2026-05-11): 3 tabs nuevos (Por reserva / Movimientos /
+// Pendientes). Reemplaza la triada vieja (Cobranzas / Facturacion / Historial)
+// porque la nueva division es coherente con el modelo de Movement unificado.
 const navItems = [
-  { to: "/payments/collections", label: "Cobranzas", icon: Banknote },
-  { to: "/payments/invoicing", label: "Facturacion", icon: FileText },
-  { to: "/payments/history", label: "Historial", icon: Clock },
+  { to: "/payments/reservas", label: "Por reserva", icon: FolderOpen },
+  { to: "/payments/movements", label: "Movimientos", icon: Activity },
+  { to: "/payments/pending", label: "Pendientes de facturar", icon: ClipboardList },
 ];
 
 export function FinanceSubnav() {

@@ -15,6 +15,9 @@ import PaymentsPage from "./features/payments/pages/PaymentsPage";
 import PaymentsCollectionsPage from "./features/payments/pages/PaymentsCollectionsPage";
 import PaymentsInvoicingPage from "./features/payments/pages/PaymentsInvoicingPage";
 import PaymentsHistoryPage from "./features/payments/pages/PaymentsHistoryPage";
+import PaymentsByReservaPage from "./features/payments/pages/PaymentsByReservaPage";
+import PaymentsMovementsPage from "./features/payments/pages/PaymentsMovementsPage";
+import PaymentsPendingPage from "./features/payments/pages/PaymentsPendingPage";
 import MessagesPage from "./features/messages/pages/MessagesPage";
 import CashPage from "./features/payments/pages/CashPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -198,7 +201,13 @@ export default function App() {
                     <Route path="/suppliers" element={<SuppliersPage />} />
                     <Route path="/suppliers/:publicId/account" element={<SupplierAccountPage />} />
                     <Route path="/payments" element={<PaymentsPage />}>
-                      <Route index element={<Navigate to="/payments/collections" replace />} />
+                      <Route index element={<Navigate to="/payments/reservas" replace />} />
+                      {/* B1.15 Fase D'.B: 3 tabs nuevos */}
+                      <Route path="reservas" element={<PaymentsByReservaPage />} />
+                      <Route path="movements" element={<PaymentsMovementsPage />} />
+                      <Route path="pending" element={<PaymentsPendingPage />} />
+                      {/* Rutas viejas: mantengo accesibles para bookmarks y links externos.
+                          Recomendaria deprecarlas en Fase D'.D si no se usan. */}
                       <Route path="collections" element={<PaymentsCollectionsPage />} />
                       <Route path="cash" element={<Navigate to="/cash" replace />} />
                       <Route path="invoicing" element={<PaymentsInvoicingPage />} />
