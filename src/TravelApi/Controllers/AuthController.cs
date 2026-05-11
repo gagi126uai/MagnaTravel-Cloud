@@ -60,7 +60,7 @@ public class AuthController : ControllerBase
             var response = await _authService.LoginAsync(request, GetIpAddress(), GetUserAgent());
             WriteSessionCookies(response);
 
-            _ = _auditService.LogBusinessEventAsync(
+            await _auditService.LogBusinessEventAsync(
                 "Login", "Session", response.User.UserId,
                 null, response.User.UserId, response.User.FullName, CancellationToken.None);
 
@@ -68,7 +68,7 @@ public class AuthController : ControllerBase
         }
         catch (UnauthorizedAccessException)
         {
-            _ = _auditService.LogBusinessEventAsync(
+            await _auditService.LogBusinessEventAsync(
                 "LoginFailed", "Session", request.Email ?? "unknown",
                 null, "Anonymous", null, CancellationToken.None);
 
@@ -118,7 +118,7 @@ public class AuthController : ControllerBase
             await _authService.RevokeRefreshTokenAsync(refreshToken);
         }
 
-        _ = _auditService.LogBusinessEventAsync(
+        await _auditService.LogBusinessEventAsync(
             "Logout", "Session", userId,
             null, userId, userName, CancellationToken.None);
 
@@ -162,7 +162,7 @@ public class AuthController : ControllerBase
             return result.Errors?.Contains("no encontrado") == true ? NotFound(result.Errors) : BadRequest(result.Errors);
         }
 
-        _ = _auditService.LogBusinessEventAsync(
+        await _auditService.LogBusinessEventAsync(
             "ChangePassword", "User", userId,
             null, userId, User.FindFirstValue(ClaimTypes.Name), CancellationToken.None);
 

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TravelApi.Application.Contracts;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -9,10 +10,12 @@ namespace TravelApi.Infrastructure.Services;
 public class AuditService : IAuditService
 {
     private readonly IRepository<AuditLog> _auditRepo;
+    private readonly ILogger<AuditService> _logger;
 
-    public AuditService(IRepository<AuditLog> auditRepo)
+    public AuditService(IRepository<AuditLog> auditRepo, ILogger<AuditService> logger)
     {
         _auditRepo = auditRepo;
+        _logger = logger;
     }
 
     public async Task<IEnumerable<AuditLog>> GetAuditLogsAsync(
@@ -160,7 +163,16 @@ public class AuditService : IAuditService
             Changes = details
         };
 
-        await _auditRepo.AddAsync(auditLog, ct);
+        try
+        {
+            await _auditRepo.AddAsync(auditLog, ct);
+        }
+        catch (Exception ex)
+        {
+            // Auditoria no debe romper la operacion principal. Loggear y continuar.
+            _logger.LogError(ex, "Audit log fallo: action={Action} entity={Entity} entityId={EntityId} userId={UserId}",
+                action, entityName, entityId, userId);
+        }
     }
 
     /// <summary>
