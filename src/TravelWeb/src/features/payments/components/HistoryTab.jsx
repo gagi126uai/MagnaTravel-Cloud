@@ -365,7 +365,7 @@ export function HistoryTab({
                               )}
                             </>
                           )}
-                          {invoice.resultado === "R" && (
+                          {(invoice.resultado === "R" || invoice.resultado === "PENDING") && (
                             <button
                               type="button"
                               onClick={() => onRetryInvoice(invoice)}

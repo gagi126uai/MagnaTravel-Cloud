@@ -792,10 +792,16 @@ export default function CustomerAccountPage() {
                             className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
                               invoice.resultado === "A"
                                 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                : invoice.resultado === "R"
+                                ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
                                 : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                             }`}
                           >
-                            {invoice.resultado === "A" ? "Autorizado" : invoice.resultado || "Pendiente"}
+                            {invoice.resultado === "A"
+                              ? "Aprobado"
+                              : invoice.resultado === "R"
+                              ? "Rechazado"
+                              : "En proceso"}
                           </span>
                         </DataGridCell>
                         <DataGridActionCell>
@@ -829,10 +835,16 @@ export default function CustomerAccountPage() {
                           className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
                             invoice.resultado === "A"
                               ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                              : invoice.resultado === "R"
+                              ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
                               : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                           }`}
                         >
-                          {invoice.resultado === "A" ? "Autorizado" : invoice.resultado || "Pendiente"}
+                          {invoice.resultado === "A"
+                            ? "Aprobado"
+                            : invoice.resultado === "R"
+                            ? "Rechazado"
+                            : "En proceso"}
                         </span>
                       }
                       title={formatInvoiceNumber(invoice)}

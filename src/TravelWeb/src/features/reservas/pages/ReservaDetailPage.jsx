@@ -36,11 +36,15 @@ import { ServiceList } from "../components/ServiceList";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 
 function InvoiceStatusBadge({ resultado }) {
-  return (
-    <span className={`rounded px-2 py-0.5 text-[10px] font-black uppercase ${resultado === "A" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
-      {resultado === "A" ? "Aceptada" : "Error"}
-    </span>
-  );
+  const isApproved = resultado === "A";
+  const isRejected = resultado === "R";
+  const className = isApproved
+    ? "bg-emerald-100 text-emerald-700"
+    : isRejected
+    ? "bg-rose-100 text-rose-700"
+    : "bg-slate-100 text-slate-600";
+  const label = isApproved ? "Aprobada" : isRejected ? "Rechazada" : "En proceso";
+  return <span className={`rounded px-2 py-0.5 text-[10px] font-black uppercase ${className}`}>{label}</span>;
 }
 
 function InvoiceTypeLabel({ tipoComprobante }) {

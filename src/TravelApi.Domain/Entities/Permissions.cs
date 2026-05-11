@@ -152,7 +152,12 @@ public static class Permissions
         CrmView, CrmEdit,
         // B1.15 smoke 2026-05-09: necesita CobranzasEdit para registrar pagos del cliente
         // en SUS reservas (con ownership). CobranzasInvoice para facturar (decision 1).
-        CobranzasView, CobranzasEdit, CobranzasInvoice,
+        // 2026-05-10: CobranzasInvoiceAnnul agregado para que el Vendedor pueda anular SUS
+        // facturas (cuando carga mal el cliente/monto). El endpoint de annul ya valida
+        // ownership (RequireOwnership Invoice, bypass via cobranzas.view_all), por lo que
+        // el Vendedor solo anula sus propias facturas. La operacion queda auditada en
+        // AnnulledByUser*, AnnulledAt y AnnulmentReason (fiscal: emite NC en AFIP).
+        CobranzasView, CobranzasEdit, CobranzasInvoice, CobranzasInvoiceAnnul,
         TarifarioView,
         PaquetesView,
     };

@@ -894,10 +894,15 @@ public class AfipService : IAfipService
             var doc = XDocument.Parse(responseXml);
             var resultNode = doc.Descendants(XName.Get("FECAESolicitarResult", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
             
-            if (resultNode == null) 
+            if (resultNode == null)
             {
-                invoice.Resultado = "R";
-                invoice.Observaciones = "AFIP respondió con un error de red o XML inválido.";
+                // B1.15 (2026-05-10): error transitorio (red / XML invalido / AFIP
+                // intermitente) NO es rechazo definitivo. Marcamos PENDING (no "R")
+                // para que la UI muestre "En proceso / Reintentar" en vez de
+                // "Rechazado". El Vendedor decide cuando reintentar manualmente
+                // (boton Reintentar en InvoicingTab).
+                invoice.Resultado = "PENDING";
+                invoice.Observaciones = "AFIP respondió con un error de red o XML inválido. Reintentá en unos segundos.";
                 await _context.SaveChangesAsync();
                 return;
             }
@@ -950,10 +955,17 @@ public class AfipService : IAfipService
         }
         catch (Exception ex)
         {
-            invoice.Resultado = "R";
+            // B1.15 (2026-05-10): excepcion tecnica (timeout, auth, parsing, DNS,
+            // etc.) NO es rechazo definitivo de AFIP. Marcamos PENDING para que
+            // la UI muestre "En proceso / Reintentar". El rechazo definitivo
+            // ("R") queda reservado para cuando AFIP procesa la solicitud y
+            // responde explicitamente con cabResult == "R" (ver caso de mas
+            // arriba). El throw se mantiene para que Hangfire registre el job
+            // como failed en el dashboard (visibilidad operativa).
+            invoice.Resultado = "PENDING";
             invoice.Observaciones = $"Error técnico: {ex.Message}";
             await _context.SaveChangesAsync();
-            throw; 
+            throw;
         }
     }
 
