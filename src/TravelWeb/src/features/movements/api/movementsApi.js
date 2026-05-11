@@ -24,6 +24,7 @@ export const KIND_LABELS = {
   payment: "Cobro",
   invoice: "Factura",
   credit_note: "Nota de crédito",
+  debit_note: "Nota de débito",
   credit_note_reversal: "Reversión NC",
 };
 
@@ -32,6 +33,7 @@ export const KIND_COLORS = {
   payment: "emerald",
   invoice: "indigo",
   credit_note: "amber",
+  debit_note: "orange",
   credit_note_reversal: "slate",
 };
 

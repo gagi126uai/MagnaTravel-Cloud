@@ -3,21 +3,25 @@ namespace TravelApi.Application.DTOs;
 /// <summary>
 /// B1.15 Fase D' (2026-05-11): vista unificada de movimientos financieros.
 ///
-/// Discriminator <see cref="Kind"/>:
+/// Discriminator <see cref="Kind"/> (ver <see cref="TravelApi.Domain.Entities.MovementKinds"/>):
 ///  - "payment": cobro al cliente (Payment con EntryType="Payment").
-///  - "invoice": factura emitida en AFIP (Invoice).
-///  - "credit_note": nota de credito emitida en AFIP (Invoice con TipoComprobante
-///    de NC). Las NCs se exponen como su propio kind para no confundirlas con
-///    facturas normales en la UI.
-///  - "credit_note_reversal": el reversal economico que se crea automáticamente
+///  - "invoice": factura emitida en AFIP (cbteTipo 1=A, 6=B, 11=C, 51=M).
+///  - "debit_note": nota de debito emitida en AFIP (cbteTipo 2=A, 7=B, 12=C, 52=M).
+///    AGREGADO 2026-05-11 (fix arca-tax-expert): antes caia en "invoice" y la UI
+///    ofrecia anular incorrectamente. Las NDs no son anulables desde la UI nueva.
+///  - "credit_note": nota de credito emitida en AFIP (cbteTipo 3=A, 8=B, 13=C, 53=M).
+///    Las NCs se exponen como su propio kind para no confundirlas con facturas
+///    normales en la UI.
+///  - "credit_note_reversal": el reversal economico que se crea automaticamente
 ///    cuando AFIP aprueba una NC (Payment con EntryType="CreditNoteReversal",
 ///    Amount negativo). Se incluye opcionalmente para auditoria; la UI puede
 ///    agruparlo bajo la NC parent.
 ///
 /// El campo <see cref="RelatedTo"/> apunta a otro movimiento cuando hay relacion
-/// fiscal/lógica:
+/// fiscal/logica:
 ///  - Una NC apunta a la factura origen via OriginalInvoice.
-///  - Un CreditNoteReversal apunta a la NC que lo originó.
+///  - Una ND tambien puede apuntar a una factura origen si se emitio por ajuste.
+///  - Un CreditNoteReversal apunta a la NC que lo origino.
 /// Permite que el frontend renderee badges "Anula factura #X" sin lookups extra.
 /// </summary>
 public class MovementDto
@@ -25,7 +29,10 @@ public class MovementDto
     public Guid PublicId { get; set; }
     public int LegacyId { get; set; }
 
-    /// <summary>"payment" | "invoice" | "credit_note" | "credit_note_reversal".</summary>
+    /// <summary>
+    /// "payment" | "invoice" | "debit_note" | "credit_note" | "credit_note_reversal".
+    /// Ver constantes en <see cref="TravelApi.Domain.Entities.MovementKinds"/>.
+    /// </summary>
     public string Kind { get; set; } = string.Empty;
 
     public DateTime Date { get; set; }
@@ -36,7 +43,7 @@ public class MovementDto
 
     /// <summary>Estado legible (depende del kind):
     /// payment: "Paid"/"Pending"/"Cancelled".
-    /// invoice/credit_note: "Approved"/"Rejected"/"InProgress"/"Annulled" (deriva de Resultado+AnnulmentStatus).
+    /// invoice/debit_note/credit_note: "Approved"/"Rejected"/"InProgress"/"Annulled" (deriva de Resultado+AnnulmentStatus).
     /// credit_note_reversal: "Paid".</summary>
     public string Status { get; set; } = string.Empty;
 
@@ -79,7 +86,7 @@ public class MovementsListQuery : PagedQuery
     /// <summary>Filtrar por cliente (LegacyId o public id resolvable).</summary>
     public string? CustomerId { get; set; }
 
-    /// <summary>Comma-separated: "payment,invoice,credit_note,credit_note_reversal".</summary>
+    /// <summary>Comma-separated: "payment,invoice,debit_note,credit_note,credit_note_reversal".</summary>
     public string? Kinds { get; set; }
 
     public DateTime? DateFrom { get; set; }

@@ -12,8 +12,18 @@ export function useFinanceActions(loadData, options = {}) {
       const response = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response]));
       const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `Factura-${invoice.tipoComprobante}-${invoice.numeroComprobante}.pdf`);
+      const tipoComprobante = invoice.tipoComprobante;
+      const numeroComprobante = invoice.numeroComprobante;
+      let baseFilename;
+      if (tipoComprobante && numeroComprobante) {
+        baseFilename = `Factura-${tipoComprobante}-${numeroComprobante}`;
+      } else if (invoice.reference) {
+        baseFilename = invoice.reference.replace(/[^a-z0-9-]/gi, "_");
+      } else {
+        baseFilename = `Factura-${getPublicId(invoice)}`;
+      }
+      const filename = `${baseFilename}.pdf`;
+      link.setAttribute("download", filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -63,11 +73,13 @@ export function useFinanceActions(loadData, options = {}) {
   };
 
   const handleAnnulInvoice = async (invoice) => {
-    const confirmed = await showConfirm(
-      "Anular factura",
-      "Se generara una nota de credito para dejar trazabilidad fiscal.",
-      "Si, anular"
-    );
+    const confirmed = await showConfirm({
+      title: "Anular factura",
+      text: "Se emitirá una nota de crédito por el importe total.",
+      details: "La nota de crédito impacta IVA en el período fiscal de su emisión, no en el de la factura origen (Ley IVA 23.349, art. 12). Si la factura pertenece a un período ya declarado, verificar el impacto antes de continuar.",
+      confirmText: "Sí, anular",
+      confirmColor: "red",
+    });
 
     if (!confirmed) {
       return;

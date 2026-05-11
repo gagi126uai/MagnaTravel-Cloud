@@ -272,4 +272,93 @@ public class InvoiceServiceFilteringAndAnnulmentTests
             j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
             Times.AtLeastOnce);
     }
+
+    /// <summary>
+    /// 2026-05-11 (fix arca-tax-expert, fiscal critico): el endpoint de anulacion
+    /// solo debe procesar Facturas A/B/C. NDs (2,7,12,52), NCs (3,8,13,53) y
+    /// Facturas M (51) deben rechazarse upfront con mensaje claro al operador,
+    /// SIN dejar la factura en Pending y SIN encolar el job.
+    /// </summary>
+    [Theory]
+    [InlineData(2)]   // ND A
+    [InlineData(7)]   // ND B
+    [InlineData(12)]  // ND C
+    [InlineData(52)]  // ND M
+    [InlineData(3)]   // NC A
+    [InlineData(8)]   // NC B
+    [InlineData(13)]  // NC C
+    [InlineData(53)]  // NC M
+    [InlineData(51)]  // Factura M (sin mapeo a NC M)
+    public async Task EnqueueAnnulmentAsync_UnsupportedTipoComprobante_Throws_AndDoesNotEnqueue(int tipoComprobante)
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        // Cambiar el tipo de la factura 1 al tipo NO soportado bajo prueba.
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        var statusAntes = inv.AnnulmentStatus;
+        inv.TipoComprobante = tipoComprobante;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "test", requesterIsAdmin: true, CancellationToken.None));
+        Assert.Contains("no soporta anulacion automatica", ex.Message);
+
+        // Status no debe cambiar a Pending (no se persistio la solicitud).
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(statusAntes, refreshed.AnnulmentStatus);
+        Assert.Null(refreshed.AnnulmentReason);
+
+        // Y el job NO debe haberse encolado.
+        _jobClientMock.Verify(
+            j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// 2026-05-11 (fix arca-tax-expert, defensa en profundidad): si por alguna razon
+    /// (Hangfire retry, dato sucio, llamada interna) el job se ejecuta con un tipo
+    /// no soportado, debe abortar marcando Failed + notificacion, SIN llamar a AFIP.
+    /// Asegura que cbteTipo=0 nunca se envia al webservice.
+    /// </summary>
+    [Theory]
+    [InlineData(51)]  // Factura M
+    [InlineData(52)]  // ND M
+    [InlineData(2)]   // ND A (caso reportado por arca-tax-expert)
+    public async Task ProcessAnnulmentJob_UnsupportedTipoComprobante_MarksFailed_AndDoesNotCallAfip(int tipoComprobante)
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        // Forzar la factura a un tipo no soportado y dejarla en Pending (estado
+        // donde estaria si el guard de Enqueue no hubiera corrido).
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        inv.TipoComprobante = tipoComprobante;
+        inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        // Debe completar sin tirar excepcion (return temprano).
+        await service.ProcessAnnulmentJob(1, "user-X", approvalRequestId: null);
+
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(AnnulmentStatus.Failed, refreshed.AnnulmentStatus);
+
+        // AFIP nunca debe haberse invocado.
+        _afipMock.Verify(
+            a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()),
+            Times.Never);
+        _afipMock.Verify(
+            a => a.ProcessInvoiceJob(It.IsAny<int>()),
+            Times.Never);
+
+        // Notificacion al operador con explicacion clara.
+        var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
+        Assert.NotNull(notif);
+        Assert.Equal("Error", notif!.Type);
+        Assert.Contains("no soporta anulacion automatica", notif.Message);
+    }
 }

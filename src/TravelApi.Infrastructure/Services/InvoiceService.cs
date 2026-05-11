@@ -392,6 +392,26 @@ public class InvoiceService : IInvoiceService
                     : "La factura tiene una anulacion en curso. Espera el resultado o reintenta si quedo en Failed.");
         }
 
+        // 2026-05-11 (fix arca-tax-expert, fiscal critico): solo Facturas A/B/C soportan
+        // anulacion automatica. NDs (2,7,12,52), NCs (3,8,13,53) y Facturas M (51) NO
+        // se anulan desde la UI nueva — antes caian en el switch default de
+        // ProcessAnnulmentJob como cbteTipo=0 y AFIP rechazaba con error oscuro,
+        // dejando la factura en Pending/Failed sin razon clara para el operador.
+        // Fail-fast aca evita encolar un job condenado a fallar.
+        //
+        // Excepcion intencional: los casos legacy 3->2, 8->7, 13->12 ("anular una NC
+        // con una ND") siguen vivos en ProcessAnnulmentJob por back-compat. Pero la
+        // UI nueva no expone esa accion (ver movementActions.js), por lo que en la
+        // practica este endpoint solo recibe tipos 1/6/11. El guard aca aplica a
+        // toda invocacion del endpoint (controllers, scripts), no a llamadas internas.
+        if (!InvoiceComprobanteHelpers.IsSupportedForAnnulment(invoice.TipoComprobante))
+        {
+            throw new InvalidOperationException(
+                $"El tipo de comprobante {invoice.TipoComprobante} no soporta anulacion automatica. " +
+                "Solo se anulan Facturas A/B/C desde la UI. " +
+                "Para Notas de Debito/Credito o Facturas M, emitir el ajuste manualmente.");
+        }
+
         // B1.15 Fase D (2026-05-11): si policy.RequiresApproval Y caller NO es
         // Admin, requiere ApprovalRequest aprobado. Admin bypassa el workflow.
         // B1.15 Fase B'' (2026-05-11): la decision se lee desde ApprovalPolicy
@@ -472,16 +492,47 @@ public class InvoiceService : IInvoiceService
             }
 
             // Determine Type (Credit or Debit Note)
+            // 2026-05-11 (fix arca-tax-expert, fiscal critico): el switch heredado
+            // tenia un default que dejaba cbteTipo=0 para tipos no mapeados (2, 7, 12,
+            // 51, 52, 53). Eso se enviaba a AFIP y fallaba con error tecnico opaco
+            // (WSFE rechaza CbteTipo=0). Ahora se valida explicitamente antes del
+            // switch. El guard duplica el de EnqueueAnnulmentAsync por defensa en
+            // profundidad: el job tambien puede ser invocado por Hangfire retry o
+            // reschedule despues de un cambio de tipo, asi que no podemos asumir
+            // que el guard de entrada se ejecuto.
             int cbteTipo = 0;
-            // Similar logic to Controller but simplified
             switch (original.TipoComprobante)
             {
                 case 1: cbteTipo = 3; break; // Fac A -> NC A
                 case 6: cbteTipo = 8; break; // Fac B -> NC B
                 case 11: cbteTipo = 13; break; // Fac C -> NC C
-                case 3: cbteTipo = 2; break; // NC A -> ND A
-                case 8: cbteTipo = 7; break; // NC B -> ND B
-                case 13: cbteTipo = 12; break; // NC C -> ND C
+                // INALCANZABLES HOY: el guard upstream en EnqueueAnnulmentAsync
+                // (InvoiceComprobanteHelpers.IsSupportedForAnnulment) solo permite
+                // tipos 1/6/11 y rechaza 3/8/13 con InvalidOperationException antes
+                // de encolar el job. Estos cases se conservan como documentacion
+                // del mapeo historico "anular NC con ND" (cliente devuelve el
+                // ajuste). Si en el futuro se decide habilitar ese flujo, el guard
+                // upstream debe ampliarse y deben sumarse tests de regresion antes
+                // de confiar en estos cases.
+                case 3: cbteTipo = 2; break; // NC A -> ND A (inalcanzable)
+                case 8: cbteTipo = 7; break; // NC B -> ND B (inalcanzable)
+                case 13: cbteTipo = 12; break; // NC C -> ND C (inalcanzable)
+            }
+            if (cbteTipo == 0)
+            {
+                // No se llamo a AFIP. Marcar Failed y notificar para que el operador
+                // tenga visibilidad. AnnulmentStatus = Failed mantiene el bloqueo de
+                // cancel de reserva (FIX 7) hasta que back-office resuelva manual.
+                original.AnnulmentStatus = AnnulmentStatus.Failed;
+                await _context.SaveChangesAsync();
+
+                var reason = $"El tipo de comprobante {original.TipoComprobante} no soporta anulacion automatica. " +
+                             "Generar la Nota de Credito (o ajuste correspondiente) manualmente desde AFIP.";
+                _logger.LogWarning(
+                    "Annulment job aborted for Invoice {InvoiceId}: tipo {Tipo} no soportado.",
+                    invoiceId, original.TipoComprobante);
+                await CreateNotification(userId, reason, "Error", invoiceId);
+                return;
             }
 
             var request = new CreateInvoiceRequest
@@ -492,8 +543,12 @@ public class InvoiceService : IInvoiceService
                 DocTipo = 99, // Sin info
                 DocNro = 0,
                 OriginalInvoiceId = original.PublicId.ToString(),
-                IsCreditNote = cbteTipo == 3 || cbteTipo == 8 || cbteTipo == 13 || cbteTipo == 53,
-                IsDebitNote = cbteTipo == 2 || cbteTipo == 7 || cbteTipo == 12 || cbteTipo == 52
+                // Centralizado en InvoiceComprobanteHelpers para evitar duplicacion
+                // y desalineo. Las ramas == 52/== 53 originales eran inalcanzables
+                // porque el switch superior nunca produce esos valores (ver guard
+                // upstream IsSupportedForAnnulment).
+                IsCreditNote = InvoiceComprobanteHelpers.IsCreditNote(cbteTipo),
+                IsDebitNote = InvoiceComprobanteHelpers.IsDebitNote(cbteTipo)
             };
 
             // Use Snapshots if available

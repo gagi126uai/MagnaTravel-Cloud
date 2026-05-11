@@ -1,22 +1,34 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Search } from "lucide-react";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { useMovements } from "../../movements/hooks/useMovements";
 import MovementsTimeline from "../../movements/components/MovementsTimeline";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { MonthNavigator, monthToBounds } from "../../../components/ui/MonthNavigator";
+import { useFinanceActions } from "../hooks/useFinanceActions";
+import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 
-// B1.15 Fase D'.B (2026-05-11): pestaña "Movimientos" — timeline cronológico
-// global con filtros. Sirve para "ver todo lo que pasó hoy" o conciliar.
+// B1.15 Fase D'.B (2026-05-11): pestaña "Movimientos" — timeline cronologico
+// global con filtros. Sirve para "ver todo lo que paso hoy" o conciliar.
 //
-// Filtro de mes: patron canónico del módulo financiero (igual que Facturación).
+// Filtro de mes: patron canonico del modulo financiero (igual que Facturacion).
 // Default: mes actual. El mes se traduce a dateFrom/dateTo ISO para el backend.
-// Si activeMonth es null, no se envían filtros de fecha (historial completo).
+// Si activeMonth es null, no se envian filtros de fecha (historial completo).
+//
+// Acciones contextuales (D'.B prio-alta recuperadas tras redesign):
+//   invoice Approved → Ver PDF · Descargar · Anular
+//   invoice Rejected → Reintentar
+//   credit_note Approved → Ver PDF · Descargar
+//   credit_note Rejected → Reintentar
+//   Resto → sin acciones
+//
+// Cuando "Anular" recibe 409 requiresApproval (Vendedor sin permiso), abre
+// RequestApprovalModal con requestType="InvoiceAnnulment".
 
 const KIND_OPTIONS = [
   { value: "payment", label: "Cobros" },
   { value: "invoice", label: "Facturas" },
-  { value: "credit_note", label: "Notas de crédito" },
+  { value: "credit_note", label: "Notas de credito" },
   { value: "credit_note_reversal", label: "Reversiones NC" },
 ];
 
@@ -32,20 +44,68 @@ export default function PaymentsMovementsPage() {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
+  // B1.15 Fase D'.B: contexto del modal de aprobacion cuando /annul devuelve
+  // 409 con requiresApproval. null = modal cerrado.
+  const [approvalContext, setApprovalContext] = useState(null);
+
+  // Items con operacion en curso (publicId como string). Deshabilita los
+  // botones de esa row y muestra spinner inline sin bloquear la lista completa.
+  const [busyItems, setBusyItems] = useState(new Set());
+
   const debouncedSearch = useDebounce(search, 300);
 
-  // Cuando activeMonth es null no se envían filtros de fecha al backend.
+  // Cuando activeMonth es null no se envian filtros de fecha al backend.
   const dateBounds = activeMonth ? monthToBounds(activeMonth) : null;
 
   const {
     items, totalCount, totalPages, page, pageSize, setPage, setPageSize,
-    loading, error,
+    loading, error, reload,
   } = useMovements({
     search: debouncedSearch.trim() || null,
     kinds: selectedKinds.length === KIND_OPTIONS.length ? null : selectedKinds,
     dateFrom: dateBounds?.from ?? null,
     dateTo: dateBounds?.to ?? null,
   });
+
+  const {
+    handleViewPdf,
+    handleDownloadPdf,
+    handleAnnulInvoice,
+    handleRetryInvoice,
+  } = useFinanceActions(reload, {
+    onApprovalRequired: ({ requestType, entityType, entityId, invoice }) => {
+      setApprovalContext({
+        requestType,
+        entityType,
+        entityId,
+        // La label se construye desde item.reference (ya formateada por el backend,
+        // ej. "Factura B 00001-00000027") sin necesidad de campos adicionales del DTO.
+        invoiceLabel: invoice?.reference ?? null,
+      });
+    },
+  });
+
+  // Wrappers con tracking de busy-state por row. Evitan llamadas duplicadas
+  // mientras la operacion esta en curso. Key normalizada a lowercase para
+  // comparacion case-insensitive con MovementsTimeline.
+  const withBusy = useCallback((handler) => async (item) => {
+    const key = String(item.publicId).toLowerCase();
+    setBusyItems((prev) => new Set(prev).add(key));
+    try {
+      await handler(item);
+    } finally {
+      setBusyItems((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, []);
+
+  const handleViewPdfForItem = (item) => withBusy(handleViewPdf)(item);
+  const handleDownloadPdfForItem = (item) => withBusy(handleDownloadPdf)(item);
+  const handleAnnulForItem = (item) => withBusy(handleAnnulInvoice)(item);
+  const handleRetryForItem = (item) => withBusy(handleRetryInvoice)(item);
 
   const toggleKind = (value) => {
     setSelectedKinds((current) =>
@@ -108,7 +168,15 @@ export default function PaymentsMovementsPage() {
           </div>
         ) : (
           <>
-            <MovementsTimeline items={items} loading={loading} />
+            <MovementsTimeline
+              items={items}
+              loading={loading}
+              onViewPdf={handleViewPdfForItem}
+              onDownloadPdf={handleDownloadPdfForItem}
+              onAnnulInvoice={handleAnnulForItem}
+              onRetryInvoice={handleRetryForItem}
+              busyItems={busyItems}
+            />
             <div className="border-t border-slate-100 dark:border-slate-800">
               <PaginationFooter
                 page={page}
@@ -121,7 +189,7 @@ export default function PaymentsMovementsPage() {
                 onPageSizeChange={setPageSize}
               />
             </div>
-            {/* Strip de conteo + acción historial completo */}
+            {/* Strip de conteo + accion historial completo */}
             {!loading && (
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-6 py-2 dark:border-slate-800">
                 <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -153,6 +221,22 @@ export default function PaymentsMovementsPage() {
           </>
         )}
       </div>
+
+      {/* Modal de aprobacion para anulaciones que requieren autorizacion del Admin */}
+      <RequestApprovalModal
+        isOpen={Boolean(approvalContext)}
+        onClose={() => setApprovalContext(null)}
+        onCreated={() => {
+          // El Vendedor recibe confirmacion en el modal (showSuccess interno).
+          // Cerramos modal; el reintento de "Anular" lo hace el Vendedor cuando
+          // el Admin apruebe — no es automatico.
+          setApprovalContext(null);
+        }}
+        requestType={approvalContext?.requestType}
+        entityType={approvalContext?.entityType}
+        entityId={approvalContext?.entityId}
+        entityLabel={approvalContext?.invoiceLabel}
+      />
     </div>
   );
 }

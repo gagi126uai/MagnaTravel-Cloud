@@ -56,7 +56,7 @@ public class MovementsService : IMovementsService
         var movements = new List<MovementDto>();
 
         // === Payments (cobros + reversals de NC) ===
-        if (kinds.Contains("payment") || kinds.Contains("credit_note_reversal"))
+        if (kinds.Contains(MovementKinds.Payment) || kinds.Contains(MovementKinds.CreditNoteReversal))
         {
             var paymentsQuery = _context.Payments
                 .AsNoTracking()
@@ -123,7 +123,7 @@ public class MovementsService : IMovementsService
             foreach (var p in payments)
             {
                 var isReversal = p.EntryType == PaymentEntryTypes.CreditNoteReversal;
-                var kind = isReversal ? "credit_note_reversal" : "payment";
+                var kind = isReversal ? MovementKinds.CreditNoteReversal : MovementKinds.Payment;
                 if (!kinds.Contains(kind)) continue;
 
                 movements.Add(new MovementDto
@@ -145,7 +145,7 @@ public class MovementsService : IMovementsService
                     RelatedTo = isReversal && p.RelatedInvoicePublicId.HasValue
                         ? new MovementRelatedToDto
                         {
-                            Kind = "credit_note",
+                            Kind = MovementKinds.CreditNote,
                             PublicId = p.RelatedInvoicePublicId.Value,
                             LegacyId = p.RelatedInvoiceId ?? 0,
                             Label = $"NC AFIP {(p.RelatedInvoicePuntoDeVenta ?? 0):D5}-{(p.RelatedInvoiceNumeroComprobante ?? 0):D8}"
@@ -155,8 +155,13 @@ public class MovementsService : IMovementsService
             }
         }
 
-        // === Invoices (facturas + NCs) ===
-        if (kinds.Contains("invoice") || kinds.Contains("credit_note"))
+        // === Invoices (facturas + NDs + NCs) ===
+        // Nota: las Notas de Debito tambien viven en la tabla Invoices (mismo modelo
+        // AFIP). Antes se proyectaban como kind="invoice" — la UI las trataba como
+        // facturas anulables. Ahora se discriminan via InvoiceComprobanteHelpers.
+        if (kinds.Contains(MovementKinds.Invoice)
+            || kinds.Contains(MovementKinds.CreditNote)
+            || kinds.Contains(MovementKinds.DebitNote))
         {
             var invoicesQuery = _context.Invoices
                 .AsNoTracking()
@@ -221,9 +226,12 @@ public class MovementsService : IMovementsService
 
             foreach (var i in invoices)
             {
-                var isCreditNote = IsCreditNoteType(i.TipoComprobante);
-                var kind = isCreditNote ? "credit_note" : "invoice";
+                var kind = GetKindForInvoiceTipo(i.TipoComprobante);
                 if (!kinds.Contains(kind)) continue;
+
+                // El monto se muestra en negativo para NC (efecto reductor en deuda).
+                // Para ND el signo queda positivo (incrementa deuda). Para facturas, positivo.
+                var isCreditNote = kind == MovementKinds.CreditNote;
 
                 movements.Add(new MovementDto
                 {
@@ -241,10 +249,14 @@ public class MovementsService : IMovementsService
                     Reference = BuildInvoiceReference(i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante),
                     Notes = null,
                     CreatedByUserName = null,
-                    RelatedTo = isCreditNote && i.OriginalInvoicePublicId.HasValue
+                    // RelatedTo: NC apunta a su factura origen. NDs tambien pueden
+                    // apuntar a una factura origen (cuando se emite por ajuste) —
+                    // mismo modelo OriginalInvoice. Si no hay original, queda null.
+                    RelatedTo = (isCreditNote || kind == MovementKinds.DebitNote)
+                        && i.OriginalInvoicePublicId.HasValue
                         ? new MovementRelatedToDto
                         {
-                            Kind = "invoice",
+                            Kind = MovementKinds.Invoice,
                             PublicId = i.OriginalInvoicePublicId.Value,
                             LegacyId = i.OriginalInvoiceId ?? 0,
                             Label = BuildInvoiceReference(i.OriginalInvoiceTipoComprobante ?? 0, i.OriginalInvoicePuntoDeVenta ?? 0, i.OriginalInvoiceNumeroComprobante ?? 0)
@@ -291,18 +303,39 @@ public class MovementsService : IMovementsService
         catch (KeyNotFoundException) { return -1; } // Forzar match vacio en filtros si la entidad no existe.
     }
 
-    // Defaults: si Kinds es null, traer los 4. Si viene csv, parsear.
+    // Defaults: si Kinds es null, traer los 5. Si viene csv, parsear.
     private static HashSet<string> ParseKinds(string? raw)
     {
-        var all = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment", "invoice", "credit_note", "credit_note_reversal" };
+        var all = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            MovementKinds.Payment,
+            MovementKinds.Invoice,
+            MovementKinds.DebitNote,
+            MovementKinds.CreditNote,
+            MovementKinds.CreditNoteReversal,
+        };
         if (string.IsNullOrWhiteSpace(raw)) return all;
         var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var requested = new HashSet<string>(parts, StringComparer.OrdinalIgnoreCase);
         return new HashSet<string>(all.Intersect(requested), StringComparer.OrdinalIgnoreCase);
     }
 
-    private static bool IsCreditNoteType(int tipoComprobante) =>
-        tipoComprobante is 3 or 8 or 13 or 53;
+    /// <summary>
+    /// Mapea el cbteTipo AFIP al discriminador de MovementDto.Kind. Centralizado
+    /// para que cualquier proyeccion de Invoice -> MovementDto use la misma logica.
+    /// Tipos desconocidos quedan como "invoice" (fallback conservador hasta que el
+    /// dato sucio se observe y limpie); loguearlos como warning seria una mejora.
+    /// </summary>
+    internal static string GetKindForInvoiceTipo(int tipoComprobante) =>
+        InvoiceComprobanteHelpers.Categorize(tipoComprobante) switch
+        {
+            InvoiceComprobanteCategory.CreditNote => MovementKinds.CreditNote,
+            InvoiceComprobanteCategory.DebitNote => MovementKinds.DebitNote,
+            InvoiceComprobanteCategory.Invoice => MovementKinds.Invoice,
+            // Tipo no reconocido — comportamiento conservador: no exponer acciones
+            // de la UI (la matriz frontend devuelve [] para kinds desconocidos).
+            _ => MovementKinds.Invoice,
+        };
 
     private static string BuildPaymentReference(string method, string? reference, bool isReversal)
     {
