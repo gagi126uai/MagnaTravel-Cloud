@@ -36,6 +36,8 @@ import { Toaster } from "sonner";
 import PackagesPage from "./features/packages/pages/PackagesPage";
 import DestinationEditorPage from "./features/packages/pages/DestinationEditorPage";
 import AdminHubPage from "./pages/AdminHubPage";
+import ApprovalsInboxPage from "./features/approvals/pages/ApprovalsInboxPage";
+import MyApprovalRequestsPage from "./features/approvals/pages/MyApprovalRequestsPage";
 
 function FullScreenLoader() {
   return (
@@ -234,6 +236,14 @@ export default function App() {
                       element={hasPermission("cobranzas.edit") ? <PaymentsTrashPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route path="/notifications" element={<NotificationsPage />} />
+                    <Route
+                      path="/approvals/inbox"
+                      element={hasPermission("approvals.review") ? <ApprovalsInboxPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
+                      path="/approvals/my-requests"
+                      element={hasPermission("approvals.request") ? <MyApprovalRequestsPage /> : <Navigate to="/dashboard" replace />}
+                    />
                                       <Route
                       path="/admin"
                       element={isAdmin() ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}

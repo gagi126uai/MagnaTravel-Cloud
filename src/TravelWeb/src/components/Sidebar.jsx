@@ -15,10 +15,13 @@ import {
   UserPlus,
   Package,
   Shield,
+  ShieldCheck,
+  Inbox,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
 import { hasPermission, isAdmin } from "../auth";
+import { useApprovalsPendingCount } from "../features/approvals/hooks/useApprovals";
 
 const mainLinks = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -31,16 +34,24 @@ const mainLinks = [
   { to: "/cash", label: "Caja", icon: ArrowLeftRight, requiredPermission: "caja.view" },
   { to: "/rates", label: "Tarifario", icon: DollarSign, requiredPermission: "tarifario.view" },
   { to: "/packages", label: "Paises y destinos", icon: Package, requiredPermission: "paquetes.view" },
+  { to: "/approvals/inbox", label: "Aprobaciones", icon: ShieldCheck, requiredPermission: "approvals.review" },
+  { to: "/approvals/my-requests", label: "Mis solicitudes", icon: Inbox, requiredPermission: "approvals.request" },
   { to: "/admin", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
   { to: "/settings", label: "Configuración", icon: Settings, requiredPermission: "configuracion.view" },
 ];
 
 export default function Sidebar({ onLogout, isAdmin, className, collapsed, onCloseMobile }) {
   const { alerts } = useAlerts();
+  // Badge dinámico de aprobaciones pendientes (solo lo carga si el user es reviewer).
+  const canReview = hasPermission("approvals.review");
+  const { count: pendingApprovals } = useApprovalsPendingCount(canReview);
 
   const linksWithBadges = mainLinks.map((link) => {
     if (link.to === "/alerts") {
       return { ...link, badge: alerts?.TotalCount };
+    }
+    if (link.to === "/approvals/inbox") {
+      return { ...link, badge: pendingApprovals };
     }
 
     return link;
