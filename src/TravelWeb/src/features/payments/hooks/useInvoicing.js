@@ -15,7 +15,7 @@ const emptyPage = {
   hasNextPage: false,
 };
 
-export function useInvoicing() {
+export function useInvoicing(options = {}) {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [workItemsPage, setWorkItemsPage] = useState(emptyPage);
@@ -117,7 +117,7 @@ export function useInvoicing() {
   useEffect(() => { setWorklistPage(1); }, [debouncedWorklistSearch, debouncedWorklistCustomer, debouncedWorklistReservation, worklistStatus, worklistPageSize]);
   useEffect(() => { setInvoicePage(1); }, [debouncedInvoiceSearch, debouncedInvoiceCustomer, debouncedInvoiceReservation, debouncedInvoiceVoucherNumber, invoiceKind, invoicePageSize, invoicePeriod, invoiceResultFilter]);
 
-  const actions = useFinanceActions(loadData);
+  const actions = useFinanceActions(loadData, options);
 
   return {
     loading,

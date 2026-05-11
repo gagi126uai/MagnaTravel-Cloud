@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowDownLeft,
@@ -13,6 +14,7 @@ import {
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { useFinanceHistory } from "../hooks/useFinanceHistory";
+import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 import {
   formatCurrency,
   formatDateTime,
@@ -109,6 +111,9 @@ function HistoryActions({
 }
 
 export default function PaymentsHistoryPage() {
+  // B1.15 Fase D: cuando /annul devuelve 409 requiresApproval, abrimos modal.
+  const [approvalContext, setApprovalContext] = useState(null);
+
   const {
     loading,
     timeline,
@@ -129,7 +134,18 @@ export default function PaymentsHistoryPage() {
     handleDownloadReceiptPdf,
     handleIssueReceipt,
     databaseUnavailable,
-  } = useFinanceHistory();
+  } = useFinanceHistory({
+    onApprovalRequired: ({ requestType, entityType, entityId, invoice }) => {
+      setApprovalContext({
+        requestType,
+        entityType,
+        entityId,
+        invoiceLabel: invoice
+          ? `Factura ${invoice.tipoComprobante === 1 ? "A" : invoice.tipoComprobante === 6 ? "B" : "C"} ${String(invoice.puntoDeVenta || 0).padStart(5, "0")}-${String(invoice.numeroComprobante || 0).padStart(8, "0")}`
+          : null,
+      });
+    },
+  });
 
   if (loading && timeline.length === 0) {
     return (
@@ -302,6 +318,16 @@ export default function PaymentsHistoryPage() {
           />
         </>
       )}
+
+      <RequestApprovalModal
+        isOpen={Boolean(approvalContext)}
+        onClose={() => setApprovalContext(null)}
+        onCreated={() => setApprovalContext(null)}
+        requestType={approvalContext?.requestType}
+        entityType={approvalContext?.entityType}
+        entityId={approvalContext?.entityId}
+        entityLabel={approvalContext?.invoiceLabel}
+      />
     </div>
   );
 }

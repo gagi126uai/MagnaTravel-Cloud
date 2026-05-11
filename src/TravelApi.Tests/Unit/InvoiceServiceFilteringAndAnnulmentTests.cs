@@ -167,7 +167,9 @@ public class InvoiceServiceFilteringAndAnnulmentTests
 
         var service = BuildService(context);
 
-        await service.EnqueueAnnulmentAsync(1, "user-X", "Carlos Admin", "Cliente cancelo", CancellationToken.None);
+        // requesterIsAdmin: true para bypassar el workflow de Fase D en este test
+        // unitario — el flujo de approval esta cubierto por tests de integracion.
+        await service.EnqueueAnnulmentAsync(1, "user-X", "Carlos Admin", "Cliente cancelo", requesterIsAdmin: true, CancellationToken.None);
 
         var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
         Assert.Equal(AnnulmentStatus.Pending, refreshed.AnnulmentStatus);
@@ -192,7 +194,7 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var service = BuildService(context);
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
-            service.EnqueueAnnulmentAsync(9999, "user-X", "Admin", "test", CancellationToken.None));
+            service.EnqueueAnnulmentAsync(9999, "user-X", "Admin", "test", requesterIsAdmin: true, CancellationToken.None));
     }
 
     /// <summary>
@@ -213,7 +215,7 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var service = BuildService(context);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "retry", CancellationToken.None));
+            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "retry", requesterIsAdmin: true, CancellationToken.None));
         Assert.Contains("anulacion en curso", ex.Message);
 
         // No debe haber encolado un segundo job.
@@ -239,7 +241,7 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var service = BuildService(context);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "duplicate", CancellationToken.None));
+            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "duplicate", requesterIsAdmin: true, CancellationToken.None));
         Assert.Contains("ya fue anulada", ex.Message);
     }
 
@@ -260,7 +262,7 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var service = BuildService(context);
 
         // No debe lanzar. Debe re-encolar y dejar status en Pending.
-        await service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "retry-after-failed", CancellationToken.None);
+        await service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "retry-after-failed", requesterIsAdmin: true, CancellationToken.None);
 
         var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
         Assert.Equal(AnnulmentStatus.Pending, refreshed.AnnulmentStatus);

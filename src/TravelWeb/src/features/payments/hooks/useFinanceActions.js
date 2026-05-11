@@ -2,7 +2,11 @@ import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 
-export function useFinanceActions(loadData) {
+// B1.15 Fase D (2026-05-11): options.onApprovalRequired (opcional). Cuando
+// AnnulInvoice devuelve 409 con requiresApproval=true, en lugar de mostrar
+// error se invoca el callback con { requestType, entityType, entityId, invoice }
+// para que el caller abra el RequestApprovalModal.
+export function useFinanceActions(loadData, options = {}) {
   const handleDownloadPdf = async (invoice) => {
     try {
       const response = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
@@ -74,6 +78,17 @@ export function useFinanceActions(loadData) {
       showSuccess(response?.message || response?.Message || "Anulacion encolada.");
       await loadData();
     } catch (error) {
+      // B1.15 Fase D: 409 con requiresApproval=true → abrir RequestApprovalModal.
+      const payload = error?.payload;
+      if (error?.status === 409 && payload?.requiresApproval && typeof options.onApprovalRequired === "function") {
+        options.onApprovalRequired({
+          requestType: payload.requestType,
+          entityType: payload.entityType,
+          entityId: payload.entityId,
+          invoice,
+        });
+        return;
+      }
       showError(error.message || "Error al anular");
     }
   };

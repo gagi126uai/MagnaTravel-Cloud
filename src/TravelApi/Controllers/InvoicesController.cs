@@ -152,16 +152,29 @@ public class InvoicesController : ControllerBase
     {
         // B1.15 Fase 2a (review final): idempotencia. EnqueueAnnulmentAsync rechaza
         // re-encolar si la factura esta Pending o Succeeded (evita doble NC en AFIP).
-        // 409 Conflict expresa "estado actual no compatible con la operacion" mejor
-        // que 500 (que es lo que daria el GlobalExceptionHandler sin este try/catch).
+        // B1.15 Fase D (2026-05-11): tambien puede tirar ApprovalRequiredException si
+        // el setting on + caller no Admin + no hay aprobacion vigente; devolvemos 409
+        // con body que indica al frontend que abra RequestApprovalModal.
         try
         {
             var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
             var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
             var reason = request?.Reason?.Trim();
+            var requesterIsAdmin = User.IsInRole("Admin");
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Invoice>(publicIdOrLegacyId, ct);
-            await _invoiceService.EnqueueAnnulmentAsync(id, userId, userName, reason, ct);
+            await _invoiceService.EnqueueAnnulmentAsync(id, userId, userName, reason, requesterIsAdmin, ct);
             return Accepted(new { Message = "La anulacion se esta procesando en segundo plano. Te avisaremos cuando termine." });
+        }
+        catch (Application.Exceptions.ApprovalRequiredException ex)
+        {
+            return Conflict(new
+            {
+                message = "Esta acción requiere autorización previa del Administrador o Colaborador.",
+                requiresApproval = true,
+                requestType = ex.RequestType.ToString(),
+                entityType = ex.EntityType,
+                entityId = ex.EntityId,
+            });
         }
         catch (InvalidOperationException ex)
         {

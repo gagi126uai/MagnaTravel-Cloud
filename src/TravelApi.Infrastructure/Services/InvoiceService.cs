@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using System.Globalization;
 using TravelApi.Application.DTOs;
+using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Identity;
@@ -29,6 +30,8 @@ public class InvoiceService : IInvoiceService
     // B1.15 Fase 2a (FIX 6): opcionales para no romper unit tests del ctor original.
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    // B1.15 Fase D (2026-05-11): opcional para no romper unit tests del ctor previo.
+    private readonly IApprovalRequestService? _approvalService;
     private static readonly string[] ActiveInvoicingStatuses =
     {
         EstadoReserva.Confirmed,
@@ -46,7 +49,8 @@ public class InvoiceService : IInvoiceService
         IOperationalFinanceSettingsService operationalFinanceSettingsService,
         UserManager<ApplicationUser> userManager,
         IUserPermissionResolver? permissionResolver = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        IApprovalRequestService? approvalService = null)
     {
         _context = context;
         _entityReferenceResolver = entityReferenceResolver;
@@ -59,6 +63,7 @@ public class InvoiceService : IInvoiceService
         _userManager = userManager;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
+        _approvalService = approvalService;
     }
 
     /// <summary>
@@ -361,7 +366,7 @@ public class InvoiceService : IInvoiceService
         return _pdfService.GenerateInvoicePdf(invoice, invoice.Reserva, settings, agencySettings);
     }
 
-    public async Task EnqueueAnnulmentAsync(int id, string userId, string? userName, string? reason, CancellationToken ct)
+    public async Task EnqueueAnnulmentAsync(int id, string userId, string? userName, string? reason, bool requesterIsAdmin, CancellationToken ct)
     {
         // B1.15 Fase 2a (FIX 6): persistir trazabilidad de la solicitud antes de
         // encolar. AnnulmentStatus = Pending bloquea cancel de reserva incluso si
@@ -383,6 +388,30 @@ public class InvoiceService : IInvoiceService
                     : "La factura tiene una anulacion en curso. Espera el resultado o reintenta si quedo en Failed.");
         }
 
+        // B1.15 Fase D (2026-05-11): si setting on Y caller NO es Admin, requiere
+        // ApprovalRequest aprobado. Admin bypassa el workflow (puede anular directo).
+        int? approvalRequestId = null;
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        if (settings.RequireApprovalForInvoiceAnnulment && !requesterIsAdmin)
+        {
+            if (_approvalService is null)
+            {
+                throw new InvalidOperationException(
+                    "Workflow de aprobaciones no disponible. Contactar al Administrador.");
+            }
+            var approval = await _approvalService.FindActiveApprovedAsync(
+                ApprovalRequestType.InvoiceAnnulment, "Invoice", id, userId, ct);
+            if (approval is null)
+            {
+                throw new ApprovalRequiredException(
+                    ApprovalRequestType.InvoiceAnnulment, "Invoice", id);
+            }
+            approvalRequestId = approval.Id;
+            // Si el caller no paso motivo explicito, usar el del approval (auditoria fiscal).
+            if (string.IsNullOrWhiteSpace(reason))
+                reason = approval.Reason;
+        }
+
         invoice.AnnulledByUserId = userId;
         invoice.AnnulledByUserName = userName;
         // AnnulledAt se setea cuando el job confirma la NC con AFIP. Hasta entonces
@@ -391,10 +420,10 @@ public class InvoiceService : IInvoiceService
         invoice.AnnulmentStatus = AnnulmentStatus.Pending;
         await _context.SaveChangesAsync(ct);
 
-        _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId));
+        _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId, approvalRequestId));
     }
 
-    public async Task ProcessAnnulmentJob(int invoiceId, string userId)
+    public async Task ProcessAnnulmentJob(int invoiceId, string userId, int? approvalRequestId = null)
     {
         try
         {
@@ -575,6 +604,13 @@ public class InvoiceService : IInvoiceService
                 original.AnnulmentStatus = AnnulmentStatus.Succeeded;
                 original.AnnulledAt = newInvoice.IssuedAt ?? DateTime.UtcNow;
                 await _context.SaveChangesAsync();
+                // B1.15 Fase D (2026-05-11): consumir la aprobacion ahora que la
+                // accion solicitada se ejecuto. Si el caller era Admin, no hay
+                // approvalRequestId (no-op).
+                if (approvalRequestId.HasValue && _approvalService is not null)
+                {
+                    await _approvalService.MarkConsumedAsync(approvalRequestId.Value);
+                }
                 await CreateNotification(userId, $"Anulación exitosa. Se generó el comprobante {newInvoice.NumeroComprobante}.", "Success", newInvoice.Id);
             }
             else

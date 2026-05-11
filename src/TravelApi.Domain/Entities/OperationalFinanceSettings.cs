@@ -43,6 +43,15 @@ public class OperationalFinanceSettings
     /// </summary>
     public int ApprovalRejectionCooldownHours { get; set; } = 1;
 
+    /// <summary>
+    /// B1.15 Fase D (2026-05-11): si <c>true</c>, anular factura requiere un
+    /// <c>ApprovalRequest</c> aprobado previamente (Vendedor solicita, Admin/
+    /// Colaborador aprueba). Admin bypassea este check. Si <c>false</c>,
+    /// cualquier user con <c>cobranzas.invoice_annul</c> puede anular directo.
+    /// Default <c>true</c> (recomendacion fiscal).
+    /// </summary>
+    public bool RequireApprovalForInvoiceAnnulment { get; set; } = true;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

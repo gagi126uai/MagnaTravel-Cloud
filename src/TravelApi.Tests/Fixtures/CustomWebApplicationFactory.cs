@@ -1,9 +1,11 @@
+using Hangfire;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Tests.Fixtures;
@@ -88,6 +90,20 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                     options.DefaultChallengeScheme = "Test";
                 })
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
+
+            // Mock de IBackgroundJobClient: Hangfire esta deshabilitado en tests
+            // (no hay storage). Sin este mock, cualquier .Enqueue(...) tira
+            // InvalidOperationException y los endpoints que encolan jobs devuelven
+            // 500 en tests. El mock es no-op y permite que los tests validen el
+            // flow sincronico (gating, 409, idempotencia) hasta el punto de
+            // encolado, sin requerir Hangfire real.
+            var jobClientDescriptor = services.SingleOrDefault(s =>
+                s.ServiceType == typeof(IBackgroundJobClient));
+            if (jobClientDescriptor is not null)
+            {
+                services.Remove(jobClientDescriptor);
+            }
+            services.AddSingleton<IBackgroundJobClient>(new Mock<IBackgroundJobClient>().Object);
         });
     }
 }

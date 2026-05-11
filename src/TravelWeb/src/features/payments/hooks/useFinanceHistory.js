@@ -15,7 +15,7 @@ const emptyPage = {
   hasNextPage: false,
 };
 
-export function useFinanceHistory() {
+export function useFinanceHistory(options = {}) {
   const [loading, setLoading] = useState(true);
   const [historyPage, setHistoryPage] = useState(emptyPage);
   const [searchTerm, setSearchTerm] = useState("");
@@ -59,7 +59,7 @@ export function useFinanceHistory() {
     setPage(1);
   }, [debouncedSearch, pageSize]);
 
-  const actions = useFinanceActions(loadData);
+  const actions = useFinanceActions(loadData, options);
 
   return {
     loading,

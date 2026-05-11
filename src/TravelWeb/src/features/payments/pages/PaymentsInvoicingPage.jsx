@@ -7,10 +7,14 @@ import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavail
 import { FinanceMetricsGrid } from "../components/FinanceMetricsGrid";
 import { WorkItemSection, InvoiceSection } from "../components/InvoicingTab";
 import { useInvoicing } from "../hooks/useInvoicing";
+import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 
 export default function PaymentsInvoicingPage() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [mainTab, setMainTab] = useState("pending"); // pending | issued
+  // B1.15 Fase D (2026-05-11): contexto del modal de aprobación cuando /annul
+  // devuelve 409 con requiresApproval. null = modal cerrado.
+  const [approvalContext, setApprovalContext] = useState(null);
 
   const {
     loading,
@@ -61,7 +65,18 @@ export default function PaymentsInvoicingPage() {
     handleRetryInvoice,
     handleAnnulInvoice,
     databaseUnavailable,
-  } = useInvoicing();
+  } = useInvoicing({
+    onApprovalRequired: ({ requestType, entityType, entityId, invoice }) => {
+      setApprovalContext({
+        requestType,
+        entityType,
+        entityId,
+        invoiceLabel: invoice
+          ? `Factura ${invoice.tipoComprobante === 1 ? "A" : invoice.tipoComprobante === 6 ? "B" : "C"} ${String(invoice.puntoDeVenta || 0).padStart(5, "0")}-${String(invoice.numeroComprobante || 0).padStart(8, "0")}`
+          : null,
+      });
+    },
+  });
 
   if (loading && workItems.length === 0 && invoices.length === 0) {
     return (
@@ -225,6 +240,21 @@ export default function PaymentsInvoicingPage() {
           setSelectedItem(null);
           await loadData();
         }}
+      />
+
+      <RequestApprovalModal
+        isOpen={Boolean(approvalContext)}
+        onClose={() => setApprovalContext(null)}
+        onCreated={() => {
+          // El Vendedor recibe confirmacion en el modal (showSuccess interno).
+          // Cerramos modal; el reintento de "Anular" lo hace el Vendedor cuando
+          // el Admin apruebe (no es automatico).
+          setApprovalContext(null);
+        }}
+        requestType={approvalContext?.requestType}
+        entityType={approvalContext?.entityType}
+        entityId={approvalContext?.entityId}
+        entityLabel={approvalContext?.invoiceLabel}
       />
     </div>
   );
