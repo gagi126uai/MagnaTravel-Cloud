@@ -3,13 +3,14 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.DTOs;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/afip")]
-[Authorize(Roles = "Admin")]
+[Authorize]
 [EnableRateLimiting("afip")]
 public class AfipController : ControllerBase
 {
@@ -21,13 +22,19 @@ public class AfipController : ControllerBase
     }
 
     [HttpGet("status")]
+    [RequirePermission(Permissions.CobranzasInvoice)]
     public async Task<IActionResult> GetStatus()
     {
         var status = await _afipService.GetStatus();
         return Ok(new { status });
     }
 
+    // El response (AfipSettingsResponse) NO expone secretos: cert binario y password
+    // nunca salen, los tokens se convierten a booleanos HasXxx. Gateamos con
+    // CobranzasInvoice porque el modal de emision de factura necesita TaxCondition
+    // para decidir si discrimina IVA (Monotributo/Exento -> factura C sin IVA).
     [HttpGet("settings")]
+    [RequirePermission(Permissions.CobranzasInvoice)]
     public async Task<ActionResult<AfipSettingsResponse>> GetSettings()
     {
         var settings = await _afipService.GetSettingsAsync();
@@ -51,6 +58,7 @@ public class AfipController : ControllerBase
     }
 
     [HttpPost("settings")]
+    [RequirePermission(Permissions.ConfiguracionAfip)]
     public async Task<ActionResult<AfipSettingsResponse>> UpdateSettings([FromForm] AfipSettingsRequest request)
     {
         const long maxCertSizeBytes = 100 * 1024; // 100 KB
