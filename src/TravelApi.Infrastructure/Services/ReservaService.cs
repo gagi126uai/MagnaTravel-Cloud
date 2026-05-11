@@ -14,6 +14,7 @@ using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services.Reservations;
+using TravelApi.Infrastructure.Time;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -884,28 +885,35 @@ public class ReservaService : IReservaService
             summaryBaseQuery = summaryBaseQuery.Where(r => r.ResponsibleUserId == ownerFilterUserId);
         }
         
+        // B1.15 Fase D' (2026-05-11): filtros de fecha convertidos via AgencyTimezone.
+        // El query string entrega DateTime con Kind=Unspecified; las columnas son
+        // timestamptz en Postgres y Npgsql tira 500 al comparar Unspecified.
+        // Ademas, rango cerrado-abierto [from, to+1day) captura todo el dia local
+        // final sin perder eventos posteriores a la medianoche UTC.
         if (query.CreatedFrom.HasValue)
         {
-            var from = query.CreatedFrom.Value.ToUniversalTime();
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt >= from);
+            var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.CreatedFrom.Value, isEndOfDay: false);
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt >= fromUtc);
         }
 
         if (query.CreatedTo.HasValue)
         {
-            var to = query.CreatedTo.Value.ToUniversalTime();
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt <= to);
+            var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.CreatedTo.Value, isEndOfDay: true);
+            // EXCLUSIVE end: rango cerrado-abierto [from, to+1day). Captura todo el dia "to" local.
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt < toUtc);
         }
 
         if (query.TravelFrom.HasValue)
         {
-            var from = query.TravelFrom.Value.ToUniversalTime();
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value >= from);
+            var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.TravelFrom.Value, isEndOfDay: false);
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value >= fromUtc);
         }
 
         if (query.TravelTo.HasValue)
         {
-            var to = query.TravelTo.Value.ToUniversalTime();
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value <= to);
+            var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.TravelTo.Value, isEndOfDay: true);
+            // EXCLUSIVE end para no perder reservas que arrancan al final del dia "to" local.
+            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value < toUtc);
         }
 
         var filteredQuery = ApplyReservaView(summaryBaseQuery, query.View);

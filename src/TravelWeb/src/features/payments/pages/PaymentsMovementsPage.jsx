@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { useMovements } from "../../movements/hooks/useMovements";
 import MovementsTimeline from "../../movements/components/MovementsTimeline";
@@ -39,7 +39,7 @@ export default function PaymentsMovementsPage() {
 
   const {
     items, totalCount, totalPages, page, pageSize, setPage, setPageSize,
-    loading, error, reload,
+    loading, error,
   } = useMovements({
     search: debouncedSearch.trim() || null,
     kinds: selectedKinds.length === KIND_OPTIONS.length ? null : selectedKinds,
@@ -99,14 +99,6 @@ export default function PaymentsMovementsPage() {
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={reload}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-            >
-              <RefreshCw className="h-3 w-3" />
-              Refrescar
-            </button>
           </div>
         </div>
 

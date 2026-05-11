@@ -189,6 +189,90 @@ public class MovementsControllerTests : IClassFixture<CustomWebApplicationFactor
         }
     }
 
+    // ========================================================================
+    // BUG fix 2026-05-11: GET /api/movements con dateFrom/dateTo devolvia 500
+    // por comparar DateTime Kind=Unspecified contra columnas timestamptz.
+    // Ademas el rango <= por dia local perdia movimientos del ultimo dia con
+    // hora > 00:00. Tests siguientes pinean ambos invariantes.
+    // ========================================================================
+
+    [Fact]
+    public async Task GET_Movements_WithDateRange_DoesNotThrow500()
+    {
+        // Regression test: la query con dateFrom + dateTo set NO debe explotar.
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..8]);
+        var client = _factory.CreateClient(); // Admin
+
+        var resp = await client.GetAsync("/api/movements?dateFrom=2026-05-01&dateTo=2026-05-31&page=1&pageSize=25");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_Movements_DateToCapturesEndOfLocalDay()
+    {
+        // Seed un Payment al final del dia 31-mayo hora Argentina:
+        //   2026-05-31 23:59:00 ART = 2026-06-01 02:59:00 UTC.
+        // Filtro dateFrom=2026-05-01 & dateTo=2026-05-31 debe INCLUIRLO.
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..8]);
+        var rangeMarker = "MOV-RANGE-" + Guid.NewGuid().ToString("N")[..6];
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Payments.Add(new Payment
+            {
+                ReservaId = seed.OwnReservaLegacyId,
+                Amount = 123m,
+                // 2026-06-01 02:59:00 UTC = 2026-05-31 23:59:00 ART (UTC-3).
+                PaidAt = new DateTime(2026, 6, 1, 2, 59, 0, DateTimeKind.Utc),
+                Method = "Transfer",
+                Status = "Paid",
+                EntryType = PaymentEntryTypes.Payment,
+                Reference = rangeMarker,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _factory.CreateClient();
+        var resp = await client.GetFromJsonAsync<PagedResponse<MovementDto>>(
+            "/api/movements?dateFrom=2026-05-01&dateTo=2026-05-31&pageSize=200");
+        Assert.NotNull(resp);
+        Assert.Contains(resp!.Items, m => m.Reference != null && m.Reference.Contains(rangeMarker));
+    }
+
+    [Fact]
+    public async Task GET_Movements_DateToExcludesNextLocalDay()
+    {
+        // Seed un Payment del 1-junio hora Argentina:
+        //   2026-06-01 00:01:00 ART = 2026-06-01 03:01:00 UTC.
+        // Filtro dateFrom=2026-05-01 & dateTo=2026-05-31 debe EXCLUIRLO.
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..8]);
+        var nextDayMarker = "MOV-NEXT-" + Guid.NewGuid().ToString("N")[..6];
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Payments.Add(new Payment
+            {
+                ReservaId = seed.OwnReservaLegacyId,
+                Amount = 456m,
+                // 2026-06-01 03:01:00 UTC = 2026-06-01 00:01:00 ART.
+                PaidAt = new DateTime(2026, 6, 1, 3, 1, 0, DateTimeKind.Utc),
+                Method = "Transfer",
+                Status = "Paid",
+                EntryType = PaymentEntryTypes.Payment,
+                Reference = nextDayMarker,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _factory.CreateClient();
+        var resp = await client.GetFromJsonAsync<PagedResponse<MovementDto>>(
+            "/api/movements?dateFrom=2026-05-01&dateTo=2026-05-31&pageSize=200");
+        Assert.NotNull(resp);
+        Assert.DoesNotContain(resp!.Items, m => m.Reference != null && m.Reference.Contains(nextDayMarker));
+    }
+
     private sealed record SeedData(
         string VendedorId,
         Guid OwnReservaPublicId,

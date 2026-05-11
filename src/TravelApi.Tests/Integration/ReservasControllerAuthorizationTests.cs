@@ -2,10 +2,12 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Identity;
@@ -285,5 +287,86 @@ public class ReservasControllerAuthorizationTests : IClassFixture<CustomWebAppli
         var response = await client.DeleteAsync($"/api/reservas/assignments/{assignment.PublicId}");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // ========================================================================
+    // B1.15 Fase D' (2026-05-11): filtros CreatedFrom/To y TravelFrom/To.
+    //
+    // El query string entrega DateTime Kind=Unspecified. Las columnas son
+    // timestamptz en Postgres y Npgsql tira 500 al comparar Unspecified vs
+    // timestamptz si no se normaliza. Ademas, rango por dia local (UTC-3) con
+    // limite "<=" perdia eventos del ultimo dia entre 21:00 ART (=00:00 UTC+1)
+    // y 23:59 ART. Tests siguientes pinean:
+    //   1) que no estalle 500 con dateFrom/dateTo set.
+    //   2) que un evento del final del dia ART final del rango se incluya.
+    // ========================================================================
+
+    [Fact]
+    public async Task GET_Reservas_WithDateRange_DoesNotThrow500()
+    {
+        // Regression: rango created amplio con admin no debe explotar.
+        var client = _factory.CreateClient(); // Admin
+        var resp = await client.GetAsync("/api/reservas?createdFrom=2026-05-01&createdTo=2026-05-31&page=1&pageSize=25");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_Reservas_CreatedFilter_CapturesEndOfLocalDay()
+    {
+        // Seed una Reserva creada al final del dia 31-mayo hora Argentina:
+        //   2026-05-31 23:59:00 ART = 2026-06-01 02:59:00 UTC.
+        // Con createdFrom=2026-05-01 & createdTo=2026-05-31 debe INCLUIRLA.
+        var marker = "R-RANGE-" + Guid.NewGuid().ToString("N")[..6];
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Reservas.Add(new Reserva
+            {
+                PublicId = Guid.NewGuid(),
+                Name = marker,
+                NumeroReserva = marker,
+                Status = EstadoReserva.Confirmed,
+                // 2026-06-01 02:59:00 UTC = 2026-05-31 23:59:00 ART (UTC-3).
+                CreatedAt = new DateTime(2026, 6, 1, 2, 59, 0, DateTimeKind.Utc),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _factory.CreateClient(); // Admin
+        var resp = await client.GetFromJsonAsync<PagedResponse<ReservaListDto>>(
+            "/api/reservas?createdFrom=2026-05-01&createdTo=2026-05-31&pageSize=500");
+        Assert.NotNull(resp);
+        Assert.Contains(resp!.Items, r => r.NumeroReserva == marker);
+    }
+
+    [Fact]
+    public async Task GET_Reservas_CreatedFilter_ExcludesNextLocalDay()
+    {
+        // Seed una Reserva creada el 1-junio hora Argentina:
+        //   2026-06-01 00:01:00 ART = 2026-06-01 03:01:00 UTC.
+        // Con createdFrom=2026-05-01 & createdTo=2026-05-31 debe EXCLUIRLA.
+        var marker = "R-NEXT-" + Guid.NewGuid().ToString("N")[..6];
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Reservas.Add(new Reserva
+            {
+                PublicId = Guid.NewGuid(),
+                Name = marker,
+                NumeroReserva = marker,
+                Status = EstadoReserva.Confirmed,
+                // 2026-06-01 03:01:00 UTC = 2026-06-01 00:01:00 ART.
+                CreatedAt = new DateTime(2026, 6, 1, 3, 1, 0, DateTimeKind.Utc),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _factory.CreateClient(); // Admin
+        var resp = await client.GetFromJsonAsync<PagedResponse<ReservaListDto>>(
+            "/api/reservas?createdFrom=2026-05-01&createdTo=2026-05-31&pageSize=500");
+        Assert.NotNull(resp);
+        Assert.DoesNotContain(resp!.Items, r => r.NumeroReserva == marker);
     }
 }

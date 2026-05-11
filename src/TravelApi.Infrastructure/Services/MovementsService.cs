@@ -5,6 +5,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Time;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -75,11 +76,14 @@ public class MovementsService : IMovementsService
             }
             if (query.DateFrom.HasValue)
             {
-                paymentsQuery = paymentsQuery.Where(p => p.PaidAt >= query.DateFrom.Value);
+                var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.DateFrom.Value, isEndOfDay: false);
+                paymentsQuery = paymentsQuery.Where(p => p.PaidAt >= fromUtc);
             }
             if (query.DateTo.HasValue)
             {
-                paymentsQuery = paymentsQuery.Where(p => p.PaidAt <= query.DateTo.Value);
+                var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.DateTo.Value, isEndOfDay: true);
+                // EXCLUSIVE end: rango cerrado-abierto [from, to+1day). Captura todo el dia "to" local.
+                paymentsQuery = paymentsQuery.Where(p => p.PaidAt < toUtc);
             }
             if (!string.IsNullOrWhiteSpace(query.Search))
             {
@@ -172,11 +176,14 @@ public class MovementsService : IMovementsService
             }
             if (query.DateFrom.HasValue)
             {
-                invoicesQuery = invoicesQuery.Where(i => i.CreatedAt >= query.DateFrom.Value);
+                var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.DateFrom.Value, isEndOfDay: false);
+                invoicesQuery = invoicesQuery.Where(i => i.CreatedAt >= fromUtc);
             }
             if (query.DateTo.HasValue)
             {
-                invoicesQuery = invoicesQuery.Where(i => i.CreatedAt <= query.DateTo.Value);
+                var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.DateTo.Value, isEndOfDay: true);
+                // EXCLUSIVE end: rango cerrado-abierto [from, to+1day). Captura todo el dia "to" local.
+                invoicesQuery = invoicesQuery.Where(i => i.CreatedAt < toUtc);
             }
             if (!string.IsNullOrWhiteSpace(query.Search))
             {
