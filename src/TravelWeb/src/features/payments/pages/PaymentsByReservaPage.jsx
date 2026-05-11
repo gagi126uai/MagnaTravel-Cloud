@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Loader2, Search } from "lucide
 import { api } from "../../../api";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import DateRangeFilter from "../../../components/ui/DateRangeFilter";
 import { useMovements } from "../../movements/hooks/useMovements";
 import MovementsTimeline from "../../movements/components/MovementsTimeline";
 
@@ -24,6 +25,9 @@ export default function PaymentsByReservaPage() {
   const [view, setView] = useState("active");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
+  // B1.15 Fase D'.B+ (2026-05-11): filtro de fechas por createdAt de reserva.
+  // Backend acepta CreatedFrom/CreatedTo en /api/reservas. Default 90 dias.
+  const [dateRange, setDateRange] = useState({ from: null, to: null });
   const debouncedSearch = useDebounce(search, 300);
 
   const [data, setData] = useState({ items: [], totalCount: 0, totalPages: 0 });
@@ -32,7 +36,7 @@ export default function PaymentsByReservaPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, view]);
+  }, [debouncedSearch, view, dateRange.from, dateRange.to]);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,6 +47,8 @@ export default function PaymentsByReservaPage() {
         const params = new URLSearchParams();
         params.set("view", view);
         if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+        if (dateRange.from) params.set("createdFrom", dateRange.from);
+        if (dateRange.to) params.set("createdTo", dateRange.to);
         params.set("page", String(page));
         params.set("pageSize", String(pageSize));
         const response = await api.get(`/reservas?${params.toString()}`);
@@ -61,21 +67,24 @@ export default function PaymentsByReservaPage() {
     };
     load();
     return () => { cancelled = true; };
-  }, [debouncedSearch, view, page, pageSize]);
+  }, [debouncedSearch, view, dateRange.from, dateRange.to, page, pageSize]);
 
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full lg:max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por reserva o cliente…"
-              className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white pl-9 pr-3 py-1.5 text-sm"
-            />
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full lg:max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Buscar por reserva o cliente…"
+                className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white pl-9 pr-3 py-1.5 text-sm"
+              />
+            </div>
+            <DateRangeFilter value={dateRange} onChange={setDateRange} defaultPreset="last90" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {STATUS_FILTER_OPTIONS.map((option) => (

@@ -4,6 +4,7 @@ import { useDebounce } from "../../../hooks/useDebounce";
 import { useMovements } from "../../movements/hooks/useMovements";
 import MovementsTimeline from "../../movements/components/MovementsTimeline";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import DateRangeFilter from "../../../components/ui/DateRangeFilter";
 
 // B1.15 Fase D'.B (2026-05-11): pestaña "Movimientos" — timeline cronológico
 // global con filtros. Sirve para "ver todo lo que pasó hoy" o conciliar.
@@ -18,6 +19,9 @@ const KIND_OPTIONS = [
 export default function PaymentsMovementsPage() {
   const [search, setSearch] = useState("");
   const [selectedKinds, setSelectedKinds] = useState(KIND_OPTIONS.map((k) => k.value));
+  // B1.15 Fase D'.B+ (2026-05-11): filtro de fechas default ultimos 90 dias.
+  // Acota la lista para que no sea infinita cuando la data crezca.
+  const [dateRange, setDateRange] = useState({ from: null, to: null });
   const debouncedSearch = useDebounce(search, 300);
 
   const {
@@ -26,6 +30,8 @@ export default function PaymentsMovementsPage() {
   } = useMovements({
     search: debouncedSearch.trim() || null,
     kinds: selectedKinds.length === KIND_OPTIONS.length ? null : selectedKinds,
+    dateFrom: dateRange.from,
+    dateTo: dateRange.to,
   });
 
   const toggleKind = (value) => {
@@ -37,16 +43,19 @@ export default function PaymentsMovementsPage() {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full lg:max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por reserva, cliente, referencia…"
-              className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white pl-9 pr-3 py-1.5 text-sm"
-            />
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full lg:max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Buscar por reserva, cliente, referencia…"
+                className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white pl-9 pr-3 py-1.5 text-sm"
+              />
+            </div>
+            <DateRangeFilter value={dateRange} onChange={setDateRange} defaultPreset="last90" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {KIND_OPTIONS.map((option) => {
