@@ -1042,7 +1042,7 @@ public class ReservaService : IReservaService
             .Include(f => f.Passengers)
             .Include(f => f.Payments)
             .ThenInclude(p => p.Receipt)
-            .Include(f => f.Invoices)
+            .Include(f => f.Invoices).ThenInclude(i => i.OriginalInvoice)
             .Include(f => f.Servicios)
             .Include(f => f.FlightSegments).ThenInclude(fs => fs.Supplier)
             .Include(f => f.HotelBookings).ThenInclude(hb => hb.Supplier)

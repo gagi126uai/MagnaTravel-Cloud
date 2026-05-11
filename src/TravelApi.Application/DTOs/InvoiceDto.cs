@@ -21,4 +21,14 @@ public class InvoiceDto
     public DateTime? ForcedAt { get; set; }
     public decimal OutstandingBalanceAtIssuance { get; set; }
     public string InvoiceType { get; set; } = string.Empty; // Keep for convenience if needed
+
+    // B1.15 (2026-05-11): para que UI distinga Factura/NC/ND y muestre relacion
+    // factura↔NC. AnnulmentStatus = "None"/"Pending"/"Succeeded"/"Failed".
+    // OriginalInvoice* != null cuando este comprobante es NC/ND emitida sobre
+    // una factura previa.
+    public string AnnulmentStatus { get; set; } = "None";
+    public Guid? OriginalInvoicePublicId { get; set; }
+    public long? OriginalInvoiceNumeroComprobante { get; set; }
+    public int? OriginalInvoiceTipoComprobante { get; set; }
+    public int? OriginalInvoicePuntoDeVenta { get; set; }
 }

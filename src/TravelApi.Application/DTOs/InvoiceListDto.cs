@@ -21,4 +21,11 @@ public class InvoiceListDto
     public DateTime? ForcedAt { get; set; }
     public decimal OutstandingBalanceAtIssuance { get; set; }
     public string InvoiceType { get; set; } = string.Empty;
+
+    // B1.15 (2026-05-11): para UI consistente con InvoiceDto.
+    public string AnnulmentStatus { get; set; } = "None";
+    public Guid? OriginalInvoicePublicId { get; set; }
+    public long? OriginalInvoiceNumeroComprobante { get; set; }
+    public int? OriginalInvoiceTipoComprobante { get; set; }
+    public int? OriginalInvoicePuntoDeVenta { get; set; }
 }

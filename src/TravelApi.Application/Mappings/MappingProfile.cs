@@ -32,12 +32,19 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
             .ForMember(dest => dest.ReservaPublicId, opt => opt.MapFrom(src => src.Reserva != null ? (Guid?)src.Reserva.PublicId : null))
             .ForMember(dest => dest.Reserva, opt => opt.MapFrom(src => src.Reserva))
-            .ForMember(dest => dest.InvoiceType, opt => opt.MapFrom(src => 
+            .ForMember(dest => dest.InvoiceType, opt => opt.MapFrom(src =>
                 src.TipoComprobante == 1 || src.TipoComprobante == 2 || src.TipoComprobante == 3 ? "A" :
                 src.TipoComprobante == 6 || src.TipoComprobante == 7 || src.TipoComprobante == 8 ? "B" :
-                src.TipoComprobante == 11 || src.TipoComprobante == 12 || src.TipoComprobante == 13 ? "C" : 
-                src.TipoComprobante == 51 ? "M" : 
-                "UNK"));
+                src.TipoComprobante == 11 || src.TipoComprobante == 12 || src.TipoComprobante == 13 ? "C" :
+                src.TipoComprobante == 51 ? "M" :
+                "UNK"))
+            // B1.15 (2026-05-11): expose anulación al frontend para que distinga
+            // Factura (None/Pending/Succeeded/Failed) y muestre relación factura↔NC.
+            .ForMember(dest => dest.AnnulmentStatus, opt => opt.MapFrom(src => src.AnnulmentStatus.ToString()))
+            .ForMember(dest => dest.OriginalInvoicePublicId, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (Guid?)src.OriginalInvoice.PublicId : null))
+            .ForMember(dest => dest.OriginalInvoiceNumeroComprobante, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (long?)src.OriginalInvoice.NumeroComprobante : null))
+            .ForMember(dest => dest.OriginalInvoiceTipoComprobante, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (int?)src.OriginalInvoice.TipoComprobante : null))
+            .ForMember(dest => dest.OriginalInvoicePuntoDeVenta, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (int?)src.OriginalInvoice.PuntoDeVenta : null));
 
         // === BOOKING SERVICES (con RatePublicId) ===
 

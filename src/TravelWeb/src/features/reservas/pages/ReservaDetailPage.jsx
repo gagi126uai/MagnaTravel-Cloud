@@ -35,7 +35,38 @@ import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 
-function InvoiceStatusBadge({ resultado }) {
+// Mapa de TipoComprobante AFIP a etiqueta legible.
+//  Facturas: 1=A, 6=B, 11=C, 51=M.
+//  Notas de Débito: 2=A, 7=B, 12=C, 52=M.
+//  Notas de Crédito: 3=A, 8=B, 13=C, 53=M.
+function getDocumentTypeLabel(tipoComprobante) {
+  switch (tipoComprobante) {
+    case 1: return { kind: "factura", letter: "A", label: "Factura A" };
+    case 6: return { kind: "factura", letter: "B", label: "Factura B" };
+    case 11: return { kind: "factura", letter: "C", label: "Factura C" };
+    case 51: return { kind: "factura", letter: "M", label: "Factura M" };
+    case 2: return { kind: "nd", letter: "A", label: "Nota de Débito A" };
+    case 7: return { kind: "nd", letter: "B", label: "Nota de Débito B" };
+    case 12: return { kind: "nd", letter: "C", label: "Nota de Débito C" };
+    case 52: return { kind: "nd", letter: "M", label: "Nota de Débito M" };
+    case 3: return { kind: "nc", letter: "A", label: "Nota de Crédito A" };
+    case 8: return { kind: "nc", letter: "B", label: "Nota de Crédito B" };
+    case 13: return { kind: "nc", letter: "C", label: "Nota de Crédito C" };
+    case 53: return { kind: "nc", letter: "M", label: "Nota de Crédito M" };
+    default: return { kind: "unknown", letter: "", label: `Comprobante #${tipoComprobante}` };
+  }
+}
+
+// Badge de estado de la factura. Prioriza AnnulmentStatus para que una factura
+// cancelada con NC se muestre claramente como "ANULADA" en vez del "Aprobada"
+// historico (la factura sigue con Resultado="A" en BD pero esta anulada).
+function InvoiceStatusBadge({ resultado, annulmentStatus }) {
+  if (annulmentStatus === "Succeeded") {
+    return <span className="rounded px-2 py-0.5 text-[10px] font-black uppercase bg-rose-100 text-rose-700">Anulada</span>;
+  }
+  if (annulmentStatus === "Pending") {
+    return <span className="rounded px-2 py-0.5 text-[10px] font-black uppercase bg-amber-100 text-amber-700">Anulando…</span>;
+  }
   const isApproved = resultado === "A";
   const isRejected = resultado === "R";
   const className = isApproved
@@ -47,8 +78,29 @@ function InvoiceStatusBadge({ resultado }) {
   return <span className={`rounded px-2 py-0.5 text-[10px] font-black uppercase ${className}`}>{label}</span>;
 }
 
-function InvoiceTypeLabel({ tipoComprobante }) {
-  return <>Factura {tipoComprobante === 1 ? "A" : tipoComprobante === 6 ? "B" : "C"}</>;
+// Etiqueta del tipo de comprobante. Si es una NC/ND, muestra debajo un sub-label
+// con la factura origen (numero formateado) para que el usuario sepa que esto
+// no es una factura independiente sino que cancela / amplia una previa.
+function InvoiceTypeLabel({ tipoComprobante, originalInvoiceNumeroComprobante, originalInvoicePuntoDeVenta, originalInvoiceTipoComprobante }) {
+  const { kind, label } = getDocumentTypeLabel(tipoComprobante);
+  const showsOriginalRef =
+    (kind === "nc" || kind === "nd") &&
+    originalInvoiceNumeroComprobante != null &&
+    originalInvoicePuntoDeVenta != null;
+  const colorClass =
+    kind === "nc" ? "text-amber-700 dark:text-amber-300" :
+    kind === "nd" ? "text-indigo-700 dark:text-indigo-300" :
+    "";
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className={colorClass}>{label}</span>
+      {showsOriginalRef ? (
+        <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">
+          {kind === "nc" ? "Anula" : "Amplía"} {getDocumentTypeLabel(originalInvoiceTipoComprobante ?? 0).label.replace(/ ?[ABCM]$/, "")} {String(originalInvoicePuntoDeVenta).padStart(5, "0")}-{String(originalInvoiceNumeroComprobante).padStart(8, "0")}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 // Botones para ver/descargar el PDF de una factura AFIP. Solo se muestran si la
@@ -722,14 +774,19 @@ export default function ReservaDetailPage() {
                         reserva.invoices.map((invoice) => (
                           <DataGridRow key={getPublicId(invoice)}>
                             <DataGridCell className="font-bold">
-                              <InvoiceTypeLabel tipoComprobante={invoice.tipoComprobante} />
+                              <InvoiceTypeLabel
+                                tipoComprobante={invoice.tipoComprobante}
+                                originalInvoiceNumeroComprobante={invoice.originalInvoiceNumeroComprobante}
+                                originalInvoicePuntoDeVenta={invoice.originalInvoicePuntoDeVenta}
+                                originalInvoiceTipoComprobante={invoice.originalInvoiceTipoComprobante}
+                              />
                             </DataGridCell>
                             <DataGridCell className="font-mono">
                               {String(invoice.puntoDeVenta).padStart(5, "0")}-{String(invoice.numeroComprobante).padStart(8, "0")}
                             </DataGridCell>
                             <DataGridCell className="font-mono text-xs text-slate-400">{invoice.cae || "---"}</DataGridCell>
                             <DataGridCell>
-                              <InvoiceStatusBadge resultado={invoice.resultado} />
+                              <InvoiceStatusBadge resultado={invoice.resultado} annulmentStatus={invoice.annulmentStatus} />
                             </DataGridCell>
                             <DataGridCell align="right" className="font-black">
                               {invoice.importeTotal?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
@@ -749,8 +806,15 @@ export default function ReservaDetailPage() {
                       {reserva.invoices.map((invoice) => (
                         <MobileRecordCard
                           key={getPublicId(invoice)}
-                          statusSlot={<InvoiceStatusBadge resultado={invoice.resultado} />}
-                          title={<InvoiceTypeLabel tipoComprobante={invoice.tipoComprobante} />}
+                          statusSlot={<InvoiceStatusBadge resultado={invoice.resultado} annulmentStatus={invoice.annulmentStatus} />}
+                          title={
+                            <InvoiceTypeLabel
+                              tipoComprobante={invoice.tipoComprobante}
+                              originalInvoiceNumeroComprobante={invoice.originalInvoiceNumeroComprobante}
+                              originalInvoicePuntoDeVenta={invoice.originalInvoicePuntoDeVenta}
+                              originalInvoiceTipoComprobante={invoice.originalInvoiceTipoComprobante}
+                            />
+                          }
                           subtitle={`${String(invoice.puntoDeVenta).padStart(5, "0")}-${String(invoice.numeroComprobante).padStart(8, "0")}`}
                           meta={<div className="text-xs text-slate-500 dark:text-slate-400">CAE {invoice.cae || "---"}</div>}
                           footer={<span className="text-sm font-bold text-slate-900 dark:text-white">{invoice.importeTotal?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}</span>}
