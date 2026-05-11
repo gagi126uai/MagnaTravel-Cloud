@@ -4,10 +4,14 @@ import { useDebounce } from "../../../hooks/useDebounce";
 import { useMovements } from "../../movements/hooks/useMovements";
 import MovementsTimeline from "../../movements/components/MovementsTimeline";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
-import DateRangeFilter from "../../../components/ui/DateRangeFilter";
+import { MonthNavigator, monthToBounds } from "../../../components/ui/MonthNavigator";
 
 // B1.15 Fase D'.B (2026-05-11): pestaña "Movimientos" — timeline cronológico
 // global con filtros. Sirve para "ver todo lo que pasó hoy" o conciliar.
+//
+// Filtro de mes: patron canónico del módulo financiero (igual que Facturación).
+// Default: mes actual. El mes se traduce a dateFrom/dateTo ISO para el backend.
+// Si activeMonth es null, no se envían filtros de fecha (historial completo).
 
 const KIND_OPTIONS = [
   { value: "payment", label: "Cobros" },
@@ -16,13 +20,22 @@ const KIND_OPTIONS = [
   { value: "credit_note_reversal", label: "Reversiones NC" },
 ];
 
+
 export default function PaymentsMovementsPage() {
   const [search, setSearch] = useState("");
   const [selectedKinds, setSelectedKinds] = useState(KIND_OPTIONS.map((k) => k.value));
-  // B1.15 Fase D'.B+ (2026-05-11): filtro de fechas default ultimos 90 dias.
-  // Acota la lista para que no sea infinita cuando la data crezca.
-  const [dateRange, setDateRange] = useState({ from: null, to: null });
+
+  // Filtro de mes — default: mes actual.
+  // null = sin filtro de fecha (historial completo).
+  const [activeMonth, setActiveMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
   const debouncedSearch = useDebounce(search, 300);
+
+  // Cuando activeMonth es null no se envían filtros de fecha al backend.
+  const dateBounds = activeMonth ? monthToBounds(activeMonth) : null;
 
   const {
     items, totalCount, totalPages, page, pageSize, setPage, setPageSize,
@@ -30,14 +43,25 @@ export default function PaymentsMovementsPage() {
   } = useMovements({
     search: debouncedSearch.trim() || null,
     kinds: selectedKinds.length === KIND_OPTIONS.length ? null : selectedKinds,
-    dateFrom: dateRange.from,
-    dateTo: dateRange.to,
+    dateFrom: dateBounds?.from ?? null,
+    dateTo: dateBounds?.to ?? null,
   });
 
   const toggleKind = (value) => {
     setSelectedKinds((current) =>
       current.includes(value) ? current.filter((k) => k !== value) : [...current, value]
     );
+  };
+
+  // Strip de conteo inferior.
+  const monthLabel = activeMonth
+    ? activeMonth.toLocaleDateString("es-AR", { month: "long", year: "numeric" })
+    : null;
+
+  const handleShowAll = () => setActiveMonth(null);
+  const handleBackToCurrentMonth = () => {
+    const now = new Date();
+    setActiveMonth(new Date(now.getFullYear(), now.getMonth(), 1));
   };
 
   return (
@@ -55,7 +79,11 @@ export default function PaymentsMovementsPage() {
                 className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white pl-9 pr-3 py-1.5 text-sm"
               />
             </div>
-            <DateRangeFilter value={dateRange} onChange={setDateRange} defaultPreset="last90" />
+            <MonthNavigator
+              month={activeMonth}
+              onChange={setActiveMonth}
+              disabled={loading}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {KIND_OPTIONS.map((option) => {
@@ -101,6 +129,35 @@ export default function PaymentsMovementsPage() {
                 onPageSizeChange={setPageSize}
               />
             </div>
+            {/* Strip de conteo + acción historial completo */}
+            {!loading && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-6 py-2 dark:border-slate-800">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  {activeMonth
+                    ? `Mostrando ${totalCount} movimiento${totalCount !== 1 ? "s" : ""} de ${monthLabel}`
+                    : `Mostrando ${totalCount} movimiento${totalCount !== 1 ? "s" : ""} en total`}
+                </span>
+                {activeMonth ? (
+                  <button
+                    type="button"
+                    onClick={handleShowAll}
+                    className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                    data-testid="movements-show-all"
+                  >
+                    Ver historial completo &rarr;
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleBackToCurrentMonth}
+                    className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
+                    data-testid="movements-back-to-month"
+                  >
+                    Volver al mes actual
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

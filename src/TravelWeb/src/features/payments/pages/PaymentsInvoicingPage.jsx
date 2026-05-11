@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Loader2, Calendar, ChevronLeft, ChevronRight, FileText, Receipt } from "lucide-react";
+import { Loader2, FileText, Receipt } from "lucide-react";
+import { MonthNavigator } from "../../../components/ui/MonthNavigator";
 import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { ListToolbar } from "../../../components/ui/ListToolbar";
@@ -86,21 +87,17 @@ export default function PaymentsInvoicingPage() {
     );
   }
 
-  // Month navigation logic mapped to invoicePeriod ("YYYY-MM")
-  const parsePeriod = (periodStr) => periodStr ? new Date(periodStr + "-01T00:00:00") : new Date();
-  const currentPeriodDate = parsePeriod(invoicePeriod);
-  
-  const handlePrevMonth = () => {
-    const prev = new Date(currentPeriodDate.getFullYear(), currentPeriodDate.getMonth() - 1, 1);
-    setInvoicePeriod(`${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`);
-  };
-  
-  const handleNextMonth = () => {
-    const next = new Date(currentPeriodDate.getFullYear(), currentPeriodDate.getMonth() + 1, 1);
-    setInvoicePeriod(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`);
-  };
+  // Convierte el invoicePeriod "YYYY-MM" a Date para MonthNavigator.
+  // Usa T00:00:00 local (sin Z) para evitar el salto de día por timezone.
+  const currentPeriodDate = invoicePeriod
+    ? new Date(invoicePeriod + "-01T00:00:00")
+    : (() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); })();
 
-  const monthName = currentPeriodDate.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+  const handleMonthChange = (date) => {
+    setInvoicePeriod(
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -144,20 +141,11 @@ export default function PaymentsInvoicingPage() {
             }
             actionSlot={
               (mainTab === "issued" || mainTab === "pending") && (
-                <div className="flex w-full items-center justify-between gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto sm:justify-center shadow-sm">
-                  <button onClick={handlePrevMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes anterior">
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <div className="flex items-center gap-1.5 px-1 sm:px-2">
-                    <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                    <span className="w-[110px] text-center text-sm font-medium capitalize text-slate-700 dark:text-slate-200">
-                      {monthName}
-                    </span>
-                  </div>
-                  <button onClick={handleNextMonth} className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white" title="Mes siguiente">
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
+                <MonthNavigator
+                  month={currentPeriodDate}
+                  onChange={handleMonthChange}
+                  disabled={loading}
+                />
               )
             }
           />
