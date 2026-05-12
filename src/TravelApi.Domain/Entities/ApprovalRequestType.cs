@@ -26,4 +26,10 @@ public enum ApprovalRequestType
 
     /// <summary>Admin con motivo edita un campo congelado por CAE (MutationGuards). Uso excepcional.</summary>
     FrozenEntityMutation = 5,
+
+    /// <summary>
+    /// B1.15 (2026-05-11): anular comprobante interno de pago (PaymentReceipt).
+    /// La fila se preserva (Status -> Voided) para mantener numeracion correlativa.
+    /// </summary>
+    ReceiptVoidance = 6,
 }

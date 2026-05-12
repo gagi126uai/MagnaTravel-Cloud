@@ -30,6 +30,7 @@ function HistoryActions({
   onAnnulInvoice,
   onDownloadReceiptPdf,
   onIssueReceipt,
+  onVoidReceipt,
 }) {
   if (item.entityType === "payment") {
     const paymentEntryType = item.paymentEntryType || "Payment";
@@ -37,9 +38,15 @@ function HistoryActions({
       paymentEntryType === "Payment" &&
       Number(item.amount) > 0 &&
       !item.receiptPublicId;
+    const canVoidReceipt = item.receiptPublicId && item.receiptStatus === "Issued";
 
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        {item.receiptPublicId && item.receiptStatus === "Voided" && (
+          <span className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+            Comprobante anulado
+          </span>
+        )}
         {item.receiptPublicId && item.receiptStatus !== "Voided" && (
           <button
             type="button"
@@ -57,6 +64,15 @@ function HistoryActions({
             className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
           >
             Emitir comprobante
+          </button>
+        )}
+        {canVoidReceipt && (
+          <button
+            type="button"
+            onClick={() => onVoidReceipt(item)}
+            className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
+          >
+            Anular comprobante
           </button>
         )}
       </div>
@@ -133,17 +149,17 @@ export default function PaymentsHistoryPage() {
     handleAnnulInvoice,
     handleDownloadReceiptPdf,
     handleIssueReceipt,
+    handleVoidReceipt,
     databaseUnavailable,
   } = useFinanceHistory({
     onApprovalRequired: ({ requestType, entityType, entityId, invoice }) => {
-      setApprovalContext({
-        requestType,
-        entityType,
-        entityId,
-        invoiceLabel: invoice
-          ? `Factura ${invoice.tipoComprobante === 1 ? "A" : invoice.tipoComprobante === 6 ? "B" : "C"} ${String(invoice.puntoDeVenta || 0).padStart(5, "0")}-${String(invoice.numeroComprobante || 0).padStart(8, "0")}`
-          : null,
-      });
+      let entityLabel = null;
+      if (requestType === "ReceiptVoidance") {
+        entityLabel = "Comprobante de pago";
+      } else if (invoice) {
+        entityLabel = `Factura ${invoice.tipoComprobante === 1 ? "A" : invoice.tipoComprobante === 6 ? "B" : "C"} ${String(invoice.puntoDeVenta || 0).padStart(5, "0")}-${String(invoice.numeroComprobante || 0).padStart(8, "0")}`;
+      }
+      setApprovalContext({ requestType, entityType, entityId, invoiceLabel: entityLabel });
     },
   });
 
@@ -288,6 +304,7 @@ export default function PaymentsHistoryPage() {
                           onAnnulInvoice={handleAnnulInvoice}
                           onDownloadReceiptPdf={handleDownloadReceiptPdf}
                           onIssueReceipt={handleIssueReceipt}
+                          onVoidReceipt={handleVoidReceipt}
                         />
 
                         {item.reservaPublicId && (

@@ -60,6 +60,14 @@ test("payment Paid → sin acciones", () => {
   assert.deepEqual(getMovementActions("payment", "Paid"), []);
 });
 
+test("payment con receiptStatus Issued → void_receipt", () => {
+  assert.deepEqual(getMovementActions("payment", "Paid", { receiptStatus: "Issued" }), ["void_receipt"]);
+});
+
+test("payment con receiptStatus Voided → sin acciones", () => {
+  assert.deepEqual(getMovementActions("payment", "Paid", { receiptStatus: "Voided" }), []);
+});
+
 test("credit_note_reversal Paid → sin acciones", () => {
   assert.deepEqual(getMovementActions("credit_note_reversal", "Paid"), []);
 });

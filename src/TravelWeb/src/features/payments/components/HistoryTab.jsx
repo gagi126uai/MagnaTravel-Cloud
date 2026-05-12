@@ -32,6 +32,7 @@ export function HistoryTab({
   onViewPdf,
   onDownloadReceiptPdf,
   onIssueReceipt,
+  onVoidReceipt,
   onAnnulInvoice,
   onRetryInvoice,
 }) {
@@ -128,6 +129,7 @@ export function HistoryTab({
                   const isPositive = Number(payment.amount) >= 0;
                   const paymentEntryType = payment.entryType || "Payment";
                   const canIssueReceipt = paymentEntryType === "Payment" && Number(payment.amount) > 0 && !payment.receipt;
+                  const canVoidReceipt = payment.receipt?.status === "Issued";
 
                   return (
                     <tr key={getPublicId(payment)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
@@ -158,18 +160,24 @@ export function HistoryTab({
                       <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{payment.method}</td>
                       <td className="px-6 py-4">
                         {payment.receipt ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-full">
-                              {payment.receipt.status === "Voided" ? "Anulado" : payment.receipt.receiptNumber}
-                            </span>
-                            {payment.receipt.status !== "Voided" && (
-                              <button
-                                type="button"
-                                onClick={() => onDownloadReceiptPdf(payment)}
-                                className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-                              >
-                                Ver PDF
-                              </button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {payment.receipt.status === "Voided" ? (
+                              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">
+                                Comprobante anulado
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-full">
+                                  {payment.receipt.receiptNumber}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => onDownloadReceiptPdf(payment)}
+                                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                                >
+                                  Ver PDF
+                                </button>
+                              </>
                             )}
                           </div>
                         ) : (
@@ -190,6 +198,14 @@ export function HistoryTab({
                             className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800"
                           >
                             Emitir comprobante
+                          </button>
+                        ) : canVoidReceipt ? (
+                          <button
+                            type="button"
+                            onClick={() => onVoidReceipt(payment)}
+                            className="px-3 py-1.5 rounded-lg border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
+                          >
+                            Anular comprobante
                           </button>
                         ) : (
                           <span className="text-xs text-slate-400 uppercase tracking-wider">
@@ -237,7 +253,9 @@ export function HistoryTab({
                   </div>
                   <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
                     {payment.receipt
-                      ? `${payment.receipt.receiptNumber} · ${payment.receipt.status}`
+                      ? payment.receipt.status === "Voided"
+                        ? "Comprobante anulado"
+                        : `${payment.receipt.receiptNumber} · Emitido`
                       : "Sin comprobante interno"}
                   </div>
                 </div>

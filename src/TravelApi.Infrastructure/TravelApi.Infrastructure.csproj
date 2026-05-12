@@ -30,4 +30,10 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- B1.15 (2026-05-11): expone internals al proyecto de tests para validar
+         el cascade NC AFIP -> Receipt Voided (AfipService.ApplyCreditNoteEconomicReversalAsync). -->
+    <InternalsVisibleTo Include="TravelApi.Tests" />
+  </ItemGroup>
+
 </Project>

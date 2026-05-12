@@ -32,6 +32,7 @@ export default function MovementsTimeline({
   onDownloadPdf,
   onAnnulInvoice,
   onRetryInvoice,
+  onVoidReceipt,
   busyItems,
 }) {
   if (loading) {
@@ -42,7 +43,7 @@ export default function MovementsTimeline({
     return <div className="px-6 py-10 text-center text-sm text-slate-500">{emptyText}</div>;
   }
 
-  const hasActions = Boolean(onViewPdf || onDownloadPdf || onAnnulInvoice || onRetryInvoice);
+  const hasActions = Boolean(onViewPdf || onDownloadPdf || onAnnulInvoice || onRetryInvoice || onVoidReceipt);
 
   return (
     <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -57,6 +58,7 @@ export default function MovementsTimeline({
           onDownloadPdf={onDownloadPdf}
           onAnnulInvoice={onAnnulInvoice}
           onRetryInvoice={onRetryInvoice}
+          onVoidReceipt={onVoidReceipt}
           busy={busyItems instanceof Set ? busyItems.has(String(item.publicId).toLowerCase()) : false}
         />
       ))}
@@ -75,7 +77,7 @@ const KIND_BUBBLE_CLASS = {
   credit_note_reversal: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
 };
 
-function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, onDownloadPdf, onAnnulInvoice, onRetryInvoice, busy }) {
+function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, onDownloadPdf, onAnnulInvoice, onRetryInvoice, onVoidReceipt, busy }) {
   const status = STATUS_LABELS[item.status] || { label: item.status, color: "slate" };
   const amountClass =
     item.amount < 0
@@ -89,7 +91,7 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
   const dateFmt = new Date(item.date).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
   const timeFmt = new Date(item.date).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
 
-  const actions = hasActions ? getMovementActions(item.kind, item.status) : [];
+  const actions = hasActions ? getMovementActions(item.kind, item.status, { receiptStatus: item.receiptStatus }) : [];
 
   // Si hay click handler Y hay acciones visibles, los botones deben detener
   // la propagacion para no activar el onClick del row.
@@ -156,6 +158,7 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
             onDownloadPdf={onDownloadPdf}
             onAnnulInvoice={onAnnulInvoice}
             onRetryInvoice={onRetryInvoice}
+            onVoidReceipt={onVoidReceipt}
           />
         ) : null}
       </div>
@@ -166,7 +169,7 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
 // Botones de accion contextuales. Replica el estilo de InvoicingTab (InvoiceSection)
 // para mantener consistencia visual: border-button para secundarias, bg-slate-900
 // para Anular, bg-indigo-600 para Reintentar.
-function MovementActions({ actions, item, busy, onViewPdf, onDownloadPdf, onAnnulInvoice, onRetryInvoice }) {
+function MovementActions({ actions, item, busy, onViewPdf, onDownloadPdf, onAnnulInvoice, onRetryInvoice, onVoidReceipt }) {
   if (busy) {
     return (
       <div role="status" aria-live="polite" aria-label="Operacion en curso" className="flex items-center gap-1.5">
@@ -226,6 +229,18 @@ function MovementActions({ actions, item, busy, onViewPdf, onDownloadPdf, onAnnu
           className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
         >
           Reintentar
+        </button>
+      ) : null}
+
+      {actions.includes("void_receipt") && onVoidReceipt ? (
+        <button
+          type="button"
+          onClick={() => onVoidReceipt(item)}
+          data-testid="movement-action-void-receipt"
+          aria-label={`Anular comprobante de ${item.reference}`}
+          className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
+        >
+          Anular comprobante
         </button>
       ) : null}
     </div>

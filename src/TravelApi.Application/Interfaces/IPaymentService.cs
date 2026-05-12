@@ -12,6 +12,20 @@ public interface IPaymentService
     Task<PaymentDto> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);
     Task<PaymentReceiptDto> IssueReceiptAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
     Task<byte[]> GetReceiptPdfAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// B1.15 (2026-05-11): anular el comprobante interno de un pago. La fila Receipt
+    /// se preserva (Status -> Voided + audit fields) para mantener numeracion correlativa.
+    /// Si la <c>ApprovalPolicy</c> de <c>ReceiptVoidance</c> requiere aprobacion y el caller
+    /// NO es Admin, lanza <see cref="Application.Exceptions.ApprovalRequiredException"/>.
+    /// </summary>
+    Task VoidReceiptAsync(
+        string paymentPublicIdOrLegacyId,
+        string? reason,
+        string userId,
+        string? userName,
+        bool requesterIsAdmin,
+        CancellationToken cancellationToken);
     Task<IEnumerable<object>> GetDeletedPaymentsAsync(CancellationToken cancellationToken);
     Task<Guid> RestorePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
     Task UpdatePaymentAsync(string paymentPublicIdOrLegacyId, UpdatePaymentRequest request, CancellationToken cancellationToken);

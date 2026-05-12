@@ -107,6 +107,38 @@ export function useFinanceActions(loadData, options = {}) {
     }
   };
 
+  const handleVoidReceipt = async (payment) => {
+    const confirmed = await showConfirm({
+      title: "Anular comprobante",
+      text: "Esta accion marcara el comprobante como anulado. El pago sigue vigente.",
+      confirmText: "Si, anular",
+      confirmColor: "red",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await api.post(`/payments/${getPublicId(payment)}/receipt/void`, { reason: null });
+      showSuccess("Comprobante anulado.");
+      await loadData();
+    } catch (error) {
+      // 409 con requiresApproval=true → abrir RequestApprovalModal (Vendedor sin permiso).
+      const payload = error?.payload;
+      if (error?.status === 409 && payload?.requiresApproval && typeof options.onApprovalRequired === "function") {
+        options.onApprovalRequired({
+          requestType: payload.requestType,   // "ReceiptVoidance"
+          entityType: payload.entityType,     // "PaymentReceipt"
+          entityId: payload.entityId,
+          invoice: payment,
+        });
+        return;
+      }
+      showError(error?.payload?.message ?? error?.message ?? "Error al anular comprobante.");
+    }
+  };
+
   const handleCreateManualMovement = async (payload) => {
     try {
       await api.post("/treasury/manual-movements", payload);
@@ -154,6 +186,7 @@ export function useFinanceActions(loadData, options = {}) {
     handleViewPdf,
     handleDownloadReceiptPdf,
     handleIssueReceipt,
+    handleVoidReceipt,
     handleRetryInvoice,
     handleAnnulInvoice,
     handleCreateManualMovement,

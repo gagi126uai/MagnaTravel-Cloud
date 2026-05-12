@@ -20,15 +20,19 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// C28 — Bloquear borrado de pagos cuando tienen un Receipt asociado
-/// (Issued o Voided) o estan vinculados a una factura (RelatedInvoiceId).
+/// C28 — Bloquear borrado de pagos cuando tienen un Receipt Issued o estan
+/// vinculados a una factura (RelatedInvoiceId).
 ///
 /// IMPORTANTE: hay 2 paths para borrar un pago, ambos deben aplicar el guard:
 ///  1. PaymentService.DeletePaymentAsync (api/payments/{id}).
 ///  2. ReservaService.DeletePaymentAsync (api/reservas/{id}/payments/{id}, legacy nested).
 ///
-/// Voided tambien bloquea: el recibo ocupa numeracion correlativa y debe
-/// preservarse — confirmado por ARCA + Contable (2026-05-06).
+/// Cambio 2026-05-11 (ratificado arca-tax-expert + accounting-expert + Gaston):
+/// receipts Voided ya NO bloquean el delete del Payment. La fila Receipt se
+/// preserva (DeleteBehavior.Restrict + soft-delete del Payment) para mantener
+/// numeracion correlativa, pero el delete del pago puede proceder. El usuario
+/// anula el recibo via POST /api/payments/{id}/receipt/void primero, y luego
+/// puede eliminar el pago.
 /// </summary>
 public class PaymentServiceDeleteTests
 {
@@ -145,17 +149,21 @@ public class PaymentServiceDeleteTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
-        Assert.Contains("recibo emitido", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Mensaje actualizado 2026-05-11: "comprobante vigente" en vez de "recibo emitido"
+        // — la nueva semantica diferencia Issued (bloqueante) vs Voided (no bloqueante).
+        Assert.Contains("comprobante vigente", ex.Message, StringComparison.OrdinalIgnoreCase);
 
         var refreshed = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 101);
         Assert.False(refreshed.IsDeleted);
     }
 
     [Fact]
-    public async Task DeletePaymentAsync_WithVoidedReceipt_Throws_PreservesNumeracion()
+    public async Task DeletePaymentAsync_WithVoidedReceipt_AllowsDelete_AndPreservesReceiptRow()
     {
-        // ARCA + Contable (2026-05-06): recibos anulados ocupan numeracion correlativa
-        // y deben preservarse para auditoria. Voided tambien bloquea el delete.
+        // Cambio 2026-05-11 (arca-tax-expert + accounting-expert + Gaston): el
+        // delete del Payment SI procede cuando el unico Receipt asociado esta Voided.
+        // La fila Receipt se preserva en DB para mantener numeracion correlativa
+        // (DeleteBehavior.Restrict desde Payment->Receipt).
         await using var context = new AppDbContext(_dbOptions);
         await SeedReservaWithServiceAsync(context);
         var payment = await SeedPaymentAsync(context, id: 102, amount: 400m);
@@ -164,19 +172,28 @@ public class PaymentServiceDeleteTests
             Id = 51, PaymentId = 102, ReservaId = 1,
             ReceiptNumber = "REC-002", Amount = 400m,
             Status = PaymentReceiptStatuses.Voided,
-            IssuedAt = DateTime.UtcNow.AddDays(-1), VoidedAt = DateTime.UtcNow
+            IssuedAt = DateTime.UtcNow.AddDays(-1), VoidedAt = DateTime.UtcNow,
+            VoidedByUserId = "u1", VoidedByUserName = "Vendedor 1", VoidReason = "Error monto"
         });
         await context.SaveChangesAsync();
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
-        Assert.Contains("anulado", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("auditoria", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // No throw: el delete procede.
+        await service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None);
 
+        // Payment quedo soft-deleted.
         var refreshed = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 102);
-        Assert.False(refreshed.IsDeleted);
+        Assert.True(refreshed.IsDeleted);
+        Assert.NotNull(refreshed.DeletedAt);
+
+        // Receipt Voided sigue existiendo en DB con su numeracion y audit trail intactos.
+        var receiptStill = await context.PaymentReceipts.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(r => r.Id == 51);
+        Assert.NotNull(receiptStill);
+        Assert.Equal("REC-002", receiptStill!.ReceiptNumber);
+        Assert.Equal(PaymentReceiptStatuses.Voided, receiptStill.Status);
+        Assert.Equal("u1", receiptStill.VoidedByUserId);
+        Assert.Equal("Error monto", receiptStill.VoidReason);
     }
 
     [Fact]
@@ -226,7 +243,8 @@ public class PaymentServiceDeleteTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
-        Assert.Contains("anulá el recibo", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Mensaje actualizado 2026-05-11.
+        Assert.Contains("comprobante vigente", ex.Message, StringComparison.OrdinalIgnoreCase);
 
         var refreshed = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 105);
         Assert.False(refreshed.IsDeleted);
@@ -300,15 +318,18 @@ public class PaymentServiceDeleteTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.DeletePaymentAsync(reservaId: 1, paymentId: 111));
-        Assert.Contains("recibo emitido", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Mensaje actualizado 2026-05-11.
+        Assert.Contains("comprobante vigente", ex.Message, StringComparison.OrdinalIgnoreCase);
 
         var refreshed = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 111);
         Assert.False(refreshed.IsDeleted);
     }
 
     [Fact]
-    public async Task ReservaService_DeletePaymentAsync_WithVoidedReceipt_Throws()
+    public async Task ReservaService_DeletePaymentAsync_WithVoidedReceipt_AllowsDelete_AndPreservesReceiptRow()
     {
+        // Cambio 2026-05-11: el path legacy nested tambien permite delete con
+        // receipt Voided. Misma regla unificada en DeleteGuards.
         await using var context = new AppDbContext(_dbOptions);
         await SeedReservaWithServiceAsync(context);
         await SeedPaymentAsync(context, id: 112, amount: 80m);
@@ -317,18 +338,25 @@ public class PaymentServiceDeleteTests
             Id = 71, PaymentId = 112, ReservaId = 1,
             ReceiptNumber = "REC-011", Amount = 80m,
             Status = PaymentReceiptStatuses.Voided,
-            IssuedAt = DateTime.UtcNow.AddDays(-1), VoidedAt = DateTime.UtcNow
+            IssuedAt = DateTime.UtcNow.AddDays(-1), VoidedAt = DateTime.UtcNow,
+            VoidedByUserId = "u2", VoidedByUserName = "Vendedor 2", VoidReason = "Error cliente"
         });
         await context.SaveChangesAsync();
 
         var service = BuildReservaService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.DeletePaymentAsync(reservaId: 1, paymentId: 112));
-        Assert.Contains("anulado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // No throw: el delete legacy procede.
+        await service.DeletePaymentAsync(reservaId: 1, paymentId: 112);
 
         var refreshed = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 112);
-        Assert.False(refreshed.IsDeleted);
+        Assert.True(refreshed.IsDeleted);
+        Assert.NotNull(refreshed.DeletedAt);
+
+        // Receipt Voided sigue existiendo con audit trail intacto.
+        var receiptStill = await context.PaymentReceipts.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(r => r.Id == 71);
+        Assert.NotNull(receiptStill);
+        Assert.Equal("REC-011", receiptStill!.ReceiptNumber);
+        Assert.Equal("u2", receiptStill.VoidedByUserId);
     }
 
     // ===== Pin del contrato HTTP 409 en ambos controllers =====
@@ -339,7 +367,7 @@ public class PaymentServiceDeleteTests
         var paymentService = new Mock<IPaymentService>();
         paymentService
             .Setup(s => s.DeletePaymentAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("No se puede eliminar el pago porque tiene un recibo emitido."));
+            .ThrowsAsync(new InvalidOperationException("No se puede anular el pago porque tiene un comprobante vigente. Anula primero el comprobante."));
 
         var controller = new PaymentsController(paymentService.Object);
 

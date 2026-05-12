@@ -31,6 +31,10 @@ public class AfipService : IAfipService
     private readonly ILogger<AfipService> _logger;
     private readonly HttpClient _httpClient;
     private readonly ISensitiveDataProtector _sensitiveDataProtector;
+    // B1.15 (2026-05-11): IAuditService opcional para audit trail diferenciado del
+    // cascade NC -> Receipt Voided. Opcional para no romper tests existentes y
+    // ctors legacy (mismo patron que PaymentService.VoidReceiptAsync).
+    private readonly IAuditService? _auditService;
 
     // URLs (TODO: move to config)
     private const string WsaaUrlDev = "https://wsaahomo.afip.gov.ar/ws/services/LoginCms";
@@ -44,12 +48,14 @@ public class AfipService : IAfipService
         AppDbContext context,
         ILogger<AfipService> logger,
         HttpClient httpClient,
-        ISensitiveDataProtector sensitiveDataProtector)
+        ISensitiveDataProtector sensitiveDataProtector,
+        IAuditService? auditService = null)
     {
         _context = context;
         _logger = logger;
         _httpClient = httpClient;
         _sensitiveDataProtector = sensitiveDataProtector;
+        _auditService = auditService;
     }
 
     private byte[]? GetCertificateData(AfipSettings settings) => 
@@ -991,7 +997,13 @@ public class AfipService : IAfipService
         return tipoComprobante == 3 || tipoComprobante == 8 || tipoComprobante == 13 || tipoComprobante == 53;
     }
 
-    private async Task ApplyCreditNoteEconomicReversalAsync(int invoiceId)
+    /// <summary>
+    /// B1.15 (2026-05-11) — internal para tests del cascade.
+    /// Crea la reversion economica de un Payment cuando AFIP aprobo la NC y, si
+    /// existe Receipt Issued atado al Payment, lo marca Voided con audit trail
+    /// completo (VoidedByUser* / VoidReason / accion `ReceiptVoidedByCascade`).
+    /// </summary>
+    internal async Task ApplyCreditNoteEconomicReversalAsync(int invoiceId)
     {
         var existingReversal = await _context.Payments
             .FirstOrDefaultAsync(p => p.RelatedInvoiceId == invoiceId && p.EntryType == PaymentEntryTypes.CreditNoteReversal);
@@ -999,8 +1011,16 @@ public class AfipService : IAfipService
         if (existingReversal != null)
             return;
 
+        // B1.15 (2026-05-11): Include(OriginalInvoice) para propagar audit trail.
+        // El user que anulo la factura original (persistido en
+        // Invoice.AnnulledByUserId/Name antes de encolar el job) es el responsable
+        // logico del cascade Receipt Voided. Esto evita cambiar la firma del job
+        // Hangfire (cambio de firma rompe jobs encolados ante deploy y obliga a
+        // mantener default values) y ademas refleja correctamente quien autorizo
+        // la cadena de eventos.
         var invoice = await _context.Invoices
             .Include(i => i.Reserva)
+            .Include(i => i.OriginalInvoice)
             .FirstOrDefaultAsync(i => i.Id == invoiceId);
 
         if (invoice?.ReservaId == null || invoice.Reserva == null)
@@ -1034,13 +1054,62 @@ public class AfipService : IAfipService
 
         _context.Payments.Add(reversal);
 
+        // B1.15 (2026-05-11): cascade NC -> Receipt Voided con audit trail completo.
+        // Idempotente (Status == Voided no se re-toca). El user se toma de la
+        // invoice original que disparo la anulacion; fallback "system"/"Sistema"
+        // si la NC se origino por un camino que no setea AnnulledByUserId
+        // (defensivo, hoy todos los paths que llegan aca lo pueblan).
+        PaymentReceipt? voidedReceipt = null;
+        string voidUserId = "system";
+        string voidUserName = "Sistema";
+        string voidReason = string.Empty;
+
         if (matchedPayment?.Receipt != null && matchedPayment.Receipt.Status != PaymentReceiptStatuses.Voided)
         {
+            voidUserId = string.IsNullOrWhiteSpace(invoice.OriginalInvoice?.AnnulledByUserId)
+                ? "system"
+                : invoice.OriginalInvoice!.AnnulledByUserId!;
+            voidUserName = string.IsNullOrWhiteSpace(invoice.OriginalInvoice?.AnnulledByUserName)
+                ? "Sistema"
+                : invoice.OriginalInvoice!.AnnulledByUserName!;
+            voidReason = $"Cascade automatico por NC AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8} (Invoice #{invoice.Id})";
+
             matchedPayment.Receipt.Status = PaymentReceiptStatuses.Voided;
             matchedPayment.Receipt.VoidedAt = DateTime.UtcNow;
+            matchedPayment.Receipt.VoidedByUserId = voidUserId;
+            matchedPayment.Receipt.VoidedByUserName = voidUserName;
+            matchedPayment.Receipt.VoidReason = voidReason;
+
+            voidedReceipt = matchedPayment.Receipt;
         }
 
         await _context.SaveChangesAsync();
+
+        // Audit trail diferenciado del void manual (`ReceiptVoided` desde
+        // PaymentService.VoidReceiptAsync). `ReceiptVoidedByCascade` permite al
+        // operador o al auditor discriminar el origen del evento. Best-effort:
+        // si _auditService es null (tests legacy / ctor sin DI) fallback a logger.
+        if (voidedReceipt != null)
+        {
+            if (_auditService is not null)
+            {
+                await _auditService.LogBusinessEventAsync(
+                    action: "ReceiptVoidedByCascade",
+                    entityName: "PaymentReceipt",
+                    entityId: voidedReceipt.Id.ToString(),
+                    details: voidReason,
+                    userId: voidUserId,
+                    userName: voidUserName,
+                    ct: CancellationToken.None);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "PaymentReceipt voided by cascade. ReceiptId={ReceiptId} ReceiptNumber={ReceiptNumber} PaymentId={PaymentId} InvoiceId={InvoiceId} ByUser={UserId} Reason={Reason}",
+                    voidedReceipt.Id, voidedReceipt.ReceiptNumber, matchedPayment!.Id, invoice.Id, voidUserId, voidReason);
+            }
+        }
+
         await RecalculateReservaBalanceAsync(invoice.ReservaId.Value);
     }
 

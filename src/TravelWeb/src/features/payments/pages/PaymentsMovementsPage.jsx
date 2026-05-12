@@ -73,16 +73,18 @@ export default function PaymentsMovementsPage() {
     handleDownloadPdf,
     handleAnnulInvoice,
     handleRetryInvoice,
+    handleVoidReceipt,
   } = useFinanceActions(reload, {
     onApprovalRequired: ({ requestType, entityType, entityId, invoice }) => {
-      setApprovalContext({
-        requestType,
-        entityType,
-        entityId,
+      let entityLabel = null;
+      if (requestType === "ReceiptVoidance") {
+        entityLabel = "Comprobante de pago";
+      } else {
         // La label se construye desde item.reference (ya formateada por el backend,
         // ej. "Factura B 00001-00000027") sin necesidad de campos adicionales del DTO.
-        invoiceLabel: invoice?.reference ?? null,
-      });
+        entityLabel = invoice?.reference ?? null;
+      }
+      setApprovalContext({ requestType, entityType, entityId, invoiceLabel: entityLabel });
     },
   });
 
@@ -107,6 +109,7 @@ export default function PaymentsMovementsPage() {
   const handleDownloadPdfForItem = (item) => withBusy(handleDownloadPdf)(item);
   const handleAnnulForItem = (item) => withBusy(handleAnnulInvoice)(item);
   const handleRetryForItem = (item) => withBusy(handleRetryInvoice)(item);
+  const handleVoidReceiptForItem = (item) => withBusy(handleVoidReceipt)(item);
 
   // Polling adaptativo: activo solo cuando hay movimientos en estado transitorio.
   useInvoicePolling(items, reload);
@@ -179,6 +182,7 @@ export default function PaymentsMovementsPage() {
               onDownloadPdf={handleDownloadPdfForItem}
               onAnnulInvoice={handleAnnulForItem}
               onRetryInvoice={handleRetryForItem}
+              onVoidReceipt={handleVoidReceiptForItem}
               busyItems={busyItems}
             />
             <div className="border-t border-slate-100 dark:border-slate-800">

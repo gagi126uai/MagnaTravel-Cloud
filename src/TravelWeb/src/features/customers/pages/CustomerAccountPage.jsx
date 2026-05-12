@@ -10,10 +10,13 @@ import {
   Receipt,
   Search,
   Trash2,
+  XCircle,
 } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
+import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
+import { useFinanceActions } from "../../payments/hooks/useFinanceActions";
 import { Button } from "../../../components/ui/button";
 import {
   DataGrid,
@@ -153,6 +156,7 @@ export default function CustomerAccountPage() {
   const [reservaOptions, setReservaOptions] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
+  const [approvalContext, setApprovalContext] = useState(null);
   const debouncedSearch = useDebounce(searchTerm, 300);
 
   const loadOverview = useCallback(async () => {
@@ -229,6 +233,17 @@ export default function CustomerAccountPage() {
       loadTab("invoices"),
     ]);
   }, [loadOverview, loadReservaOptions, loadTab]);
+
+  const { handleVoidReceipt } = useFinanceActions(refreshAll, {
+    onApprovalRequired: ({ requestType, entityType, entityId }) => {
+      setApprovalContext({
+        requestType,
+        entityType,
+        entityId,
+        invoiceLabel: "Comprobante de pago",
+      });
+    },
+  });
 
   useEffect(() => {
     setPaging(defaultPagingState);
@@ -705,14 +720,26 @@ export default function CustomerAccountPage() {
                         </DataGridCell>
                         <DataGridCell>{payment.notes || "-"}</DataGridCell>
                         <DataGridActionCell>
-                          <button
-                            type="button"
-                            onClick={() => handleDeletePayment(payment)}
-                            className="inline-flex rounded-lg p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20"
-                            title="Eliminar pago"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            {payment.receiptPublicId && payment.receiptStatus === "Issued" && (
+                              <button
+                                type="button"
+                                onClick={() => handleVoidReceipt(payment)}
+                                className="inline-flex rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20"
+                                title="Anular comprobante de pago"
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePayment(payment)}
+                              className="inline-flex rounded-lg p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                              title="Eliminar pago"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </DataGridActionCell>
                       </DataGridRow>
                     ))
@@ -742,13 +769,24 @@ export default function CustomerAccountPage() {
                       }
                       footer={<span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(payment.amount)}</span>}
                       footerActions={
-                        <button
-                          type="button"
-                          onClick={() => handleDeletePayment(payment)}
-                          className="inline-flex rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
-                        >
-                          Eliminar
-                        </button>
+                        <div className="flex gap-2">
+                          {payment.receiptPublicId && payment.receiptStatus === "Issued" && (
+                            <button
+                              type="button"
+                              onClick={() => handleVoidReceipt(payment)}
+                              className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            >
+                              Anular comp.
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePayment(payment)}
+                            className="inline-flex rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
                       }
                     />
                   ))}
@@ -914,6 +952,16 @@ export default function CustomerAccountPage() {
         customerId={publicId}
         availableReservas={availableReservas}
         onSave={refreshAll}
+      />
+
+      <RequestApprovalModal
+        isOpen={Boolean(approvalContext)}
+        onClose={() => setApprovalContext(null)}
+        onCreated={() => setApprovalContext(null)}
+        requestType={approvalContext?.requestType}
+        entityType={approvalContext?.entityType}
+        entityId={approvalContext?.entityId}
+        entityLabel={approvalContext?.invoiceLabel}
       />
     </div>
   );

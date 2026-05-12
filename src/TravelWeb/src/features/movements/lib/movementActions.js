@@ -8,6 +8,8 @@
 //   "download_pdf" — descargar PDF.
 //   "annul"        — anular factura (genera NC). Solo para "invoice".
 //   "retry"        — reintentar emision AFIP.
+//   "void_receipt" — anular comprobante interno de cobro. Solo para "payment"
+//                    cuando receiptStatus === "Issued".
 //
 // Restriccion de negocio:
 //   - Las NC (credit_note) NO se anulan desde la UI; ya son resultado de anulacion.
@@ -20,9 +22,11 @@
  *
  * @param {string} kind  - "invoice" | "credit_note" | "debit_note" | "payment" | "credit_note_reversal"
  * @param {string} status - "Approved" | "Rejected" | "InProgress" | "Annulled" | "Paid" | "Pending" | "Cancelled"
+ * @param {object} [opts] - Opciones adicionales para condiciones dependientes del item.
+ * @param {string|null} [opts.receiptStatus] - "Issued" | "Voided" | null. Solo relevante para payment.
  * @returns {string[]} Array de action keys. Vacio = sin acciones.
  */
-export function getMovementActions(kind, status) {
+export function getMovementActions(kind, status, opts = {}) {
   if (kind === "invoice") {
     switch (status) {
       case "Approved":
@@ -52,6 +56,14 @@ export function getMovementActions(kind, status) {
     }
   }
 
-  // payment, credit_note_reversal, o cualquier otro: sin acciones por ahora.
+  if (kind === "payment") {
+    // "void_receipt" disponible solo cuando hay un comprobante emitido (no anulado).
+    if (opts.receiptStatus === "Issued") {
+      return ["void_receipt"];
+    }
+    return [];
+  }
+
+  // credit_note_reversal u otro: sin acciones.
   return [];
 }

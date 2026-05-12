@@ -8,6 +8,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using TravelApi.Application.DTOs;
+using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -25,6 +26,11 @@ public class PaymentService : IPaymentService
     // B1.15 Fase 2a (FIX 5): opcionales para no romper unit tests con ctor de 5 args.
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    // B1.15 (2026-05-11): workflow de aprobaciones para anular receipts. Opcionales:
+    // los tests unitarios viejos pueden construir el service sin estos.
+    private readonly IApprovalRequestService? _approvalService;
+    private readonly IApprovalPolicyService? _approvalPolicyService;
+    private readonly IAuditService? _auditService;
 
     private static readonly string[] ActiveCollectionStatuses =
     {
@@ -39,7 +45,10 @@ public class PaymentService : IPaymentService
         IOperationalFinanceSettingsService operationalFinanceSettingsService,
         ILogger<PaymentService> logger,
         IUserPermissionResolver? permissionResolver = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        IApprovalRequestService? approvalService = null,
+        IApprovalPolicyService? approvalPolicyService = null,
+        IAuditService? auditService = null)
     {
         _dbContext = dbContext;
         _entityReferenceResolver = entityReferenceResolver;
@@ -48,6 +57,9 @@ public class PaymentService : IPaymentService
         _logger = logger;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
+        _approvalService = approvalService;
+        _approvalPolicyService = approvalPolicyService;
+        _auditService = auditService;
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
@@ -454,13 +466,28 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentReceiptDto> IssueReceiptAsync(int paymentId, CancellationToken cancellationToken)
     {
+        // IgnoreQueryFilters: necesitamos ver el Payment incluso si esta soft-deleted
+        // para devolver el mensaje correcto. Sin esto, el query filter !IsDeleted lo
+        // ocultaria y el caller recibiria "Pago no encontrado" (KeyNotFoundException
+        // -> 404) en vez del 409 "anulado/eliminado" que es semanticamente correcto.
         var payment = await _dbContext.Payments
+            .IgnoreQueryFilters()
             .Include(p => p.Reserva)
             .Include(p => p.Receipt)
             .FirstOrDefaultAsync(p => p.Id == paymentId, cancellationToken);
 
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
+
+        // B1.15 (2026-05-11): no emitir comprobantes sobre pagos eliminados o
+        // cancelados. ARCA + Contable: un recibo correlativo solo puede emitirse
+        // sobre un movimiento vivo. Si el pago esta soft-deleted o Cancelled,
+        // emitir un recibo dejaria numero correlativo huerfano y trazabilidad rota.
+        if (payment.IsDeleted || string.Equals(payment.Status, "Cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "No se puede emitir el comprobante porque el pago esta anulado o eliminado.");
+        }
 
         var entryType = string.IsNullOrWhiteSpace(payment.EntryType)
             ? PaymentEntryTypes.Payment
@@ -475,7 +502,26 @@ public class PaymentService : IPaymentService
         }
 
         if (payment.Receipt != null)
+        {
+            // B1.15 (2026-05-11): si ya existe un recibo Voided, NO reemitir
+            // automaticamente — preservamos la numeracion historica y exigimos
+            // intencion explicita. (Issue/emision posterior es un ticket aparte
+            // que el plan deja como deuda; por ahora bloqueamos.)
+            //
+            // ARCA + Contable: numerar un recibo nuevo sobre un payment que ya
+            // consumio numero correlativo previamente (anulado) requiere decision
+            // operativa explicita y registro fiscal. Por ahora se documenta el
+            // caso y se rechaza para no perder trazabilidad accidentalmente.
+            if (string.Equals(payment.Receipt.Status, PaymentReceiptStatuses.Voided, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Ya existe un comprobante anulado N° {payment.Receipt.ReceiptNumber} para este pago. " +
+                    "No se puede reemitir.");
+            }
+
+            // Issued (o cualquier otro estado): idempotente, devuelve el existente.
             return _mapper.Map<PaymentReceiptDto>(payment.Receipt);
+        }
 
         var receipt = new PaymentReceipt
         {
@@ -497,6 +543,119 @@ public class PaymentService : IPaymentService
     {
         var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
         return await GetReceiptPdfAsync(paymentId, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task VoidReceiptAsync(
+        string paymentPublicIdOrLegacyId,
+        string? reason,
+        string userId,
+        string? userName,
+        bool requesterIsAdmin,
+        CancellationToken cancellationToken)
+    {
+        // Guard de longitud (sugerencia security + backend reviewer): la columna
+        // VoidReason es varchar(500). Sin este check, un Reason > 500 chars
+        // termina como DbUpdateException = 500 inesperado para el cliente.
+        if (reason != null && reason.Length > 500)
+        {
+            throw new InvalidOperationException("El motivo no puede superar los 500 caracteres.");
+        }
+
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
+
+        // IgnoreQueryFilters: el Payment podria estar soft-deleted en escenarios de race,
+        // pero igual queremos resolver y devolver el mensaje correcto (no 404).
+        var payment = await _dbContext.Payments
+            .IgnoreQueryFilters()
+            .Include(p => p.Receipt)
+            .FirstOrDefaultAsync(p => p.Id == paymentId, cancellationToken);
+
+        if (payment == null)
+        {
+            throw new KeyNotFoundException("Pago no encontrado.");
+        }
+
+        var receipt = payment.Receipt;
+        if (receipt == null || !string.Equals(receipt.Status, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase))
+        {
+            // Caso: nunca tuvo receipt, o ya esta Voided. Ambos son operaciones invalidas
+            // (la 2da ademas es idempotente desde la perspectiva del cliente, pero el
+            // contract devuelve 409 para que el frontend refresque su estado y no
+            // muestre el boton).
+            throw new InvalidOperationException("El comprobante no existe o ya esta anulado.");
+        }
+
+        // B1.15 Fase D (2026-05-11): workflow de aprobacion. Si policy requiere
+        // aprobacion Y caller no es Admin, exigir ApprovalRequest aprobado.
+        // Admin bypassa el workflow (mismo patron que InvoiceService.EnqueueAnnulmentAsync).
+        int? approvalRequestId = null;
+        if (!requesterIsAdmin && _approvalPolicyService is not null)
+        {
+            // Fallback true: si no hay policy persistida (DB vieja), exigir aprobacion.
+            // Es la opcion conservadora para una operacion fiscal.
+            var requiresApproval = await _approvalPolicyService.RequiresApprovalAsync(
+                ApprovalRequestType.ReceiptVoidance, fallback: true, cancellationToken);
+
+            if (requiresApproval)
+            {
+                if (_approvalService is null)
+                {
+                    throw new InvalidOperationException(
+                        "Workflow de aprobaciones no disponible. Contactar al Administrador.");
+                }
+
+                // EntityType="PaymentReceipt" + EntityId=receipt.Id. La aprobacion
+                // queda ligada al recibo especifico (no al pago) — evita "cheque en
+                // blanco" sobre el mismo payment si reemite y revoluciona.
+                var approval = await _approvalService.FindActiveApprovedAsync(
+                    ApprovalRequestType.ReceiptVoidance, "PaymentReceipt", receipt.Id, userId, cancellationToken);
+                if (approval is null)
+                {
+                    throw new ApprovalRequiredException(
+                        ApprovalRequestType.ReceiptVoidance, "PaymentReceipt", receipt.Id);
+                }
+                approvalRequestId = approval.Id;
+                if (string.IsNullOrWhiteSpace(reason))
+                {
+                    reason = approval.Reason; // hereda motivo declarado al pedir aprobacion
+                }
+            }
+        }
+
+        receipt.Status = PaymentReceiptStatuses.Voided;
+        receipt.VoidedAt = DateTime.UtcNow;
+        receipt.VoidedByUserId = string.IsNullOrWhiteSpace(userId) ? null : userId;
+        receipt.VoidedByUserName = userName;
+        receipt.VoidReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Audit trail business event. Best-effort: AuditService no debe romper la
+        // operacion principal (su propio try/catch lo loggea).
+        if (_auditService is not null)
+        {
+            await _auditService.LogBusinessEventAsync(
+                action: "ReceiptVoided",
+                entityName: "PaymentReceipt",
+                entityId: receipt.Id.ToString(),
+                details: receipt.VoidReason,
+                userId: userId,
+                userName: userName,
+                ct: cancellationToken);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "PaymentReceipt voided. ReceiptId={ReceiptId} ReceiptNumber={ReceiptNumber} PaymentId={PaymentId} ByUser={UserId} Reason={Reason}",
+                receipt.Id, receipt.ReceiptNumber, payment.Id, userId, receipt.VoidReason ?? "<none>");
+        }
+
+        // Consumir la aprobacion ahora que la accion se ejecuto exitosamente.
+        if (approvalRequestId.HasValue && _approvalService is not null)
+        {
+            await _approvalService.MarkConsumedAsync(approvalRequestId.Value, cancellationToken);
+        }
     }
 
     public async Task<byte[]> GetReceiptPdfAsync(int paymentId, CancellationToken cancellationToken)

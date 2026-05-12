@@ -46,6 +46,11 @@ public static class Permissions
     public const string CobranzasInvoice = "cobranzas.invoice";
     public const string CobranzasInvoiceAnnul = "cobranzas.invoice_annul";
     public const string CobranzasSeeCost = "cobranzas.see_cost";
+    // B1.15 (2026-05-11): anular comprobante interno de pago (PaymentReceipt).
+    // La fila Receipt se preserva (Status -> Voided) para mantener numeracion correlativa.
+    // ARCA + Contable: anular el Receipt es operacion fiscalmente sensible — Vendedor
+    // dispara workflow de aprobacion via ApprovalPolicy.
+    public const string CobranzasReceiptVoid = "cobranzas.receipt_void";
 
     // Caja
     public const string CajaView = "caja.view";
@@ -106,6 +111,7 @@ public static class Permissions
         {
             CobranzasView, CobranzasEdit,
             CobranzasViewAll, CobranzasAnnul, CobranzasInvoice, CobranzasInvoiceAnnul, CobranzasSeeCost,
+            CobranzasReceiptVoid,
         },
         ["Caja"] = new[] { CajaView, CajaEdit },
         ["Tesoreria"] = new[] { TesoreriaSupplierPayments },
@@ -136,6 +142,7 @@ public static class Permissions
         ProveedoresView, ProveedoresEditFiscal,
         CobranzasView,
         CobranzasViewAll, CobranzasAnnul, CobranzasInvoice, CobranzasInvoiceAnnul, CobranzasSeeCost,
+        CobranzasReceiptVoid,
         CajaView,
         TesoreriaSupplierPayments,
         TarifarioView,
@@ -172,6 +179,11 @@ public static class Permissions
         // el Vendedor solo anula sus propias facturas. La operacion queda auditada en
         // AnnulledByUser*, AnnulledAt y AnnulmentReason (fiscal: emite NC en AFIP).
         CobranzasView, CobranzasEdit, CobranzasInvoice, CobranzasInvoiceAnnul,
+        // B1.15 (2026-05-11): anular sus propios recibos. El endpoint ya valida
+        // ownership (RequireOwnership Payment, bypass via cobranzas.view_all), y
+        // la ApprovalPolicy.ReceiptVoidance dispara workflow de aprobacion al
+        // Admin/Colaborador por default (Vendedor no Admin -> approval required).
+        CobranzasReceiptVoid,
         TarifarioView,
         PaquetesView,
         // B1.15 Fase B' (2026-05-11): el Vendedor crea solicitudes de aprobacion

@@ -16,6 +16,7 @@ export const approvalsApi = {
 // Labels para mostrar enums del backend sin tocar el dominio.
 export const REQUEST_TYPE_LABELS = {
   InvoiceAnnulment: "Anulación de factura",
+  ReceiptVoidance: "Anulación de comprobante de pago",
   ReservationCancellationWithPayment: "Cancelar reserva con cobros",
   DiscountAboveThreshold: "Descuento sobre umbral",
   PaymentDeadlineOverride: "Saltar bloqueo 20 días",

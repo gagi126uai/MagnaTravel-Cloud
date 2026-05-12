@@ -191,11 +191,23 @@ public static class DeleteGuards
     /// <summary>
     /// Devuelve el motivo de bloqueo para borrar un pago o null si esta permitido.
     ///
-    /// Reglas (C28):
-    ///  - Bloquea si el pago tiene un Receipt asociado, sea cual sea su Status.
-    ///    Voided tambien bloquea: el recibo ocupa numeracion correlativa y debe
-    ///    preservarse para auditoria — confirmado por ARCA + Contable (2026-05-06).
+    /// Reglas (C28 — cambio 2026-05-11 ratificado por arca-tax-expert + accounting-expert + Gaston):
+    ///  - Bloquea si el pago tiene un Receipt en estado <c>Issued</c>. Hay que anular
+    ///    el recibo primero (POST /api/payments/{id}/receipt/void).
+    ///  - Receipt en estado <c>Voided</c> NO bloquea el delete del pago. La fila
+    ///    Receipt se preserva (no se borra fisicamente) en la base de datos para
+    ///    mantener numeracion correlativa para auditoria. Soft-delete del Payment
+    ///    NO cascadea al Receipt (DeleteBehavior.Restrict configurado en AppDbContext
+    ///    via WithOne(...).HasForeignKey&lt;PaymentReceipt&gt;(...)). Asi, los reportes
+    ///    sobre PaymentReceipts (IgnoreQueryFilters() o con Include de Payment con
+    ///    soft-delete filter on) siguen encontrando la fila Voided con su trazabilidad
+    ///    completa (ReceiptNumber, VoidedAt, VoidedByUser*, VoidReason).
     ///  - Bloquea si el pago esta vinculado a una factura (RelatedInvoiceId).
+    ///
+    /// Regla previa (HASTA 2026-05-06): tambien bloqueaba con Voided. Cambio
+    /// solicitado por Gaston al introducir el endpoint /receipt/void (Vendedores
+    /// pueden anular recibos para corregir errores operativos comunes; obligar a
+    /// contactar al Admin para borrar el Payment hace inviable el flujo).
     /// </summary>
     public static async Task<string?> GetPaymentDeleteBlockReasonAsync(
         AppDbContext db,
@@ -208,29 +220,25 @@ public static class DeleteGuards
             .FirstOrDefaultAsync(ct);
         if (payment == null) return null;
 
-        // Caso real (emitido → anulado → reemitido): un payment puede tener 2 receipts.
-        // FirstOrDefault sobre la lista no garantiza orden estable entre InMemory y Postgres,
-        // asi que traemos los Status y decidimos en memoria.
+        // Receipt es 0..1 por UNIQUE index en PaymentReceipts.PaymentId.
+        // Materializamos a lista para no depender del orden de FirstOrDefault entre
+        // InMemory y Postgres y para tener un patron defensivo si el index cambia.
         var receiptStatuses = await db.PaymentReceipts.AsNoTracking()
             .Where(r => r.PaymentId == paymentId)
             .Select(r => r.Status)
             .ToListAsync(ct);
 
-        if (receiptStatuses.Count > 0)
+        var hasIssued = receiptStatuses.Any(s => string.Equals(s, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase));
+        if (hasIssued)
         {
-            var hasIssued = receiptStatuses.Any(s => string.Equals(s, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase));
-            if (hasIssued)
-            {
-                // Si coexisten Issued + Voided (reemision), prevalece el mensaje del Issued:
-                // ese es el recibo activo que el usuario tiene que anular primero.
-                return "No se puede eliminar el pago porque tiene un recibo emitido. Anulá el recibo primero.";
-            }
-
-            // Solo Voided: ocupan numeracion correlativa y deben preservarse para
-            // auditoria — ARCA + Contable 2026-05-06.
-            return "No se puede eliminar el pago porque tiene un recibo anulado que debe preservarse para auditoria. " +
-                   "Contactá al administrador.";
+            // Si coexisten Issued + Voided (reemision), prevalece el mensaje del Issued:
+            // ese es el recibo activo que el usuario tiene que anular primero.
+            return "No se puede anular el pago porque tiene un comprobante vigente. Anula primero el comprobante.";
         }
+
+        // Solo Voided: la fila se preserva via DeleteBehavior.Restrict pero el
+        // delete (soft) del Payment puede proceder. La numeracion correlativa
+        // queda intacta. Audit trail: VoidedAt/VoidedByUser*/VoidReason permanecen.
 
         if (payment.RelatedInvoiceId.HasValue)
         {

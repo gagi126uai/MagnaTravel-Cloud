@@ -32,4 +32,18 @@ public class PaymentReceipt : IHasPublicId
     public string Status { get; set; } = PaymentReceiptStatuses.Issued;
 
     public DateTime? VoidedAt { get; set; }
+
+    /// <summary>
+    /// B1.15 (2026-05-11): user que anulo el recibo. Audit trail fiscal — la
+    /// fila Receipt se preserva indefinidamente para mantener numeracion correlativa
+    /// (ARCA + Contable 2026-05-06). Null si nunca fue anulado.
+    /// </summary>
+    [MaxLength(64)]
+    public string? VoidedByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? VoidedByUserName { get; set; }
+
+    [MaxLength(500)]
+    public string? VoidReason { get; set; }
 }

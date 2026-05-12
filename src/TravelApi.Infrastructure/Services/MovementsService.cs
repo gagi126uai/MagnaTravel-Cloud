@@ -117,6 +117,8 @@ public class MovementsService : IMovementsService
                     RelatedInvoiceId = p.RelatedInvoiceId,
                     RelatedInvoiceNumeroComprobante = p.RelatedInvoice != null ? (long?)p.RelatedInvoice.NumeroComprobante : null,
                     RelatedInvoicePuntoDeVenta = p.RelatedInvoice != null ? (int?)p.RelatedInvoice.PuntoDeVenta : null,
+                    ReceiptStatus = p.Receipt != null ? p.Receipt.Status : null,
+                    ReceiptPublicId = p.Receipt != null ? (Guid?)p.Receipt.PublicId : null,
                 })
                 .ToListAsync(ct);
 
@@ -151,6 +153,8 @@ public class MovementsService : IMovementsService
                             Label = $"NC AFIP {(p.RelatedInvoicePuntoDeVenta ?? 0):D5}-{(p.RelatedInvoiceNumeroComprobante ?? 0):D8}"
                         }
                         : null,
+                    ReceiptStatus = isReversal ? null : p.ReceiptStatus,
+                    ReceiptPublicId = isReversal ? null : p.ReceiptPublicId,
                 });
             }
         }

@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
+using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
@@ -111,9 +113,65 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo emitir el comprobante del pago." });
+            // B1.15 (2026-05-11): los guards nuevos (pago anulado/eliminado, receipt
+            // Voided previo) son condiciones de conflicto reales, no errores de
+            // validacion. 409 + mensaje accionable; antes esto retornaba 400 generico
+            // ocultando la causa.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
+    /// B1.15 (2026-05-11): anular el comprobante interno de un pago. La fila Receipt
+    /// se preserva (Status -> Voided + audit fields) para mantener numeracion correlativa
+    /// — ARCA + Contable. Vendedor dispara workflow de aprobacion via ApprovalPolicy;
+    /// Admin bypassa.
+    /// </summary>
+    [HttpPost("{publicIdOrLegacyId}/receipt/void")]
+    [RequirePermission(Permissions.CobranzasReceiptVoid)]
+    [RequireOwnership(OwnedEntity.Payment, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
+    public async Task<IActionResult> VoidReceipt(
+        string publicIdOrLegacyId,
+        [FromBody] VoidReceiptRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+            var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+            var requesterIsAdmin = User.IsInRole("Admin");
+            var reason = request?.Reason?.Trim();
+
+            await _paymentService.VoidReceiptAsync(
+                publicIdOrLegacyId, reason, userId, userName, requesterIsAdmin, cancellationToken);
+            return Ok(new { message = "Comprobante anulado correctamente." });
+        }
+        catch (ApprovalRequiredException ex)
+        {
+            // Mismo contrato 409 + body que /invoices/{id}/annul para que el frontend
+            // (RequestApprovalModal) consuma identico shape.
+            return Conflict(new
+            {
+                message = "Esta acción requiere autorización previa del Administrador o Colaborador.",
+                requiresApproval = true,
+                requestType = ex.RequestType.ToString(),
+                entityType = ex.EntityType,
+                entityId = ex.EntityId,
+            });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
@@ -214,8 +272,10 @@ public class PaymentsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // 409 Conflict: el pago tiene un recibo (Issued/Voided) o esta vinculado
-            // a una factura. Antes de C28 esto caia a 500 sin guard.
+            // 409 Conflict: el pago tiene un recibo Issued o esta vinculado a una
+            // factura. (Receipt Voided ya NO bloquea — la fila Receipt se preserva
+            // pero el Payment puede borrarse. Cambio 2026-05-11 ratificado por
+            // ARCA + Contable + Gaston cuando se introdujo /receipt/void.)
             return Conflict(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
@@ -224,3 +284,9 @@ public class PaymentsController : ControllerBase
         }
     }
 }
+
+/// <summary>
+/// B1.15 (2026-05-11): payload opcional para anular comprobante de pago.
+/// <c>Reason</c> queda persistido en <c>PaymentReceipt.VoidReason</c> (audit trail).
+/// </summary>
+public record VoidReceiptRequest(string? Reason);

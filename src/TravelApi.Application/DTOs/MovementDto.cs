@@ -64,6 +64,14 @@ public class MovementDto
 
     /// <summary>Movimiento relacionado (NC -> factura original, reversal -> NC parent).</summary>
     public MovementRelatedToDto? RelatedTo { get; set; }
+
+    /// <summary>Solo aplica a kind="payment": estado del comprobante asociado
+    /// (recibo interno). null si no se emitio. "Issued" | "Voided".
+    /// Permite a la UI mostrar el boton "Anular comprobante" cuando corresponda.</summary>
+    public string? ReceiptStatus { get; set; }
+
+    /// <summary>Solo aplica a kind="payment" con Receipt emitido: PublicId del receipt.</summary>
+    public Guid? ReceiptPublicId { get; set; }
 }
 
 public class MovementRelatedToDto
