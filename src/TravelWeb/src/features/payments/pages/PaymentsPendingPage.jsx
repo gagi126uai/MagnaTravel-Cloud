@@ -5,6 +5,7 @@ import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { WorkItemSection } from "../components/InvoicingTab";
 import { useInvoicing } from "../hooks/useInvoicing";
+import { useInvoicePolling } from "../hooks/useInvoicePolling";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 
 // B1.15 Fase D'.B (2026-05-11): pestaña "Pendientes de facturar".
@@ -50,6 +51,9 @@ export default function PaymentsPendingPage() {
       });
     },
   });
+
+  // Polling adaptativo: activo solo cuando hay items en estado transitorio.
+  useInvoicePolling(workItems, loadData);
 
   if (loading && workItems.length === 0) {
     return (

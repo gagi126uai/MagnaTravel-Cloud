@@ -6,6 +6,7 @@ import MovementsTimeline from "../../movements/components/MovementsTimeline";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { MonthNavigator, monthToBounds } from "../../../components/ui/MonthNavigator";
 import { useFinanceActions } from "../hooks/useFinanceActions";
+import { useInvoicePolling } from "../hooks/useInvoicePolling";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 
 // B1.15 Fase D'.B (2026-05-11): pestaña "Movimientos" — timeline cronologico
@@ -106,6 +107,9 @@ export default function PaymentsMovementsPage() {
   const handleDownloadPdfForItem = (item) => withBusy(handleDownloadPdf)(item);
   const handleAnnulForItem = (item) => withBusy(handleAnnulInvoice)(item);
   const handleRetryForItem = (item) => withBusy(handleRetryInvoice)(item);
+
+  // Polling adaptativo: activo solo cuando hay movimientos en estado transitorio.
+  useInvoicePolling(items, reload);
 
   const toggleKind = (value) => {
     setSelectedKinds((current) =>

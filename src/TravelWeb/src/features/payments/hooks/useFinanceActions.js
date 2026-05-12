@@ -68,7 +68,9 @@ export function useFinanceActions(loadData, options = {}) {
       showSuccess("Reintento encolado.");
       await loadData();
     } catch (error) {
-      showError("Error al reintentar.");
+      // 409 cuando la factura ya está en proceso (Resultado == "PENDING").
+      // El backend devuelve { message } con texto accionable para el usuario.
+      showError(error?.payload?.message ?? error?.message ?? "Error al reintentar.");
     }
   };
 

@@ -72,7 +72,11 @@ public class InvoiceServiceRetryIdempotencyTests
                _settingsMock.Object,
                BuildUserManager());
 
-    private static async Task<Invoice> SeedInvoiceAsync(AppDbContext ctx, AnnulmentStatus status, string resultado = "PENDING")
+    // 2026-05-11 (fiscal critico): defecto pasado a "R" (rechazado) en lugar de "PENDING".
+    // El nuevo guard de RetryAsync bloquea reintento mientras hay job de emision en
+    // vuelo (Resultado="PENDING"). Reintento solo es valido cuando AFIP rechazo
+    // (Resultado="R"); ver test RetryAsync_ResultadoPending_Throws.
+    private static async Task<Invoice> SeedInvoiceAsync(AppDbContext ctx, AnnulmentStatus status, string resultado = "R")
     {
         ctx.Reservas.Add(new Reserva
         {
@@ -160,5 +164,28 @@ public class InvoiceServiceRetryIdempotencyTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.RetryAsync(inv.Id, CancellationToken.None));
         Assert.Contains("aprobada", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 2026-05-11 (fiscal critico): Resultado="PENDING" = job ProcessInvoiceJob esta en
+    /// vuelo (encolado o corriendo). Reintentar mientras esta activo encola un segundo
+    /// job concurrente — riesgo de doble pedido de CAE a AFIP. El operador debe esperar
+    /// el resultado (Aprobado/Rechazado) antes de reintentar.
+    /// </summary>
+    [Fact]
+    public async Task RetryAsync_ResultadoPending_Throws_AndDoesNotEnqueue()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        var inv = await SeedInvoiceAsync(ctx, AnnulmentStatus.None, resultado: "PENDING");
+        var service = BuildService(ctx);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RetryAsync(inv.Id, CancellationToken.None));
+        Assert.Contains("en proceso", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // No se debe haber encolado un segundo job.
+        _jobClientMock.Verify(
+            c => c.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<Hangfire.States.IState>()),
+            Times.Never);
     }
 }

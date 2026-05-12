@@ -311,7 +311,16 @@ export function HistoryTab({
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        {invoice.resultado === "A" ? (
+                        {invoice.annulmentStatus === "Pending" ? (
+                          <div
+                            className="flex items-center gap-1 text-amber-600 dark:text-amber-400 text-[10px] font-black uppercase"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+                            Anulando…
+                          </div>
+                        ) : invoice.resultado === "A" ? (
                           <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-[10px] font-black uppercase">
                             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                             Aprobado
@@ -353,7 +362,7 @@ export function HistoryTab({
                               >
                                 <Download className="w-4.5 h-4.5" />
                               </button>
-                              {![2, 3, 7, 8, 12, 13, 52, 53].includes(invoice.tipoComprobante) && (
+                              {![2, 3, 7, 8, 12, 13, 52, 53].includes(invoice.tipoComprobante) && invoice.annulmentStatus !== "Pending" && (
                                 <button
                                   type="button"
                                   onClick={() => onAnnulInvoice(invoice)}
@@ -365,7 +374,7 @@ export function HistoryTab({
                               )}
                             </>
                           )}
-                          {(invoice.resultado === "R" || invoice.resultado === "PENDING") && (
+                          {invoice.resultado === "R" && (
                             <button
                               type="button"
                               onClick={() => onRetryInvoice(invoice)}
@@ -446,7 +455,7 @@ export function HistoryTab({
                     >
                       Ver PDF
                     </button>
-                  ) : (
+                  ) : invoice.resultado === "R" ? (
                     <button
                       type="button"
                       onClick={() => onRetryInvoice(invoice)}
@@ -454,7 +463,7 @@ export function HistoryTab({
                     >
                       Reintentar
                     </button>
-                  )}
+                  ) : null}
                   <a href={`/reservas/${getPublicId(invoice.reserva)}`} className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-400 rounded-lg">
                     <ExternalLink className="w-4 h-4" />
                   </a>

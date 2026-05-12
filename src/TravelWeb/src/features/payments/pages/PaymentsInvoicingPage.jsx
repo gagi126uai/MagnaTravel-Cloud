@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Loader2, FileText, Receipt } from "lucide-react";
+import { useInvoicePolling } from "../hooks/useInvoicePolling";
 import { MonthNavigator } from "../../../components/ui/MonthNavigator";
 import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
@@ -78,6 +79,9 @@ export default function PaymentsInvoicingPage() {
       });
     },
   });
+
+  // Polling adaptativo: activo solo cuando hay items/facturas en estado transitorio.
+  useInvoicePolling([...workItems, ...invoices], loadData);
 
   if (loading && workItems.length === 0 && invoices.length === 0) {
     return (

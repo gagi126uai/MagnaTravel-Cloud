@@ -186,7 +186,9 @@ export default function CreateInvoiceModal({
       onClose();
     } catch (error) {
       console.error(error);
-      showError(error.message || "Error al crear factura.");
+      // 409 cuando ya hay una Invoice con Resultado="PENDING" para esta reserva.
+      // El backend devuelve { message } con texto accionable — mostrarlo verbatim.
+      showError(error?.payload?.message ?? error?.message ?? "Error al crear factura.");
     } finally {
       setLoading(false);
     }

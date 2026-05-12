@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Npgsql;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
@@ -315,6 +316,281 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         _jobClientMock.Verify(
             j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
             Times.Never);
+    }
+
+    /// <summary>
+    /// 2026-05-11 (fiscal critico — UX pendiente al emitir): el guard de CreateAsync
+    /// debe rechazar emitir una nueva factura mientras hay OTRA Invoice en estado
+    /// Resultado="PENDING" para la misma reserva (no anulada). Esto evita el escenario:
+    ///  1. Operador clickea Emitir -> job1 encolado, Resultado=PENDING.
+    ///  2. UI sigue mostrando "Lista para emitir" durante la ventana del job.
+    ///  3. Operador duda y vuelve a clickear -> sin guard, se persistiria una segunda
+    ///     Invoice PENDING -> 2 jobs concurrentes -> 2 CAEs distintos en AFIP ->
+    ///     correlatividad fiscal rota.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_WhenAnotherInvoicePendingForSameReserva_Throws_AndDoesNotCreate()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        // La reserva 1 ya tiene la invoice 1 con Resultado="A". Agregamos otra invoice
+        // con Resultado="PENDING" (simulando un job de emision en vuelo).
+        var reserva = await context.Reservas.FirstAsync(r => r.Id == 1);
+        var pending = new Invoice
+        {
+            Id = 100,
+            ReservaId = reserva.Id,
+            TipoComprobante = 6,
+            Resultado = "PENDING",
+            AnnulmentStatus = AnnulmentStatus.None,
+            ImporteTotal = 500m,
+            CreatedAt = DateTime.UtcNow
+        };
+        context.Invoices.Add(pending);
+        await context.SaveChangesAsync();
+
+        var initialCount = await context.Invoices.CountAsync();
+
+        var service = BuildService(context);
+        var request = new CreateInvoiceRequest
+        {
+            ReservaId = reserva.PublicId.ToString(),
+            CbteTipo = 6,
+            Concepto = 3,
+            DocTipo = 99,
+            DocNro = 0
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateAsync(request, "user-X", "Usuario", CancellationToken.None));
+        Assert.Contains("en proceso", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // No se debe haber persistido una nueva invoice.
+        Assert.Equal(initialCount, await context.Invoices.CountAsync());
+
+        // AFIP no debe haber sido invocado (ni CreatePendingInvoice, ni ProcessInvoiceJob).
+        _afipMock.Verify(
+            a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()),
+            Times.Never);
+
+        // El job de emision no debe haberse encolado.
+        _jobClientMock.Verify(
+            j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// 2026-05-11 (fiscal critico): el guard de CreateAsync NO debe bloquear cuando la
+    /// invoice PENDING existente ya fue anulada (AnnulmentStatus=Succeeded). Esa invoice
+    /// quedo cerrada con NC aprobada y el flujo de emision ya no esta en vuelo. Permite
+    /// emitir una factura nueva sobre la misma reserva en ese caso.
+    ///
+    /// Caso real: factura A emitida, anulada con NC, ahora se necesita reemitir.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_WhenPendingButAnnulmentSucceeded_DoesNotBlock()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        var reserva = await context.Reservas.FirstAsync(r => r.Id == 1);
+        // Invoice PENDING pero ya anulada (NC aprobada). No esta "en vuelo".
+        context.Invoices.Add(new Invoice
+        {
+            Id = 101,
+            ReservaId = reserva.Id,
+            TipoComprobante = 6,
+            Resultado = "PENDING",
+            AnnulmentStatus = AnnulmentStatus.Succeeded,
+            ImporteTotal = 500m,
+            CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        // Setup AFIP mock para que CreatePendingInvoice devuelva una invoice valida
+        // (el flujo necesita continuar tras el guard para verificar que NO se rompio).
+        _afipMock
+            .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
+            .ReturnsAsync(new Invoice
+            {
+                Id = 200,
+                ReservaId = reserva.Id,
+                TipoComprobante = 6,
+                Resultado = "PENDING",
+                AnnulmentStatus = AnnulmentStatus.None,
+                ImporteTotal = 500m
+            });
+
+        var service = BuildService(context);
+        var request = new CreateInvoiceRequest
+        {
+            ReservaId = reserva.PublicId.ToString(),
+            CbteTipo = 6,
+            Concepto = 3,
+            DocTipo = 99,
+            DocNro = 0
+        };
+
+        // No debe tirar. El guard solo bloquea invoices PENDING no anuladas.
+        var result = await service.CreateAsync(request, "user-X", "Usuario", CancellationToken.None);
+        Assert.NotNull(result);
+
+        // El job debe haberse encolado (caso de exito).
+        _jobClientMock.Verify(
+            j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
+            Times.AtLeastOnce);
+    }
+
+    /// <summary>
+    /// 2026-05-11 (fiscal critico — race condition): cuando el guard aplicativo AnyAsync
+    /// pasa pero el INSERT colisiona con el unique index parcial UX_Invoices_OnePendingPerReserva
+    /// (T1 y T2 ven "no hay PENDING" en paralelo, ambos insertan), Postgres rechaza el
+    /// segundo INSERT con SQLSTATE 23505. CreateAsync debe atrapar esa DbUpdateException
+    /// y traducirla a la misma InvalidOperationException que el guard aplicativo — el
+    /// contrato del endpoint hacia el frontend no cambia (sigue siendo 409 con el mismo
+    /// mensaje, "Ya hay una factura en proceso...").
+    ///
+    /// El test simula el path catch del catch alrededor de _afipService.CreatePendingInvoice
+    /// haciendo que el mock tire la DbUpdateException directamente. No exigimos hacer
+    /// un test integration con Postgres real para este caso — la equivalencia del path
+    /// se prueba aca; el index real va a smoke en VPS.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_WhenDbUpdate23505Race_TranslatesToInvalidOperation()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        var reserva = await context.Reservas.FirstAsync(r => r.Id == 1);
+
+        // Simulamos la race: el guard AnyAsync NO ve PENDING en este context (no hay
+        // ninguna en la DB), llega a llamar a _afipService.CreatePendingInvoice, y el
+        // SaveChanges interno colisiona con el unique index parcial -> 23505.
+        var postgresEx = new PostgresException(
+            messageText: "duplicate key value violates unique constraint \"UX_Invoices_OnePendingPerReserva\"",
+            severity: "ERROR",
+            invariantSeverity: "ERROR",
+            sqlState: PostgresErrorCodes.UniqueViolation);
+        var dbUpdateEx = new DbUpdateException("Error al guardar la factura PENDING.", postgresEx);
+
+        _afipMock
+            .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
+            .ThrowsAsync(dbUpdateEx);
+
+        var service = BuildService(context);
+        var request = new CreateInvoiceRequest
+        {
+            ReservaId = reserva.PublicId.ToString(),
+            CbteTipo = 6,
+            Concepto = 3,
+            DocTipo = 99,
+            DocNro = 0
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateAsync(request, "user-X", "Usuario", CancellationToken.None));
+
+        // Mensaje IDENTICO al del guard aplicativo — el frontend trata ambos casos igual.
+        Assert.Equal(
+            "Ya hay una factura en proceso para esta reserva. Espera a que termine antes de emitir otra.",
+            ex.Message);
+
+        // El job de emision no debe haberse encolado (la traduccion bloquea el path feliz).
+        _jobClientMock.Verify(
+            j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// 2026-05-11 (race condition guard): otras DbUpdateException que NO sean 23505
+    /// (foreign key violation, check constraint, timeout, etc.) deben propagarse tal
+    /// cual hacia arriba — no las queremos enmascarar como "en proceso para esta
+    /// reserva" porque seria un mensaje incorrecto. El handler 500 del controller las
+    /// captura como Problem(500) genericas.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_WhenDbUpdateNonUnique_DoesNotTranslate()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        var reserva = await context.Reservas.FirstAsync(r => r.Id == 1);
+
+        // FK violation (23503) NO debe ser traducida.
+        var postgresEx = new PostgresException(
+            messageText: "insert or update on table \"Invoices\" violates foreign key constraint",
+            severity: "ERROR",
+            invariantSeverity: "ERROR",
+            sqlState: PostgresErrorCodes.ForeignKeyViolation);
+        var dbUpdateEx = new DbUpdateException("FK violation simulada.", postgresEx);
+
+        _afipMock
+            .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
+            .ThrowsAsync(dbUpdateEx);
+
+        var service = BuildService(context);
+        var request = new CreateInvoiceRequest
+        {
+            ReservaId = reserva.PublicId.ToString(),
+            CbteTipo = 6,
+            Concepto = 3,
+            DocTipo = 99,
+            DocNro = 0
+        };
+
+        // Debe propagar la DbUpdateException original — no atrapar 23503 como si fuera 23505.
+        var ex = await Assert.ThrowsAsync<DbUpdateException>(() =>
+            service.CreateAsync(request, "user-X", "Usuario", CancellationToken.None));
+        Assert.Same(postgresEx, ex.InnerException);
+    }
+
+    /// <summary>
+    /// 2026-05-11 (UX pendiente al emitir): la worklist debe marcar la reserva como
+    /// FiscalStatus="in_progress" cuando hay una invoice PENDING en vuelo. El frontend
+    /// usa este flag para deshabilitar el boton Emitir y evitar el doble click.
+    /// </summary>
+    [Fact]
+    public async Task GetInvoicingWorklist_WhenReservaHasInvoicePending_ReturnsInProgressStatus()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        // No usamos SeedAsync porque queremos una reserva sin invoices aprobadas previas
+        // para que la fila aparezca como Lista para emitir (y se sobreescriba a in_progress).
+        context.Reservas.Add(new Reserva
+        {
+            Id = 10,
+            NumeroReserva = "F-INV-WL-1",
+            Name = "Reserva en proceso",
+            Status = EstadoReserva.Confirmed,
+            TotalSale = 1500m,
+            Balance = 0m, // settled => seria Ready si no fuera por el PENDING en curso
+            StartDate = DateTime.UtcNow.Date
+        });
+        context.Invoices.Add(new Invoice
+        {
+            Id = 50,
+            ReservaId = 10,
+            TipoComprobante = 6,
+            Resultado = "PENDING",
+            AnnulmentStatus = AnnulmentStatus.None,
+            ImporteTotal = 1500m,
+            CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+        // Status="all" para no filtrar por ready (el default), porque el item nuevo es in_progress.
+        var page = await service.GetInvoicingWorklistAsync(new InvoicingWorklistQuery { Status = "all" }, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal("in_progress", item.FiscalStatus);
+        Assert.Equal("En proceso AFIP", item.FiscalStatusLabel);
+        // PendingFiscalAmount sigue >0 (la fila aparece, la UI solo deshabilita el boton).
+        Assert.True(item.PendingFiscalAmount > 0m);
+        // RequiresOverride debe estar en false: el flujo dominante es "esperar AFIP",
+        // no "pedir autorizacion para emitir con deuda".
+        Assert.False(item.RequiresOverride);
+        Assert.Null(item.EconomicBlockReason);
     }
 
     /// <summary>

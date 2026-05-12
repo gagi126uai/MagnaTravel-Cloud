@@ -60,9 +60,15 @@ public class InvoicesController : ControllerBase
             var invoice = await _invoiceService.CreateAsync(request, userId, userName, ct);
             return Accepted(invoice);
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "No se pudo generar la factura." });
+            // 2026-05-11 (fiscal critico): el service tira InvalidOperationException con
+            // mensaje claro al operador para casos de estado/regla — reserva no encontrada,
+            // factura PENDING en curso, override sin motivo, AFIP con deuda. 409 Conflict
+            // expresa "estado actual incompatible con la operacion" y es consistente con
+            // RetryInvoice y AnnulInvoice. El mensaje se preserva para la UI (vs el
+            // generico anterior que escondia la causa real al operador).
+            return Conflict(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {

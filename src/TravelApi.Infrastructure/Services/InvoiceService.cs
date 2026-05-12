@@ -13,6 +13,7 @@ using TravelApi.Infrastructure.Persistence;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Hangfire;
+using Npgsql;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -248,6 +249,34 @@ public class InvoiceService : IInvoiceService
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
+        // B1.15 (2026-05-11, fiscal critico): guard anti-doble-emision concurrente.
+        //
+        // Sin este guard, un doble click en Emitir o un usuario que duda durante la
+        // ventana del job Hangfire (segundos a minutos) puede generar 2 jobs ProcessInvoiceJob
+        // en paralelo. Cada job pide CAE a AFIP -> potencial doble factura en correlativa
+        // fiscal, con consecuencias graves (numeracion, libros IVA, AFIP rechaza ajustes).
+        //
+        // Regla: el sistema PERMITE multiples facturas por reserva (cobranzas parciales,
+        // NCs). El guard NO bloquea por aprobadas previas. Solo bloquea cuando hay OTRA
+        // invoice en estado PENDING ligada a la misma reserva, no anulada (Succeeded).
+        // Una invoice con NC aprobada (AnnulmentStatus=Succeeded) ya no esta "en vuelo"
+        // — la factura quedo cerrada.
+        //
+        // Cubre Facturas normales y NCs/NDs: la entidad fisica es la misma Invoice, y
+        // todas pasan por ProcessInvoiceJob -> CAE. Si una NC PENDING existe para la
+        // reserva, emitir otra factura (o NC) tambien puede pegarle a la correlativa.
+        var hasPendingInFlight = await _context.Invoices
+            .AsNoTracking()
+            .AnyAsync(i =>
+                i.ReservaId == reservaId &&
+                i.Resultado == "PENDING" &&
+                i.AnnulmentStatus != AnnulmentStatus.Succeeded, ct);
+        if (hasPendingInFlight)
+        {
+            throw new InvalidOperationException(
+                "Ya hay una factura en proceso para esta reserva. Espera a que termine antes de emitir otra.");
+        }
+
         if (!request.IsCreditNote && !request.IsDebitNote)
         {
             var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
@@ -271,17 +300,56 @@ public class InvoiceService : IInvoiceService
         }
 
         // 1. Create Pending in DB
-        var invoice = await _afipService.CreatePendingInvoice(reservaId, request);
+        //
+        // B1.15 (2026-05-11, fiscal critico): el guard aplicativo de arriba (AnyAsync)
+        // es la primera linea de defensa, pero NO es atomico bajo concurrencia. Si dos
+        // requests pasan el AnyAsync simultaneamente (T1 read -> T2 read -> ambos SaveChanges)
+        // se encolarian 2 ProcessInvoiceJob para la misma reserva — riesgo de doble CAE.
+        //
+        // Backstop: la migracion AddInvoicePendingInFlightUniqueIndex crea
+        // UX_Invoices_OnePendingPerReserva (UNIQUE PARCIAL) sobre TravelFileId con filtro
+        // Resultado='PENDING' AND AnnulmentStatus != Succeeded. El segundo INSERT recibe
+        // 23505 unique_violation de Postgres y aca lo traducimos a la MISMA
+        // InvalidOperationException que tira el guard aplicativo (mismo 409, mismo mensaje)
+        // para no romper el contrato del endpoint hacia el frontend.
+        Invoice invoice;
+        try
+        {
+            invoice = await _afipService.CreatePendingInvoice(reservaId, request);
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            _logger.LogWarning(ex,
+                "Race condition al crear Invoice PENDING para ReservaId {ReservaId}: el unique index UX_Invoices_OnePendingPerReserva rechazo el INSERT. El guard aplicativo no llego a verlo.",
+                reservaId);
+            throw new InvalidOperationException(
+                "Ya hay una factura en proceso para esta reserva. Espera a que termine antes de emitir otra.");
+        }
 
         if (invoice.WasForced)
         {
             await NotifyAdminsOfForcedInvoiceAsync(invoice, request, ct);
         }
-        
+
         // 2. Enqueue Job
         _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(invoice.Id));
 
         return _mapper.Map<InvoiceDto>(invoice);
+    }
+
+    /// <summary>
+    /// B1.15 (2026-05-11): detecta unique_violation (SQLSTATE 23505) de PostgreSQL
+    /// cuando se produce dentro de un SaveChanges* de EF Core. EF envuelve el error
+    /// de Npgsql en DbUpdateException — chequeamos el InnerException tal cual hace
+    /// Microsoft en la doc oficial.
+    ///
+    /// Se mantiene como helper privado y no como utility compartida por ahora: solo
+    /// hay un uso (CreateAsync). Si aparece un segundo caso se promueve a Infrastructure.
+    /// </summary>
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
+    {
+        return ex.InnerException is PostgresException pg
+            && pg.SqlState == PostgresErrorCodes.UniqueViolation;
     }
 
     public async Task<bool> RetryAsync(int id, CancellationToken ct)
@@ -301,6 +369,25 @@ public class InvoiceService : IInvoiceService
                 invoice.AnnulmentStatus == AnnulmentStatus.Succeeded
                     ? "No se puede reintentar la emision de una factura ya anulada (NC aprobada)."
                     : "No se puede reintentar la emision de una factura con anulacion en proceso. Esperá a que AFIP confirme la NC.");
+        }
+
+        // B1.15 (2026-05-11, fiscal critico): idempotencia con job de emision en vuelo.
+        //
+        // Si Resultado="PENDING" y la factura no esta en flow de anulacion (chequeado
+        // arriba), el job ProcessInvoiceJob ya esta encolado/corriendo. Reintentar
+        // mientras esta en curso encolaria un segundo job concurrente — riesgo de doble
+        // pedido de CAE a AFIP y ruptura de correlativa. El operador debe esperar el
+        // resultado: si AFIP rechaza queda en "R" (entonces si se puede reintentar);
+        // si aprueba queda en "A" (cubierto por el guard previo de Resultado=="A").
+        //
+        // Nota: el orden importa. Cuando Resultado=PENDING + AnnulmentStatus=Pending
+        // ambos guards aplicarian; preferimos el mensaje de anulacion porque el flow
+        // dominante es la NC en curso (la emision PENDING quedo huerfana y no se va a
+        // reintentar nunca de ese estado).
+        if (invoice.Resultado == "PENDING")
+        {
+            throw new InvalidOperationException(
+                "La factura ya esta en proceso. Espera el resultado antes de reintentar.");
         }
 
         // Reset to PENDING so UI shows yellow
@@ -804,7 +891,18 @@ public class InvoiceService : IInvoiceService
                     .Where(invoice => invoice.ReservaId == reserva.Id && invoice.Resultado == "A" && invoice.WasForced)
                     .OrderByDescending(invoice => invoice.CreatedAt)
                     .Select(invoice => invoice.ForcedByUserName)
-                    .FirstOrDefault()
+                    .FirstOrDefault(),
+                // 2026-05-11 (UX pendiente al emitir): true si hay un job ProcessInvoiceJob
+                // en vuelo para la reserva. Filtra invoices con Resultado="PENDING" que NO
+                // estan anuladas (Succeeded). EF traduce esta subconsulta a un EXISTS
+                // correlacionado. La fila sigue apareciendo en la worklist (PendingFiscalAmount
+                // no cambia) pero el frontend deshabilita Emitir para evitar doble click.
+                HasInvoiceInProgress = _context.Invoices
+                    .AsNoTracking()
+                    .Any(invoice =>
+                        invoice.ReservaId == reserva.Id &&
+                        invoice.Resultado == "PENDING" &&
+                        invoice.AnnulmentStatus != AnnulmentStatus.Succeeded)
             })
             .Select(item => new
             {
@@ -818,7 +916,8 @@ public class InvoiceService : IInvoiceService
                 PendingFiscalAmount = item.TotalSale > item.AlreadyInvoiced
                     ? Math.Round(item.TotalSale - item.AlreadyInvoiced, 2)
                     : 0m,
-                item.ForcedByUserName
+                item.ForcedByUserName,
+                item.HasInvoiceInProgress
             })
             .Where(item => item.PendingFiscalAmount > 0m)
             .Select(item => new InvoicingWorkItemDto
@@ -830,22 +929,34 @@ public class InvoiceService : IInvoiceService
                 TotalSale = item.TotalSale,
                 AlreadyInvoiced = item.AlreadyInvoiced,
                 PendingFiscalAmount = item.PendingFiscalAmount,
-                FiscalStatus = item.Balance <= 0m
-                    ? "ready"
-                    : allowsOverride
-                        ? "override"
-                        : "blocked",
-                FiscalStatusLabel = item.Balance <= 0m
-                    ? "Lista para emitir"
-                    : allowsOverride
-                        ? "Requiere autorizacion"
-                        : "Bloqueada por deuda",
-                RequiresOverride = item.Balance > 0m && allowsOverride,
-                EconomicBlockReason = item.Balance <= 0m
+                // 2026-05-11 (UX pendiente al emitir): si hay un job de emision en vuelo,
+                // el estado "in_progress" tiene prioridad sobre ready/override/blocked.
+                // El frontend usa este valor para deshabilitar Emitir hasta que el job
+                // termine — evita doble click que generaria 2 CAE distintos. Cuando el
+                // job aprueba, AlreadyInvoiced sube y la fila desaparece (o queda con
+                // saldo restante). Si rechaza, el PENDING se libera y vuelve a ready.
+                FiscalStatus = item.HasInvoiceInProgress
+                    ? "in_progress"
+                    : item.Balance <= 0m
+                        ? "ready"
+                        : allowsOverride
+                            ? "override"
+                            : "blocked",
+                FiscalStatusLabel = item.HasInvoiceInProgress
+                    ? "En proceso AFIP"
+                    : item.Balance <= 0m
+                        ? "Lista para emitir"
+                        : allowsOverride
+                            ? "Requiere autorizacion"
+                            : "Bloqueada por deuda",
+                RequiresOverride = !item.HasInvoiceInProgress && item.Balance > 0m && allowsOverride,
+                EconomicBlockReason = item.HasInvoiceInProgress
                     ? null
-                    : allowsOverride
-                        ? overrideBlockReason
-                        : hardBlockReason,
+                    : item.Balance <= 0m
+                        ? null
+                        : allowsOverride
+                            ? overrideBlockReason
+                            : hardBlockReason,
                 ForcedByUserName = item.ForcedByUserName
             });
     }
@@ -1008,6 +1119,10 @@ public class InvoiceService : IInvoiceService
             "ready" => query.Where(item => item.FiscalStatus == "ready"),
             "blocked" => query.Where(item => item.FiscalStatus == "blocked"),
             "override" => query.Where(item => item.FiscalStatus == "override"),
+            // 2026-05-11 (UX pendiente al emitir): permite que la UI filtre solo las
+            // reservas con job AFIP en vuelo. Util si el operador quiere ver que esta
+            // procesandose ahora mismo.
+            "in_progress" => query.Where(item => item.FiscalStatus == "in_progress"),
             _ => query
         };
     }

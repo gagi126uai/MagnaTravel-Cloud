@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { AlertCircle, CheckCircle2, ExternalLink, Receipt, ShieldAlert } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Receipt, ShieldAlert } from "lucide-react";
 import { formatCurrency, formatDate, getInvoiceLabel } from "../lib/financeUtils";
 import { getPublicId } from "../../../lib/publicIds";
 
@@ -74,9 +74,13 @@ export function WorkItemSection({ status, onStatusChange, items, onInvoice, sear
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <Link to={`/reservas/${item.reservaPublicId}`} className="font-semibold text-slate-900 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-300">{item.numeroReserva}</Link>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${item.fiscalStatus === "ready" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300" : item.fiscalStatus === "override" ? "bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300" : "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-300"}`}>
-                    {item.fiscalStatus === "ready" ? <CheckCircle2 className="h-3 w-3" /> : item.fiscalStatus === "override" ? <ShieldAlert className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                    {item.fiscalStatusLabel}
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${item.fiscalStatus === "ready" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300" : item.fiscalStatus === "override" ? "bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300" : item.fiscalStatus === "in_progress" ? "bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300" : "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-300"}`}
+                    role={item.fiscalStatus === "in_progress" ? "status" : undefined}
+                    aria-live={item.fiscalStatus === "in_progress" ? "polite" : undefined}
+                  >
+                    {item.fiscalStatus === "ready" ? <CheckCircle2 className="h-3 w-3" aria-hidden="true" /> : item.fiscalStatus === "in_progress" ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : item.fiscalStatus === "override" ? <ShieldAlert className="h-3 w-3" aria-hidden="true" /> : <AlertCircle className="h-3 w-3" aria-hidden="true" />}
+                    {item.fiscalStatus === "in_progress" ? "Facturando…" : item.fiscalStatusLabel}
                   </span>
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">{item.customerName}</div>
@@ -91,7 +95,13 @@ export function WorkItemSection({ status, onStatusChange, items, onInvoice, sear
               </div>
 
               <div className="flex justify-end">
-                <button type="button" onClick={() => onInvoice(item)} disabled={item.fiscalStatus === "blocked"} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${item.fiscalStatus === "override" ? "bg-amber-500 text-white hover:bg-amber-600" : item.fiscalStatus === "ready" ? "bg-indigo-600 text-white hover:bg-indigo-700" : "cursor-not-allowed bg-slate-100 text-slate-400"}`}>
+                <button
+                  type="button"
+                  onClick={() => onInvoice(item)}
+                  disabled={item.fiscalStatus === "blocked" || item.fiscalStatus === "in_progress"}
+                  title={item.fiscalStatus === "in_progress" ? "Hay una factura en proceso para esta reserva" : undefined}
+                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${item.fiscalStatus === "override" ? "bg-amber-500 text-white hover:bg-amber-600" : item.fiscalStatus === "ready" ? "bg-indigo-600 text-white hover:bg-indigo-700" : "cursor-not-allowed bg-slate-100 text-slate-400"}`}
+                >
                   <Receipt className="h-4 w-4" />
                   {item.fiscalStatus === "override" ? "Emitir con autorizacion" : "Emitir en AFIP"}
                 </button>
@@ -135,9 +145,20 @@ export function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDown
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-900 dark:text-white">{getInvoiceLabel(invoice.tipoComprobante)}</span>
                   {invoice.wasForced && <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:bg-amber-900/20 dark:text-amber-300">Excepcion</span>}
-                  <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${invoice.resultado === "A" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300" : invoice.resultado === "R" ? "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800"}`}>
-                    {invoice.resultado === "A" ? "Aprobado" : invoice.resultado === "R" ? "Rechazado" : "En proceso"}
-                  </span>
+                  {invoice.annulmentStatus === "Pending" ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:bg-amber-900/20 dark:text-amber-300"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                      Anulando…
+                    </span>
+                  ) : (
+                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${invoice.resultado === "A" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300" : invoice.resultado === "R" ? "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800"}`}>
+                      {invoice.resultado === "A" ? "Aprobado" : invoice.resultado === "R" ? "Rechazado" : "En proceso"}
+                    </span>
+                  )}
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">{invoice.numeroReserva || "Sin reserva"} · {invoice.customerName || "Consumidor Final"}</div>
                 <div className="text-xs text-slate-400">{formatDate(invoice.createdAt)} · #{invoice.numeroComprobante?.toString().padStart(8, "0") || "--------"}</div>
@@ -151,11 +172,13 @@ export function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDown
                   <>
                     <button type="button" onClick={() => onViewPdf(invoice)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Ver PDF</button>
                     <button type="button" onClick={() => onDownloadPdf(invoice)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Descargar</button>
-                    {![2, 3, 7, 8, 12, 13, 52, 53].includes(invoice.tipoComprobante) && <button type="button" onClick={() => onAnnulInvoice(invoice)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">Anular</button>}
+                    {![2, 3, 7, 8, 12, 13, 52, 53].includes(invoice.tipoComprobante) && invoice.annulmentStatus !== "Pending" && (
+                      <button type="button" onClick={() => onAnnulInvoice(invoice)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">Anular</button>
+                    )}
                   </>
-                ) : (
+                ) : invoice.resultado !== "PENDING" ? (
                   <button type="button" onClick={() => onRetryInvoice(invoice)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">Reintentar</button>
-                )}
+                ) : null}
                 {invoice.reservaPublicId && <Link to={`/reservas/${invoice.reservaPublicId}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800" title="Ver reserva"><ExternalLink className="h-4 w-4" /></Link>}
               </div>
             </div>

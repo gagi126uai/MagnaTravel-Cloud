@@ -788,21 +788,31 @@ export default function CustomerAccountPage() {
                           {formatCurrency(invoice.importeTotal)}
                         </DataGridCell>
                         <DataGridCell align="center">
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                              invoice.resultado === "A"
-                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                          {invoice.annulmentStatus === "Pending" ? (
+                            <span
+                              className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                              role="status"
+                              aria-live="polite"
+                            >
+                              Anulando…
+                            </span>
+                          ) : (
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                invoice.resultado === "A"
+                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                  : invoice.resultado === "R"
+                                  ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
+                                  : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                              }`}
+                            >
+                              {invoice.resultado === "A"
+                                ? "Aprobado"
                                 : invoice.resultado === "R"
-                                ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
-                                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                            }`}
-                          >
-                            {invoice.resultado === "A"
-                              ? "Aprobado"
-                              : invoice.resultado === "R"
-                              ? "Rechazado"
-                              : "En proceso"}
-                          </span>
+                                ? "Rechazado"
+                                : "En proceso"}
+                            </span>
+                          )}
                         </DataGridCell>
                         <DataGridActionCell>
                           <button
@@ -831,21 +841,31 @@ export default function CustomerAccountPage() {
                     <MobileRecordCard
                       key={getPublicId(invoice)}
                       statusSlot={
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                            invoice.resultado === "A"
-                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        invoice.annulmentStatus === "Pending" ? (
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            Anulando…
+                          </span>
+                        ) : (
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                              invoice.resultado === "A"
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                : invoice.resultado === "R"
+                                ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
+                                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                            }`}
+                          >
+                            {invoice.resultado === "A"
+                              ? "Aprobado"
                               : invoice.resultado === "R"
-                              ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
-                              : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                          }`}
-                        >
-                          {invoice.resultado === "A"
-                            ? "Aprobado"
-                            : invoice.resultado === "R"
-                            ? "Rechazado"
-                            : "En proceso"}
-                        </span>
+                              ? "Rechazado"
+                              : "En proceso"}
+                          </span>
+                        )
                       }
                       title={formatInvoiceNumber(invoice)}
                       subtitle={formatInvoiceType(invoice)}
