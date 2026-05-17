@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Errors;
 
 namespace TravelApi.Middleware;
@@ -20,6 +21,39 @@ public class GlobalExceptionHandler : IExceptionHandler
         Exception exception,
         CancellationToken cancellationToken)
     {
+        // FC1 (review BR3, 2026-05-14): los CHECK constraints del modulo de
+        // cancelacion / refund (PG SqlState 23514) son re-lanzados como
+        // BusinessInvariantViolationException por el SaveChangesInterceptor.
+        // Aca se mapean a 409 Conflict ANTES de pasar por el clasificador de
+        // "database unavailable", que sino los confundiria con un 503.
+        if (exception is BusinessInvariantViolationException invariant)
+        {
+            _logger.LogWarning(exception,
+                "Business invariant violated: {Invariant} ({Constraint})",
+                invariant.InvariantCode,
+                invariant.ConstraintName);
+
+            var problem = new ProblemDetails
+            {
+                Status = StatusCodes.Status409Conflict,
+                Title = "Operacion rechazada por una regla de negocio.",
+                Detail = invariant.Message,
+            };
+
+            // Los codigos de invariante y constraint van como extensions para que
+            // el frontend pueda decidir si mostrar un copy especifico o un link a
+            // ayuda. NO incluimos InnerException — puede contener nombres de columna.
+            if (invariant.InvariantCode is not null)
+                problem.Extensions["invariantCode"] = invariant.InvariantCode;
+            if (invariant.ConstraintName is not null)
+                problem.Extensions["constraintName"] = invariant.ConstraintName;
+            problem.Extensions["code"] = "business_invariant_violation";
+
+            httpContext.Response.StatusCode = problem.Status.Value;
+            await httpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
+            return true;
+        }
+
         _logger.LogError(exception, "Exception occurred: {Message}", exception.Message);
 
         var problemDetails = DatabaseExceptionClassifier.IsDatabaseUnavailable(exception)

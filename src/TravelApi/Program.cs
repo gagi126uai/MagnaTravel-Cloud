@@ -137,7 +137,13 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+// FC1 (review BR3, 2026-05-14): interceptor que traduce CHECK violations
+// de Postgres (SqlState 23514) a BusinessInvariantViolationException -> HTTP 409
+// con mensaje en espanol via GlobalExceptionHandler. Stateless, scoped junto al
+// DbContext para asegurar que se enganche en todos los SaveChangesAsync.
+builder.Services.AddSingleton<BusinessInvariantInterceptor>();
+
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
     options.UseNpgsql(connectionString, o =>
@@ -145,6 +151,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
         o.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
     });
+    options.AddInterceptors(sp.GetRequiredService<BusinessInvariantInterceptor>());
 });
 
 // C17: MassTransit + EntityFramework Outbox.
