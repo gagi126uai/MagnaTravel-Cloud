@@ -54,6 +54,9 @@ public sealed class OwnershipResolver : IOwnershipResolver
             OwnedEntity.Voucher => await ResolveVoucherResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.Passenger => await ResolvePassengerResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.Assignment => await ResolveAssignmentResponsibleAsync(publicId, legacyId, cancellationToken),
+            // FC1.2.0 v3 (2026-05-17): nuevas entidades del modulo de cancelacion/refund.
+            OwnedEntity.BookingCancellation => await ResolveBookingCancellationResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.ClientCreditEntry => await ResolveClientCreditEntryResponsibleAsync(publicId, legacyId, cancellationToken),
             _ => null,
         };
 
@@ -193,6 +196,58 @@ public sealed class OwnershipResolver : IOwnershipResolver
         return query
             .Where(a => a.Passenger != null && a.Passenger.Reserva != null)
             .Select(a => a.Passenger!.Reserva!.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// FC1.2.0 v3 (2026-05-17): BookingCancellation -> Reserva.ResponsibleUserId.
+    /// La cancelacion es propiedad logica del responsable de la reserva que se
+    /// cancela: si Pedro es responsable de la reserva, Pedro es responsable de
+    /// cancelarla (o un admin con ReservasViewAll/ReservasCancel global).
+    /// </summary>
+    private Task<string?> ResolveBookingCancellationResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.BookingCancellations.AsNoTracking().AsQueryable();
+        if (publicId.HasValue)
+        {
+            query = query.Where(b => b.PublicId == publicId.Value);
+        }
+        else
+        {
+            query = query.Where(b => b.Id == legacyId!.Value);
+        }
+        // BookingCancellation.Reserva siempre es required en el modelo (FK NOT NULL),
+        // pero defendemos con un null-check por si una query incompleta hace skip.
+        return query
+            .Where(b => b.Reserva != null)
+            .Select(b => b.Reserva!.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// FC1.2.0 v3 (2026-05-17): ClientCreditEntry hereda ownership via su
+    /// <see cref="ClientCreditEntry.BookingCancellation"/> y, finalmente, via la
+    /// <see cref="BookingCancellation.Reserva"/>.
+    ///
+    /// **Verificado**: Customer.cs NO tiene ResponsibleUserId (grep 2026-05-17).
+    /// Si en el futuro la ficha de cliente gana un responsable comercial, este
+    /// resolver puede agregar el fallback `entry.Customer.ResponsibleUserId`
+    /// como primera opcion, manteniendo BC->Reserva como segundo fallback.
+    /// </summary>
+    private Task<string?> ResolveClientCreditEntryResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.ClientCreditEntries.AsNoTracking().AsQueryable();
+        if (publicId.HasValue)
+        {
+            query = query.Where(e => e.PublicId == publicId.Value);
+        }
+        else
+        {
+            query = query.Where(e => e.Id == legacyId!.Value);
+        }
+        return query
+            .Where(e => e.BookingCancellation != null && e.BookingCancellation.Reserva != null)
+            .Select(e => e.BookingCancellation.Reserva.ResponsibleUserId)
             .FirstOrDefaultAsync(ct);
     }
 }

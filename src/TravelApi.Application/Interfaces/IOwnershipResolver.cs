@@ -14,6 +14,23 @@ public enum OwnedEntity
     Voucher,
     Passenger,
     Assignment,
+
+    // FC1.2.0 v3 (2026-05-17): entidades nuevas del modulo de cancelacion/refund.
+    // OperatorRefundReceived NO se incluye a proposito: es back-office sin
+    // ownership por reserva (un mismo ingreso cubre N BCs). Su autorizacion
+    // va por permission (CajaEdit/CobranzasEdit) en el controller.
+
+    /// <summary>
+    /// Cancelacion de reserva. Hereda el responsable de la <see cref="BookingCancellation.Reserva"/>.
+    /// </summary>
+    BookingCancellation,
+
+    /// <summary>
+    /// Saldo a favor del cliente. Hereda el responsable de la
+    /// <see cref="ClientCreditEntry.BookingCancellation"/>.<see cref="BookingCancellation.Reserva"/>
+    /// (Customer no tiene ResponsibleUserId hoy — confirmado por grep 2026-05-17).
+    /// </summary>
+    ClientCreditEntry,
 }
 
 /// <summary>

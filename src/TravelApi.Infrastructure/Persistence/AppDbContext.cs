@@ -593,6 +593,20 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(i => i.AnnulledByUserId)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            // FC1.2.0 v3 §10.1 (BR-V2-03, 2026-05-17): cross-reference fiscal.
+            // Restrict para preservar trazabilidad: no permitir borrar el
+            // ApprovalRequest si hay Invoices anuladas vinculadas. Si fuera
+            // SetNull, perderiamos el rastro del approval que valido la NC.
+            entity.HasOne(i => i.AnnulmentApprovalRequest)
+                  .WithMany()
+                  .HasForeignKey(i => i.AnnulmentApprovalRequestId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Indice nullable para queries de auditoria fiscal:
+            //   "todas las NCs aprobadas por approval X" / contador.
+            entity.HasIndex(i => i.AnnulmentApprovalRequestId)
+                  .HasDatabaseName("IX_Invoices_AnnulmentApprovalRequestId");
         });
 
         // InvoiceItem (Singular table from Program.cs)

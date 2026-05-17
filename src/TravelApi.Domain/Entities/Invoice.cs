@@ -66,6 +66,29 @@ public class Invoice : IHasPublicId
     /// </summary>
     public DateTime? LastArcaAttemptAt { get; set; }
 
+    /// <summary>
+    /// FC1.2.0 v3 §10.1 (BR-V2-03, 2026-05-17): cross-reference fiscal del
+    /// approval que autorizo la anulacion.
+    ///
+    /// **Por que existe**: cuando <c>BookingCancellationService.ConfirmAsync</c>
+    /// dispara la NC con <c>requesterIsAdmin: true</c>, el approval normal de
+    /// tipo <c>InvoiceAnnulment</c> se omite — el <c>InvariantOverride</c>
+    /// aprobado para el BC cubre el caso. Para que la auditoria fiscal pueda
+    /// trazar "quien aprobo esta annulacion", guardamos aca el FK al
+    /// <see cref="ApprovalRequest"/> que valido la operacion.
+    ///
+    /// **Null = annulacion legacy o flujo back-office sin BC** (no cubierto por
+    /// FC1.2): el campo es opcional para no romper datos historicos. La
+    /// trazabilidad alternativa esta en <see cref="AnnulmentReason"/> (prefijo
+    /// "BC override [publicId]:" cuando aplica) y en el AuditLog.
+    ///
+    /// **OnDelete: Restrict** — si alguien intenta borrar el ApprovalRequest
+    /// vinculado, la BD rechaza (preserva trazabilidad).
+    /// Ver §13 OPEN QUESTION OPS-FISCAL-001 del plan tactico.
+    /// </summary>
+    public int? AnnulmentApprovalRequestId { get; set; }
+    public ApprovalRequest? AnnulmentApprovalRequest { get; set; }
+
     [Column(TypeName = "decimal(18,2)")]
     public decimal OutstandingBalanceAtIssuance { get; set; }
 

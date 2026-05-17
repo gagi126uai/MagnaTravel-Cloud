@@ -256,4 +256,240 @@ public class OwnershipResolverTests
 
         Assert.False(result);
     }
+
+    // ============================================================
+    // FC1.2.0 v3 (2026-05-17): nuevos handlers OwnedEntity.BookingCancellation
+    // y OwnedEntity.ClientCreditEntry. Reusan el patron Reserva: heredan el
+    // ResponsibleUserId via la Reserva padre.
+    // ============================================================
+
+    /// <summary>
+    /// Helper minimo para crear un BookingCancellation con todas las FK requeridas.
+    /// Los CHECK constraints SQL (INV-118 fiscal snapshot) los aplica solo Postgres,
+    /// no InMemory, asi que aca podemos construir un BC en Drafted sin FiscalSnapshot
+    /// completo y testear el resolver puro.
+    /// </summary>
+    private static async Task<BookingCancellation> SeedBookingCancellationAsync(
+        AppDbContext ctx,
+        Reserva reserva,
+        int bcId = 1000)
+    {
+        var customer = new Customer
+        {
+            Id = bcId + 1,
+            PublicId = Guid.NewGuid(),
+            FullName = "Cliente Test",
+            TaxCondition = "Consumidor Final",
+        };
+        ctx.Customers.Add(customer);
+
+        var supplier = new Supplier
+        {
+            Id = bcId + 2,
+            PublicId = Guid.NewGuid(),
+            Name = "Operador Test",
+        };
+        ctx.Suppliers.Add(supplier);
+
+        var invoice = new Invoice
+        {
+            Id = bcId + 3,
+            PublicId = Guid.NewGuid(),
+            ReservaId = reserva.Id,
+            ImporteTotal = 1000m,
+        };
+        ctx.Invoices.Add(invoice);
+        await ctx.SaveChangesAsync();
+
+        var bc = new BookingCancellation
+        {
+            Id = bcId,
+            PublicId = Guid.NewGuid(),
+            ReservaId = reserva.Id,
+            CustomerId = customer.Id,
+            SupplierId = supplier.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Reason = "test",
+            DraftedByUserId = "user-vendor",
+            FiscalSnapshot = new FiscalSnapshot(),
+        };
+        ctx.BookingCancellations.Add(bc);
+        await ctx.SaveChangesAsync();
+        return bc;
+    }
+
+    [Fact]
+    public async Task BookingCancellation_resolves_via_parent_reserva_owner_match()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, "user-1");
+        var bc = await SeedBookingCancellationAsync(ctx, reserva);
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-1", OwnedEntity.BookingCancellation, bc.PublicId.ToString());
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task BookingCancellation_owner_mismatch_returns_false()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, "user-1");
+        var bc = await SeedBookingCancellationAsync(ctx, reserva);
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-2", OwnedEntity.BookingCancellation, bc.PublicId.ToString());
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task BookingCancellation_with_legacy_reserva_without_responsible_returns_false()
+    {
+        // Decision Gaston (B1.15): reservas legacy sin ResponsibleUserId NO
+        // asumen ownership para nadie. Vendedor con permiso ReservasView no
+        // puede cancelar lo que no esta backfilled.
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, responsibleUserId: null);
+        var bc = await SeedBookingCancellationAsync(ctx, reserva);
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-1", OwnedEntity.BookingCancellation, bc.PublicId.ToString());
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task BookingCancellation_not_found_returns_false()
+    {
+        await using var ctx = BuildContext();
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-1", OwnedEntity.BookingCancellation, Guid.NewGuid().ToString());
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task BookingCancellation_lookup_by_legacy_id_works()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, "user-1");
+        var bc = await SeedBookingCancellationAsync(ctx, reserva, bcId: 9999);
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-1", OwnedEntity.BookingCancellation, "9999");
+
+        Assert.True(result);
+    }
+
+    private static async Task<ClientCreditEntry> SeedClientCreditEntryAsync(
+        AppDbContext ctx,
+        BookingCancellation bc,
+        int entryId = 2000)
+    {
+        // OperatorRefund minimo para satisfacer la FK del Allocation.
+        var refund = new OperatorRefundReceived
+        {
+            Id = entryId + 1,
+            PublicId = Guid.NewGuid(),
+            SupplierId = bc.SupplierId,
+            ReceivedAmount = 5000m,
+            Currency = "ARS",
+            Method = "Transfer",
+            ReceivedByUserId = "user-cashier",
+            ReceivedByUserName = "Cashier",
+        };
+        ctx.OperatorRefundReceived.Add(refund);
+
+        var allocation = new OperatorRefundAllocation
+        {
+            Id = entryId + 2,
+            PublicId = Guid.NewGuid(),
+            OperatorRefundReceivedId = refund.Id,
+            BookingCancellationId = bc.Id,
+            GrossAmount = 1000m,
+            NetAmount = 1000m,
+            CreatedByUserId = "user",
+        };
+        ctx.OperatorRefundAllocations.Add(allocation);
+        await ctx.SaveChangesAsync();
+
+        var entry = new ClientCreditEntry
+        {
+            Id = entryId,
+            PublicId = Guid.NewGuid(),
+            CustomerId = bc.CustomerId,
+            OperatorRefundAllocationId = allocation.Id,
+            BookingCancellationId = bc.Id,
+            CreditedAmount = 1000m,
+            RemainingBalance = 1000m,
+        };
+        ctx.ClientCreditEntries.Add(entry);
+        await ctx.SaveChangesAsync();
+        return entry;
+    }
+
+    [Fact]
+    public async Task ClientCreditEntry_resolves_via_bc_and_reserva_owner_match()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, "user-1");
+        var bc = await SeedBookingCancellationAsync(ctx, reserva);
+        var entry = await SeedClientCreditEntryAsync(ctx, bc);
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-1", OwnedEntity.ClientCreditEntry, entry.PublicId.ToString());
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task ClientCreditEntry_owner_mismatch_returns_false()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, "user-1");
+        var bc = await SeedBookingCancellationAsync(ctx, reserva);
+        var entry = await SeedClientCreditEntryAsync(ctx, bc);
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-9", OwnedEntity.ClientCreditEntry, entry.PublicId.ToString());
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task ClientCreditEntry_with_legacy_reserva_without_responsible_returns_false()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, responsibleUserId: null);
+        var bc = await SeedBookingCancellationAsync(ctx, reserva);
+        var entry = await SeedClientCreditEntryAsync(ctx, bc);
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-1", OwnedEntity.ClientCreditEntry, entry.PublicId.ToString());
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task ClientCreditEntry_not_found_returns_false()
+    {
+        await using var ctx = BuildContext();
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync(
+            "user-1", OwnedEntity.ClientCreditEntry, Guid.NewGuid().ToString());
+
+        Assert.False(result);
+    }
 }
