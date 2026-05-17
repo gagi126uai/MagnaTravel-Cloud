@@ -32,4 +32,34 @@ public enum ApprovalRequestType
     /// La fila se preserva (Status -> Voided) para mantener numeracion correlativa.
     /// </summary>
     ReceiptVoidance = 6,
+
+    /// <summary>
+    /// FC1 (ADR-002, 2026-05-13): override generico de un invariante de negocio
+    /// (patron <c>IBusinessInvariant</c> de ADR-001 review B4). Razon obligatoria
+    /// >= 20 caracteres + audit reforzado. Usado por flujos donde el dominio
+    /// permite forzar la operacion bajo responsabilidad explicita.
+    /// </summary>
+    InvariantOverride = 7,
+
+    /// <summary>
+    /// FC1 (ADR-002, 2026-05-13): solicitud al operador para que devuelva fondos
+    /// fisicos sobre una cancelacion (T2 del flujo de cancelacion). Es un trigger
+    /// administrativo, no implica salida de caja.
+    /// </summary>
+    ProviderRefundRequest = 8,
+
+    /// <summary>
+    /// FC1 (ADR-002, 2026-05-13): el cliente devuelve dinero ya retirado y la
+    /// agencia lo re-acredita al operador. Diferenciado de
+    /// <see cref="MisassociationReversal"/> porque aca SI hubo egreso fisico previo.
+    /// Requiere audit reforzado (ver ADR-002 §2.10).
+    /// </summary>
+    ClientRefundReversal = 9,
+
+    /// <summary>
+    /// FC1 (ADR-002, 2026-05-13): correccion administrativa cuando un cashier
+    /// asocio un <see cref="ApprovalRequestType"/> equivocado al BookingCancellation.
+    /// Allocation original se marca <c>IsVoided</c> y se crea una nueva (ver ADR-002 §2.10).
+    /// </summary>
+    MisassociationReversal = 10,
 }

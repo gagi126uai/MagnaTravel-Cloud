@@ -56,6 +56,16 @@ public class Invoice : IHasPublicId
     public string? AnnulmentReason { get; set; }
     public AnnulmentStatus AnnulmentStatus { get; set; } = AnnulmentStatus.None;
 
+    /// <summary>
+    /// FC1 (ADR-002 §2.6, 2026-05-13): timestamp del ultimo intento de
+    /// consulta/anulacion contra ARCA. Lo usa el job recurrente
+    /// <c>ArcaAnnulmentReconciliationJob</c> para detectar facturas en
+    /// <see cref="AnnulmentStatus.Pending"/> que pasaron del umbral
+    /// configurado (<c>ArcaStaleAnnulmentThresholdMinutes</c>) sin respuesta
+    /// y reintentar la consulta de estado a AFIP. Null = aun no se intento.
+    /// </summary>
+    public DateTime? LastArcaAttemptAt { get; set; }
+
     [Column(TypeName = "decimal(18,2)")]
     public decimal OutstandingBalanceAtIssuance { get; set; }
 

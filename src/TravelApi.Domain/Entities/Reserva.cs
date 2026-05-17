@@ -8,9 +8,13 @@ namespace TravelApi.Domain.Entities;
 /// y los nombres de los miembros (ingles) reflejan la semantica funcional:
 ///  - Budget: presupuesto entregado al cliente, sin compromisos con proveedor.
 ///  - Confirmed: confirmada con proveedor, en gestion (cobro, vouchers, etc).
-///  - Traveling: el cliente ya esta viajando (StartDate <= hoy <= EndDate).
+///  - Traveling: el cliente ya esta viajando (StartDate &lt;= hoy &lt;= EndDate).
 ///  - Closed: viaje terminado y cierre administrativo completo (Balance == 0).
 ///  - Cancelled: cancelada antes de viajar.
+///  - PendingOperatorRefund: reserva ya cancelada con el cliente (NC fiscal
+///    emitida o en curso) que sigue esperando la devolucion fisica del operador.
+///    Estado introducido por ADR-002 (FC1) — el dinero todavia no llego, por eso
+///    aparece en alertas/deuda pero no se reporta como ingreso.
 ///
 /// "Archived" es un estado adicional usado para soft-delete de reservas viejas
 /// y se referencia como literal "Archived" (legacy) — no esta en este enum.
@@ -25,6 +29,14 @@ public static class EstadoReserva
     public const string Traveling = "Traveling";
     public const string Closed = "Closed";
     public const string Cancelled = "Cancelled";
+
+    /// <summary>
+    /// ADR-002 FC1 (2026-05-13): cancelacion con el cliente completada pero
+    /// el operador aun no devolvio el dinero. La reserva ya no es operativa,
+    /// pero queda visible en alertas de deuda y excluida de revenue queries
+    /// hasta que llegue el refund (T2 del flujo) o se marque AbandonedByOperator.
+    /// </summary>
+    public const string PendingOperatorRefund = "PendingOperatorRefund";
 }
 
 public class Reserva : IHasPublicId

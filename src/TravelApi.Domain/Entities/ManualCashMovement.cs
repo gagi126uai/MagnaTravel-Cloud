@@ -45,4 +45,28 @@ public class ManualCashMovement : IHasPublicId
 
     public int? RelatedSupplierId { get; set; }
     public Supplier? RelatedSupplier { get; set; }
+
+    /// <summary>
+    /// FC1 (ADR-002 §2.3.2 / §3.1, 2026-05-13): link al retiro de saldo del
+    /// cliente que origino este egreso fisico. Cuando se genera un retiro de
+    /// tipo <c>PhysicalCash</c>, <c>Transfer</c> o <c>AppliedToNewBooking</c>,
+    /// el service crea (en la misma transaccion) un <see cref="ManualCashMovement"/>
+    /// con direction <c>Expense</c> y este FK seteado. De esta forma el egreso
+    /// aparece en el Libro de Caja (<c>TreasuryService.GetCashSummaryAsync</c>)
+    /// y se cierra el bug INV-CONT-09 (NC sin reflejo en caja).
+    /// Null = movimiento no relacionado con el modulo de cancelacion.
+    /// </summary>
+    public int? ClientCreditWithdrawalId { get; set; }
+    public ClientCreditWithdrawal? ClientCreditWithdrawal { get; set; }
+
+    /// <summary>
+    /// FC1 (ADR-002 §2.3.2, 2026-05-13): link al ingreso fisico recibido del
+    /// operador (T2 del flujo de cancelacion). Cuando el cashier registra un
+    /// <see cref="OperatorRefundReceived"/>, el service crea (en la misma
+    /// transaccion) un <see cref="ManualCashMovement"/> con direction
+    /// <c>Income</c> y este FK seteado, para que el ingreso aparezca en caja.
+    /// Null = movimiento no relacionado con un refund de operador.
+    /// </summary>
+    public int? OperatorRefundReceivedId { get; set; }
+    public OperatorRefundReceived? OperatorRefundReceived { get; set; }
 }

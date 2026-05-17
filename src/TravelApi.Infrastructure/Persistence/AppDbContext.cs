@@ -303,6 +303,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
     public DbSet<ApprovalPolicy> ApprovalPolicies => Set<ApprovalPolicy>();
 
+    // FC1 (ADR-002, 2026-05-13): modulo cancelacion/refund — 3 aggregate roots
+    // + 3 children. Configuracion fluida en OnModelCreating (CHECK constraints,
+    // unique partial index y xmin concurrency token en la migracion EF).
+    public DbSet<BookingCancellation> BookingCancellations => Set<BookingCancellation>();
+    public DbSet<OperatorRefundReceived> OperatorRefundReceived => Set<OperatorRefundReceived>();
+    public DbSet<OperatorRefundAllocation> OperatorRefundAllocations => Set<OperatorRefundAllocation>();
+    public DbSet<DeductionLine> DeductionLines => Set<DeductionLine>();
+    public DbSet<ClientCreditEntry> ClientCreditEntries => Set<ClientCreditEntry>();
+    public DbSet<ClientCreditWithdrawal> ClientCreditWithdrawals => Set<ClientCreditWithdrawal>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1050,6 +1060,254 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.ToTable("ApprovalPolicies");
             entity.HasIndex(p => p.RequestType).IsUnique();
+        });
+
+        ConfigureCancellationModule(modelBuilder);
+    }
+
+    /// <summary>
+    /// FC1 (ADR-002, 2026-05-13): configuracion EF del modulo de cancelacion/refund.
+    /// 6 entidades nuevas + relaciones explicitas + concurrency tokens (xmin) +
+    /// owned entity FiscalSnapshot. Los CHECK constraints SQL y el unique partial
+    /// index se aplican via <c>migrationBuilder.Sql(...)</c> en la migracion porque
+    /// EF Core no tiene API fluida para CHECK ni para indices WHERE.
+    ///
+    /// IMPORTANTE — UseXminAsConcurrencyToken (Npgsql 8.x):
+    ///  - Crea una shadow property <c>uint</c> mapeada a la columna pseudo-de-sistema
+    ///    <c>xmin</c> de Postgres (id de transaccion que modifico la fila).
+    ///  - EF la usa como concurrency token: si dos sesiones concurrentes leen el mismo
+    ///    BC y ambas intentan SaveChanges, la segunda lanza
+    ///    <c>DbUpdateConcurrencyException</c>. El caller decide reintentar o reportar 409.
+    ///  - No hay que agregar columna en la entidad ni en la migracion — xmin existe
+    ///    en TODAS las tablas Postgres automaticamente.
+    /// </summary>
+    private static void ConfigureCancellationModule(ModelBuilder modelBuilder)
+    {
+        // Public IDs (Guid uuid en BD + unique index, patron del repo).
+        ConfigurePublicEntity<BookingCancellation>(modelBuilder);
+        ConfigurePublicEntity<OperatorRefundReceived>(modelBuilder);
+        ConfigurePublicEntity<OperatorRefundAllocation>(modelBuilder);
+        ConfigurePublicEntity<DeductionLine>(modelBuilder);
+        ConfigurePublicEntity<ClientCreditEntry>(modelBuilder);
+        ConfigurePublicEntity<ClientCreditWithdrawal>(modelBuilder);
+
+        // ===== BookingCancellation (aggregate root) =====
+        modelBuilder.Entity<BookingCancellation>(entity =>
+        {
+            entity.ToTable("BookingCancellations");
+            entity.Property(b => b.Status).HasConversion<int>();
+            entity.Property(b => b.Reason).HasMaxLength(1000).IsRequired();
+            entity.Property(b => b.DraftedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(b => b.DraftedByUserName).HasMaxLength(200);
+            entity.Property(b => b.ConfirmedByUserId).HasMaxLength(450);
+            entity.Property(b => b.ConfirmedByUserName).HasMaxLength(200);
+            entity.Property(b => b.AmountPaidAtCancellation).HasPrecision(18, 2);
+            entity.Property(b => b.EstimatedRefundAmount).HasPrecision(18, 2);
+            entity.Property(b => b.ReceivedRefundAmount).HasPrecision(18, 2);
+
+            // INV-081: una sola cancelacion por reserva. Adicionalmente el CHECK
+            // de Reservas.Status garantiza que el valor PendingOperatorRefund
+            // sea valido (ver migracion SQL).
+            entity.HasIndex(b => b.ReservaId).IsUnique();
+
+            // INV-100 (review BR4, 2026-05-14): la factura original que se anula no
+            // puede pertenecer a dos cancelaciones distintas. Sin este UNIQUE seria
+            // posible reabrir una cancelacion sobre la misma factura A y generar
+            // dos NCs huerfanas — incidente fiscal grave.
+            entity.HasIndex(b => b.OriginatingInvoiceId)
+                  .IsUnique()
+                  .HasDatabaseName("IX_BookingCancellations_OriginatingInvoiceId");
+
+            entity.HasOne(b => b.Reserva)
+                  .WithMany()
+                  .HasForeignKey(b => b.ReservaId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(b => b.Customer)
+                  .WithMany()
+                  .HasForeignKey(b => b.CustomerId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(b => b.Supplier)
+                  .WithMany()
+                  .HasForeignKey(b => b.SupplierId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(b => b.OriginatingInvoice)
+                  .WithMany()
+                  .HasForeignKey(b => b.OriginatingInvoiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // NC opcional: existe solo despues de T0. SetNull para que el rollback
+            // de una NC (caso raro) no rompa el aggregate.
+            entity.HasOne(b => b.CreditNoteInvoice)
+                  .WithMany()
+                  .HasForeignKey(b => b.CreditNoteInvoiceId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            // FiscalSnapshot owned: columnas con prefijo "FiscalSnapshot_" en la
+            // misma tabla. ExtrasJson queda como text — no se mapea como jsonb
+            // por ahora (revisitar cuando haya casos de filtrado por contenido).
+            entity.OwnsOne(b => b.FiscalSnapshot, snap =>
+            {
+                snap.Property(s => s.ExchangeRateAtOriginalInvoice).HasPrecision(18, 6);
+                snap.Property(s => s.ExchangeRateAtOperatorRefundReceipt).HasPrecision(18, 6);
+                snap.Property(s => s.ExchangeRateAtClientWithdrawal).HasPrecision(18, 6);
+                snap.Property(s => s.Source).HasConversion<int>();
+            });
+
+            // Concurrency lock-free (ADR-002 §2.5 / B11). Pre-requisito FC1.1
+            // verificado: Npgsql 8.x soporta xmin nativamente.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== OperatorRefundReceived (aggregate root) =====
+        modelBuilder.Entity<OperatorRefundReceived>(entity =>
+        {
+            entity.ToTable("OperatorRefundsReceived");
+            entity.Property(r => r.ReceivedAmount).HasPrecision(18, 2);
+            entity.Property(r => r.AllocatedAmount).HasPrecision(18, 2);
+            entity.Property(r => r.ExchangeRateAtReceipt).HasPrecision(18, 6);
+            entity.Property(r => r.Method).HasMaxLength(50).IsRequired();
+            entity.Property(r => r.Reference).HasMaxLength(100);
+            entity.Property(r => r.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(r => r.ReceivedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(r => r.ReceivedByUserName).HasMaxLength(200).IsRequired();
+
+            entity.HasOne(r => r.Supplier)
+                  .WithMany()
+                  .HasForeignKey(r => r.SupplierId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(r => r.Allocations)
+                  .WithOne(a => a.Refund)
+                  .HasForeignKey(a => a.OperatorRefundReceivedId)
+                  // Restrict: si hay allocations historicas no se borra el ingreso fisico.
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(r => r.ReceivedAt);
+            entity.HasIndex(r => r.SupplierId);
+
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== OperatorRefundAllocation (relacion N:M con BC) =====
+        modelBuilder.Entity<OperatorRefundAllocation>(entity =>
+        {
+            entity.ToTable("OperatorRefundAllocations");
+            entity.Property(a => a.GrossAmount).HasPrecision(18, 2);
+            entity.Property(a => a.NetAmount).HasPrecision(18, 2);
+            entity.Property(a => a.CreatedByUserId).HasMaxLength(450).IsRequired();
+
+            entity.HasOne(a => a.BookingCancellation)
+                  .WithMany()
+                  .HasForeignKey(a => a.BookingCancellationId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Self-reference para la cadena "voids/reemplaza a" — SetNull para que
+            // un rollback de la nueva no destruya el rastro de la original voided.
+            entity.HasOne(a => a.VoidsAllocation)
+                  .WithMany()
+                  .HasForeignKey(a => a.VoidsAllocationId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasMany(a => a.Deductions)
+                  .WithOne(d => d.Allocation)
+                  .HasForeignKey(d => d.OperatorRefundAllocationId)
+                  // Cascade porque DeductionLine es child sin sentido sin la allocation.
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(a => a.BookingCancellationId);
+            // El unique partial index "WHERE NOT IsVoided" se aplica con SQL
+            // crudo en la migracion (EF no tiene API fluida para indices filtrados).
+        });
+
+        // ===== DeductionLine (child 1:N) =====
+        modelBuilder.Entity<DeductionLine>(entity =>
+        {
+            entity.ToTable("DeductionLines");
+            entity.Property(d => d.Kind).HasConversion<int>();
+            entity.Property(d => d.Amount).HasPrecision(18, 2);
+            entity.Property(d => d.CertificateNumber).HasMaxLength(50);
+            entity.Property(d => d.CertificatePdfUrl).HasMaxLength(500);
+            entity.Property(d => d.Jurisdiction).HasMaxLength(50);
+            entity.Property(d => d.ForeignCountryCode).HasMaxLength(2);
+            entity.Property(d => d.Description).HasMaxLength(500);
+            entity.Property(d => d.SupportingDocumentRef).HasMaxLength(200);
+            entity.Property(d => d.JustificationComment).HasMaxLength(1000);
+            entity.Property(d => d.Comment).HasMaxLength(1000);
+
+            entity.HasIndex(d => d.OperatorRefundAllocationId);
+            entity.HasIndex(d => d.Kind);
+        });
+
+        // ===== ClientCreditEntry (aggregate root, vive en Customer) =====
+        modelBuilder.Entity<ClientCreditEntry>(entity =>
+        {
+            entity.ToTable("ClientCreditEntries");
+            entity.Property(c => c.CreditedAmount).HasPrecision(18, 2);
+            entity.Property(c => c.RemainingBalance).HasPrecision(18, 2);
+
+            entity.HasOne(c => c.Customer)
+                  .WithMany()
+                  .HasForeignKey(c => c.CustomerId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.Allocation)
+                  .WithMany()
+                  .HasForeignKey(c => c.OperatorRefundAllocationId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.BookingCancellation)
+                  .WithMany()
+                  .HasForeignKey(c => c.BookingCancellationId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(c => c.Withdrawals)
+                  .WithOne(w => w.Entry)
+                  .HasForeignKey(w => w.ClientCreditEntryId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(c => c.CustomerId);
+            entity.HasIndex(c => new { c.CustomerId, c.IsFullyConsumed });
+
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== ClientCreditWithdrawal (child 1:N) =====
+        modelBuilder.Entity<ClientCreditWithdrawal>(entity =>
+        {
+            entity.ToTable("ClientCreditWithdrawals");
+            entity.Property(w => w.Amount).HasPrecision(18, 2);
+            entity.Property(w => w.Kind).HasConversion<int>();
+            entity.Property(w => w.ExecutedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(w => w.ExecutedByUserName).HasMaxLength(200).IsRequired();
+            entity.Property(w => w.ApprovalRequestId).HasMaxLength(64);
+
+            // SetNull: si el ManualCashMovement se anula, conservamos la fila de
+            // retiro pero perdemos el link al egreso fisico (auditable).
+            entity.HasOne(w => w.ManualCashMovement)
+                  .WithMany()
+                  .HasForeignKey(w => w.ManualCashMovementId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(w => w.ExecutedAt);
+        });
+
+        // ===== ManualCashMovement: 2 FKs nuevas hacia el modulo de cancelacion =====
+        // Estos linkean los egresos/ingresos fisicos generados por T2/T3 de modo
+        // que aparezcan en TreasuryService.GetCashSummaryAsync (bug INV-CONT-09).
+        modelBuilder.Entity<ManualCashMovement>(entity =>
+        {
+            entity.HasOne(m => m.ClientCreditWithdrawal)
+                  .WithMany()
+                  .HasForeignKey(m => m.ClientCreditWithdrawalId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(m => m.OperatorRefundReceived)
+                  .WithMany()
+                  .HasForeignKey(m => m.OperatorRefundReceivedId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
     }
 
