@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FC1 (2026-05-14): runsettings opcional para TravelApi.Tests.
+
+  Aplica TestCaseFilter Category!=Integration cuando se pasa explicitamente
+  via dotnet test ##settings src/TravelApi.Tests/tests.runsettings
+
+  Razones:
+   * Los tests con Trait("Category","Integration") requieren Docker Engine
+     activo (TestContainers levanta un Postgres real). En CI rapido / dev
+     local sin Docker, conviene excluirlos del comando dotnet test.
+
+  Como usarlo:
+   * Sin Docker (374 tests):
+       dotnet test ##settings src/TravelApi.Tests/tests.runsettings
+   * Solo integration (Docker arriba, 13 tests):
+       dotnet test ##filter "Category=Integration"
+   * Suite completa (387 tests, requiere Docker):
+       dotnet test
+
+  Nota: doble-hash en este texto representa el guion-guion del CLI, no se
+  puede escribir literal porque romperia el parser XML.
+-->
+<RunSettings>
+  <RunConfiguration>
+    <TestCaseFilter>Category!=Integration</TestCaseFilter>
+  </RunConfiguration>
+</RunSettings>

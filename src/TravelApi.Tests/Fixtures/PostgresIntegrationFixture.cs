@@ -1,0 +1,249 @@
+using Microsoft.EntityFrameworkCore;
+using Testcontainers.PostgreSql;
+using TravelApi.Infrastructure.Persistence;
+using Xunit;
+
+namespace TravelApi.Tests.Fixtures;
+
+/// <summary>
+/// FC1 (2026-05-14): fixture compartida (via <see cref="IClassFixture{T}"/>) que
+/// levanta un Postgres real en Docker para los tests de integracion del modulo
+/// de cancelacion/refund.
+///
+/// Por que TestContainers en vez de InMemory:
+///  - El modulo se apoya en CHECK constraints SQL (INV-084/085/100/112/118) y en
+///    el concurrency token <c>xmin</c> de Postgres. InMemory ignora las dos cosas,
+///    asi que los tests pasarian sin proteger las invariantes reales.
+///  - <see cref="BusinessInvariantInterceptor"/> mapea <c>SqlState='23514'</c>
+///    (check_violation) -> <see cref="Domain.Exceptions.BusinessInvariantViolationException"/>.
+///    Validar esto necesita una BD que efectivamente lance ese error.
+///
+/// Cross-platform (decision Gaston 2026-05-14):
+///  - TestContainers detecta el Docker Engine local (Docker Desktop en Windows /
+///    socket nativo en Linux), por eso esta misma clase corre identica en
+///    Windows dev y en el VPS Ubuntu. No hay paths hardcoded.
+///  - Imagen <c>postgres:16</c> (igual al <c>docker-compose.yml</c> del repo).
+///
+/// Lifecycle:
+///  - <see cref="InitializeAsync"/> arranca el container, espera healthcheck y
+///    construye el schema usando <c>db.Database.EnsureCreatedAsync()</c> + un
+///    batch SQL con los CHECK constraints SQL crudos del modulo FC1.
+///    Por que NO <c>MigrateAsync()</c>: el historial de migraciones del repo
+///    arranca creando una tabla <c>Reservas</c> que en produccion fue renombrada
+///    manualmente a <c>TravelFiles</c> (documentado en
+///    <c>reference_db_naming</c>). Migrar desde cero contra una BD limpia
+///    deja la tabla como <c>Reservas</c> y las migraciones posteriores rompen.
+///    <c>EnsureCreated</c> usa el modelo en memoria (que tiene
+///    <c>ToTable("TravelFiles")</c> via fluent) -> schema correcto.
+///    El trade-off: <c>EnsureCreated</c> no replica los CHECK SQL crudos de
+///    la migracion FC1; los aplicamos a mano despues. Sin esto los tests no
+///    podrian validar lo que vinieron a validar.
+///  - <see cref="DisposeAsync"/> detiene + elimina el container — todos los datos
+///    se descartan, no queda volumen residual.
+///  - <see cref="ResetDatabaseAsync"/> hace <c>TRUNCATE ... RESTART IDENTITY CASCADE</c>
+///    de las tablas tocadas por el modulo entre tests para mantenerlos
+///    independientes sin pagar el costo de levantar otro container.
+/// </summary>
+public sealed class PostgresIntegrationFixture : IAsyncLifetime
+{
+    /// <summary>
+    /// Imagen alineada con <c>docker-compose.yml</c> (servicio <c>db</c>). Cambios
+    /// de mayor version aqui obligan a verificar que las CHECK constraints SQL
+    /// del modulo sigan funcionando — Postgres conserva la semantica entre versiones
+    /// 14/15/16 pero conviene saberlo.
+    /// </summary>
+    private const string PostgresImage = "postgres:16";
+
+    private readonly PostgreSqlContainer _container;
+
+    public PostgresIntegrationFixture()
+    {
+        // Credenciales locales no sensibles — el container es efimero y solo
+        // expone su puerto al host de tests. NO se publican fuera del host.
+        _container = new PostgreSqlBuilder()
+            .WithImage(PostgresImage)
+            .WithDatabase("travel_tests")
+            .WithUsername("travel_tests_user")
+            .WithPassword("travel_tests_password_local_only")
+            // PostgreSqlBuilder ya espera el healthcheck pg_isready internamente
+            // antes de devolver el control; no hace falta WaitUntil explicito.
+            .Build();
+    }
+
+    /// <summary>
+    /// Connection string apuntando al container. Cambia entre runs (puerto
+    /// random asignado por Docker) — nunca hardcodearla.
+    /// </summary>
+    public string ConnectionString => _container.GetConnectionString();
+
+    public async Task InitializeAsync()
+    {
+        await _container.StartAsync();
+
+        await using var ctx = CreateDbContext();
+
+        // Construir schema desde el modelo. La tabla "TravelFiles" queda con su
+        // nombre correcto (HasTable via fluent), las owned entities del
+        // FiscalSnapshot quedan como columnas con prefijo, y xmin
+        // (rowVersion=true) queda configurado como concurrency token.
+        await ctx.Database.EnsureCreatedAsync();
+
+        // Aplicar los CHECK constraints SQL crudos del modulo FC1. Estos NO
+        // los crea EnsureCreated porque EF no expone los <c>migrationBuilder.Sql</c>
+        // del archivo de migracion al schema-from-model. Sin esto los tests
+        // no validan lo que vienen a validar.
+        //
+        // Mismo SQL que la migracion 20260514030142_FC1_AddCancellationModule
+        // (DROP IF EXISTS + ADD) para idempotencia local; cualquier cambio
+        // alli debe replicarse aca o el contrato del modulo divergira.
+        await ApplyCheckConstraintsAsync(ctx);
+    }
+
+    private static async Task ApplyCheckConstraintsAsync(AppDbContext ctx)
+    {
+        // (a) INV-084: AllocatedAmount <= ReceivedAmount.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "OperatorRefundsReceived"
+              DROP CONSTRAINT IF EXISTS chk_OperatorRefundsReceived_allocated_not_exceeds;
+            ALTER TABLE "OperatorRefundsReceived"
+              ADD CONSTRAINT chk_OperatorRefundsReceived_allocated_not_exceeds
+              CHECK ("AllocatedAmount" >= 0 AND "AllocatedAmount" <= "ReceivedAmount");
+            """);
+
+        // (b) INV-085: saldo cliente no negativo y <= credito inicial.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "ClientCreditEntries"
+              DROP CONSTRAINT IF EXISTS chk_ClientCreditEntries_remaining_non_negative;
+            ALTER TABLE "ClientCreditEntries"
+              ADD CONSTRAINT chk_ClientCreditEntries_remaining_non_negative
+              CHECK ("RemainingBalance" >= 0 AND "RemainingBalance" <= "CreditedAmount");
+            """);
+
+        // (c) INV-112: NetAmount >= 0 y GrossAmount >= NetAmount.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "OperatorRefundAllocations"
+              DROP CONSTRAINT IF EXISTS chk_OperatorRefundAllocations_net_positive;
+            ALTER TABLE "OperatorRefundAllocations"
+              ADD CONSTRAINT chk_OperatorRefundAllocations_net_positive
+              CHECK ("NetAmount" >= 0 AND "GrossAmount" >= "NetAmount");
+            """);
+
+        // (d) INV-112: DeductionLine.Amount > 0.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "DeductionLines"
+              DROP CONSTRAINT IF EXISTS chk_DeductionLines_amount_positive;
+            ALTER TABLE "DeductionLines"
+              ADD CONSTRAINT chk_DeductionLines_amount_positive
+              CHECK ("Amount" > 0);
+            """);
+
+        // (e) INV-100: TravelFiles.Status restringido a la whitelist.
+        //     Incluye "Archived" (legacy soft-delete) + "PendingOperatorRefund" (FC1).
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "TravelFiles"
+              DROP CONSTRAINT IF EXISTS chk_TravelFiles_status_valid;
+            ALTER TABLE "TravelFiles"
+              ADD CONSTRAINT chk_TravelFiles_status_valid
+              CHECK ("Status" IN (
+                'Budget',
+                'Confirmed',
+                'Traveling',
+                'Closed',
+                'Cancelled',
+                'PendingOperatorRefund',
+                'Archived'
+              ));
+            """);
+
+        // (f) INV-118: FiscalSnapshot consistente fuera de Drafted/Aborted.
+        //     Codigo de status: 0=Drafted, 1=AwaitingFiscalConfirmation, ..., 6=Aborted.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "BookingCancellations"
+              DROP CONSTRAINT IF EXISTS chk_BookingCancellations_fiscalsnapshot_consistent;
+            ALTER TABLE "BookingCancellations"
+              ADD CONSTRAINT chk_BookingCancellations_fiscalsnapshot_consistent
+              CHECK (
+                "Status" IN (0, 6)
+                OR (
+                  "FiscalSnapshot_Source" <> 0
+                  AND "FiscalSnapshot_ExchangeRateAtOriginalInvoice" > 0
+                  AND "FiscalSnapshot_CurrencyAtEvent" IS NOT NULL
+                )
+              );
+            """);
+
+        // (g) Unique partial index para allocations activas (no voided) por pareja.
+        //     Conservamos por completitud aunque ningun test lo ejercita directamente.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            DROP INDEX IF EXISTS "ix_OperatorRefundAllocations_active_unique_alloc_per_refund_per_bc";
+            CREATE UNIQUE INDEX "ix_OperatorRefundAllocations_active_unique_alloc_per_refund_per_bc"
+              ON "OperatorRefundAllocations" ("OperatorRefundReceivedId", "BookingCancellationId")
+              WHERE "IsVoided" = false;
+            """);
+    }
+
+    public async Task DisposeAsync()
+    {
+        await _container.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Crea un <see cref="AppDbContext"/> nuevo apuntando al container, con el
+    /// <see cref="BusinessInvariantInterceptor"/> registrado.
+    ///
+    /// Por que cada test crea su propio context:
+    ///  - Los tests de concurrencia abren 2 contexts paralelos para simular dos
+    ///    sesiones que cargan el mismo aggregate. EF Core NO permite compartir
+    ///    una entidad tracked entre dos contexts.
+    ///  - Reusar un context entre tests tampoco es seguro por el ChangeTracker
+    ///    cacheando estados previos.
+    /// </summary>
+    public AppDbContext CreateDbContext()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(ConnectionString)
+            .AddInterceptors(new BusinessInvariantInterceptor())
+            .Options;
+
+        // IHttpContextAccessor null -> el ctor lo acepta, los audit logs usaran
+        // "System"/"Sistema" como user (suficiente para los tests).
+        return new AppDbContext(options);
+    }
+
+    /// <summary>
+    /// Limpia todas las tablas del modulo de cancelacion + las dependencias
+    /// minimas que cada test instancia (Customer, Supplier, TravelFiles, Invoices).
+    /// Usa <c>TRUNCATE ... RESTART IDENTITY CASCADE</c> para resetear los
+    /// IDENTITY sequences — sino los Id seguirian creciendo entre tests y
+    /// haria diff debugging mas dificil.
+    ///
+    /// El orden no importa por <c>CASCADE</c>, pero listamos primero las tablas
+    /// del modulo para documentacion. Las tablas Identity (AspNetUsers, etc.) se
+    /// dejan intactas porque ningun test las usa para datos.
+    /// </summary>
+    public async Task ResetDatabaseAsync()
+    {
+        await using var ctx = CreateDbContext();
+
+        // TRUNCATE CASCADE en un solo statement: Postgres lo procesa atomicamente.
+        // RESTART IDENTITY resetea las secuencias asociadas a cada tabla.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            TRUNCATE TABLE
+                "ClientCreditWithdrawals",
+                "ClientCreditEntries",
+                "DeductionLines",
+                "OperatorRefundAllocations",
+                "OperatorRefundsReceived",
+                "BookingCancellations",
+                "ManualCashMovements",
+                "PaymentReceipts",
+                "Invoices",
+                "Payments",
+                "TravelFiles",
+                "Customers",
+                "Suppliers",
+                "AuditLogs"
+            RESTART IDENTITY CASCADE;
+            """);
+    }
+}

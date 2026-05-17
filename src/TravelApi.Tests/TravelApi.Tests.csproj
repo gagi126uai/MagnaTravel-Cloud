@@ -14,6 +14,12 @@
     <PackageReference Include="Moq" Version="4.20.70" />
     <PackageReference Include="xunit" Version="2.6.6" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.6" />
+    <!-- FC1 integration tests (2026-05-14): TestContainers levanta un Postgres 16 real
+         por test class para validar CHECK constraints + xmin concurrency. Misma version
+         de Npgsql.EntityFrameworkCore.PostgreSQL que TravelApi.Infrastructure (8.0.11)
+         para no introducir doble version en el grafo. -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="3.10.0" />
   </ItemGroup>
 
   <ItemGroup>
