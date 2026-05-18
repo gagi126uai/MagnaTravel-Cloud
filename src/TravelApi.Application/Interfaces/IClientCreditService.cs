@@ -43,9 +43,20 @@ public interface IClientCreditService
     /// allocation y los demas side-effects (HC1 plan v3).
     /// </para>
     /// </summary>
+    /// <remarks>
+    /// <b>Por que recibimos la entidad <see cref="OperatorRefundAllocation"/> en
+    /// vez del Id int</b>: este metodo se invoca DENTRO de la misma unidad de
+    /// trabajo donde la allocation recien fue <c>Add()</c>-eada al ChangeTracker
+    /// pero todavia NO se persistio (HC1 plan v3: un solo SaveChanges al final).
+    /// En ese momento <c>allocation.Id == 0</c> — si pasamos el Id directo, EF
+    /// escribe 0 en la columna FK y Postgres rechaza el INSERT con violacion FK.
+    /// Pasando la entidad, seteamos la navigation property y EF resuelve la FK
+    /// al hacer SaveChanges en orden topologico (primero el padre, despues el
+    /// hijo con el Id ya generado).
+    /// </remarks>
     Task<ClientCreditEntry> CreateEntryAsync(
         int bookingCancellationId,
-        int operatorRefundAllocationId,
+        OperatorRefundAllocation operatorRefundAllocation,
         int customerId,
         decimal netAmount,
         string currency,

@@ -270,13 +270,19 @@ public sealed class BookingCancellationServiceTests
         Assert.NotNull(bc.OperatorRefundDueBy);
         Assert.Equal(EstadoReserva.PendingOperatorRefund, bc.Reserva.Status);
 
+        // Despues del fix F5, el bypass del approval del InvoiceAnnulment requiere
+        // que el override del BC haya sido aprobado (approvalRequest != null).
+        // Como este escenario NO tiene override (BuildValidConfirm() sin params +
+        // requesterIsAdmin: false), approvalRequest queda en null y el service
+        // propaga requesterIsAdmin: false al EnqueueAnnulmentAsync. La NC entonces
+        // sigue el approval workflow fiscal normal (OPS-FISCAL-001 plan v3 §13).
         invoiceMock.Verify(
             s => s.EnqueueAnnulmentAsync(
                 seed.InvoiceId,
                 "user-vendor",
                 "Vendor",
                 It.IsAny<string>(),
-                true,
+                false,
                 It.IsAny<CancellationToken>(),
                 null),
             Times.Once);

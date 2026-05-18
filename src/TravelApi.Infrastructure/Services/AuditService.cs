@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using TravelApi.Application.Contracts;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Interfaces;
 
 namespace TravelApi.Infrastructure.Services;
@@ -167,9 +168,37 @@ public class AuditService : IAuditService
         {
             await _auditRepo.AddAsync(auditLog, ct);
         }
+        catch (BusinessInvariantViolationException)
+        {
+            // FC1.2.2 fix 2026-05-18: las violaciones de invariante de negocio
+            // (CHECK constraint SQL via BusinessInvariantInterceptor — ej. INV-084
+            // cap excedido) NO se traen. El SaveChanges del Repository.AddAsync
+            // arrastra tracked entities Modified ademas del audit log: si una de
+            // esas modificaciones rompe un CHECK constraint, el caller debe
+            // recibir la excepcion para que su retry/rollback funcione. Tragar
+            // INV-084 aca dejaba pasar over-allocations en concurrencia N:M.
+            throw;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // FC1.2.2 fix 2026-05-18: conflictos xmin (concurrencia optimista
+            // de Postgres). El caller tiene retry loops que dependen de ver esta
+            // excepcion para recargar y reintentar.
+            throw;
+        }
+        catch (DbUpdateException)
+        {
+            // FC1.2.2 fix 2026-05-18: violaciones de FK/unique/etc. que el caller
+            // necesita ver para abortar o decidir como recuperar. Si las tragamos,
+            // dejamos persistir estados inconsistentes (ver bug FC1.2.2 reviewer).
+            throw;
+        }
         catch (Exception ex)
         {
-            // Auditoria no debe romper la operacion principal. Loggear y continuar.
+            // Resto de errores (ej. JSON serialization de details, problemas de red
+            // del repo): la auditoria NO debe romper la operacion principal.
+            // Loggear y continuar — la operacion de negocio ya esta materializada
+            // o lo estara en el SaveChanges del caller.
             _logger.LogError(ex, "Audit log fallo: action={Action} entity={Entity} entityId={EntityId} userId={UserId}",
                 action, entityName, entityId, userId);
         }

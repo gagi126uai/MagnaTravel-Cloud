@@ -814,6 +814,21 @@ public class InvoiceService : IInvoiceService
                 // job entero y llamaria AFIP de nuevo (NC duplicada). Si el bridge
                 // falla, el path de remediacion es manual via
                 // ForceArcaConfirmationAsync (BR-V2-01).
+                //
+                // Contrato del bridge (FC1.2.1 v3, leer antes de modificar este bloque):
+                //   1. En este punto la NC YA quedo commiteada — el SaveChangesAsync
+                //      anterior (linea original.AnnulmentStatus=Succeeded) ya ejecuto
+                //      y AFIP ya emitio el comprobante (CAE devuelto). No hay vuelta atras.
+                //   2. El bridge (BookingCancellationService.OnArcaSucceededAsync)
+                //      abre su PROPIA unidad de trabajo / transaccion: carga el BC,
+                //      lo transiciona a AwaitingOperatorRefund, escribe audit log y
+                //      hace SaveChangesAsync. NO comparte la transaccion con este service.
+                //   3. NO se debe tocar el DbContext entre el SaveChanges anterior y
+                //      esta llamada — el bridge asume que el contexto esta limpio
+                //      (Include necesarios, sin entidades tracked stale).
+                //   4. Si el bridge falla, el escape hatch documentado es
+                //      BookingCancellationService.ForceArcaConfirmationAsync (BR-V2-01),
+                //      que requiere approval InvariantOverride.
                 if (_bcBridge is not null)
                 {
                     try
@@ -822,11 +837,26 @@ public class InvoiceService : IInvoiceService
                     }
                     catch (Exception bridgeEx)
                     {
+                        // Log humano: mismo nivel que antes para que el ops/back-office
+                        // vea el contexto completo en el log de la app.
                         _logger.LogError(
                             bridgeEx,
                             "Bridge BC.OnArcaSucceededAsync fallo para Invoice {InvoiceId} (CN={CreditNoteId}). " +
                             "La NC quedo Succeeded en AFIP. Remediacion: ForceArcaConfirmationAsync manual.",
                             invoiceId, newInvoice.Id);
+
+                        // Log estructurado para metricas/alerting. El prefijo "metric:"
+                        // permite que un pipeline (Grafana/Loki/Datadog) extraiga el
+                        // evento bc_bridge_failed y arme una alerta si se dispara N
+                        // veces por semana — sintoma de que el bridge esta roto a
+                        // nivel sistema, no caso aislado. NO incluye stack trace ni
+                        // mensaje del usuario, solo identificadores estables y el
+                        // tipo de excepcion.
+                        _logger.LogError(
+                            "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaSucceeded",
+                            invoiceId,
+                            newInvoice.Id,
+                            bridgeEx.GetType().Name);
                     }
                 }
             }
@@ -854,6 +884,15 @@ public class InvoiceService : IInvoiceService
                             bridgeEx,
                             "Bridge BC.OnArcaFailedAsync fallo para Invoice {InvoiceId}. La NC esta Failed en AFIP.",
                             invoiceId);
+
+                        // Mismo prefijo metric:bc_bridge_failed que el caso Succeeded
+                        // para que el alerting capture ambos modos de falla con la
+                        // misma regla. stage=OnArcaFailed diferencia el contexto.
+                        _logger.LogError(
+                            "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaFailed",
+                            invoiceId,
+                            (int?)null,
+                            bridgeEx.GetType().Name);
                     }
                 }
             }

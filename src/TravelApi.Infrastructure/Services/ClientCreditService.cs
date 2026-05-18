@@ -65,7 +65,7 @@ public class ClientCreditService : IClientCreditService
     /// </summary>
     public Task<ClientCreditEntry> CreateEntryAsync(
         int bookingCancellationId,
-        int operatorRefundAllocationId,
+        OperatorRefundAllocation operatorRefundAllocation,
         int customerId,
         decimal netAmount,
         string currency,
@@ -73,6 +73,13 @@ public class ClientCreditService : IClientCreditService
         string? userName,
         CancellationToken ct)
     {
+        if (operatorRefundAllocation is null)
+        {
+            // Guard defensivo: sin la allocation no podemos setear la navigation
+            // property y EF no resuelve la FK al guardar.
+            throw new ArgumentNullException(nameof(operatorRefundAllocation));
+        }
+
         if (netAmount <= 0m)
         {
             // Defensivo: si por algun motivo el OperatorRefundService llamara aca
@@ -88,7 +95,14 @@ public class ClientCreditService : IClientCreditService
         var entry = new ClientCreditEntry
         {
             BookingCancellationId = bookingCancellationId,
-            OperatorRefundAllocationId = operatorRefundAllocationId,
+            // NO seteamos OperatorRefundAllocationId directamente: en este punto
+            // operatorRefundAllocation.Id puede ser 0 (entidad recien Add()-eada,
+            // todavia no persistida). Seteamos la navigation property y EF resuelve
+            // la FK al hacer SaveChanges en orden topologico: primero inserta la
+            // allocation (obtiene Id real de la secuencia Postgres) y despues el
+            // entry con esa FK. Si seteamos el Id en vez de la navigation property,
+            // Postgres recibe FK = 0 y rompe el INSERT con FK violation.
+            Allocation = operatorRefundAllocation,
             CustomerId = customerId,
             CreditedAmount = netAmount,
             RemainingBalance = netAmount,
@@ -98,8 +112,8 @@ public class ClientCreditService : IClientCreditService
         _db.ClientCreditEntries.Add(entry);
 
         _logger.LogDebug(
-            "ClientCreditEntry pendiente Add para BcId={BcId} AllocationId={AllocationId} Customer={CustomerId} NetAmount={NetAmount} {Currency}.",
-            bookingCancellationId, operatorRefundAllocationId, customerId, netAmount, currency);
+            "ClientCreditEntry pendiente Add para BcId={BcId} AllocationPublicId={AllocationPublicId} Customer={CustomerId} NetAmount={NetAmount} {Currency}.",
+            bookingCancellationId, operatorRefundAllocation.PublicId, customerId, netAmount, currency);
 
         // No SaveChanges: el OperatorRefundService.AllocateAsync hara el commit.
         return Task.FromResult(entry);

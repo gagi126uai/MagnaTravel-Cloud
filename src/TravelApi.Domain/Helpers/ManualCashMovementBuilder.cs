@@ -124,7 +124,20 @@ public static class ManualCashMovementBuilder
 
             // MR-V2-05: N:M. La trazabilidad viaja por OperatorRefundReceivedId.
             RelatedReservaId = null,
-            OperatorRefundReceivedId = refund.Id,
+            // ATENCION trainee/junior — bug fix 2026-05-18:
+            // NO seteamos OperatorRefundReceivedId al int crudo (refund.Id) porque
+            // en T2 (RecordReceivedAsync), el caller invoca este builder con un
+            // OperatorRefundReceived que acaba de ser Add()-eado y todavia no
+            // se persistio: refund.Id == 0 hasta el SaveChangesAsync final. Si
+            // setearamos el FK escalar a 0, Postgres lo recibe como FK invalida
+            // y rompe el INSERT con 23503 (FK_ManualCashMovements_OperatorRefundsReceived...).
+            //
+            // Solucion: seteamos la NAVIGATION property (OperatorRefundReceived).
+            // EF Core resuelve la FK al hacer SaveChanges en orden topologico:
+            // primero inserta el refund (obtiene Id real de la secuencia Postgres)
+            // y despues el movement con esa FK ya resuelta. Es el mismo patron
+            // usado en OperatorRefundService.AllocateAsync con ClientCreditEntry.
+            OperatorRefundReceived = refund,
             ClientCreditWithdrawalId = null,
         };
     }

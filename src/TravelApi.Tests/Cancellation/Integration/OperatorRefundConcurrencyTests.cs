@@ -328,7 +328,25 @@ public sealed class OperatorRefundConcurrencyTests
             // El fixture lo recrea al InitializeAsync de la clase, pero estamos
             // en un test puntual: lo restauramos explicitamente para que los
             // siguientes tests dentro de esta clase queden bien.
+            //
+            // ORDEN IMPORTANTE: primero limpiamos la fila corrupta (AllocatedAmount=9999)
+            // que escribimos arriba, y RECIEN DESPUES recreamos el CHECK. Si invertimos
+            // el orden, Postgres valida el ADD CONSTRAINT contra las filas existentes,
+            // encuentra la fila con 9999 > ReceivedAmount y tira PostgresException 23514.
+            // Cuando esa excepcion ocurre, el CHECK queda DROPPED y el siguiente test
+            // paralelo corre sin proteccion y permite over-allocation (falso negativo).
             await using var restoreCtx = _fixture.CreateDbContext();
+
+            // 1) Limpieza: cualquier fila que haya quedado con AllocatedAmount > ReceivedAmount
+            //    (cortesia de este mismo test) se normaliza a 0 para que el CHECK sea recreable.
+            await restoreCtx.Database.ExecuteSqlRawAsync(
+                "UPDATE \"OperatorRefundsReceived\" " +
+                "SET \"AllocatedAmount\" = 0 " +
+                "WHERE \"AllocatedAmount\" > \"ReceivedAmount\";");
+
+            // 2) Recreacion del CHECK con la misma expresion que la migracion FC1
+            //    (20260514030142_FC1_AddCancellationModule, lineas 503-509) y el mismo
+            //    nombre que usa el fixture en ApplyCheckConstraintsAsync.
             await restoreCtx.Database.ExecuteSqlRawAsync(
                 "ALTER TABLE \"OperatorRefundsReceived\" " +
                 "ADD CONSTRAINT chk_OperatorRefundsReceived_allocated_not_exceeds " +

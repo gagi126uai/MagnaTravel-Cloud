@@ -73,9 +73,14 @@ public class ManualCashMovementBuilderTests
         Assert.Equal("user-cashier", movement.CreatedBy);
         Assert.Equal(refund.SupplierId, movement.RelatedSupplierId);
 
-        // MR-V2-05: N:M, trazabilidad por OperatorRefundReceivedId.
+        // MR-V2-05: N:M, trazabilidad por OperatorRefundReceived (navigation property).
+        // Despues del fix del bug FC1.2.2 (2026-05-18, FK violation con Id=0), el builder
+        // setea la navigation property en vez del FK escalar. EF resuelve el FK al persistir
+        // (SaveChanges en orden topologico). En este test Unit, sin BD, el FK escalar
+        // OperatorRefundReceivedId queda null, pero la navigation apunta al refund correcto.
         Assert.Null(movement.RelatedReservaId);
-        Assert.Equal(refund.Id, movement.OperatorRefundReceivedId);
+        Assert.Same(refund, movement.OperatorRefundReceived);
+        Assert.Null(movement.OperatorRefundReceivedId);
         Assert.Null(movement.ClientCreditWithdrawalId);
     }
 

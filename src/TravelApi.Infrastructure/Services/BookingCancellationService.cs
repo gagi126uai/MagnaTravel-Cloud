@@ -208,6 +208,13 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
         ConfirmCancellationRequest request,
         string userId,
         string? userName,
+        // requesterIsAdmin: flag informativo del rol del caller (lo setea el
+        // controller con User.IsInRole("Admin")). NO se usa para saltear el
+        // workflow de approval del InvoiceAnnulment — ese bypass depende del
+        // override del BC (approvalRequest != null), no de este flag.
+        // Lo mantenemos en la firma para forward-compatibility con futuros
+        // checks de policy y para mantener simetria con IPaymentService /
+        // IInvoiceService que tambien lo aceptan.
         bool requesterIsAdmin,
         CancellationToken ct)
     {
@@ -330,9 +337,20 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
         // 10) BR-V2-03 cross-reference: encolar annulacion en AFIP.
         //     Si hubo override admin, pasamos el approvalRequestId para que el
         //     InvoiceService persista la cross-reference fiscal.
-        //     Comentario fiscal: el "requesterIsAdmin: true" salta el approval
-        //     workflow normal de InvoiceAnnulment porque el InvariantOverride
-        //     del BC ya cubre la operacion (ver OPS-FISCAL-001 plan v3 §13).
+        //
+        //     Bypass del approval del InvoiceAnnulment (requesterIsAdmin del
+        //     InvoiceService, NO confundir con el parametro homonimo de
+        //     ConfirmAsync): se hace SOLO cuando el override del BC ya cubre la
+        //     NC fiscal (approvalRequest != null). Cuando NO hay override, la NC
+        //     tiene que pasar por su approval workflow normal — si seteamos
+        //     true sin override, un caller no-admin podria emitir NCs sin
+        //     control fiscal (OPS-FISCAL-001 plan v3 §13).
+        //
+        //     IMPORTANTE: si en el futuro el BC se invoca desde un controller
+        //     que pasa requesterIsAdmin=true porque el usuario es Admin (sin
+        //     necesidad de override formal), revisar si tiene sentido propagarlo
+        //     aca. Hoy no, porque la unica forma de "saltear AFIP approval" es
+        //     traer un approval scoped al BC.
         var crossRefReason = approvalRequest != null
             ? $"BC override {approvalRequest.PublicId}: {request.OverrideReason!.Trim()}"
             : $"BC cancellation: {bc.Reason}";
@@ -342,7 +360,7 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
             userId: userId,
             userName: userName,
             reason: crossRefReason,
-            requesterIsAdmin: true,
+            requesterIsAdmin: approvalRequest != null,
             ct: ct,
             approvalRequestId: approvalRequest?.Id);
 
@@ -622,10 +640,34 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
         }
 
         // Cuento allocations activas restantes (excluyendo la que se acaba de void).
-        // Usamos query directa al ChangeTracker porque las allocations modificadas
-        // en memoria ya tienen IsVoided=true.
+        //
+        // ATENCION trainee/junior — bug fix 2026-05-18:
+        // El caller (OperatorRefundService.VoidAllocationAsync / ReassociateAsync)
+        // hace `allocation.IsVoided = true` EN MEMORIA y nos invoca SIN haber
+        // hecho SaveChangesAsync todavia. Eso es el patron HC1 del plan v3: un
+        // unico SaveChanges al final de la transaccion del service.
+        //
+        // El problema: EF8 + Postgres NO ve los cambios in-memory cuando hace
+        // CountAsync, porque CountAsync se traduce a un SELECT COUNT(*) que va
+        // al motor SQL. El motor lee la fila tal como esta persistida (IsVoided
+        // sigue false en BD), asi que la cuenta da >= 1 y NUNCA entramos al
+        // if (remainingActiveAllocations == 0) que revierte el BC. Resultado:
+        // el BC queda colgado en ClientCreditApplied aunque la ultima allocation
+        // ya fue voideada en memoria.
+        //
+        // Fix: filtramos manualmente los Ids que estan marcados como IsVoided=true
+        // en el ChangeTracker (estado Modified). Es el equivalente "ver lo no
+        // persistido todavia" que CountAsync no hace.
+        var localVoidedIds = _db.ChangeTracker
+            .Entries<OperatorRefundAllocation>()
+            .Where(e => e.State == EntityState.Modified && e.Entity.IsVoided)
+            .Select(e => e.Entity.Id)
+            .ToHashSet();
+
         var remainingActiveAllocations = await _db.OperatorRefundAllocations
-            .Where(a => a.BookingCancellationId == bookingCancellationId && !a.IsVoided)
+            .Where(a => a.BookingCancellationId == bookingCancellationId
+                     && !a.IsVoided
+                     && !localVoidedIds.Contains(a.Id))
             .CountAsync(ct);
 
         if (remainingActiveAllocations == 0 &&

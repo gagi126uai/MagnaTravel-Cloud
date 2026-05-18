@@ -288,8 +288,18 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
         // BookingCancellationService implementa AMBAS interfaces (split BR-04).
         // Registramos la clase concreta + ambas interfaces como factory que
         // resuelve la misma instancia dentro del scope.
+        //
+        // Por que registramos las 2 interfaces apuntando a la misma instancia:
+        // BookingCancellationService es a la vez IBookingCancellationService (lo
+        // usa el flujo principal) y IInvoiceAnnulmentBcBridge (lo usa
+        // InvoiceService para notificar callbacks). Sin el bridge, el smoke DI
+        // test rompe con "No service for type 'IInvoiceAnnulmentBcBridge'", y
+        // ademas la sincronizacion del callback no funciona porque el bridge
+        // resolveria una instancia distinta con otro AppDbContext.
         services.AddScoped<BookingCancellationService>();
         services.AddScoped<IBookingCancellationService>(sp =>
+            sp.GetRequiredService<BookingCancellationService>());
+        services.AddScoped<IInvoiceAnnulmentBcBridge>(sp =>
             sp.GetRequiredService<BookingCancellationService>());
 
         // OperatorRefundService + ClientCreditService (los 2 de FC1.2.2).

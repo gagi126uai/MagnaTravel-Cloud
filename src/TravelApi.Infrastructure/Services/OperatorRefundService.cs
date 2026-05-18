@@ -125,15 +125,16 @@ public class OperatorRefundService : IOperatorRefundService
         // 3) Crear el ManualCashMovement Income asociado al ingreso fisico
         //    (cierra INV-CONT-09: el deposito se ve en el Libro de Caja).
         //    El builder valida que Supplier no sea null y ReceivedAmount > 0.
-        //    OperatorRefundReceivedId queda con el FK al refund nuevo: EF lo
-        //    completa cuando hace flush porque pasamos refund.Id (que se setea
-        //    al SaveChanges).
         //
-        //    Truco didactico: pasamos la referencia `refund` al builder; tras
-        //    SaveChangesAsync, EF replace el FK temporal con el Id real porque
-        //    sigue el cambio de identidad. Si el caller hiciera Add del movement
-        //    ANTES de Add del refund, el FK quedaria en 0 y reventaria la
-        //    constraint — pero como agregamos refund primero, EF sabe el orden.
+        //    Trainee/junior — bug fix 2026-05-18:
+        //    El builder setea la NAVIGATION property `OperatorRefundReceived = refund`
+        //    (no el FK escalar refund.Id). Eso es clave porque en este punto el
+        //    refund acaba de hacer Add() y todavia NO se persistio: refund.Id == 0
+        //    hasta que el SaveChangesAsync final corra. Si el builder seteara el
+        //    FK escalar a 0, Postgres recibiria una FK invalida y rompe el INSERT
+        //    con 23503. EF resuelve esto al guardar en orden topologico cuando
+        //    seteamos la navigation property: inserta primero el refund, obtiene
+        //    el Id real, y despues inserta el movement con la FK correcta.
         var movement = ManualCashMovementBuilder.BuildIncomeForRefund(refund, userId);
         // Sobrescribimos la Description si vino un Notes en el request — util
         // para que el cashier deje contexto operativo en caja.
@@ -147,10 +148,15 @@ public class OperatorRefundService : IOperatorRefundService
 
         // 4) Audit. Lo armamos con todo el contexto fiscal del ingreso para que
         //    el contador pueda reconstruir el evento sin ir a la tabla principal.
+        //    EntityId: usamos refund.PublicId (Guid asignado por default en el
+        //    field de la entidad). El Id int todavia es 0 — solo lo tendremos
+        //    despues del SaveChangesAsync final. AuditService persiste su propia
+        //    fila inmediatamente (Repository.AddAsync llama SaveChanges), por
+        //    eso necesitamos un identificador estable AHORA, no despues.
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.OperatorRefundReceivedRegistered,
             entityName: AuditActions.OperatorRefundReceivedEntityName,
-            entityId: "pending", // el Id real se conoce post-SaveChanges; el PublicId ya es estable
+            entityId: refund.PublicId.ToString(),
             details: JsonSerializer.Serialize(new
             {
                 refundPublicId = refund.PublicId,
@@ -296,6 +302,20 @@ public class OperatorRefundService : IOperatorRefundService
                 invariantCode: "INV-118");
         }
 
+        // 4-bis) INV-126: el operador del ingreso (refund.SupplierId) y el operador
+        //        de la cancelacion (bc.SupplierId) tienen que ser el MISMO. Sin
+        //        este check un cashier podria allocate por error un ingreso de
+        //        Despegar contra una cancelacion cuyo operador era Avantrip,
+        //        contaminando el cap del refund y los reportes contables por
+        //        operador. La validacion vive aca (no en BD) porque es runtime
+        //        cross-aggregate — un CHECK SQL acoplaria dos tablas.
+        if (refund.SupplierId != bc.SupplierId)
+        {
+            throw new BusinessInvariantViolationException(
+                "El proveedor del reintegro no coincide con el proveedor de la cancelacion.",
+                invariantCode: "INV-126");
+        }
+
         // 5) Validar matriz fiscal Mono/RI usando el FiscalSnapshot cristalizado.
         //    Hacemos PRIMERO la validacion porque rechaza antes de tocar BD:
         //    un usuario equivocado se entera con HTTP 409 sin pasar por retry.
@@ -357,10 +377,18 @@ public class OperatorRefundService : IOperatorRefundService
 
         _db.OperatorRefundAllocations.Add(allocation);
 
-        // 9) Incrementar el cap del refund. Esto dispara el CHECK SQL al
-        //    SaveChanges: si superamos ReceivedAmount, el interceptor traduce
-        //    a BusinessInvariantViolationException(INV-084).
-        refund.AllocatedAmount += allocation.GrossAmount;
+        // 9) Incrementar el cap del refund con el NETO (NO el gross).
+        //    Por que NetAmount y no GrossAmount: el contrato de
+        //    OperatorRefundReceived.AllocatedAmount es "SUM(allocations.NetAmount
+        //    WHERE NOT IsVoided)" (ver doc de la propiedad + ADR-002 §2.5 +
+        //    plan tactico FC1.2 v3 §6.3 paso 4). Las deducciones del operador
+        //    (penalidades, comisiones, retenciones que se queda el operador)
+        //    NO entran a la caja de la agencia, por lo tanto NO consumen el cap
+        //    del ingreso fisico. Si pusieramos GrossAmount el cap se consumiria
+        //    de mas y la agencia "perderia" capacidad de asignar a otros BC.
+        //    El CHECK SQL chk_OperatorRefundsReceived_allocated_not_exceeds
+        //    valida AllocatedAmount <= ReceivedAmount al SaveChanges final.
+        refund.AllocatedAmount += allocation.NetAmount;
 
         // 10) Actualizar el denormalizado del BC: ReceivedRefundAmount = SUM
         //     allocations.NetAmount activas. Lo incrementamos en memoria; un
@@ -377,9 +405,33 @@ public class OperatorRefundService : IOperatorRefundService
         // 12) Crear el ClientCreditEntry: el cliente recibe NetAmount como
         //     saldo a favor. RemainingBalance arranca = NetAmount; FC1.2.3
         //     gestionara retiros.
+        //
+        //     Guard defensivo: si las deducciones consumen el gross completo
+        //     (netAmount == 0), no tiene sentido crear un entry con saldo 0.
+        //     ClientCreditService.CreateEntryAsync tira ArgumentException
+        //     internamente, pero validamos aca para fallar ANTES del Add() del
+        //     entry — asi la transaccion envolvente no queda con cambios parciales
+        //     (allocation + bc.Status modificado) que el rollback tiene que limpiar.
+        //     Bajo el patron HC1 (no SaveChanges intermedio) el rollback se hace
+        //     solo via ChangeTracker.Clear() del retry, pero un fail temprano es
+        //     menos costoso y mas legible.
+        if (allocation.NetAmount <= 0m)
+        {
+            throw new ArgumentException(
+                "Las deducciones igualaron o superaron al GrossAmount: el cliente recibiria saldo cero. " +
+                "Revisar los montos del refund o las deducciones.",
+                nameof(request));
+        }
+
+        // Pasamos la entidad y NO el Id, porque al momento de esta llamada
+        // allocation.Id == 0 (todavia no se persistio — HC1 plan v3: un solo
+        // SaveChanges al final). EF8 resuelve la FK al hacer SaveChanges en
+        // orden topologico: primero inserta la allocation (obtiene Id real), y
+        // despues el entry con esa FK ya resuelta. Setear el Id en el entry
+        // ahora dejaria 0 escrito en Postgres y rompe la FK.
         await _clientCreditService.CreateEntryAsync(
             bookingCancellationId: bc.Id,
-            operatorRefundAllocationId: allocation.Id, // 0 hasta SaveChanges, EF resuelve por navigation
+            operatorRefundAllocation: allocation,
             customerId: bc.CustomerId,
             netAmount: allocation.NetAmount,
             currency: refund.Currency,
@@ -387,12 +439,17 @@ public class OperatorRefundService : IOperatorRefundService
             userName: userName,
             ct: ct);
 
-        // 13) Audit con metadata completa. EntityId "pending" porque el Id real
-        //     se asigna en el SaveChanges (Identity column).
+        // 13) Audit con metadata completa.
+        //     EntityId: usamos el PublicId (Guid asignado en el constructor de
+        //     la entidad, default = Guid.NewGuid()). NO podemos usar el Id int
+        //     porque todavia es 0 hasta el SaveChanges final — el audit log se
+        //     persiste antes (AuditService.LogBusinessEventAsync hace su propio
+        //     SaveChanges interno). El PublicId es estable desde el momento del
+        //     Add() y permite trazar la fila aun antes de que la BD le asigne Id.
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.OperatorRefundAllocated,
             entityName: AuditActions.OperatorRefundAllocationEntityName,
-            entityId: "pending",
+            entityId: allocation.PublicId.ToString(),
             details: JsonSerializer.Serialize(new
             {
                 allocationPublicId = allocation.PublicId,
@@ -583,9 +640,13 @@ public class OperatorRefundService : IOperatorRefundService
         allocation.VoidedByUserId = userId;
         allocation.VoidedReason = request.Reason.Trim();
 
-        // 5) Liberar el cap del refund. CHECK SQL chk_..._allocated_not_exceeds
-        //    permite AllocatedAmount >= 0, asi que decrementar es seguro.
-        allocation.Refund.AllocatedAmount -= allocation.GrossAmount;
+        // 5) Liberar el cap del refund con el NETO (NO el gross).
+        //    Espejo de paso 9 de AllocateAsync: el cap se incrementa con
+        //    NetAmount, asi que tambien se libera con NetAmount. Si decrementaramos
+        //    con GrossAmount, el AllocatedAmount podria quedar negativo (rompiendo
+        //    el CHECK SQL: AllocatedAmount >= 0) cuando la allocation tenia
+        //    deducciones.
+        allocation.Refund.AllocatedAmount -= allocation.NetAmount;
 
         // 6) Ajustar el denormalizado del BC.
         allocation.BookingCancellation.ReceivedRefundAmount -= allocation.NetAmount;
@@ -771,7 +832,10 @@ public class OperatorRefundService : IOperatorRefundService
         oldAllocation.VoidedAt = DateTime.UtcNow;
         oldAllocation.VoidedByUserId = userId;
         oldAllocation.VoidedReason = $"Reassociate: {request.Reason.Trim()}";
-        oldAllocation.Refund.AllocatedAmount -= oldAllocation.GrossAmount;
+        // Liberar cap del refund con NetAmount (espejo de AllocateAsync).
+        // Ver explicacion en paso 9 de TryAllocateOnceAsync: el cap acumula netos,
+        // por lo tanto se libera con neto.
+        oldAllocation.Refund.AllocatedAmount -= oldAllocation.NetAmount;
         oldAllocation.BookingCancellation.ReceivedRefundAmount -= oldAllocation.NetAmount;
 
         if (oldCreditEntry != null)
@@ -820,13 +884,19 @@ public class OperatorRefundService : IOperatorRefundService
         }
 
         _db.OperatorRefundAllocations.Add(newAllocation);
-        oldAllocation.Refund.AllocatedAmount += newAllocation.GrossAmount;
+        // Incrementar cap del refund con NetAmount de la NUEVA allocation
+        // (mismo principio que AllocateAsync paso 9: cap acumula netos).
+        oldAllocation.Refund.AllocatedAmount += newAllocation.NetAmount;
         newBc.ReceivedRefundAmount += newAllocation.NetAmount;
 
         // 8) Crear ClientCreditEntry nuevo para el cliente del BC nuevo.
+        //    Pasamos la entidad y no el Id por el mismo motivo que en AllocateAsync:
+        //    newAllocation.Id == 0 hasta el SaveChanges final, asi que setear el
+        //    Id ahora rompe la FK. La navigation property hace que EF resuelva la
+        //    FK al persistir en orden topologico.
         await _clientCreditService.CreateEntryAsync(
             bookingCancellationId: newBc.Id,
-            operatorRefundAllocationId: newAllocation.Id,
+            operatorRefundAllocation: newAllocation,
             customerId: newBc.CustomerId,
             netAmount: newAllocation.NetAmount,
             currency: oldAllocation.Refund.Currency,
