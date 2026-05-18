@@ -1,6 +1,14 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Testcontainers.PostgreSql;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Domain.Interfaces;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Repositories;
+using TravelApi.Infrastructure.Services;
 using Xunit;
 
 namespace TravelApi.Tests.Fixtures;
@@ -208,6 +216,87 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
         // IHttpContextAccessor null -> el ctor lo acepta, los audit logs usaran
         // "System"/"Sistema" como user (suficiente para los tests).
         return new AppDbContext(options);
+    }
+
+    /// <summary>
+    /// FC1.2.2 v3 §7.3 (BR-V2-04, 2026-05-18): construye un IServiceProvider
+    /// con TODAS las dependencias necesarias para los services del modulo de
+    /// cancelacion/refund. Cada test paralelo (los 4 de concurrencia xmin
+    /// abren scopes separados sobre este provider para tener su propio
+    /// AppDbContext sin pelear con el ChangeTracker del otro.
+    ///
+    /// <para>
+    /// <b>Smoke test obligatorio</b>: antes de los tests funcionales, validar
+    /// con <c>BuildServiceProvider_ResolvesAllServices</c> que todo resuelve.
+    /// Si falla, sabemos inmediatamente que falta registrar X — no hay que
+    /// debugear via tests funcionales rotos.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Settings: feature flag prendido</b>. Para todos los tests, levantamos
+    /// con <c>EnableNewCancellationFlow=true</c>. Es lo unico que evita que
+    /// los services rechacen las operaciones con "modulo no habilitado".
+    /// </para>
+    /// </summary>
+    public IServiceProvider BuildServiceProvider()
+    {
+        var services = new ServiceCollection();
+
+        // EF + interceptor (scoped). Cada scope obtiene su propio AppDbContext.
+        services.AddDbContext<AppDbContext>(o => o
+            .UseNpgsql(ConnectionString)
+            .AddInterceptors(new BusinessInvariantInterceptor()),
+            ServiceLifetime.Scoped);
+
+        // Logging null para no spamear test output. NullLogger es seguro thread-wise.
+        services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
+        services.AddSingleton(NullLoggerFactory.Instance);
+
+        // Repository<T> generico (lo usa AuditService internamente).
+        services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+
+        // Settings con feature flag prendido. Lo registramos como singleton-mock
+        // para que todos los tests del fixture compartan el mismo retorno.
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        settingsMock
+            .Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings
+            {
+                EnableNewCancellationFlow = true,
+                OnePerReservaInvoicePolicy = true,
+                OperatorRefundTimeoutDays = 60,
+            });
+        services.AddSingleton(settingsMock.Object);
+
+        // AuditService real (persiste audit logs en Postgres real).
+        services.AddScoped<IAuditService, AuditService>();
+
+        // ApprovalRequestService real (FindActiveApproved + MarkConsumed contra BD).
+        services.AddScoped<IApprovalRequestService, ApprovalRequestService>();
+
+        // InvoiceService: NO lo usamos en FC1.2.2 (solo BC.ConfirmAsync lo invoca).
+        // Lo dejamos como mock no-op para que el BC service compile y resuelva.
+        var invoiceMock = new Mock<IInvoiceService>();
+        invoiceMock
+            .Setup(s => s.EnqueueAnnulmentAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<int?>()))
+            .Returns(Task.CompletedTask);
+        services.AddSingleton(invoiceMock.Object);
+
+        // BookingCancellationService implementa AMBAS interfaces (split BR-04).
+        // Registramos la clase concreta + ambas interfaces como factory que
+        // resuelve la misma instancia dentro del scope.
+        services.AddScoped<BookingCancellationService>();
+        services.AddScoped<IBookingCancellationService>(sp =>
+            sp.GetRequiredService<BookingCancellationService>());
+
+        // OperatorRefundService + ClientCreditService (los 2 de FC1.2.2).
+        services.AddScoped<IOperatorRefundService, OperatorRefundService>();
+        services.AddScoped<IClientCreditService, ClientCreditService>();
+
+        return services.BuildServiceProvider();
     }
 
     /// <summary>

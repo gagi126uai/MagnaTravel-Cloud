@@ -106,11 +106,24 @@ public interface IBookingCancellationService
     /// transiciona <c>AwaitingOperatorRefund</c> → <c>ClientCreditApplied</c>.
     ///
     /// <para>
-    /// <b>FC1.2.1</b>: stub no-op. La implementacion real va en FC1.2.2 cuando
-    /// existan los services de OperatorRefund.
+    /// <b>FC1.2.1</b>: stub no-op (implementacion real en FC1.2.2).
     /// </para>
     /// </summary>
     Task OnAllocationRecordedAsync(int bookingCancellationId, decimal netAmount, CancellationToken ct);
+
+    /// <summary>
+    /// FC1.2.2 (2026-05-18) trigger: <c>OperatorRefundService.VoidAllocationAsync</c>
+    /// avisa que una allocation existente fue anulada (soft-void). Si el BC se
+    /// quedo sin allocations activas, hay que volver a
+    /// <c>AwaitingOperatorRefund</c> (estaba en <c>ClientCreditApplied</c>).
+    ///
+    /// <para>
+    /// <b>FC1.2.2</b>: implementado en este service. El caller pasa
+    /// <c>bookingCancellationId</c> y el <c>netAmount</c> que se libera (mismo
+    /// valor que recibio antes en <see cref="OnAllocationRecordedAsync"/>).
+    /// </para>
+    /// </summary>
+    Task OnAllocationVoidedAsync(int bookingCancellationId, decimal netAmount, CancellationToken ct);
 
     /// <summary>
     /// FC1.2.3 trigger: <c>ClientCreditService</c> avisa que todos los entries del

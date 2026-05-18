@@ -69,7 +69,37 @@ public static class AuditActions
     /// </summary>
     public const string BookingCancellationArcaConfirmedManuallyNoOp = "BookingCancellationArcaConfirmedManually_NoOp";
 
-    // ===== Entity name (helper) =====
+    // ===== Modulo OperatorRefund (FC1.2.2) =====
+
+    /// <summary>
+    /// FC1.2.2 (2026-05-18): la agencia registra un ingreso fisico recibido del
+    /// operador (transferencia, cheque, etc.) que se imputara N:M contra una o
+    /// mas BCs via allocations. Triggea un <c>ManualCashMovement</c> Income.
+    /// </summary>
+    public const string OperatorRefundReceivedRegistered = "OperatorRefundReceivedRegistered";
+
+    /// <summary>
+    /// FC1.2.2 (2026-05-18): se asigna parte del refund recibido a un BC
+    /// especifico (con sus deducciones tipificadas). En el detail JSON viaja el
+    /// gross, el net, las deducciones y el ApprovalId (si aplico override).
+    /// </summary>
+    public const string OperatorRefundAllocated = "OperatorRefundAllocated";
+
+    /// <summary>
+    /// FC1.2.2 (2026-05-18): allocation anulada manualmente (cashier se equivoco,
+    /// el BC esta mal imputado, etc.). Audit reforzado con motivo &gt;= 20 chars.
+    /// Libera el cap del refund (decrementa <c>AllocatedAmount</c>).
+    /// </summary>
+    public const string OperatorRefundAllocationVoided = "OperatorRefundAllocationVoided";
+
+    /// <summary>
+    /// FC1.2.2 (2026-05-18): allocation movida atomicamente de un BC a otro
+    /// (un solo audit en vez de void + allocate para que el reviewer entienda
+    /// el evento unico). Metadata incluye old/newBcId, old/newAllocationId.
+    /// </summary>
+    public const string OperatorRefundAllocationReassociated = "OperatorRefundAllocationReassociated";
+
+    // ===== Entity names (helpers) =====
 
     /// <summary>
     /// Nombre canonico de entidad que se pasa a <c>LogBusinessEventAsync(entityName: ...)</c>
@@ -77,4 +107,10 @@ public static class AuditActions
     /// <c>entityName=BookingCancellation</c>, este es el valor a usar.
     /// </summary>
     public const string BookingCancellationEntityName = "BookingCancellation";
+
+    /// <summary>FC1.2.2: entityName para eventos sobre el ingreso fisico del operador.</summary>
+    public const string OperatorRefundReceivedEntityName = "OperatorRefundReceived";
+
+    /// <summary>FC1.2.2: entityName para eventos sobre la allocation N:M.</summary>
+    public const string OperatorRefundAllocationEntityName = "OperatorRefundAllocation";
 }

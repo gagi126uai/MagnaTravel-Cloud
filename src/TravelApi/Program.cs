@@ -437,6 +437,17 @@ builder.Services.AddScoped<IBookingCancellationService>(sp =>
     sp.GetRequiredService<BookingCancellationService>());
 builder.Services.AddScoped<IInvoiceAnnulmentBcBridge>(sp =>
     sp.GetRequiredService<BookingCancellationService>());
+
+// FC1.2.2 (2026-05-18) — OperatorRefundService gestiona los ingresos del operador
+// (T2 del flujo) + la matriz fiscal Mono/RI + las allocations N:M con retry xmin.
+// Depende de IBookingCancellationService (callbacks On*Async) y de IClientCreditService
+// (crea ClientCreditEntry al imputar el net amount). Sin dependencias circulares
+// porque los 3 services hablan en una sola direccion: OperatorRefund -> BC + CC.
+builder.Services.AddScoped<IOperatorRefundService, OperatorRefundService>();
+
+// FC1.2.2 (2026-05-18) — ClientCreditService stub minimo en FC1.2.2 (solo
+// CreateEntryAsync). La implementacion completa con WithdrawAsync llega en FC1.2.3.
+builder.Services.AddScoped<IClientCreditService, ClientCreditService>();
 builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();

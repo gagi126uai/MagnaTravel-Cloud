@@ -560,15 +560,90 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
     // Hooks internos (stubs FC1.2.1 — implementacion completa en FC1.2.2/3)
     // =========================================================================
 
-    public Task OnAllocationRecordedAsync(int bookingCancellationId, decimal netAmount, CancellationToken ct)
+    public async Task OnAllocationRecordedAsync(int bookingCancellationId, decimal netAmount, CancellationToken ct)
     {
-        // FC1.2.2 placeholder. Cuando OperatorRefundService aterrice, esto
-        // transiciona AwaitingOperatorRefund → ClientCreditApplied si era la
-        // primera allocation y el monto cubre el credito.
-        _logger.LogDebug(
-            "OnAllocationRecordedAsync called but not yet implemented (FC1.2.2). BcId={BcId} NetAmount={NetAmount}",
-            bookingCancellationId, netAmount);
-        return Task.CompletedTask;
+        // FC1.2.2 (2026-05-18): el caller (OperatorRefundService.AllocateAsync)
+        // YA hizo Add() del allocation pero NO commiteo todavia (HC1: services
+        // internos no SaveChanges). Nosotros marcamos el estado del BC en
+        // memoria y dejamos que el caller commitee TODO junto.
+        //
+        // IMPORTANTE: ReceivedRefundAmount tambien lo aumenta el OperatorRefundService
+        // antes de llamar a este callback (es responsabilidad del aggregate del BC,
+        // no nuestra) — nosotros solo nos ocupamos del Status.
+        var bc = await _db.BookingCancellations
+            .FirstOrDefaultAsync(b => b.Id == bookingCancellationId, ct);
+
+        if (bc is null)
+        {
+            // No tiramos: el caller esta dentro de su tx y necesitamos que se le
+            // propague la falla del Add() — un log diagnostico es suficiente.
+            _logger.LogWarning(
+                "OnAllocationRecordedAsync: BC {BcId} no existe. No-op.",
+                bookingCancellationId);
+            return;
+        }
+
+        // Reglas del estado:
+        //  - AwaitingOperatorRefund (post-CAE) -> ClientCreditApplied (primera allocation).
+        //  - ClientCreditApplied (ya habia allocations) -> sigue igual.
+        //  - Otros estados (Drafted, Aborted, Closed, ArcaRejected) -> el caller
+        //    no deberia llegar aca, pero loggeamos y no transicionamos.
+        if (bc.Status == BookingCancellationStatus.AwaitingOperatorRefund)
+        {
+            bc.Status = BookingCancellationStatus.ClientCreditApplied;
+            _logger.LogInformation(
+                "BC {BcPublicId} transitioned to ClientCreditApplied via OnAllocationRecordedAsync. NetAmount={NetAmount}",
+                bc.PublicId, netAmount);
+        }
+        else if (bc.Status != BookingCancellationStatus.ClientCreditApplied)
+        {
+            _logger.LogWarning(
+                "OnAllocationRecordedAsync: BC {BcPublicId} esta en {Status}, no se transiciona. NetAmount={NetAmount}",
+                bc.PublicId, bc.Status, netAmount);
+        }
+    }
+
+    public async Task OnAllocationVoidedAsync(int bookingCancellationId, decimal netAmount, CancellationToken ct)
+    {
+        // FC1.2.2 (2026-05-18): el caller (OperatorRefundService.VoidAllocation)
+        // ya marco IsVoided=true + decremento refund.AllocatedAmount + ajusto
+        // bc.ReceivedRefundAmount, pero todavia no commiteo (HC1). Aca solo
+        // ajustamos el Status del BC si quedo sin allocations activas.
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .FirstOrDefaultAsync(b => b.Id == bookingCancellationId, ct);
+
+        if (bc is null)
+        {
+            _logger.LogWarning(
+                "OnAllocationVoidedAsync: BC {BcId} no existe. No-op.",
+                bookingCancellationId);
+            return;
+        }
+
+        // Cuento allocations activas restantes (excluyendo la que se acaba de void).
+        // Usamos query directa al ChangeTracker porque las allocations modificadas
+        // en memoria ya tienen IsVoided=true.
+        var remainingActiveAllocations = await _db.OperatorRefundAllocations
+            .Where(a => a.BookingCancellationId == bookingCancellationId && !a.IsVoided)
+            .CountAsync(ct);
+
+        if (remainingActiveAllocations == 0 &&
+            bc.Status == BookingCancellationStatus.ClientCreditApplied)
+        {
+            // Volvemos al estado pre-allocation. La Reserva sigue en
+            // PendingOperatorRefund (no cambia: el flujo fiscal sigue activo).
+            bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
+            _logger.LogInformation(
+                "BC {BcPublicId} revertido a AwaitingOperatorRefund por void de la ultima allocation. NetAmountLiberado={NetAmount}",
+                bc.PublicId, netAmount);
+        }
+        else
+        {
+            _logger.LogDebug(
+                "OnAllocationVoidedAsync: BC {BcPublicId} tiene {Count} allocations activas, Status sigue en {Status}.",
+                bc.PublicId, remainingActiveAllocations, bc.Status);
+        }
     }
 
     public Task OnAllCreditConsumedAsync(int bookingCancellationId, CancellationToken ct)

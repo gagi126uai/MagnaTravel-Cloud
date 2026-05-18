@@ -53,6 +53,34 @@ public class OperatorRefundAllocation : IHasPublicId
     public int? VoidsAllocationId { get; set; }
     public OperatorRefundAllocation? VoidsAllocation { get; set; }
 
+    // ============================================================
+    // FC1.2.2 (2026-05-18): metadata del soft-void.
+    //
+    // Por que separamos VoidedAt/By/Reason de IsVoided:
+    //  - IsVoided es el flag operativo: lo usa el unique partial index
+    //    (`WHERE IsVoided = false`) para permitir que una allocation
+    //    nueva tome el slot de una vieja anulada.
+    //  - Los 3 campos abajo capturan QUIEN, CUANDO y POR QUE — datos
+    //    obligatorios para auditoria fiscal / contable cuando se anula
+    //    o reasocia un movimiento de plata.
+    //
+    // Quedan nullable porque las allocations creadas activas no los
+    // setean. Cuando IsVoided pasa a true, el service de FC1.2.2
+    // (OperatorRefundService.VoidAllocationAsync / Reassociate) los
+    // completa con el contexto del actor.
+    // ============================================================
+
+    /// <summary>FC1.2.2: UTC en que se marco <see cref="IsVoided"/> = true. Null mientras la allocation este activa.</summary>
+    public DateTime? VoidedAt { get; set; }
+
+    /// <summary>FC1.2.2: UserId del cashier/admin que ejecuto el void o el reassociate. Auditoria fiscal.</summary>
+    [MaxLength(450)]
+    public string? VoidedByUserId { get; set; }
+
+    /// <summary>FC1.2.2: razon textual de la anulacion (min 20 chars del request). Para que el contador entienda el movimiento.</summary>
+    [MaxLength(500)]
+    public string? VoidedReason { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     [Required]

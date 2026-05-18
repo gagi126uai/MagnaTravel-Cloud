@@ -156,3 +156,180 @@ public record ForceArcaConfirmationRequest(
     [Required, MinLength(20), MaxLength(500)]
     string Reason
 );
+
+// =============================================================================
+// FC1.2.2 (2026-05-18) — DTOs del modulo OperatorRefund (T2 del flujo).
+// =============================================================================
+
+/// <summary>
+/// FC1.2.2 §3 (plan v3): payload para registrar el ingreso fisico que un
+/// operador envia para cubrir cancelaciones (transferencia, cheque, etc.).
+///
+/// **Decisiones de diseno**:
+///   - El monto es <c>ReceivedAmount</c> (lo que efectivamente llega a caja).
+///     La distribucion contra BCs se hace por separado via <c>AllocateAsync</c>
+///     porque un mismo ingreso puede cubrir N reservas distintas (N:M).
+///   - <c>Currency</c> es ISO 4217 (3 chars). Validamos en el service que
+///     coincida con la moneda del FiscalSnapshot del BC cuando se allocate.
+///   - <c>ReceivedAt</c> es la fecha REAL del ingreso (cuando el dinero llego),
+///     no <c>UtcNow</c>: si el cashier carga ayer una transferencia recibida
+///     anteayer, queremos reflejar el dia correcto en el Libro de Caja.
+/// </summary>
+public record RecordOperatorRefundRequest(
+    [Required] Guid SupplierPublicId,
+
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto debe ser mayor a cero.")]
+    decimal ReceivedAmount,
+
+    [Required, MaxLength(3, ErrorMessage = "Currency es ISO 4217 (3 chars).")]
+    string Currency,
+
+    [Required] DateTime ReceivedAt,
+
+    [MaxLength(50)] string? Method,
+
+    [MaxLength(100)] string? Reference,
+
+    [MaxLength(500)] string? Notes
+);
+
+/// <summary>
+/// FC1.2.2 §3 (plan v3): linea de deduccion que viene en una <see cref="AllocateRefundRequest"/>.
+///
+/// <para>
+/// **Por que esta tipificado**: <see cref="DeductionKind"/> tiene 10 valores con
+/// reglas de validacion distintas (retenciones AR exigen certificado, ForeignTax
+/// exige country, etc.). El service valida las reglas segun el kind antes de
+/// persistir cada <see cref="DeductionLine"/>.
+/// </para>
+/// </summary>
+public record DeductionLineRequest(
+    [Required] DeductionKind Kind,
+
+    [Range(0.01, double.MaxValue, ErrorMessage = "Amount debe ser mayor a cero.")]
+    decimal Amount,
+
+    [MaxLength(500)] string? Description,
+
+    // Campos opcionales segun Kind. La validacion fina vive en el service.
+    [MaxLength(50)] string? CertificateNumber,
+    DateTime? CertificateDate,
+    [MaxLength(500)] string? CertificatePdfUrl,
+    [MaxLength(50)] string? Jurisdiction,
+    [MaxLength(2)] string? ForeignCountryCode,
+    [MaxLength(200)] string? SupportingDocumentRef,
+    [MaxLength(1000)] string? JustificationComment,
+    bool MissingFiscalSupport,
+    [MaxLength(1000)] string? Comment,
+    bool RequiresAccountingReview
+);
+
+/// <summary>
+/// FC1.2.2 §3 (plan v3): payload para imputar parte de un ingreso del operador
+/// contra UN BookingCancellation.
+///
+/// <para>
+/// **Que es Gross vs Net**: <c>GrossAmount</c> es lo que el operador "dice" que
+/// le toca a este BC (antes de descontar deducciones). <c>NetAmount</c> se
+/// calcula automaticamente como <c>Gross - SUM(Deductions.Amount)</c> y es lo
+/// que se acredita al cliente como <see cref="ClientCreditEntry"/>.
+/// </para>
+///
+/// <para>
+/// **Concurrencia N:M**: el CHECK SQL
+/// <c>chk_OperatorRefundsReceived_allocated_not_exceeds</c> garantiza que
+/// <c>SUM(allocations) &lt;= ReceivedAmount</c> incluso cuando dos cashiers
+/// allocate paralelos contra el mismo refund.
+/// </para>
+/// </summary>
+public record AllocateRefundRequest(
+    [Required] Guid BookingCancellationPublicId,
+
+    [Range(0.01, double.MaxValue, ErrorMessage = "GrossAmount debe ser mayor a cero.")]
+    decimal GrossAmount,
+
+    [Required] List<DeductionLineRequest> Deductions
+);
+
+/// <summary>
+/// FC1.2.2 §3 (plan v3): payload del void de una allocation.
+/// <c>Reason</c> obligatorio min 20 chars para auditoria fiscal.
+/// </summary>
+public record VoidAllocationRequest(
+    [Required, MinLength(20), MaxLength(500)]
+    string Reason
+);
+
+/// <summary>
+/// FC1.2.2 §3 (plan v3): payload del reassociate (mueve allocation entre BCs).
+/// Atomic: void de la vieja + create de la nueva en una sola tx.
+/// </summary>
+public record ReassociateAllocationRequest(
+    [Required] Guid NewBookingCancellationPublicId,
+
+    [Required, MinLength(20), MaxLength(500)]
+    string Reason
+);
+
+/// <summary>
+/// FC1.2.2 §3 (plan v3): respuesta del registro/lectura de un ingreso de operador.
+/// Lo construye <see cref="OperatorRefundService"/> y lo retornan los endpoints
+/// del controller (FC1.2.4). Contiene las allocations linkeadas para que la UI
+/// pueda mostrar "Recibi $1000, asigne $300 a BC#A y $400 a BC#B, sobran $300".
+/// </summary>
+public class OperatorRefundReceivedDto
+{
+    public Guid PublicId { get; set; }
+    public Guid SupplierPublicId { get; set; }
+    public string SupplierName { get; set; } = string.Empty;
+    public decimal ReceivedAmount { get; set; }
+    public decimal AllocatedAmount { get; set; }
+    public decimal RemainingCap { get; set; }
+    public string Currency { get; set; } = "ARS";
+    public DateTime ReceivedAt { get; set; }
+    public string Method { get; set; } = "Transfer";
+    public string? Reference { get; set; }
+    public string ReceivedByUserId { get; set; } = string.Empty;
+    public string ReceivedByUserName { get; set; } = string.Empty;
+    public List<OperatorRefundAllocationDto> Allocations { get; set; } = new();
+}
+
+/// <summary>
+/// FC1.2.2 §3 (plan v3): respuesta de una allocation N:M.
+/// Incluye las deducciones tipificadas para que la UI pueda mostrar el desglose
+/// "del bruto $500 le saque $50 de retencion IIBB Buenos Aires y $20 de banca".
+/// </summary>
+public class OperatorRefundAllocationDto
+{
+    public Guid PublicId { get; set; }
+    public Guid RefundPublicId { get; set; }
+    public Guid BookingCancellationPublicId { get; set; }
+    public decimal GrossAmount { get; set; }
+    public decimal NetAmount { get; set; }
+    public bool IsVoided { get; set; }
+    public DateTime? VoidedAt { get; set; }
+    public string? VoidedByUserId { get; set; }
+    public string? VoidedReason { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string CreatedByUserId { get; set; } = string.Empty;
+    public List<DeductionLineDto> Deductions { get; set; } = new();
+}
+
+/// <summary>FC1.2.2: respuesta de una linea de deduccion (todos los campos opcionales segun Kind).</summary>
+public class DeductionLineDto
+{
+    public Guid PublicId { get; set; }
+    public DeductionKind Kind { get; set; }
+    public decimal Amount { get; set; }
+    public string? Description { get; set; }
+    public string? CertificateNumber { get; set; }
+    public DateTime? CertificateDate { get; set; }
+    public string? CertificatePdfUrl { get; set; }
+    public string? Jurisdiction { get; set; }
+    public string? ForeignCountryCode { get; set; }
+    public string? SupportingDocumentRef { get; set; }
+    public string? JustificationComment { get; set; }
+    public bool MissingFiscalSupport { get; set; }
+    public string? Comment { get; set; }
+    public bool RequiresAccountingReview { get; set; }
+}

@@ -1217,6 +1217,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(a => a.GrossAmount).HasPrecision(18, 2);
             entity.Property(a => a.NetAmount).HasPrecision(18, 2);
             entity.Property(a => a.CreatedByUserId).HasMaxLength(450).IsRequired();
+            // FC1.2.2: metadata del void (anulacion / reassociate).
+            entity.Property(a => a.VoidedByUserId).HasMaxLength(450);
+            entity.Property(a => a.VoidedReason).HasMaxLength(500);
 
             entity.HasOne(a => a.BookingCancellation)
                   .WithMany()
