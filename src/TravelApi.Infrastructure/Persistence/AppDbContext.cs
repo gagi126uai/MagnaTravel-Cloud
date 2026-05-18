@@ -1115,6 +1115,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(b => b.DraftedByUserName).HasMaxLength(200);
             entity.Property(b => b.ConfirmedByUserId).HasMaxLength(450);
             entity.Property(b => b.ConfirmedByUserName).HasMaxLength(200);
+
+            // FC1.2.1 (BR-V2-01): campos del escape hatch manual ARCA.
+            entity.Property(b => b.ArcaConfirmedManuallyByUserId).HasMaxLength(450);
+            entity.Property(b => b.ArcaErrorMessage).HasMaxLength(1000);
+
             entity.Property(b => b.AmountPaidAtCancellation).HasPrecision(18, 2);
             entity.Property(b => b.EstimatedRefundAmount).HasPrecision(18, 2);
             entity.Property(b => b.ReceivedRefundAmount).HasPrecision(18, 2);

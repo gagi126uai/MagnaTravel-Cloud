@@ -139,4 +139,36 @@ public class BookingCancellation : IHasPublicId
     /// Es tri-state porque permite distinguir "no aplica" vs "aplica explicitamente".
     /// </summary>
     public bool? IsLegacyPreCancellationModel { get; set; }
+
+    // ============================================================
+    // FC1.2.1 v3 §10.1 (BR-V2-01, 2026-05-17): trazabilidad del escape hatch
+    // manual cuando AFIP confirmo la NC pero el callback automatico fallo
+    // (ej. job zombie en Hangfire, excepcion no recuperable).
+    // ============================================================
+
+    /// <summary>
+    /// FC1.2.1 (BR-V2-01): UTC en que un Admin forzo la transicion fiscal
+    /// (<c>ForceArcaConfirmationAsync</c>). <b>Null</b> si la transicion paso por el
+    /// flujo automatico (callback Hangfire). Si tiene valor, en auditoria se puede
+    /// distinguir manual vs automatico.
+    /// </summary>
+    public DateTime? ArcaConfirmedManuallyAt { get; set; }
+
+    /// <summary>
+    /// FC1.2.1 (BR-V2-01): UserId del Admin que ejecuto <c>ForceArcaConfirmationAsync</c>.
+    /// Null si la transicion fue automatica. La FK se deja "logica" (string del Id) sin
+    /// referencial constraint a <c>AspNetUsers</c> a proposito: si el user se elimina,
+    /// el rastro de quien forzo la operacion debe sobrevivir (auditoria fiscal).
+    /// </summary>
+    [MaxLength(450)]
+    public string? ArcaConfirmedManuallyByUserId { get; set; }
+
+    /// <summary>
+    /// FC1.2.1: mensaje de error que AFIP devolvio cuando rechazo la NC.
+    /// Persistido aca para que el back-office vea el motivo sin tener que abrir
+    /// los logs de Hangfire o consultar el Invoice. Util cuando el BC queda en
+    /// <see cref="BookingCancellationStatus.ArcaRejected"/>.
+    /// </summary>
+    [MaxLength(1000)]
+    public string? ArcaErrorMessage { get; set; }
 }

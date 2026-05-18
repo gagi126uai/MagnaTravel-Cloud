@@ -35,6 +35,13 @@ public class InvoiceService : IInvoiceService
     private readonly IApprovalRequestService? _approvalService;
     // B1.15 Fase B'' (2026-05-11): opcional por la misma razon.
     private readonly IApprovalPolicyService? _approvalPolicyService;
+    // FC1.2.1 (BR-V2-04, MR-V2-02): bridge "chico" hacia BookingCancellationService.
+    // Inyectado opcional porque los unit tests del invoice no necesitan resolverlo
+    // y porque el ciclo DI se rompio justamente con esta interface acotada.
+    // Si esta presente, ProcessAnnulmentJob lo invoca post-CAE para sincronizar
+    // el estado del BC asociado. Si esta null, el job sigue funcionando para
+    // annulaciones standalone (back-office sin BC).
+    private readonly IInvoiceAnnulmentBcBridge? _bcBridge;
     private static readonly string[] ActiveInvoicingStatuses =
     {
         EstadoReserva.Confirmed,
@@ -54,7 +61,8 @@ public class InvoiceService : IInvoiceService
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
         IApprovalRequestService? approvalService = null,
-        IApprovalPolicyService? approvalPolicyService = null)
+        IApprovalPolicyService? approvalPolicyService = null,
+        IInvoiceAnnulmentBcBridge? bcBridge = null)
     {
         _context = context;
         _entityReferenceResolver = entityReferenceResolver;
@@ -69,6 +77,7 @@ public class InvoiceService : IInvoiceService
         _httpContextAccessor = httpContextAccessor;
         _approvalService = approvalService;
         _approvalPolicyService = approvalPolicyService;
+        _bcBridge = bcBridge;
     }
 
     /// <summary>
@@ -457,7 +466,14 @@ public class InvoiceService : IInvoiceService
         return _pdfService.GenerateInvoicePdf(invoice, invoice.Reserva, settings, agencySettings);
     }
 
-    public async Task EnqueueAnnulmentAsync(int id, string userId, string? userName, string? reason, bool requesterIsAdmin, CancellationToken ct)
+    public async Task EnqueueAnnulmentAsync(
+        int id,
+        string userId,
+        string? userName,
+        string? reason,
+        bool requesterIsAdmin,
+        CancellationToken ct,
+        int? approvalRequestId = null)
     {
         // B1.15 Fase 2a (FIX 6): persistir trazabilidad de la solicitud antes de
         // encolar. AnnulmentStatus = Pending bloquea cancel de reserva incluso si
@@ -505,7 +521,15 @@ public class InvoiceService : IInvoiceService
         // (configurable por Admin), no desde el setting global viejo (deprecado).
         // Fallback al setting viejo si el policy service no esta inyectado
         // (compat unit tests). Si tampoco hay setting, fallback true (conservador).
-        int? approvalRequestId = null;
+        //
+        // FC1.2.1 v3 (BR-V2-03, 2026-05-17): si el caller paso un
+        // <c>approvalRequestId</c> propio (caso BookingCancellationService:
+        // InvariantOverride aprobado al BC), lo usamos como cross-reference
+        // fiscal y NO buscamos un InvoiceAnnulment separado. La decision
+        // OPS-FISCAL-001 cubre la equivalencia legal del approval del BC vs
+        // un approval especifico de la NC.
+        // Renombramos la local var de FC1.2.0 a evitar shadowing del parametro.
+        int? consumedApprovalRequestId = approvalRequestId;
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
         bool requiresApproval;
         if (_approvalPolicyService is not null)
@@ -533,7 +557,7 @@ public class InvoiceService : IInvoiceService
                 throw new ApprovalRequiredException(
                     ApprovalRequestType.InvoiceAnnulment, "Invoice", id);
             }
-            approvalRequestId = approval.Id;
+            consumedApprovalRequestId = approval.Id;
             // Si el caller no paso motivo explicito, usar el del approval (auditoria fiscal).
             if (string.IsNullOrWhiteSpace(reason))
                 reason = approval.Reason;
@@ -545,9 +569,17 @@ public class InvoiceService : IInvoiceService
         // queda null; la "solicitud" se infiere por AnnulmentStatus = Pending.
         invoice.AnnulmentReason = reason;
         invoice.AnnulmentStatus = AnnulmentStatus.Pending;
+        // FC1.2.1 v3 (BR-V2-03): persistir el cross-reference fiscal apenas se
+        // dispara el job. Si el caller (BC service) paso un approvalRequestId,
+        // este valor permite que el contador rastree "esta NC fue autorizada por
+        // que ApprovalRequest" sin tener que reconstruir desde audit logs.
+        if (consumedApprovalRequestId.HasValue)
+        {
+            invoice.AnnulmentApprovalRequestId = consumedApprovalRequestId.Value;
+        }
         await _context.SaveChangesAsync(ct);
 
-        _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId, approvalRequestId));
+        _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId, consumedApprovalRequestId));
     }
 
     public async Task ProcessAnnulmentJob(int invoiceId, string userId, int? approvalRequestId = null)
@@ -774,6 +806,29 @@ public class InvoiceService : IInvoiceService
                     await _approvalService.MarkConsumedAsync(approvalRequestId.Value);
                 }
                 await CreateNotification(userId, $"Anulación exitosa. Se generó el comprobante {newInvoice.NumeroComprobante}.", "Success", newInvoice.Id);
+
+                // FC1.2.1 v3 §6.2 / HC3 (BR-V2-04, 2026-05-17): sincronizar el BC
+                // asociado (si existe). El try/catch envolvente es CRITICO: el
+                // commit fiscal arriba ya quedo (AnnulmentStatus=Succeeded), por
+                // lo tanto NO podemos hacer rethrow → Hangfire reintentaria el
+                // job entero y llamaria AFIP de nuevo (NC duplicada). Si el bridge
+                // falla, el path de remediacion es manual via
+                // ForceArcaConfirmationAsync (BR-V2-01).
+                if (_bcBridge is not null)
+                {
+                    try
+                    {
+                        await _bcBridge.OnArcaSucceededAsync(invoiceId, newInvoice.Id, CancellationToken.None);
+                    }
+                    catch (Exception bridgeEx)
+                    {
+                        _logger.LogError(
+                            bridgeEx,
+                            "Bridge BC.OnArcaSucceededAsync fallo para Invoice {InvoiceId} (CN={CreditNoteId}). " +
+                            "La NC quedo Succeeded en AFIP. Remediacion: ForceArcaConfirmationAsync manual.",
+                            invoiceId, newInvoice.Id);
+                    }
+                }
             }
             else
             {
@@ -782,6 +837,25 @@ public class InvoiceService : IInvoiceService
                 original.AnnulmentStatus = AnnulmentStatus.Failed;
                 await _context.SaveChangesAsync();
                 await CreateNotification(userId, $"La anulación falló en AFIP: {newInvoice.Observaciones}", "Error", invoiceId);
+
+                // FC1.2.1 v3 §6.2: notificar al BC asociado. Mismo patron try/catch:
+                // el commit Failed ya quedo, no podemos rethrow. El BC quedaria en
+                // AwaitingFiscalConfirmation indefinidamente — el remediation es
+                // manual (back-office decide reintentar o abandonar).
+                if (_bcBridge is not null)
+                {
+                    try
+                    {
+                        await _bcBridge.OnArcaFailedAsync(invoiceId, newInvoice.Observaciones, CancellationToken.None);
+                    }
+                    catch (Exception bridgeEx)
+                    {
+                        _logger.LogError(
+                            bridgeEx,
+                            "Bridge BC.OnArcaFailedAsync fallo para Invoice {InvoiceId}. La NC esta Failed en AFIP.",
+                            invoiceId);
+                    }
+                }
             }
         }
         catch (Exception ex)

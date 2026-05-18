@@ -94,6 +94,16 @@ public static class Permissions
     public const string ApprovalsPolicies = "approvals.policies";
 
     /// <summary>
+    /// FC1.2.1 v3 (BR-V2-01, 2026-05-17): escape hatch fiscal. Cuando AFIP
+    /// devolvio CAE para una NC pero el callback automatico al
+    /// <c>BookingCancellationService</c> fallo, un Admin puede empatar manualmente
+    /// el estado del BC con la realidad fiscal. Es alto riesgo: salta el flujo
+    /// normal de approval de annulacion. Default <b>solo Admin</b> — NO va a
+    /// Colaborador ni Vendedor (decision Gaston, plan v3 §4.4).
+    /// </summary>
+    public const string CancellationsForceArcaConfirmation = "cancellations.force_arca_confirmation";
+
+    /// <summary>
     /// Todos los permisos disponibles agrupados por módulo para la UI.
     /// </summary>
     public static readonly Dictionary<string, string[]> AllByModule = new()
@@ -102,6 +112,8 @@ public static class Permissions
         {
             ReservasView, ReservasEdit, ReservasDelete,
             ReservasViewAll, ReservasCancel, ReservasCancelWithPayment, ReservasDiscountAboveThreshold,
+            // FC1.2.1 (BR-V2-01): permission del modulo cancelacion/refund expuesto en UI Reservas.
+            CancellationsForceArcaConfirmation,
         },
         ["Vouchers"] = new[] { VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersAuthorizeException, VouchersRevoke },
         ["Mensajes"] = new[] { MessagesView, MessagesSend },

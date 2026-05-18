@@ -34,4 +34,14 @@ public enum BookingCancellationStatus
 
     /// <summary>Abort manual desde <see cref="Drafted"/>: ningun side-effect fiscal generado. La Reserva no cambia.</summary>
     Aborted = 6,
+
+    /// <summary>
+    /// FC1.2.1 (2026-05-17): la NC fue enviada a AFIP pero el organismo la
+    /// rechazo (CAE no aprobado). Estado terminal para el flujo automatico —
+    /// la remediacion es manual: el back-office reintenta la annulacion (corrigiendo
+    /// datos), o un Admin usa <c>ForceArcaConfirmationAsync</c> apuntando a una NC
+    /// emitida fuera del sistema. La Reserva sigue en su estado previo a T0
+    /// (no transiciona a <c>PendingOperatorRefund</c> hasta que ARCA confirme).
+    /// </summary>
+    ArcaRejected = 7,
 }

@@ -18,7 +18,21 @@ public interface IInvoiceService
     // se guarda en el job para marcar Consumed cuando la NC sea aprobada por AFIP.
     // Throws <see cref="ApprovalRequiredException"/> si el setting esta on, el
     // user no es Admin y no hay ApprovalRequest aprobado vigente.
-    Task EnqueueAnnulmentAsync(int id, string userId, string? userName, string? reason, bool requesterIsAdmin, CancellationToken ct);
+    //
+    // FC1.2.1 v3 (BR-V2-03, 2026-05-17): se agrega <c>approvalRequestId</c> opcional
+    // para cross-reference fiscal cuando la annulacion la dispara
+    // <c>BookingCancellationService.ConfirmAsync</c> (con un InvariantOverride
+    // aprobado al BC, no un InvoiceAnnulment standalone). Si tiene valor, se
+    // persiste en <c>Invoice.AnnulmentApprovalRequestId</c> para que la auditoria
+    // pueda trazar quien aprobo. Callers viejos pasan null por default → compat.
+    Task EnqueueAnnulmentAsync(
+        int id,
+        string userId,
+        string? userName,
+        string? reason,
+        bool requesterIsAdmin,
+        CancellationToken ct,
+        int? approvalRequestId = null);
 
     // Background Job method
     // approvalRequestId nullable: si null el job no consume approval (caso Admin

@@ -417,6 +417,26 @@ builder.Services.AddHttpClient<IAfipService, AfipService>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IApprovalRequestService, ApprovalRequestService>();
+
+// FC1.2.1 v3 (MR-V2-02, 2026-05-17) — BookingCancellationService implementa
+// AMBAS interfaces:
+//   - IBookingCancellationService (API publica que llaman controllers).
+//   - IInvoiceAnnulmentBcBridge (interface chica de 2 metodos que InvoiceService
+//     inyecta opcional para sincronizar el BC post-CAE).
+// Sin este split, IInvoiceService <-> IBookingCancellationService genera ciclo
+// DI rechazado por el resolver al startup (Scoped circular reference). Con el
+// split, el ciclo queda solo logico (uno llama al otro en runtime) pero NO en
+// el grafo de tipos del DI container.
+//
+// Registramos la clase concreta una vez + ambas interfaces como factory que
+// resuelve la misma instancia dentro del scope. Asi comparten AppDbContext y
+// ChangeTracker — critico para que los callbacks del bridge vean los cambios
+// commiteados por el flujo principal.
+builder.Services.AddScoped<BookingCancellationService>();
+builder.Services.AddScoped<IBookingCancellationService>(sp =>
+    sp.GetRequiredService<BookingCancellationService>());
+builder.Services.AddScoped<IInvoiceAnnulmentBcBridge>(sp =>
+    sp.GetRequiredService<BookingCancellationService>());
 builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
