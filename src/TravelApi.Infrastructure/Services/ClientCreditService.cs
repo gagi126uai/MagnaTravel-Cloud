@@ -278,6 +278,15 @@ public class ClientCreditService : IClientCreditService
                 ct: ct);
         }
 
+        // FC1.2.7b counter: el cliente retiro saldo. Pasamos `kind` como property
+        // estructurada para que el dashboard pueda filtrar por tipo de retiro
+        // (PhysicalCash vs Transfer vs ReversedToOperator) y armar series por
+        // kind. Si physical_cash crece desproporcionado, hay problema operativo
+        // (la caja deberia preferir transfer para evitar manejo de efectivo).
+        _logger.LogInformation(
+            "metric:client_credit_withdrawn | WithdrawalPublicId={WithdrawalPublicId} EntryPublicId={EntryPublicId} Kind={Kind} Amount={Amount}",
+            withdrawal.PublicId, entry.PublicId, withdrawal.Kind.ToString(), withdrawal.Amount);
+
         // 7) Cierre del BC si TODOS los entries estan consumidos.
         //    MR-02 plan v3: el callback evalua con SQL crudo + ChangeTracker
         //    (porque los cambios in-memory de este metodo todavia no estan en BD)

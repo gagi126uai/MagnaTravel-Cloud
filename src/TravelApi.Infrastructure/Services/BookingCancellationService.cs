@@ -199,6 +199,16 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
             userName: userName,
             ct: ct);
 
+        // FC1.2.7b counter: una metrica operativa por draft creado. La diferencia
+        // con el audit log es de roles: el audit es traza FISCAL (quien / cuando /
+        // que cambio); el counter es SENIAL para metricas/alerting (ej. cuantos
+        // drafts/dia, cuantos por usuario, picos anomalos). El prefijo "metric:"
+        // permite que un parser de logs (Grafana Loki / Promtail) extraiga los
+        // valores como series temporales sin tener que tocar el audit log fiscal.
+        _logger.LogInformation(
+            "metric:cancellation_drafted | BcPublicId={BcPublicId} ReservaPublicId={ReservaPublicId} UserId={UserId}",
+            bc.PublicId, reserva.PublicId, userId);
+
         return await MapToDtoAsync(bc.Id, ct)
             ?? throw new InvalidOperationException("BC no encontrada despues de crearla. Estado inconsistente.");
     }
@@ -399,6 +409,15 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
             userName: userName,
             ct: ct);
 
+        // FC1.2.7b counter: marcamos confirm + flag with_override para que el
+        // dashboard pueda distinguir "cuantas cancelaciones fueron normales vs
+        // cuantas pasaron por escape hatch de admin". Si with_override sube,
+        // hay un problema sistematico (probablemente reglas de negocio mal
+        // calibradas o callbacks AFIP fallando).
+        _logger.LogInformation(
+            "metric:cancellation_confirmed | BcPublicId={BcPublicId} WithOverride={WithOverride} UserId={UserId}",
+            bc.PublicId, approvalRequest != null, userId);
+
         return await MapToDtoAsync(bc.Id, ct)
             ?? throw new InvalidOperationException("BC no encontrada despues de confirmar. Estado inconsistente.");
     }
@@ -445,6 +464,13 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
             userId: userId,
             userName: null,
             ct: ct);
+
+        // FC1.2.7b counter: cuantos drafts se abortan en vez de confirmarse.
+        // Una tasa alta indica que vendedores estan creando drafts "por las dudas"
+        // — vale la pena reentrenar el flujo o ajustar la UI para reducir aborts.
+        _logger.LogInformation(
+            "metric:cancellation_aborted | BcPublicId={BcPublicId} UserId={UserId}",
+            bc.PublicId, userId);
 
         return (await MapToDtoAsync(bc.Id, ct))!;
     }
@@ -565,10 +591,12 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
 
         await _db.SaveChangesAsync(ct);
 
-        // OPS4 (plan v3 §11): counter para alerting. Si supera N/semana en
-        // produccion, indica que el callback automatico esta fallando sistematicamente.
+        // OPS4 (plan v3 §11) + FC1.2.7b: counter para alerting. Si supera
+        // N/semana en produccion, indica que el callback automatico esta fallando
+        // sistematicamente. Usamos el mismo formato "metric:nombre | k=v k=v" que
+        // los demas counters del modulo para que el parser de logs los junte.
         _logger.LogInformation(
-            "metric:cancellation_force_arca_executed {BcPublicId} {AdminUserId}",
+            "metric:cancellation_force_arca_executed | BcPublicId={BcPublicId} AdminUserId={AdminUserId}",
             bc.PublicId, userId);
 
         return (await MapToDtoAsync(bc.Id, ct))!;
@@ -814,6 +842,13 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
         _logger.LogInformation(
             "BC {BcPublicId} closed via OnAllCreditConsumedAsync (Reserva -> Cancelled).",
             bc.PublicId);
+
+        // FC1.2.7b counter: cierre del BC = ciclo completo (Drafted → Closed).
+        // El delta entre cancellation_drafted y cancellation_closed indica cuantas
+        // cancelaciones quedan "abiertas" en el funnel (drafted pero no cerradas).
+        _logger.LogInformation(
+            "metric:cancellation_closed | BcPublicId={BcPublicId} ReceivedRefundAmount={ReceivedRefundAmount}",
+            bc.PublicId, bc.ReceivedRefundAmount);
     }
 
     public async Task<BookingCancellationDto?> GetByPublicIdAsync(Guid publicId, CancellationToken ct)
@@ -871,6 +906,12 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
         _logger.LogInformation(
             "BC {BcPublicId} transitioned to AwaitingOperatorRefund via OnArcaSucceededAsync (auto).",
             bc.PublicId);
+
+        // FC1.2.7b counter: callback AFIP exitoso. Si crece muy despacio comparado
+        // con cancellation_confirmed, hay backlog en Hangfire o AFIP esta lento.
+        _logger.LogInformation(
+            "metric:cancellation_arca_succeeded | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} CreditNoteInvoiceId={CreditNoteInvoiceId}",
+            bc.PublicId, originatingInvoiceId, creditNoteInvoiceId);
     }
 
     public async Task OnArcaFailedAsync(int originatingInvoiceId, string? afipErrorMessage, CancellationToken ct)
@@ -915,6 +956,16 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
         _logger.LogError(
             "BC {BcPublicId} marked as ArcaRejected. AFIP error: {Error}",
             bc.PublicId, bc.ArcaErrorMessage);
+
+        // FC1.2.7b counter: callback AFIP rechazado. Si supera N/dia, hay un
+        // problema sistematico con AFIP (CUITs invalidos, fechas mal, etc.).
+        // El admin puede recurrir a ForceArcaConfirmation manualmente para
+        // destrabar (genera otro counter "cancellation_force_arca_executed").
+        _logger.LogInformation(
+            "metric:cancellation_arca_failed | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} ErrorTruncated={ErrorPreview}",
+            bc.PublicId, originatingInvoiceId,
+            // Truncamos a 80 chars para que el log no se ensucie con XML completo.
+            bc.ArcaErrorMessage.Length > 80 ? bc.ArcaErrorMessage[..80] : bc.ArcaErrorMessage);
     }
 
     // =========================================================================

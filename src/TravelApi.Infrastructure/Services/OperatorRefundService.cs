@@ -176,6 +176,14 @@ public class OperatorRefundService : IOperatorRefundService
         // 5) SaveChanges unico: refund + movement + audit log se persisten juntos.
         await _db.SaveChangesAsync(ct);
 
+        // FC1.2.7b counter: la caja registro un ingreso del operador. La
+        // diferencia con el audit log es de rol: audit = traza fiscal, counter
+        // = senial para metricas. Si refunds_received / dia cae a cero, puede
+        // haber un problema con el operador o con la caja.
+        _logger.LogInformation(
+            "metric:operator_refund_received | RefundPublicId={RefundPublicId} SupplierId={SupplierId} Amount={Amount} Currency={Currency}",
+            refund.PublicId, supplier.Id, refund.ReceivedAmount, refund.Currency);
+
         // 6) Mapeo de salida.
         return MapRefund(refund);
     }
@@ -478,6 +486,14 @@ public class OperatorRefundService : IOperatorRefundService
         //         RecordReceivedAsync)
         //       - audit log
         await _db.SaveChangesAsync(ct);
+
+        // FC1.2.7b counter: una allocation N:M aplicada. Util cruzar contra
+        // operator_refund_received para ver si los ingresos quedan "huerfanos"
+        // (recibidos pero no allocados a ninguna BC). Si el ratio
+        // received/allocated diverge, la caja tiene plata sin imputar.
+        _logger.LogInformation(
+            "metric:operator_refund_allocated | AllocationPublicId={AllocationPublicId} RefundPublicId={RefundPublicId} BcPublicId={BcPublicId} NetAmount={NetAmount}",
+            allocation.PublicId, refund.PublicId, bc.PublicId, allocation.NetAmount);
 
         return MapAllocation(allocation);
     }
