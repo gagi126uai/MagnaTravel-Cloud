@@ -99,6 +99,41 @@ public static class AuditActions
     /// </summary>
     public const string OperatorRefundAllocationReassociated = "OperatorRefundAllocationReassociated";
 
+    // ===== Modulo ClientCredit (FC1.2.3) =====
+
+    /// <summary>
+    /// FC1.2.3 (2026-05-18): el cliente (o el cashier en su nombre) retiro
+    /// saldo del <see cref="ClientCreditEntry"/>. Audit base para PhysicalCash /
+    /// Transfer / KeptAsCredit / AppliedToNewBooking. Para ReversedToOperator
+    /// existe un audit dedicado (ver <see cref="ClientRefundReversalApproved"/>)
+    /// que se loguea ADEMAS de este (audit reforzado).
+    /// </summary>
+    public const string ClientCreditWithdrawn = "ClientCreditWithdrawn";
+
+    /// <summary>
+    /// FC1.2.3 (2026-05-18): variante del withdraw cuando la kind es
+    /// <c>PhysicalCash</c> y el monto supera <c>PhysicalRefundAlertThreshold</c>
+    /// (sin llegar a Ley 25.345). Es informativo: el dashboard del admin lo
+    /// muestra como "Movimiento importante" sin bloquear la operacion.
+    /// </summary>
+    public const string ClientCreditPhysicalRefundAlert = "ClientCreditPhysicalRefundAlert";
+
+    /// <summary>
+    /// FC1.2.3 (2026-05-18): audit reforzado para el caso ReversedToOperator
+    /// (el cliente devuelve plata ya retirada). Se logue ADEMAS del audit base
+    /// <see cref="ClientCreditWithdrawn"/> para que el daily egress report pueda
+    /// destacar el evento como "reversal post-egreso" (audit fiscal ADR-002 §8).
+    /// </summary>
+    public const string ClientRefundReversalApproved = "ClientRefundReversalApproved";
+
+    /// <summary>
+    /// FC1.2.3 (2026-05-18): cuando el ultimo withdraw deja el BC sin saldos
+    /// pendientes (todos los entries en RemainingBalance=0), el BC pasa a
+    /// <c>Closed</c> y la Reserva a <c>Cancelled</c>. El audit deja trazabilidad
+    /// de quien gatillo el cierre y cuando.
+    /// </summary>
+    public const string BookingCancellationClosed = "BookingCancellationClosed";
+
     // ===== Entity names (helpers) =====
 
     /// <summary>
@@ -113,4 +148,10 @@ public static class AuditActions
 
     /// <summary>FC1.2.2: entityName para eventos sobre la allocation N:M.</summary>
     public const string OperatorRefundAllocationEntityName = "OperatorRefundAllocation";
+
+    /// <summary>FC1.2.3: entityName para eventos sobre el retiro de saldo cliente.</summary>
+    public const string ClientCreditWithdrawalEntityName = "ClientCreditWithdrawal";
+
+    /// <summary>FC1.2.3: entityName para eventos sobre el saldo del cliente (entry).</summary>
+    public const string ClientCreditEntryEntityName = "ClientCreditEntry";
 }

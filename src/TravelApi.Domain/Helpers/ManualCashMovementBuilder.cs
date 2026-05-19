@@ -288,7 +288,23 @@ public static class ManualCashMovementBuilder
             // (degradacion suave; el reporte sigue agrupando por ClientCreditWithdrawalId).
             RelatedReservaId = entry.BookingCancellation?.ReservaId,
             OperatorRefundReceivedId = null,
-            ClientCreditWithdrawalId = withdrawal.Id,
+
+            // ATENCION trainee/junior — bug fix 2026-05-18 (Obs 2 review FC1.2.3):
+            // NO seteamos ClientCreditWithdrawalId al int crudo (withdrawal.Id) porque
+            // en T3 (WithdrawAsync), el caller invoca este builder con un
+            // ClientCreditWithdrawal que acaba de ser Add()-eado y todavia no
+            // se persistio: withdrawal.Id == 0 hasta el SaveChangesAsync final. Si
+            // setearamos el FK escalar a 0, Postgres lo recibe como FK invalida
+            // y rompe el INSERT con 23503 (FK violation).
+            //
+            // Solucion: seteamos la NAVIGATION property (ClientCreditWithdrawal).
+            // EF Core resuelve la FK al hacer SaveChanges en orden topologico:
+            // primero inserta el withdrawal (obtiene Id real de la secuencia Postgres)
+            // y despues el movement con esa FK ya resuelta. Es exactamente el
+            // mismo patron que BuildIncomeForRefund (linea ~140) usa con
+            // OperatorRefundReceived.
+            ClientCreditWithdrawal = withdrawal,
+            ClientCreditWithdrawalId = null,
         };
     }
 }

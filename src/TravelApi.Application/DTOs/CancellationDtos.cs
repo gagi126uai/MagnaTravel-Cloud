@@ -333,3 +333,110 @@ public class DeductionLineDto
     public string? Comment { get; set; }
     public bool RequiresAccountingReview { get; set; }
 }
+
+// =============================================================================
+// FC1.2.3 (2026-05-18) — DTOs del modulo ClientCredit (T3 del flujo).
+// =============================================================================
+
+/// <summary>
+/// FC1.2.3 v3 §2.3 (2026-05-18): payload para que el cliente (o el cashier en
+/// su nombre) retire saldo de un <see cref="ClientCreditEntry"/>.
+///
+/// <para>
+/// <b>Kinds soportados</b> (ver <see cref="WithdrawalKind"/>):
+/// <list type="bullet">
+///   <item><c>KeptAsCredit</c>: el cliente no retira nada, deja el saldo vivo.
+///         Genera un withdrawal "marca de decision" con Amount=0 (sin movimiento
+///         de caja). Util para timeline del cliente: "el 12/05 decidio dejar
+///         $X como credito".</item>
+///   <item><c>PhysicalCash</c>: efectivo. Ley 25.345 valida que Amount no
+///         supere <see cref="OperationalFinanceSettings.Ley25345ThresholdAmount"/>.
+///         Si supera <see cref="OperationalFinanceSettings.PhysicalRefundAlertThreshold"/>
+///         se logea alerta admin sin bloquear.</item>
+///   <item><c>Transfer</c>: transferencia bancaria. Sin tope Ley 25.345.
+///         <see cref="PaymentMethodOverride"/> permite trazar el detalle
+///         operativo ("Transfer-BBVA", "MercadoPago", etc.).</item>
+///   <item><c>AppliedToNewBooking</c>: el saldo se aplica como pago de otra
+///         reserva del cliente. NO genera <see cref="ManualCashMovement"/>
+///         (el <c>PaymentService</c> lo hara al registrar el pago en la nueva
+///         reserva). <see cref="AppliedToReservaPublicId"/> apunta a la reserva
+///         destino.</item>
+///   <item><c>ReversedToOperator</c>: el cliente devuelve plata ya cobrada.
+///         Requiere <see cref="ApprovalRequestPublicId"/> de tipo
+///         <c>ClientRefundReversal</c> aprobado. Audit reforzado.</item>
+/// </list>
+/// </para>
+///
+/// <para>
+/// <b>Validacion semantica</b>: el service decide que campos son obligatorios
+/// segun el <c>Kind</c>. El payload los acepta todos como opcionales para que
+/// el frontend no tenga que armar requests distintos por kind.
+/// </para>
+/// </summary>
+public record WithdrawClientCreditRequest(
+    [Required] WithdrawalKind Kind,
+
+    // KeptAsCredit no consume saldo: Amount = 0 valido. El resto debe ser > 0.
+    // No usamos [Range(0.01, ...)] porque excluiria KeptAsCredit; el service
+    // valida el rango segun kind.
+    [Range(0, double.MaxValue, ErrorMessage = "Amount no puede ser negativo.")]
+    decimal Amount,
+
+    // Solo se usa cuando Kind == Transfer (o PhysicalCash con descripcion).
+    // Si null, el builder usa fallback por kind (Cash / Transfer).
+    [MaxLength(50)] string? PaymentMethodOverride,
+
+    // Solo se usa cuando Kind == AppliedToNewBooking. El service valida que la
+    // reserva exista y pertenezca al mismo customer del entry (defense in depth).
+    Guid? AppliedToReservaPublicId,
+
+    // Solo se usa cuando Kind == ReversedToOperator. Debe ser un approval
+    // ClientRefundReversal aprobado para entityType="ClientCreditEntry",
+    // entityId=entry.Id, requestedBy=userId.
+    Guid? ApprovalRequestPublicId,
+
+    // Opcional: referencia externa para el ManualCashMovement (numero de
+    // transferencia, comprobante bancario, etc.). El service lo persiste en
+    // movement.Reference.
+    [MaxLength(100)] string? Reference
+);
+
+/// <summary>
+/// FC1.2.3: respuesta de un withdrawal ejecutado. Es el espejo de
+/// <see cref="ClientCreditWithdrawal"/> + el PublicId del entry padre para
+/// que el frontend pueda refetch el entry sin extra hops.
+/// </summary>
+public class ClientCreditWithdrawalDto
+{
+    public Guid PublicId { get; set; }
+    public Guid EntryPublicId { get; set; }
+    public WithdrawalKind Kind { get; set; }
+    public decimal Amount { get; set; }
+    public DateTime ExecutedAt { get; set; }
+    public string ExecutedByUserId { get; set; } = string.Empty;
+    public string ExecutedByUserName { get; set; } = string.Empty;
+
+    // Reference al ManualCashMovement si aplico (PhysicalCash/Transfer/ReversedToOperator).
+    // Null para KeptAsCredit y AppliedToNewBooking.
+    public Guid? ManualCashMovementPublicId { get; set; }
+
+    // Reference al approval consumido si aplico (ReversedToOperator).
+    public string? ApprovalRequestId { get; set; }
+}
+
+/// <summary>
+/// FC1.2.3: respuesta de query del saldo cliente con sus retiros.
+/// La UI lo usa para mostrar "Saldo $X (de $Y inicial)" + timeline de retiros.
+/// </summary>
+public class ClientCreditEntryDto
+{
+    public Guid PublicId { get; set; }
+    public Guid BookingCancellationPublicId { get; set; }
+    public Guid CustomerPublicId { get; set; }
+    public Guid OperatorRefundAllocationPublicId { get; set; }
+    public decimal CreditedAmount { get; set; }
+    public decimal RemainingBalance { get; set; }
+    public bool IsFullyConsumed { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public List<ClientCreditWithdrawalDto> Withdrawals { get; set; } = new();
+}

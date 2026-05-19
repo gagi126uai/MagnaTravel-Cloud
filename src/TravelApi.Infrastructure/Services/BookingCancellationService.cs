@@ -688,14 +688,132 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
         }
     }
 
-    public Task OnAllCreditConsumedAsync(int bookingCancellationId, CancellationToken ct)
+    public async Task OnAllCreditConsumedAsync(int bookingCancellationId, CancellationToken ct)
     {
-        // FC1.2.3 placeholder. Cierra el BC + Reserva cuando todos los entries
-        // tienen RemainingBalance=0.
-        _logger.LogDebug(
-            "OnAllCreditConsumedAsync called but not yet implemented (FC1.2.3). BcId={BcId}",
-            bookingCancellationId);
-        return Task.CompletedTask;
+        // FC1.2.3 v3 §6.4 (2026-05-18): cierre del BC cuando TODOS los entries
+        // del BC quedan con RemainingBalance=0. Lo invoca ClientCreditService
+        // despues de un withdraw que dejo el entry consumido.
+        //
+        // Patron HC1: este callback corre DENTRO de la tx envolvente del
+        // ClientCreditService.WithdrawAsync. Modificamos el bc en memoria y
+        // dejamos que el caller commitee TODO junto (un solo SaveChanges).
+        //
+        // Patron MR-02 (idempotencia bajo concurrencia): si dos withdraws
+        // paralelos terminan el ultimo entry casi al mismo tiempo, los dos
+        // callers pueden invocar este callback. La transicion debe ser
+        // idempotente — solo cerrar si esta en ClientCreditApplied; si ya
+        // esta Closed, no-op silencioso.
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .FirstOrDefaultAsync(b => b.Id == bookingCancellationId, ct);
+
+        if (bc is null)
+        {
+            _logger.LogWarning(
+                "OnAllCreditConsumedAsync: BC {BcId} no existe. No-op.",
+                bookingCancellationId);
+            return;
+        }
+
+        // Reverificacion bajo concurrencia (MR-02 plan v3):
+        //
+        // El caller dijo "ya consumi el ultimo entry" basandose en su estado
+        // in-memory. Pero si OTRO withdraw paralelo abrio otra tx, podria
+        // haber agregado un nuevo entry o restaurado el balance via Reassociate.
+        // Antes de cerrar el BC, contamos directamente en BD con SQL crudo
+        // cuantos entries quedan con saldo > 0 EXCLUYENDO los cambios in-memory
+        // que el caller ya hizo (todavia no commiteados).
+        //
+        // Por que SQL crudo y no LINQ: el CountAsync de EF ve el estado
+        // persistido de BD, no el ChangeTracker. Es exactamente lo que queremos
+        // aca — verificar que en BD no quede nada con saldo > 0 de OTRA tx.
+        // Sumamos al final la cuenta in-memory de "lo que NUESTRO tx esta a
+        // punto de dejar a saldo > 0" (caso edge: un nuevo entry agregado en
+        // este scope).
+        var remainingInDb = await _db.Database.SqlQueryRaw<int>(
+            // EF Core 8: SqlQueryRaw<int> usa { } para parametros (no @p0).
+            // El TableName/Column names entre comillas dobles para Postgres.
+            "SELECT COUNT(*)::int AS \"Value\" FROM \"ClientCreditEntries\" " +
+            "WHERE \"BookingCancellationId\" = {0} AND \"RemainingBalance\" > 0",
+            bookingCancellationId).FirstOrDefaultAsync(ct);
+
+        // Tambien contamos lo in-memory: entries Added/Modified en este scope
+        // con RemainingBalance > 0 que aun no se commitearon. Si hay alguno,
+        // no cerramos.
+        //
+        // Trainee/junior: EF Core trackea entidades modificadas via
+        // ChangeTracker. Le pedimos las entries que esta gestionando y filtramos
+        // por las que apuntan a este BC y todavia tienen saldo. Esto cubre el
+        // caso "el caller in-memory tiene un entry con saldo > 0 que la query
+        // SQL no ve porque no se persistio".
+        var remainingInMemory = _db.ChangeTracker
+            .Entries<ClientCreditEntry>()
+            .Where(e => e.State == EntityState.Added || e.State == EntityState.Modified)
+            .Select(e => e.Entity)
+            .Count(entry => entry.BookingCancellationId == bookingCancellationId
+                         && entry.RemainingBalance > 0m);
+
+        if (remainingInDb + remainingInMemory > 0)
+        {
+            _logger.LogDebug(
+                "OnAllCreditConsumedAsync: BC {BcPublicId} todavia tiene saldos pendientes " +
+                "(db={RemainingInDb}, mem={RemainingInMemory}). No se cierra.",
+                bc.PublicId, remainingInDb, remainingInMemory);
+            return;
+        }
+
+        // Transicion idempotente:
+        //  - Si esta en ClientCreditApplied -> Closed + Reserva Cancelled.
+        //  - Si ya esta Closed -> no-op (otro withdraw paralelo cerro antes).
+        //  - Si esta en otro estado (AwaitingOperatorRefund / etc.) -> log
+        //    warning. No tiene sentido cerrar desde un estado que no llego a
+        //    aplicar credito.
+        if (bc.Status == BookingCancellationStatus.Closed)
+        {
+            _logger.LogDebug(
+                "OnAllCreditConsumedAsync: BC {BcPublicId} ya esta Closed. No-op.",
+                bc.PublicId);
+            return;
+        }
+
+        if (bc.Status != BookingCancellationStatus.ClientCreditApplied)
+        {
+            _logger.LogWarning(
+                "OnAllCreditConsumedAsync: BC {BcPublicId} esta en {Status}, no en ClientCreditApplied. " +
+                "No se cierra (algo raro: el flujo deberia haber pasado por allocation antes de retiros).",
+                bc.PublicId, bc.Status);
+            return;
+        }
+
+        bc.Status = BookingCancellationStatus.Closed;
+        bc.ClosedAt = DateTime.UtcNow;
+        bc.Reserva.Status = EstadoReserva.Cancelled;
+
+        // Audit dedicado del cierre del BC para que el contador pueda buscar
+        // "cuando se cerro la cancelacion #X" sin tener que mirar el ultimo
+        // withdraw individual.
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationClosed,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                reservaPublicId = bc.Reserva.PublicId,
+                closedAt = bc.ClosedAt,
+                receivedRefundAmount = bc.ReceivedRefundAmount,
+            }),
+            // Usamos el usuario que confirmo el BC originalmente como actor.
+            // El user que dispara el ultimo withdraw figura en el audit
+            // ClientCreditWithdrawn — aca queremos trazar "quien era duenio
+            // del BC cuando se cerro" para reportes operativos.
+            userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
+            ct: ct);
+
+        _logger.LogInformation(
+            "BC {BcPublicId} closed via OnAllCreditConsumedAsync (Reserva -> Cancelled).",
+            bc.PublicId);
     }
 
     public async Task<BookingCancellationDto?> GetByPublicIdAsync(Guid publicId, CancellationToken ct)
