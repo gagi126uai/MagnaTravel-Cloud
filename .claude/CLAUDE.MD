@@ -156,9 +156,28 @@ Use `accounting-expert-argentina` for accounting-sensitive changes involving:
 - accounting exports;
 - financial reporting.
 
-### Mandatory collaboration
+### Integrated travel-agency accountant
 
-Use both `arca-tax-expert-argentina` and `accounting-expert-argentina` together when a feature affects:
+Use `travel-agency-accountant-argentina` (NEW, preferred for integrated cases) when a question requires combined fiscal + accounting + travel-agency-business analysis simultaneously. Typical cases:
+
+- NC parcial vs NC total in cancelacion turismo;
+- intermediario vs reseller fiscal model (configurable per operator);
+- items no reintegrables (cargo gestion, seguro cancelacion, anticipo no reembolsable);
+- fee agencia en cancelacion (multi-dimensional rules);
+- multimoneda en turismo (factura USD, paga ARS, NC posterior);
+- penalidades operador con tipificacion fiscal (administrativeFee vs withholding vs tax);
+- comision vendedor con tope cero en cancelacion;
+- voucher vs factura vs recibo (riesgo fiscal por confusion);
+- snapshot fiscal al momento del evento;
+- ARCA fiscal events with sector-specific nuance for retail travel agency.
+
+Use this agent INSTEAD of invoking `arca-tax-expert-argentina` + `accounting-expert-argentina` separately when the question is sector-turismo specific. It gives an integrated answer instead of two separate ones to cross-reference manually.
+
+Use the three specialists separately (`arca-tax-expert-argentina`, `accounting-expert-argentina`, `travel-agency-domain-expert`) when the question is 100% fiscal OR 100% accounting OR 100% business, with no cross-cutting concerns.
+
+### Mandatory collaboration (legacy multi-agent path)
+
+Use both `arca-tax-expert-argentina` and `accounting-expert-argentina` together when a feature affects general (non-travel-specific) accounting/fiscal areas:
 
 - invoices;
 - credit notes;
@@ -173,6 +192,8 @@ Use both `arca-tax-expert-argentina` and `accounting-expert-argentina` together 
 - accounting exports;
 - ARCA integrations;
 - financial reports.
+
+For travel-agency-specific cases involving these areas, prefer `travel-agency-accountant-argentina` instead.
 
 ### Tax/accounting truthfulness rules
 
