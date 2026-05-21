@@ -448,6 +448,14 @@ builder.Services.AddScoped<IOperatorRefundService, OperatorRefundService>();
 // FC1.2.2 (2026-05-18) — ClientCreditService stub minimo en FC1.2.2 (solo
 // CreateEntryAsync). La implementacion completa con WithdrawAsync llega en FC1.2.3.
 builder.Services.AddScoped<IClientCreditService, ClientCreditService>();
+
+// FC1.3.1 (ADR-009 §2.6, 2026-05-21) — clasificador fiscal puro de NC parcial.
+// Service stateless sin dependencias de DbContext: recibe entidades pre-cargadas
+// + settings y devuelve el DTO transitorio. El caller (BookingCancellationService
+// en sub-fase FC1.3.3) lo invoca para decidir auto-emite vs manual review vs
+// rechaza (TotalPlusNewInvoice por GR-001).
+builder.Services.AddScoped<IFiscalLiquidationCalculator, FiscalLiquidationCalculator>();
+
 builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
