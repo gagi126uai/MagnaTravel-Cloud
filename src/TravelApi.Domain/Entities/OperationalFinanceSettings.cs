@@ -111,6 +111,138 @@ public class OperationalFinanceSettings
     [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
     public decimal PhysicalRefundAlertThreshold { get; set; } = 50_000m;
 
+    // ============================================================
+    // FC1.3 (ADR-009 §2.3.4, 2026-05-21): settings del modulo NC parcial.
+    // Todos defaults conservadores. La habilitacion en prod requiere que
+    // el contador firme primero los thresholds y el template. Hasta tanto,
+    // el modulo arranca apagado y se prende solo en staging para QA.
+    // ============================================================
+
+    /// <summary>
+    /// FC1.3 (ADR-009): feature flag maestro del modulo FC1.3. Si <c>false</c>,
+    /// el clasificador NO corre y el flujo se comporta exactamente como FC1.2
+    /// (NC por total). Default <c>false</c>.
+    ///
+    /// <para>PRE-CONDICION (GR-002): si este flag es <c>true</c>,
+    /// <see cref="EnableNewCancellationFlow"/> tambien tiene que ser <c>true</c>.
+    /// La validacion en startup rechaza el arranque si esta combinacion no se
+    /// cumple — eso evita prender FC1.3 sin haber firmado primero FC1.2.</para>
+    /// </summary>
+    public bool EnablePartialCreditNotes { get; set; } = false;
+
+    /// <summary>
+    /// FC1.3 (ADR-009): por debajo de este monto en ARS, la NC parcial se
+    /// auto-emite si no hay otros disparadores manuales. Default 500.000 ARS.
+    /// Sujeto a confirmacion contador (pregunta F1).
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
+    public decimal PartialNcAutoApprovalThreshold { get; set; } = 500_000m;
+
+    /// <summary>
+    /// FC1.3 (ADR-009): por encima de <see cref="PartialNcAutoApprovalThreshold"/>
+    /// y hasta este monto, requiere admin con comentario minimo 20 chars + 4-eyes
+    /// (la persona que aprueba no puede ser la misma que solicito).
+    /// Default 2.000.000 ARS.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
+    public decimal PartialNcAdminReviewThreshold { get; set; } = 2_000_000m;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 + G5): por encima de <see cref="PartialNcAdminReviewThreshold"/>,
+    /// admin reforzada con comentario minimo 100 chars + flag
+    /// <c>AccountingReviewRequired=true</c> en el Metadata del approval.
+    /// Si es <c>null</c>, no hay tope superior y todo lo mayor a Admin Review entra
+    /// al flujo G5.
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
+    public decimal? PartialNcAccountingReviewThreshold { get; set; } = null;
+
+    /// <summary>
+    /// FC1.3 (ADR-009): template de descripcion de la NC parcial. Variables
+    /// soportadas: <c>{invoiceType}</c>, <c>{invoiceNumber}</c>,
+    /// <c>{pointOfSale}</c>, <c>{fiscalAmount}</c>, <c>{currency}</c>,
+    /// <c>{cancellationReason}</c>, <c>{nonRefundableAmount}</c>,
+    /// <c>{operatorPenaltyAmount}</c>, <c>{customerName}</c>,
+    /// <c>{customerTaxId}</c>. Validacion al guardar.
+    /// </summary>
+    [MaxLength(500)]
+    public string PartialNcDescriptionTemplate { get; set; } =
+        "NC parcial s/Fc {invoiceType} {invoiceNumber} (PV {pointOfSale}). " +
+        "Monto fiscal acreditado: {fiscalAmount} {currency}. " +
+        "Concepto: {cancellationReason}. " +
+        "Items no reintegrables retenidos: {nonRefundableAmount} {currency}.";
+
+    /// <summary>
+    /// FC1.3 (ADR-009): dias desde T2 despues de los cuales se alerta al admin
+    /// que el plazo RG 4540 (15 dias) esta por vencer en un BC stuck en
+    /// <see cref="BookingCancellationStatus.ManualReviewPending"/>. Default 10.
+    /// </summary>
+    public int ManualReviewMaxDaysBeforeRg4540Alert { get; set; } = 10;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 + RH-008): unica expresion regex con alternativas separadas
+    /// por '|' que el clasificador caso 4 usa para flagear "factura con descripcion
+    /// generica unica".
+    ///
+    /// <para><b>Default vacio (string.Empty) — heuristica DESACTIVADA</b>
+    /// (RH-008/RH-021).</para>
+    ///
+    /// <para>Configurable por agencia. Si no esta vacio, se evalua case-insensitive
+    /// sobre <c>Description</c> del unico <c>InvoiceItem</c>. Activar SOLO si el
+    /// contador lo pide explicitamente, despues de testear contra dataset legacy
+    /// y confirmar menos del 5% de falsos positivos.</para>
+    ///
+    /// <para>Ejemplo si activo: <c>"^(servicio|concepto|importe|operacion|reserva)"</c>.</para>
+    /// </summary>
+    [MaxLength(1000)]
+    public string GenericDescriptionPatterns { get; set; } = string.Empty;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 + RH-013): timestamp del deploy de FC1.3 a prod.
+    /// Heuristica caso 4 (factura confusa): facturas emitidas antes de esta fecha
+    /// se flagean como "legacy invoice" para revision manual.
+    ///
+    /// <para><b>Default null</b> (RH-008): la heuristica legacy esta DESACTIVADA
+    /// por default. La migracion M3 setea automaticamente <c>UtcNow</c> solo si
+    /// el flag <see cref="EnablePartialCreditNotes"/> ya estaba en <c>true</c> al
+    /// momento de aplicar la migracion. Si null + flag en true post-startup, el
+    /// validador de startup lo setea a <c>UtcNow</c> y emite un warning.</para>
+    /// </summary>
+    public DateTime? Fc13DeployDate { get; set; } = null;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 + GR-005): si <c>true</c>, permite self-approval del admin
+    /// cuando el sistema tiene 1 solo admin y el vendedor que solicito coincide
+    /// con ese admin. Requiere comentario reforzado de 100+ chars y un flag
+    /// audit <c>SelfApprovedDueToSingleAdmin=true</c> en el Metadata del approval.
+    ///
+    /// <para>Default <c>false</c> (4-eyes estricto). Pensado para agencias chicas
+    /// donde solo hay una persona con rol admin. NO afecta cuando hay 2 o mas
+    /// admins activos: en ese caso siempre se exige 4-eyes.</para>
+    /// </summary>
+    public bool Allow4EyesBypassWhenSingleAdmin { get; set; } = false;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 round 3, Q2): cada cuantos minutos el job de reconciliacion
+    /// bridge (FC1.3.6b) considera "stale" un <c>ApprovalRequest</c> aprobado pero
+    /// con su BC todavia en <see cref="BookingCancellationStatus.ManualReviewPending"/>.
+    /// Default 30. El job en si corre cada 30 min via cron fijo; este setting controla
+    /// el filtro de antiguedad para no re-disparar callbacks "frescos".
+    /// </summary>
+    public int BridgeReconciliationStalenessMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 round 3, N-003): umbral de reintentos del job de reconciliacion
+    /// bridge antes de declarar el approval como <c>ManualInterventionRequired</c>
+    /// y dejar de re-intentar (anti-spam). Default 5.
+    ///
+    /// <para>Despues de N intentos fallidos consecutivos, el job: (a) NO vuelve a
+    /// llamar al bridge, (b) emite UNA notificacion adicional con flag
+    /// <c>ManualInterventionRequired=true</c>, (c) requiere force-callback explicito
+    /// del admin con InvariantOverride (§2.12 del ADR).</para>
+    /// </summary>
+    public int BridgeReconciliationMaxRetries { get; set; } = 5;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

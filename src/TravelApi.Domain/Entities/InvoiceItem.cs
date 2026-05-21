@@ -28,4 +28,47 @@ public class InvoiceItem
     
     [Column(TypeName = "decimal(18,2)")]
     public decimal ImporteIva { get; set; } // Calculated VAT amount for this item
+
+    // ============================================================
+    // FC1.3 (ADR-009 §2.3.2, 2026-05-21): tres campos nuevos para
+    // soportar NC parcial. Default conservador: todo item legacy queda
+    // como reintegrable, sin categoria especifica, sin trazabilidad al
+    // servicio origen. La logica de defaults segun categoria (G1) vive
+    // en el SERVICE que crea el InvoiceItem, NO aca.
+    // ============================================================
+
+    /// <summary>
+    /// FC1.3 (ADR-009): si <c>false</c>, este item NO entra en el calculo del monto
+    /// a acreditar en una NC parcial. Default <c>true</c> (compat backward).
+    ///
+    /// <para>Ejemplo pelotudo: cliente cancela el hotel y la agencia retiene un cargo
+    /// de gestion de $5.000. Ese cargo se factura como item con
+    /// <c>IsRefundable=false</c>: cuando se emite la NC parcial, el monto fiscal
+    /// acreditado excluye esos $5.000. La factura original sigue viva por $5.000 +
+    /// IVA correspondiente.</para>
+    ///
+    /// <para>INMUTABLE post-emision de factura: cualquier cambio debe pasar por los
+    /// <c>Invoice.MutationGuards</c> (la factura ya tiene CAE). Esto se enforce a
+    /// nivel service, no a nivel CHECK SQL (la regla depende del status de la factura).</para>
+    /// </summary>
+    public bool IsRefundable { get; set; } = true;
+
+    /// <summary>
+    /// FC1.3 (ADR-009): clasificacion del item. Usada por la UI para alertas y por
+    /// el service que crea el item para preseleccionar <c>IsRefundable=false</c>
+    /// cuando la categoria es <see cref="InvoiceItemCategory.Insurance"/>,
+    /// <see cref="InvoiceItemCategory.AdministrativeFee"/> o
+    /// <see cref="InvoiceItemCategory.OperatorAdvance"/> (regla G1 del ADR).
+    /// Default <see cref="InvoiceItemCategory.Service"/> (compat backward).
+    /// </summary>
+    public InvoiceItemCategory ItemCategory { get; set; } = InvoiceItemCategory.Service;
+
+    /// <summary>
+    /// FC1.3 (ADR-009): trazabilidad linea de factura -&gt; servicio reservado de
+    /// origen. Habilita el calculo "que linea de factura pertenece a que servicio
+    /// cancelado". Nullable porque facturas legacy o conceptos sueltos
+    /// (cargo de gestion suelto, por ejemplo) no tienen servicio origen.
+    /// </summary>
+    public int? SourceServicioReservaId { get; set; }
+    public ServicioReserva? SourceServicioReserva { get; set; }
 }

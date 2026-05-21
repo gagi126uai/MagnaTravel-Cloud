@@ -44,4 +44,44 @@ public enum BookingCancellationStatus
     /// (no transiciona a <c>PendingOperatorRefund</c> hasta que ARCA confirme).
     /// </summary>
     ArcaRejected = 7,
+
+    // ============================================================
+    // FC1.3 (ADR-009 §2.3.3 / §2.8, 2026-05-21): 4 estados nuevos para
+    // el flujo NC parcial. Insertados con valores 8..11 a proposito,
+    // sin reutilizar gaps anteriores, para no chocar con la serializacion
+    // de los estados existentes ni con queries que asumen rangos viejos.
+    // ============================================================
+
+    /// <summary>
+    /// FC1.3 (ADR-009): el clasificador identifico que el caso requiere revision
+    /// manual, pero el <c>ApprovalRequest</c> todavia no se abrio. Estado
+    /// TRANSITORIO: dentro de la misma transaccion, el service pasa directo a
+    /// <see cref="ManualReviewPending"/> con el approval creado.
+    /// En la practica este valor NO se observa en la BD bajo el flujo normal —
+    /// existe en el enum como marker semantico para futuras evoluciones y para
+    /// que los tests puedan validar la maquina de estados completa.
+    /// </summary>
+    RequiresManualReview = 8,
+
+    /// <summary>
+    /// FC1.3 (ADR-009): existe un <c>ApprovalRequest</c> tipo
+    /// <c>PartialCreditNoteApproval=11</c> abierto (Pending) que espera la
+    /// resolucion del admin. El BC esta congelado en este estado hasta que el
+    /// admin apruebe o rechace. CHECK SQL garantiza FK al approval no-null.
+    /// </summary>
+    ManualReviewPending = 9,
+
+    /// <summary>
+    /// FC1.3 (ADR-009): el admin aprobo la liquidacion. El siguiente paso es
+    /// emitir la NC (en Fase 1 reutiliza el flujo FC1.2 y emite NC por total;
+    /// en Fase 2 emitira NC parcial real al ARCA).
+    /// </summary>
+    ManualReviewApproved = 10,
+
+    /// <summary>
+    /// FC1.3 (ADR-009): el admin rechazo la liquidacion. El BC vuelve a
+    /// <see cref="Drafted"/> mediante <c>ResetToDraftAsync</c> (Fase 1.3.3) o
+    /// se aborta segun decida el vendedor que pidio la revision.
+    /// </summary>
+    ManualReviewRejected = 11,
 }

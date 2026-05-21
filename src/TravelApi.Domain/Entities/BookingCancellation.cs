@@ -171,4 +171,91 @@ public class BookingCancellation : IHasPublicId
     /// </summary>
     [MaxLength(1000)]
     public string? ArcaErrorMessage { get; set; }
+
+    // ============================================================
+    // FC1.3 (ADR-009 §2.3.2, 2026-05-21): persistencia MINIMA del
+    // resultado del clasificador fiscal NC parcial. Decision GR-004:
+    // NO persistimos la liquidacion entera (montos, items, formula);
+    // solo el resumen (kind + motivos + timestamps + FK al approval).
+    // El detalle completo del calculo vive en
+    // <c>ApprovalRequest.Metadata</c> JSON, y SOLO cuando hubo manual
+    // review. Si auto-aprobo, el calculator es deterministico y se
+    // re-ejecuta en Fase 2 cuando sea necesario.
+    // ============================================================
+
+    /// <summary>
+    /// FC1.3 (ADR-009): tipo de NC clasificado por <c>IFiscalLiquidationCalculator</c>.
+    /// Fase 1 solo persiste <see cref="CreditNoteKind.PartialOnOriginal"/>;
+    /// <see cref="CreditNoteKind.TotalPlusNewInvoice"/> dispara rechazo en Confirm
+    /// (GR-001) y por lo tanto NUNCA queda persistido en BD.
+    /// Null hasta que el calculator corra (BC con flag FC1.3 OFF o caso trivial FC1.2).
+    /// </summary>
+    public CreditNoteKind? CreditNoteKind { get; set; }
+
+    /// <summary>
+    /// FC1.3 (ADR-009): bitflag de motivos que activaron revision manual.
+    /// Default <see cref="Entities.ReviewRequiredReason.None"/> (=0) significa
+    /// "el calculator no encontro motivos, puede auto-aprobarse".
+    ///
+    /// <para>Se persiste para queries de auditoria/reporting tipo:
+    /// "cuantas cancelaciones del mes dispararon manual review por items no
+    /// reintegrables". Una sola query bitwise sin tocar JSON.</para>
+    /// </summary>
+    public ReviewRequiredReason ReviewRequiredReason { get; set; } = ReviewRequiredReason.None;
+
+    /// <summary>
+    /// FC1.3 (ADR-009): momento UTC en que corrio el calculator. Null si nunca corrio
+    /// (BC en flujo FC1.2 puro). El CHECK SQL <c>chk_BookingCancellations_creditnotekind_consistent</c>
+    /// garantiza que si este valor no es null, <see cref="CreditNoteKind"/> tampoco lo es.
+    /// </summary>
+    public DateTime? LiquidationComputedAt { get; set; }
+
+    /// <summary>
+    /// FC1.3 (ADR-009): userId del usuario que disparo el Confirm (y por lo tanto la
+    /// corrida del calculator). Se guarda como string libre sin FK formal a
+    /// <c>AspNetUsers</c> — mismo patron que <see cref="DraftedByUserId"/>: si la
+    /// cuenta se elimina, el rastro fiscal sobrevive.
+    /// </summary>
+    [MaxLength(450)]
+    public string? LiquidationComputedByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? LiquidationComputedByUserName { get; set; }
+
+    /// <summary>
+    /// FC1.3 (ADR-009): FK al <see cref="ApprovalRequest"/> tipo
+    /// <c>PartialCreditNoteApproval=11</c> que aprueba/rechaza la liquidacion.
+    /// Null hasta que el BC entra a <see cref="BookingCancellationStatus.ManualReviewPending"/>.
+    ///
+    /// <para>El CHECK SQL <c>chk_BookingCancellations_manualreview_approvalref</c>
+    /// garantiza que cualquier Status en {9, 10, 11} tiene este FK seteado.</para>
+    ///
+    /// <para><b>OnDelete: Restrict</b> — preservar el rastro del approval aunque
+    /// alguien intente eliminarlo. Mismo patron que <c>Invoice.AnnulmentApprovalRequestId</c>.</para>
+    /// </summary>
+    public int? PartialCreditNoteApprovalRequestId { get; set; }
+    public ApprovalRequest? PartialCreditNoteApprovalRequest { get; set; }
+
+    /// <summary>
+    /// FC1.3 (ADR-009): trazabilidad del usuario admin que tomo la decision en
+    /// la revision manual (aprobar/rechazar). Null si el BC paso por flujo auto.
+    /// Mismo patron de string libre que arriba.
+    /// </summary>
+    [MaxLength(450)]
+    public string? ManualReviewerUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? ManualReviewerUserName { get; set; }
+
+    /// <summary>FC1.3 (ADR-009): momento UTC en que el admin resolvio la revision manual.</summary>
+    public DateTime? ManualReviewedAt { get; set; }
+
+    /// <summary>
+    /// FC1.3 (ADR-009): comentario obligatorio del admin al resolver la revision
+    /// manual. El ADR especifica longitud minima distinta segun el threshold del
+    /// monto (validacion en service): &gt;= 20 chars para AdminReview, &gt;= 100
+    /// chars para AccountingReview y para GR-005 (single admin self-approval).
+    /// </summary>
+    [MaxLength(1000)]
+    public string? ManualReviewComment { get; set; }
 }

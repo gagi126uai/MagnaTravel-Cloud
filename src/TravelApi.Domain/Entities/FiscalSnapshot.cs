@@ -111,4 +111,32 @@ public class FiscalSnapshot
     /// el caso. Sin esquema estricto a proposito — el campo es para casos raros.
     /// </summary>
     public string? ExtrasJson { get; set; }
+
+    // ============================================================
+    // FC1.3 (ADR-009 §2.3.2, 2026-05-21): dos campos nuevos para
+    // snapshotear datos que pueden cambiar despues de la facturacion
+    // y romper la NC parcial retroactivamente. Critico porque la NC se
+    // emite cuando la cancelacion ocurre (posiblemente meses despues),
+    // pero el calculo DEBE usar los valores que existian al facturar.
+    // ============================================================
+
+    /// <summary>
+    /// FC1.3 (ADR-009): snapshot del <c>Supplier.InvoicingMode</c> al momento de
+    /// emitir la factura original. CRITICO: si el operador cambia de modo despues
+    /// (ej. paso de TotalToCustomer a CommissionOnly), el calculo de la NC parcial
+    /// debe usar ESTE valor, no el actual del Supplier.
+    ///
+    /// <para>Nullable porque facturas legacy (anteriores al deploy FC1.3) no tienen
+    /// este snapshot. El calculator detecta null + flag <c>LegacyInvoice</c> si la
+    /// heuristica esta activa.</para>
+    /// </summary>
+    public SupplierInvoicingMode? InvoicingModeAtEvent { get; set; }
+
+    /// <summary>
+    /// FC1.3 (ADR-009): redundante con <c>OriginatingInvoice.TipoComprobante</c>
+    /// pero persistido aca para queries de auditoria sin necesidad de hacer JOIN.
+    /// Nullable por legacy. El tipo (1=Factura A, 6=Factura B, 11=Factura C, etc.)
+    /// es la entrada clave para el clasificador (caso 8 = Factura A).
+    /// </summary>
+    public int? OriginalInvoiceTypeAtEvent { get; set; }
 }

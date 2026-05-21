@@ -62,4 +62,18 @@ public enum ApprovalRequestType
     /// Allocation original se marca <c>IsVoided</c> y se crea una nueva (ver ADR-002 §2.10).
     /// </summary>
     MisassociationReversal = 10,
+
+    /// <summary>
+    /// FC1.3 (ADR-009, 2026-05-21): solicitud de aprobacion para la liquidacion
+    /// fiscal de una NC parcial Hotel.
+    ///
+    /// <para>El <c>EntityType</c> es siempre <c>"BookingCancellation"</c> y el
+    /// <c>EntityId</c> apunta al BC. El detalle de la liquidacion calculada
+    /// (montos, caso, regla aplicada) se serializa al campo
+    /// <c>Metadata</c> JSON (ADR-009 §2.7) para audit + edicion admin.</para>
+    ///
+    /// <para>Se reutiliza la bandeja generica de <c>ApprovalRequestsController</c>;
+    /// no hay UI nueva en Fase 1 (decision G2).</para>
+    /// </summary>
+    PartialCreditNoteApproval = 11,
 }

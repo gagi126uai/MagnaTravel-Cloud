@@ -613,6 +613,27 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<InvoiceItem>(entity =>
         {
             entity.ToTable("InvoiceItem");
+
+            // FC1.3 (ADR-009 §2.3.2, 2026-05-21): persistir el enum como int en
+            // BD (consistencia con el resto de enums del modulo: BookingCancellationStatus,
+            // ApprovalRequestType, etc.).
+            entity.Property(i => i.ItemCategory).HasConversion<int>();
+
+            // FC1.3: FK opcional a ServicioReserva.
+            //
+            // OnDelete: Restrict — preservar la trazabilidad linea-de-factura -> servicio
+            // origen incluso si alguien intenta borrar el servicio. Si la cancelacion FC1.3
+            // necesita re-leer de donde viene la linea, no nos podemos quedar sin la FK.
+            // Si la trazabilidad estorba para borrar, la operacion legitima la rompe
+            // explicitamente (UPDATE InvoiceItem SET SourceServicioReservaId = NULL).
+            entity.HasOne(i => i.SourceServicioReserva)
+                  .WithMany()
+                  .HasForeignKey(i => i.SourceServicioReservaId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Indice para queries inversas tipo "que items facture para este servicio".
+            entity.HasIndex(i => i.SourceServicioReservaId)
+                  .HasDatabaseName("IX_InvoiceItem_SourceServicioReservaId");
         });
 
         // InvoiceTribute (Singular table from Program.cs)
@@ -1190,7 +1211,43 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 snap.Property(s => s.ExchangeRateAtOperatorRefundReceipt).HasPrecision(18, 6);
                 snap.Property(s => s.ExchangeRateAtClientWithdrawal).HasPrecision(18, 6);
                 snap.Property(s => s.Source).HasConversion<int>();
+
+                // FC1.3 (ADR-009 §2.3.2, 2026-05-21): snapshot del modo de
+                // facturacion del operador AL MOMENTO DE EMITIR la factura.
+                // Persistir como int por consistencia con el resto de enums
+                // de la owned entity.
+                snap.Property(s => s.InvoicingModeAtEvent).HasConversion<int?>();
             });
+
+            // ============================================================
+            // FC1.3 (ADR-009 §2.3.2, 2026-05-21): persistencia summary del
+            // resultado del clasificador NC parcial + FK al ApprovalRequest
+            // que lo aprueba/rechaza.
+            // ============================================================
+
+            entity.Property(b => b.CreditNoteKind).HasConversion<int?>();
+            entity.Property(b => b.ReviewRequiredReason).HasConversion<int>();
+            entity.Property(b => b.LiquidationComputedByUserId).HasMaxLength(450);
+            entity.Property(b => b.LiquidationComputedByUserName).HasMaxLength(200);
+            entity.Property(b => b.ManualReviewerUserId).HasMaxLength(450);
+            entity.Property(b => b.ManualReviewerUserName).HasMaxLength(200);
+            entity.Property(b => b.ManualReviewComment).HasMaxLength(1000);
+
+            // FK al ApprovalRequest que aprueba la liquidacion FC1.3.
+            //
+            // OnDelete: Restrict — el approval es evidencia fiscal del consentimiento
+            // admin para la NC parcial. Si alguien quiere borrar el approval, la BD
+            // debe rechazar porque romperia la auditoria del BC. Mismo patron que
+            // <c>Invoice.AnnulmentApprovalRequestId</c>.
+            entity.HasOne(b => b.PartialCreditNoteApprovalRequest)
+                  .WithMany()
+                  .HasForeignKey(b => b.PartialCreditNoteApprovalRequestId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Indice nullable para queries de auditoria: "todos los BCs aprobados
+            // por este approval X".
+            entity.HasIndex(b => b.PartialCreditNoteApprovalRequestId)
+                  .HasDatabaseName("IX_BookingCancellations_PartialCreditNoteApprovalRequestId");
 
             // Concurrency lock-free (ADR-002 §2.5 / B11). Pre-requisito FC1.1
             // verificado: Npgsql 8.x soporta xmin nativamente.

@@ -75,6 +75,24 @@ public class HotelBooking : IHasPublicId
     // Planner de habitaciones: JSON con asignación de pasajeros por habitación
     public string? RoomingAssignmentsJson { get; set; }
 
+    /// <summary>
+    /// FC1.3 (ADR-009 §2.3.2, 2026-05-21): lista JSON de conceptos no reintegrables
+    /// que se imputan al cliente fuera del costo neto/venta del hotel
+    /// (ej. cargo gestion $5.000, seguro cancelacion $20.000).
+    /// Persistido como <c>jsonb</c> (consistencia con
+    /// <c>Supplier.PenaltyPolicyJson</c>).
+    ///
+    /// <para>Schema:
+    /// <c>[{"description": string, "amount": decimal, "category": InvoiceItemCategory}, ...]</c>
+    /// Null o array vacio significa "sin conceptos adicionales".</para>
+    ///
+    /// <para>Cada concepto se traduce a un <c>InvoiceItem</c> con
+    /// <c>IsRefundable=false</c> al momento de facturar, asi se mantiene la
+    /// trazabilidad fiscal del concepto retenido en la NC parcial.</para>
+    /// </summary>
+    [Column(TypeName = "jsonb")]
+    public string? NonRefundableConceptsJson { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public int GetExpectedPaxCount() => Adults + Children;
