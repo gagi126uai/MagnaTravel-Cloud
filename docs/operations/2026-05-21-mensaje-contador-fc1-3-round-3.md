@@ -46,6 +46,20 @@ Hoy nuestro ADR-002 dice "no usar ND en flow normal" para mantener el flujo simp
 
 **Pregunta**: cual de las dos vias preferis para FC1.3? O mejor que el sistema soporte ambas y el admin elija segun el caso?
 
+**F4 - Penalidad del operador en modo reseller: reduce la NC al cliente o no?**
+
+Nos cruzamos con una contradiccion en el criterio que nos pasaste:
+
+- Por un lado, dijiste que cuando la agencia opera como **revendedor** (factura todo al cliente), la penalidad operador es "costo de la agencia, no reduce NC al cliente".
+- Por otro lado, en uno de los casos de la matriz dijiste que la penalidad **SI reduce** el monto fiscal acreditable (caso 3: "factura total + penalidad valida = NC parcial, neto facturado por retenido").
+
+Escenario concreto: cliente paga $1.000.000 por hotel (modo revendedor, Factura A). Cancela. Operador retiene $200.000 de penalidad. Cliente recibe $800.000 al bolsillo.
+
+- **Opcion A**: NC parcial al cliente por **$800.000**. La penalidad reduce el monto fiscal. (Lo que dice el caso 3 de la matriz).
+- **Opcion B**: NC parcial al cliente por **$1.000.000**. La penalidad es costo de la agencia, no afecta lo que el cliente "perdio de credito fiscal". La agencia se come la penalidad como gasto en su balance. (Lo que decia la parte general del criterio).
+
+**Pregunta**: cual es la regla correcta?
+
 ---
 
 ### Bloque 2 - Confirmaciones profesionales (8 puntos)

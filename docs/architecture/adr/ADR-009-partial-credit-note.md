@@ -1,15 +1,17 @@
 # ADR-009 — Nota de Credito parcial fiscal para cancelaciones Hotel (FC1.3 Fase 1)
 
-- **Status**: Proposed (depende de FC1.2 mergeado, OPS-FISCAL-001 firmado, y signoff Fase 1 de Gaston)
-- **Date**: 2026-05-21
-- **Author(s)**: software-architect agent (Fase 1, post plan funcional del subagente integrado `travel-agency-accountant-argentina`)
-- **Supersedes**: §2.2 punto 1 de [ADR-002](ADR-002-cancellation-refund.md) ("NC siempre por total facturado"). FC1.3 acepta NC parcial cuando el criterio fiscal lo amerita.
+- **Status**: Proposed (Round 2 - corrige Round 1 con 13 hallazgos del reviewer + 6 decisiones Gaston GR-001..GR-006).
+- **Date**: 2026-05-21 (round 1) / 2026-05-21 (round 2).
+- **Author(s)**: software-architect agent.
+- **Supersedes**:
+  - Round 1 de este mismo ADR (sintaxis SQL Server por error de brief de la sesion principal; persistencia de `FiscalLiquidation` Fase 1; auto-procesamiento de `TotalPlusNewInvoice`; hipotesis CommissionOnly + penalty no reduce; uso de `MutationContext`).
+  - §2.2 punto 1 de [ADR-002](ADR-002-cancellation-refund.md) ("NC siempre por total facturado"). FC1.3 acepta NC parcial cuando el criterio fiscal lo amerita.
 - **Related**:
-  - [ADR-002 Cancelacion / Refund](ADR-002-cancellation-refund.md)
-  - [ADR-001 Domain Invariants](ADR-001-domain-invariants.md)
-  - Plan funcional FC1.3 ([plan-tactico-fc1-3.md](../plan-tactico-fc1-3.md) §1..§16) — autoria `travel-agency-accountant-argentina` 2026-05-21
-  - Plan tactico FC1.2 v3 ([plan-tactico-fc1-2.md](../plan-tactico-fc1-2.md))
-  - Doc criterio contador [2026-05-21-criterio-contador-nc-parcial-y-nuevo-agente.md](../../explicaciones/2026-05-21-criterio-contador-nc-parcial-y-nuevo-agente.md)
+  - [ADR-002 Cancelacion / Refund](ADR-002-cancellation-refund.md).
+  - [ADR-001 Domain Invariants](ADR-001-domain-invariants.md) (**status: Changes Required, NO mergeado** — no asumir patrones de ese ADR).
+  - Plan funcional FC1.3 ([plan-tactico-fc1-3.md](../plan-tactico-fc1-3.md) §1..§16) — autoria `travel-agency-accountant-argentina` 2026-05-21.
+  - Plan tactico FC1.2 v3 ([plan-tactico-fc1-2.md](../plan-tactico-fc1-2.md)).
+  - Doc criterio contador [2026-05-21-criterio-contador-nc-parcial-y-nuevo-agente.md](../../explicaciones/2026-05-21-criterio-contador-nc-parcial-y-nuevo-agente.md).
 
 ---
 
@@ -25,58 +27,73 @@ Entrego una **matriz de 8 casos** (cubre Factura B/C/A, modo reseller vs interme
 
 ### 1.2 Ejemplo pelotudo (kiosco)
 
-Imaginate el kiosco. Cliente paga `$1000` por 4 milanesas + `$50` por envoltorio regalo (no devuelve nunca). Se arrepiente y se lleva 3. La caja vieja (FC1.2) anulaba TODA la cuenta y empezaba de nuevo: poco prolijo, pero funcionaba. La caja nueva (FC1.3) **arranca una NC parcial por las dos cosas**: lo que pierde causa fiscal (1 milanesa = `$250`) + el envoltorio regalo es item no reintegrable (no entra en la NC porque la agencia ya lo facturo como ingreso). La factura sigue viva por `$800` (3 milanesas) + el envoltorio `$50` queda como `FinalNetInvoiced` de la operacion.
+Imaginate el kiosco. Cliente paga `$1000` por 4 milanesas + `$50` por envoltorio regalo (no devuelve nunca). Se arrepiente y se lleva 3. La caja vieja (FC1.2) anulaba TODA la cuenta y empezaba de nuevo: poco prolijo, pero funcionaba. La caja nueva (FC1.3) **arranca una NC parcial por las dos cosas**: lo que pierde causa fiscal (1 milanesa = `$250`) + el envoltorio regalo es item no reintegrable (no entra en la NC porque la agencia ya lo facturo como ingreso). La factura sigue viva por `$800` (3 milanesas) + el envoltorio `$50` queda como ingreso reconocido de la agencia.
 
 El sistema viejo escribia "ANULADO" en la factura entera y emitia una nueva por `$800` (lo de FC1.2). El sistema nuevo emite **una NC por `$250`** y la factura original queda intacta. Cuaderno limpio.
 
 ### 1.3 Hechos verificados en el repo (relevantes para el diseno)
 
-Confirmados leyendo entidades y services:
+Confirmados leyendo entidades, services y migraciones reales:
 
-- `Invoice.OriginalInvoiceId` self-reference + `<CbtesAsoc>` ya emitidos por `AfipService.cs:827-838`. **El plumbing fiscal de vinculo NC<->factura ya esta**. Lo que falta es persistir el monto fiscal calculado, no la NC en si.
+- **Stack confirmado: PostgreSQL** (Npgsql 8.x). Evidencia: `Program.cs` con `UseNpgsql`, `AppDbContext.UseXminAsConcurrencyToken()` (linea 1180), `PostgresIntegrationFixture` con TestContainers (`postgres:16`), migracion `FC1_AddCancellationModule.cs` con `using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata` + identificadores con comillas dobles + tipo `xid` (`xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)`). El interceptor `BusinessInvariantInterceptor` mapea `PostgresException.SqlState='23514'` (CHECK violation) a `BusinessInvariantViolationException`.
+- `Invoice.OriginalInvoiceId` self-reference + `<CbtesAsoc>` ya emitidos por `AfipService.cs:827-838`. El plumbing fiscal de vinculo NC<->factura ya esta. Lo que falta es persistir el monto fiscal calculado, no la NC en si.
 - `InvoiceItem` no tiene `IsRefundable` ni `ItemCategory` ni FK al servicio origen. Agregar Fase 1.
-- `BookingCancellationStatus` tiene 8 estados (0..7) hoy. **Insertamos 4 estados nuevos antes de `AwaitingFiscalConfirmation` con valores 8..11** para no chocar con valores existentes ni cambiar serializacion previa.
-- `ApprovalRequest.Metadata` ya es `string?` JSON arbitrario. **Sirve para persistir liquidacion + edicion admin (G3) sin tabla extra**.
-- `ApprovalRequestType` enum llega hasta 10. Agregamos `PartialCreditNoteApproval = 11`.
-- `ApprovalRequestsController` acepta cualquier `RequestType` + filtros por user/pending. **Reutilizable, no se crea bandeja paralela** (cierre G2).
-- `OperationalFinanceSettings` tiene espacio claro para los nuevos thresholds + template.
-- `FiscalSnapshot` es VO owned, persistido como columnas prefijadas. Buen precedente para `FiscalLiquidation`.
-- Stack confirmado: **SQL Server** (no Postgres, el plan funcional menciono Postgres por reflejo y se ignora). `UseRowVersionConcurrencyToken` o equivalente, no `xmin`.
+- `BookingCancellationStatus` tiene 8 estados (0..7) hoy. **Insertamos 4 estados nuevos con valores 8..11** para no chocar con valores existentes ni cambiar serializacion previa.
+- `ApprovalRequest` tiene `Metadata string?` JSON arbitrario y `ResolverNotes string?` (max 1000 chars). **Pero NO tiene concurrency token hoy** — riesgo de race en edicion admin. Se agrega como **migracion separada pre-requisito** (ver §5.1 M0).
+- `ApprovalRequestType` enum llega hasta 10. Agregamos `PartialCreditNoteApproval = 11`. `InvariantOverride = 7` ya existe y es el patron real para overrides (NO `MutationContext` que pertenece a ADR-001 rechazado).
+- `ApprovalRequestsController` acepta cualquier `RequestType` + filtros por user/pending. Reutilizable, no se crea bandeja paralela (cierre G2).
+- `OperationalFinanceSettings` tiene espacio claro para los nuevos thresholds + template. `EnableNewCancellationFlow` linea 74 (default `false`) es el flag de FC1.2.
+- `FiscalSnapshot` es VO owned en `BookingCancellation`, persistido como columnas prefijadas `FiscalSnapshot_*` (verificado en migracion FC1).
+- `BookingCancellationService.cs:980-987` tiene helper `EnsureFeatureFlagOnAsync` que tira `InvalidOperationException` cuando `EnableNewCancellationFlow=false` (kill switch real, no comportamiento legacy).
+- `BookingCancellationService.cs:261-281` es el patron real de override: busqueda de `ApprovalRequest` con `RequestType=InvariantOverride=7`, `EntityType="BookingCancellation"`, `EntityId=bc.Id`, `Status=Approved`, `RequestedByUserId == userId`, `ExpiresAt > UtcNow`.
+- `AuditLog.Changes` es `string?` con shape JSON `{"Field": {"Old": "Val1", "New": "Val2"}}` (verificado linea 28).
+- `AssignmentServiceType.Hotel = "Hotel"` (constante string en `PassengerServiceAssignment.cs:11`). `ServicioReserva.ProductType` es `string?` con default `ServiceTypes.Flight = "Aereo"`. Los valores `Hotel`, `Aereo`, etc. estan en `ServiceTypes` (`ServicioReserva.cs:5-14`). Para validacion FC1.3 usamos la **constante `ServiceTypes.Hotel`**, NO string literal.
 
 ### 1.4 Que NO entra en Fase 1
 
-- **Emision real de NC parcial al ARCA**. Hoy `AfipService.cs` emite NC asumiendo monto total. Calcular `<ImpTotal>`/`<ImpNeto>`/`<ImpIVA>` con prorrateo proporcional al neto acreditado entra en **Fase 2**. La Fase 1 calcula `FiscalLiquidation`, persiste el `CreditNoteKind`, abre approval y deja al BC parado en `ManualReviewApproved` cuando hace falta intervencion. La emision real sigue por la ruta FC1.2 vigente (NC por total) mientras el flag `EnablePartialCreditNotes` esta off.
+- **Emision real de NC parcial al ARCA**. Hoy `AfipService.cs` emite NC asumiendo monto total. Calcular `<ImpTotal>`/`<ImpNeto>`/`<ImpIVA>` con prorrateo proporcional al neto acreditado entra en **Fase 2**. La Fase 1 calcula `FiscalLiquidation` **en memoria solamente** (GR-004), bloquea casos sensibles, y NO persiste la liquidacion entera. Solo se persisten `CreditNoteKind`, `ReviewRequiredReason` y `LiquidationComputedAt`.
+- **Persistencia entera de `FiscalLiquidation`** (GR-004). Diferida a Fase 2 cuando AfipService emita NC parcial real y necesite leer los montos calculados.
+- **Auto-procesamiento de `TotalPlusNewInvoice`** (GR-001). Si el clasificador devuelve `TotalPlusNewInvoice`, el sistema **rechaza el Confirm con error explicito** y no persiste nada. Casos 4 y 7 quedan para flujo legacy o FC1.3 Fase 2.
+- **Calculo automatico en modo `CommissionOnly`** (GR-003). Si el clasificador detecta `Supplier.InvoicingMode = CommissionOnly`, pasa directo a `ManualReviewPending` con flag `InvoicingModeCommissionOnly`. Pendiente respuesta F2 round 3 contador para implementar formula.
+- **Auto-procesamiento de modo `TotalToCustomer` con penalty operador > 0** (GR-006). Contradiccion interna en plan funcional (§5.5 vs §12.3): contador debe responder F4 round 3 si penalty resta o no del monto fiscal. Mientras tanto, el caso 3 va a `ManualReviewPending` con flag `PenaltyResetUncertainInResellerMode`.
 - **UI modal** del admin para revisar/aprobar liquidaciones (Fase 3).
 - **Plumbing AfipService** para NC parcial (Fase 2).
 - **Servicios distintos a Hotel**. Vuelo/Paquete/Traslado/Asistencia siguen flujo FC1.2 (NC por total). Si la reserva mezcla, se rechaza FC1.3 con mensaje claro.
 
-### 1.5 Decisiones cerradas que NO se pueden cambiar (cierres 2026-05-19/21)
+### 1.5 Decisiones cerradas que NO se pueden cambiar (cierres 2026-05-19/21 + GR-001..GR-006 round 2)
 
-| ID | Decision (contador/Gaston) | Implicancia tecnica |
+| ID | Decision | Implicancia tecnica |
 |---|---|---|
 | G1 | Preseleccion auto `IsRefundable=false` para items `Insurance`/`AdministrativeFee`/`OperatorAdvance`. Vendedor puede destildar con confirmacion. | Default logic en creacion de `InvoiceItem`. UI cubre confirmacion (Fase 3). |
 | G2 | Reutilizar `ApprovalRequestsController` con nuevo `PartialCreditNoteApproval=11`. No hay bandeja separada. | Solo sumar enum + handler. |
 | G3 | Admin edita liquidacion en `ManualReviewPending` con `editLiquidation()` + audit + comentario obligatorio distinto al de aprobacion. | Self-loop `ManualReviewPending`->`ManualReviewPending` con audit. Metadata del approval refleja el cambio. |
 | G4 | NO ND complementaria para cliente RI. Factura A original + NC parcial alcanzan. | Sin cambios en `Invoice` para ND. ADR-002 §2.2 punto 2 vigente. |
 | G5 | Sin rol nuevo Fase 1. Admin actual aprueba >$2M con comentario min 100 chars + `AccountingReviewRequired=true` en metadata. | Validacion min chars segun threshold. Sin permiso nuevo. |
-| G6 | Comision vendedor sobre `FinalNetInvoiced`. | Service de comision usa este campo. Fuera de scope FC1.3 Fase 1 (solo se persiste el valor). |
+| G6 | Comision vendedor sobre `FinalNetInvoiced`. | Service de comision usa este campo. Fuera de scope FC1.3 Fase 1 (solo se documenta). |
+| **GR-001** | **Rechazar Confirm con `InvalidOperationException`** si clasificador devuelve `TotalPlusNewInvoice` (casos 4 y 7). | Eliminar path "BC en ManualReviewApproved esperando Fase 2" para `TotalPlusNewInvoice`. Mensaje: "Caso fiscal requiere FC1.3 Fase 2 - use flujo legacy". |
+| **GR-002** | **FC1.3 se mergea DESPUES de FC1.2 ON en prod** (post signoff OPS-FISCAL-001). | ADR asume `EnableNewCancellationFlow=ON` antes de prender `EnablePartialCreditNotes`. Validacion startup rechaza FC1.3 ON con FC1.2 OFF. |
+| **GR-003** | **Diferir `CommissionOnly` a manual review obligatorio** Fase 1. | Clasificador NO calcula, dispara flag `InvoicingModeCommissionOnly` y va a `ManualReviewPending`. |
+| **GR-004** | **NO persistir `FiscalLiquidation` entera Fase 1**. | Migracion FC1.3.0 NO crea columnas `FiscalLiquidation_*`. Solo se persisten `CreditNoteKind`, `ReviewRequiredReason`, `LiquidationComputedAt`, `LiquidationComputedByUserId/Name`. La liquidacion completa se calcula in-memory + se serializa al `ApprovalRequest.Metadata` JSON (para audit + edicion admin G3). |
+| **GR-005** | **Setting `Allow4EyesBypassWhenSingleAdmin`** default `false`. | Cuando `true` AND sistema tiene 1 solo admin AND vendedor=admin, permite self-approval con comentario reforzado 100+ chars + flag audit `SelfApprovedDueToSingleAdmin=true`. |
+| **GR-006** | **Diferir caso 3 con penalty operador en modo `TotalToCustomer`** hasta respuesta contador F4 round 3. | Flag `PenaltyResetUncertainInResellerMode` activado. No auto-procesa. |
 | Mat | Matriz 8 casos + Escenarios A/B del contador. | Clasificador (matriz 8) implementado en service aislado testeable. |
-| Cri | Criterio NC parcial = pierde causa fiscal, NO monto devuelto. | INV-FC1.3-005 + dos campos separados (`FiscalAmountToCredit` vs `AmountToRefundCustomer`). |
+| Cri | Criterio NC parcial = pierde causa fiscal, NO monto devuelto. | INV-FC1.3-005 + dos campos separados (`FiscalAmountToCredit` vs `AmountToRefundCustomer`) en el DTO transitorio (NO persistidos Fase 1). |
 
 ---
 
 ## 2. Decision
 
-Implementar FC1.3 Fase 1 como **extension aditiva de FC1.2** (no rewrite), con:
+Implementar FC1.3 Fase 1 como **extension aditiva de FC1.2** (no rewrite), con alcance **deliberadamente reducido** por GR-001/GR-003/GR-004/GR-006:
 
-1. **Un Owned VO nuevo** `FiscalLiquidation` en `BookingCancellation` (paralelo a `FiscalSnapshot`).
-2. **Un service nuevo** `IFiscalLiquidationCalculator` (puro, sin DbContext directo) que implementa la matriz 8 casos como **clasificador aislado y testeable**.
-3. **4 estados nuevos** en `BookingCancellationStatus` insertados antes de `AwaitingFiscalConfirmation` (valores 8..11).
-4. **Reutilizacion del `ApprovalRequestsController` existente** con tipo nuevo `PartialCreditNoteApproval=11`. `Metadata` JSON captura la liquidacion + edicion admin.
+1. **Un service nuevo** `IFiscalLiquidationCalculator` (puro, sin DbContext directo) que implementa la matriz 8 casos como **clasificador aislado y testeable** y devuelve un DTO transitorio (`FiscalLiquidationDto`).
+2. **Persistencia minima Fase 1** en `BookingCancellation`: solo `CreditNoteKind`, `ReviewRequiredReason`, `LiquidationComputedAt`, `LiquidationComputedByUserId/Name`, `PartialCreditNoteApprovalRequestId` (FK), `ManualReviewer*` fields. **El detalle de la liquidacion** (montos, items, penalty, regla aplicada) se serializa al `ApprovalRequest.Metadata` JSON.
+3. **4 estados nuevos** en `BookingCancellationStatus` con valores 8..11.
+4. **Reutilizacion del `ApprovalRequestsController` existente** con tipo nuevo `PartialCreditNoteApproval=11`.
 5. **3 modificaciones** a entidades existentes: `Supplier` (InvoicingMode + PenaltyPolicyJson), `InvoiceItem` (IsRefundable + ItemCategory + SourceServicioReservaId), `FiscalSnapshot` (InvoicingModeAtEvent + OriginalInvoiceTypeAtEvent).
-6. **Settings nuevos** en `OperationalFinanceSettings` para thresholds y template parametrizable.
-7. **Feature flag nuevo** `EnablePartialCreditNotes` (independiente de `EnableNewCancellationFlow`), default `false` en prod, separado para poder mergear sin romper FC1.2.
-8. **Mantenimiento de FC1.2** intacto: si flag off, todo el modulo se comporta exactamente como hoy. Si flag on pero la reserva no entra al clasificador (caso 2 trivial sin disparadores), tambien se comporta como FC1.2 (NC total). FC1.3 abre la puerta solo cuando la clasificacion lo amerita.
+6. **Settings nuevos** en `OperationalFinanceSettings` para thresholds, template, GR-005 y heuristicas.
+7. **Feature flag nuevo** `EnablePartialCreditNotes` (independiente de `EnableNewCancellationFlow`), default `false` en prod, separado para poder mergear sin romper FC1.2. **Pre-condicion startup (GR-002): si `EnablePartialCreditNotes=true && EnableNewCancellationFlow=false` -> rechazar arranque con error claro.**
+8. **5 migraciones agrupadas por aggregate + 1 pre-requisito M0** (RH-006/RH-007).
+9. **Mantenimiento de FC1.2** intacto: si flag FC1.3 off, todo el modulo se comporta exactamente como hoy. Si flag on pero la reserva no entra al clasificador (caso 2 trivial sin disparadores), tambien se comporta como FC1.2 (NC total).
 
 ### 2.1 Glosario adicional (extiende ADR-002 §2.1)
 
@@ -84,74 +101,46 @@ Implementar FC1.3 Fase 1 como **extension aditiva de FC1.2** (no rewrite), con:
 |---|---|
 | **NC parcial** | NC vinculada a factura original via `OriginalInvoiceId` por un monto **menor** que el total facturado. La factura original sigue viva por el saldo. |
 | **NC total** | NC vinculada a factura original por el 100% del total facturado (es lo que hace FC1.2 hoy). |
-| **NC total + nueva factura** | Anular factura original (NC por total) + emitir factura nueva por el remanente conceptual. Casos 4 y 7 de la matriz. Fase 2 implementa la nueva factura. |
-| **`FiscalLiquidation`** | Owned VO que persiste el calculo fiscal del momento de confirmacion: monto facturado, penalidad, items no reintegrables, monto fiscal acreditado, monto a devolver, neto facturado final, regla aplicada (1..8), `CreditNoteKind`. |
-| **`CreditNoteKind`** | Enum: `PartialOnOriginal` (casos 1, 2, 3, 5, 6 — una sola NC). `TotalPlusNewInvoice` (casos 4, 7 — NC total + factura nueva en Fase 2). |
+| **NC total + nueva factura** | Anular factura original (NC por total) + emitir factura nueva por el remanente conceptual. Casos 4 y 7 de la matriz. **Fase 1 RECHAZA estos casos en Confirm (GR-001)**. Fase 2 implementa. |
+| **`FiscalLiquidationDto`** | DTO transitorio devuelto por el calculator con monto facturado, penalidad, items no reintegrables, monto fiscal acreditado, monto a devolver, neto facturado final, regla aplicada (1..8), `CreditNoteKind`, `ReviewRequiredReason`. **NO se persiste Fase 1** (GR-004). Se serializa al `ApprovalRequest.Metadata` cuando hay review manual. |
+| **`CreditNoteKind`** | Enum: `PartialOnOriginal` (casos 1, 2, 3, 5, 6 — una sola NC). `TotalPlusNewInvoice` (casos 4, 7 — Fase 1 rechaza). |
 | **Clasificador matriz 8** | Logica que mira `OriginatingInvoice.TipoComprobante`, `Supplier.InvoicingMode`, items no reintegrables, retenciones, modo cambiado, etc., y decide caso 1..8 + `ReviewRequiredReason`. |
 
 ### 2.2 Decisiones cerradas no negociables (Fase 1)
 
-1. **Stack es SQL Server**. Las CHECK constraints se escriben en sintaxis T-SQL. El plan funcional referencio Postgres por reflejo del lenguaje ADR-002 — se ignora. El interceptor de `AppDbContext` ya transforma `SqlException` (severity / number) en `BusinessInvariantViolationException`.
-2. **`FiscalLiquidation` es Owned VO**, no entidad propia (cierre §17.1 plan funcional, item 1). Argumentado en §2.4.
-3. **`Supplier.PenaltyPolicyJson` es columna `nvarchar(max)`**, no tabla normalizada (cierre §17.1 item 2). Argumentado en §2.5.
+1. **Stack es PostgreSQL** (Npgsql 8.x). CHECK constraints en sintaxis Postgres con identificadores entre comillas dobles. Concurrency token via `xmin` shadow column + `UseXminAsConcurrencyToken()`. Interceptor mapea `PostgresException.SqlState='23514'` a `BusinessInvariantViolationException`.
+2. **No se persiste `FiscalLiquidation` entera Fase 1** (GR-004). Owned VO eliminado del modelo Fase 1.
+3. **`Supplier.PenaltyPolicyJson` es columna `jsonb`** (RH-014), no `text`. Permite validacion sintactica automatica + future `jsonb_typeof` checks.
 4. **Clasificador en service separado** `IFiscalLiquidationCalculator` (cierre §17.1 item 3). Argumentado en §2.6.
-5. **Approval via `ApprovalRequest.Metadata` JSON** + FK `BC.PartialCreditNoteApprovalRequestId` (cierre §17.1 item 4). Argumentado en §2.7.
-6. **Feature flag nuevo `EnablePartialCreditNotes`** (cierre §17.1 item 7). Argumentado en §2.10.
-7. **Auto-emision por umbral $500k**: el plan funcional propuso este threshold como sugerencia del agente integrado. Lo aceptamos como **default editable en `OperationalFinanceSettings`**. Si el contador propone otro valor en la respuesta a F1, se actualiza el setting sin tocar codigo.
-8. **`CreditNoteKind = TotalPlusNewInvoice` queda persistido pero la nueva factura NO se emite en Fase 1**. Solo se marca el BC para que Fase 2 lo procese cuando emita real al ARCA. Hoy queda como "decision documentada, ejecucion diferida". Test cubre que el BC quede en estado terminal Fase 1 (`ManualReviewApproved`) sin avanzar.
+5. **Approval via `ApprovalRequest.Metadata` JSON** + FK `BC.PartialCreditNoteApprovalRequestId`. Argumentado en §2.7.
+6. **Feature flag nuevo `EnablePartialCreditNotes`** + pre-condicion `EnableNewCancellationFlow=true` validada al startup (GR-002).
+7. **Auto-emision por umbral $500k**: default editable en `OperationalFinanceSettings`. Si el contador propone otro valor en respuesta a F1 round 3, se actualiza el setting sin tocar codigo.
+8. **`CreditNoteKind = TotalPlusNewInvoice` provoca rechazo en Confirm** (GR-001). No queda BC colgado.
+9. **Heuristicas factura confusa DESACTIVADAS por default** (RH-008). `GenericDescriptionPatterns = ""` (vacio) + `Fc13DeployDate = null`. Solo se activan si el contador lo pide explicitamente en round 3.
+10. **`ApprovalRequest` necesita concurrency token antes de FC1.3** (RH-006): migracion pre-requisito M0 agrega `xmin` a la tabla `ApprovalRequests`.
 
-### 2.3 Modelo de datos
+### 2.3 Modelo de datos (Fase 1 - REDUCIDO por GR-004)
 
-#### 2.3.1 Entidades nuevas
+#### 2.3.1 Entidades NUEVAS
 
 ```csharp
-// src/TravelApi.Domain/Entities/FiscalLiquidation.cs
+// src/TravelApi.Application/DTOs/Cancellation/FiscalLiquidationDto.cs
 //
-// Owned VO de BookingCancellation. Se persiste como columnas con prefijo
-// FiscalLiquidation_ en la tabla BookingCancellations (igual que FiscalSnapshot).
-// Inmutable post-T0 salvo edicion explicita del admin en ManualReviewPending (G3).
-public class FiscalLiquidation
-{
-    // ===== Origen =====
-    [Column(TypeName = "decimal(18,2)")]
-    public decimal OriginalInvoiceAmount { get; set; }       // = OriginatingInvoice.ImporteTotal
-
-    [Column(TypeName = "decimal(18,2)")]
-    public decimal CancellationAmount { get; set; }          // monto cancelado (en general = OriginalInvoiceAmount, distinto si parcial)
-
-    // ===== Componentes que NO van a la NC =====
-    [Column(TypeName = "decimal(18,2)")]
-    public decimal OperatorPenaltyAmount { get; set; }       // penalidad operador (modo reseller resta NC, modo intermediario depende)
-
-    [Column(TypeName = "decimal(18,2)")]
-    public decimal NonRefundableItemsAmount { get; set; }    // suma de items con IsRefundable=false en la factura origen
-
-    // ===== Resultados calculados =====
-    [Column(TypeName = "decimal(18,2)")]
-    public decimal FiscalAmountToCredit { get; set; }        // = OriginalInvoiceAmount - NonRefundable - (Penalty si aplica modo). Va a la NC.
-
-    [Column(TypeName = "decimal(18,2)")]
-    public decimal AmountToRefundCustomer { get; set; }      // dinero que se devuelve. Puede coincidir con FiscalAmountToCredit (modo reseller) o no.
-
-    [Column(TypeName = "decimal(18,2)")]
-    public decimal FinalNetInvoiced { get; set; }            // = OriginalInvoiceAmount - FiscalAmountToCredit. Lo que queda como ingreso reconocido agencia.
-
-    // ===== Decision de clasificacion =====
-    public PartialCreditNoteCase ComputedCase { get; set; }  // enum 1..8 (matriz contador)
-
-    public CreditNoteKind CreditNoteKind { get; set; }       // PartialOnOriginal | TotalPlusNewInvoice
-
-    public ReviewRequiredReason ReviewRequiredReason { get; set; }  // bitflag, default None
-
-    // ===== Trazabilidad del calculo =====
-    public DateTime? ComputedAt { get; set; }
-
-    [MaxLength(450)]
-    public string? ComputedByUserId { get; set; }
-
-    [MaxLength(200)]
-    public string? ComputedByUserName { get; set; }
-}
+// DTO transitorio que el calculator devuelve. NO se persiste Fase 1 (GR-004).
+// Se serializa al ApprovalRequest.Metadata JSON cuando hay manual review.
+public record FiscalLiquidationDto(
+    decimal OriginalInvoiceAmount,
+    decimal CancellationAmount,
+    decimal OperatorPenaltyAmount,
+    decimal NonRefundableItemsAmount,
+    decimal FiscalAmountToCredit,
+    decimal AmountToRefundCustomer,
+    decimal FinalNetInvoiced,
+    PartialCreditNoteCase ComputedCase,
+    CreditNoteKind CreditNoteKind,
+    ReviewRequiredReason ReviewRequiredReason,
+    string Currency,
+    string ClassificationExplanation);
 
 // src/TravelApi.Domain/Entities/PartialCreditNoteCase.cs
 public enum PartialCreditNoteCase
@@ -160,10 +149,10 @@ public enum PartialCreditNoteCase
     Case1_PartialRefundNoPenalty = 1,
     Case2_FullCancellationNoRetention = 2,
     Case3_FullCancellationWithPenalty = 3,
-    Case4_OriginalInvoiceUnclear = 4,
-    Case5_CommissionOnlyPartial = 5,
-    Case6_CommissionOnlyFull = 6,
-    Case7_RetentionChangesNature = 7,
+    Case4_OriginalInvoiceUnclear = 4,         // Fase 1: rechaza Confirm (GR-001)
+    Case5_CommissionOnlyPartial = 5,          // Fase 1: manual review (GR-003)
+    Case6_CommissionOnlyFull = 6,             // Fase 1: manual review (GR-003)
+    Case7_RetentionChangesNature = 7,         // Fase 1: rechaza Confirm (GR-001)
     Case8_FacturaA = 8,
 }
 
@@ -172,31 +161,33 @@ public enum CreditNoteKind
 {
     Unset = 0,
     PartialOnOriginal = 1,         // casos 1, 2, 3, 5, 6 — una sola NC vinculada
-    TotalPlusNewInvoice = 2,       // casos 4, 7 — NC total + factura nueva en Fase 2
+    TotalPlusNewInvoice = 2,       // casos 4, 7 — Fase 1 RECHAZA Confirm (GR-001)
 }
 
 // src/TravelApi.Domain/Entities/ReviewRequiredReason.cs
-// Bitflag: un BC puede activar multiples motivos (ej. Factura A + items no reintegrables).
+// Bitflag: un BC puede activar multiples motivos.
 [Flags]
 public enum ReviewRequiredReason
 {
     None = 0,
-    CustomerIsRiOrFacturaA = 1 << 0,         // caso 8 obligatorio
+    CustomerIsRiOrFacturaA = 1 << 0,                  // caso 8 obligatorio
     HasNonRefundableItems = 1 << 1,
-    AmountAboveAdminThreshold = 1 << 2,      // > PartialNcAutoApprovalThreshold
-    AmountAboveAccountingThreshold = 1 << 3, // > PartialNcAdminReviewThreshold (G5: comentario 100+ chars)
-    RetentionChangesNature = 1 << 4,         // caso 7 — mix DeductionKind heterogeneo
-    OriginalInvoiceUnclear = 1 << 5,         // caso 4 — heuristicas factura confusa
-    MultiCurrency = 1 << 6,                  // futuro Fase 2
-    LegacyInvoice = 1 << 7,                  // factura emitida antes de Fc13DeployDate
-    Other = 1 << 8,                          // catch-all, ej. NC en cadena
+    AmountAboveAdminThreshold = 1 << 2,
+    AmountAboveAccountingThreshold = 1 << 3,          // > PartialNcAccountingReviewThreshold (G5)
+    RetentionChangesNature = 1 << 4,                  // caso 7 — RECHAZADO Fase 1 (GR-001)
+    OriginalInvoiceUnclear = 1 << 5,                  // caso 4 — RECHAZADO Fase 1 (GR-001)
+    MultiCurrency = 1 << 6,                           // futuro Fase 2
+    LegacyInvoice = 1 << 7,                           // OFF por default (RH-008)
+    InvoicingModeCommissionOnly = 1 << 8,             // NUEVO RH-015/GR-003: dispara manual review
+    PenaltyResetUncertainInResellerMode = 1 << 9,     // NUEVO GR-006: dispara manual review
+    Other = 1 << 10,                                  // catch-all (NC en cadena, etc.)
 }
 
 // src/TravelApi.Domain/Entities/SupplierInvoicingMode.cs
 public enum SupplierInvoicingMode
 {
     TotalToCustomer = 0,  // reseller: factura al cliente el total del servicio. Default conservador.
-    CommissionOnly = 1,   // intermediario: factura solo la comision. Resto en cuenta corriente con operador.
+    CommissionOnly = 1,   // intermediario: factura solo la comision. Fase 1 va a manual review (GR-003).
 }
 
 // src/TravelApi.Domain/Entities/InvoiceItemCategory.cs
@@ -222,7 +213,7 @@ public class Supplier
     /// <summary>
     /// FC1.3 (ADR-009, 2026-05-21): modelo de facturacion al cliente para este operador.
     /// TotalToCustomer = reseller (factura el total del servicio).
-    /// CommissionOnly = intermediario (factura solo la comision).
+    /// CommissionOnly = intermediario (factura solo la comision). FASE 1: manual review obligatorio (GR-003).
     /// Snapshot al momento de emitir factura queda en FiscalSnapshot.InvoicingModeAtEvent.
     /// Editable por admin. Default TotalToCustomer (conservador, comportamiento legacy).
     /// </summary>
@@ -230,11 +221,14 @@ public class Supplier
 
     /// <summary>
     /// FC1.3 (ADR-009, 2026-05-21): tabla de penalidades por antelacion en JSON.
+    /// Tipo: jsonb (RH-014). CHECK Postgres valida que sea objeto top-level.
     /// Schema: { "tiers": [{"minDaysBefore": int, "penaltyPercent": decimal}, ...], "currency": "USD"|"ARS" }
     /// Tiers ordenados DESC por minDaysBefore. Vendedor puede override manual al confirmar (D2 2026-05-21).
-    /// Validacion via FluentValidation en el Service que actualiza Supplier (no en el entity).
-    /// Si null o vacio: sin tabla, vendedor ingresa manual cada vez.
+    /// Validacion via FluentValidation en SupplierService antes de persistir.
+    /// Si null: sin tabla, vendedor ingresa manual cada vez.
+    /// Calculator: try/catch al deserializar + fallback "manual input requerido" + log warning grave.
     /// </summary>
+    [Column(TypeName = "jsonb")]
     public string? PenaltyPolicyJson { get; set; }
 }
 
@@ -244,7 +238,7 @@ public class InvoiceItem
     // ... props existentes ...
 
     /// <summary>
-    /// FC1.3 (ADR-009, 2026-05-21): si false, este item NO entra en FiscalLiquidation.FiscalAmountToCredit
+    /// FC1.3 (ADR-009, 2026-05-21): si false, este item NO entra en FiscalAmountToCredit
     /// (no se acredita al cliente en NC parcial). Default true. INMUTABLE post-emision de factura
     /// (CHECK indirecto via Invoice MutationGuards). G1: preseleccion false para categories
     /// AdministrativeFee/Insurance/OperatorAdvance.
@@ -258,8 +252,8 @@ public class InvoiceItem
 
     /// <summary>
     /// FC1.3 (ADR-009): trazabilidad linea InvoiceItem <-> ServicioReserva origen.
-    /// Habilita el calculo "que linea pertenece a que servicio" para parsing en clasificador
-    /// caso 4 (factura confusa). Nullable: facturas legacy o conceptos sueltos no tienen origen.
+    /// Habilita el calculo "que linea pertenece a que servicio". Nullable: facturas legacy
+    /// o conceptos sueltos no tienen origen.
     /// </summary>
     public int? SourceServicioReservaId { get; set; }
     public ServicioReserva? SourceServicioReserva { get; set; }
@@ -280,29 +274,47 @@ public class FiscalSnapshot
 
     /// <summary>
     /// FC1.3 (ADR-009): redundante con OriginatingInvoice.TipoComprobante pero permite queries
-    /// de auditoria sin join. Pone el "es Factura A?" en la tabla del BC para alertas.
-    /// Nullable por legacy.
+    /// de auditoria sin join. Nullable por legacy.
     /// </summary>
     public int? OriginalInvoiceTypeAtEvent { get; set; }
 }
 
-// src/TravelApi.Domain/Entities/BookingCancellation.cs — 4 props nuevas + Owned VO
+// src/TravelApi.Domain/Entities/BookingCancellation.cs — 7 props nuevas (REDUCIDO por GR-004)
 public class BookingCancellation
 {
     // ... props existentes ...
 
+    // GR-004: NO persistimos la liquidacion entera. Solo guardamos el resultado de clasificacion
+    // + timestamp + quien lo corrio. El detalle JSON vive en ApprovalRequest.Metadata cuando hay review.
+
     /// <summary>
-    /// FC1.3 (ADR-009): liquidacion fiscal calculada al momento de Confirm.
-    /// Owned VO (igual patron que FiscalSnapshot). Nullable hasta que el calculator corra.
-    /// Inmutable salvo edicion admin en ManualReviewPending (G3) — siempre con audit + nuevo
-    /// comentario en metadata del approval.
+    /// FC1.3 (ADR-009, GR-004): tipo de NC clasificado por el calculator. Solo Fase 1 maneja
+    /// PartialOnOriginal (los casos TotalPlusNewInvoice se rechazan en Confirm via GR-001).
+    /// Null hasta que el calculator corra.
     /// </summary>
-    public FiscalLiquidation? FiscalLiquidation { get; set; }
+    public CreditNoteKind? CreditNoteKind { get; set; }
+
+    /// <summary>
+    /// FC1.3 (ADR-009, GR-004): bitflag de motivos que activaron review manual.
+    /// Se persiste para queries de auditoria/reporting. None = clasificador permitio auto-emision.
+    /// </summary>
+    public ReviewRequiredReason ReviewRequiredReason { get; set; } = ReviewRequiredReason.None;
+
+    /// <summary>
+    /// FC1.3 (ADR-009): momento en que corrio el calculator. Null si nunca corrio (FC1.2 path).
+    /// </summary>
+    public DateTime? LiquidationComputedAt { get; set; }
+
+    [MaxLength(450)]
+    public string? LiquidationComputedByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? LiquidationComputedByUserName { get; set; }
 
     /// <summary>
     /// FC1.3 (ADR-009): FK al ApprovalRequest tipo PartialCreditNoteApproval que aprueba
     /// la liquidacion. Null hasta que el BC pase por ManualReviewPending. Persistido para
-    /// audit cross-reference (igual patron que Invoice.AnnulmentApprovalRequestId).
+    /// audit cross-reference (mismo patron que Invoice.AnnulmentApprovalRequestId).
     /// OnDelete: Restrict.
     /// </summary>
     public int? PartialCreditNoteApprovalRequestId { get; set; }
@@ -332,11 +344,16 @@ public class HotelBooking
     /// FC1.3 (ADR-009): lista JSON de conceptos no reintegrables que se imputan al cliente
     /// fuera del costo neto/venta (ej: cargo gestion $5.000, seguro cancelacion $20.000).
     /// Cada concepto se traduce a un InvoiceItem con IsRefundable=false al facturar.
+    /// Tipo jsonb (consistencia con PenaltyPolicyJson).
     /// Schema: [{"description": string, "amount": decimal, "category": InvoiceItemCategory}, ...]
     /// Null o vacio: sin conceptos adicionales.
     /// </summary>
+    [Column(TypeName = "jsonb")]
     public string? NonRefundableConceptsJson { get; set; }
 }
+
+// src/TravelApi.Domain/Entities/ApprovalRequest.cs — SIN cambios de propiedades,
+// SOLO se agrega xmin shadow + UseXminAsConcurrencyToken() en migracion M0 pre-requisito (RH-006).
 ```
 
 #### 2.3.3 Extension de enums
@@ -354,9 +371,9 @@ public enum BookingCancellationStatus
     Aborted = 6,
     ArcaRejected = 7,
     // ===== FC1.3 nuevos =====
-    RequiresManualReview = 8,    // clasificador identifico caso review pero approval no abierto aun
+    RequiresManualReview = 8,    // clasificador identifico caso review pero approval no abierto aun (transitorio dentro de misma tx)
     ManualReviewPending = 9,     // ApprovalRequest tipo PartialCreditNoteApproval abierto
-    ManualReviewApproved = 10,   // admin aprobo, siguiente paso emitCreditNote()
+    ManualReviewApproved = 10,   // admin aprobo, siguiente paso emitCreditNote() (Fase 1: avanza a AwaitingFiscalConfirmation)
     ManualReviewRejected = 11,   // admin rechazo, BC vuelve a Drafted o se aborta
 }
 
@@ -377,45 +394,40 @@ public class OperationalFinanceSettings
 
     /// <summary>
     /// FC1.3 (ADR-009): feature flag maestro del modulo FC1.3. Si false, BC service ignora
-    /// el clasificador y se comporta exactamente como FC1.2 (NC por total). Si true, el
-    /// clasificador corre, los nuevos estados ManualReviewPending pueden activarse y se
-    /// emite NC parcial cuando aplica (Fase 2 hace la emision real al ARCA).
-    /// Default false en prod. Independiente de EnableNewCancellationFlow porque FC1.2
-    /// puede estar prendido sin FC1.3.
+    /// el clasificador y se comporta exactamente como FC1.2 (NC por total).
+    /// Default false en prod. Independiente de EnableNewCancellationFlow.
+    /// PRE-CONDICION (GR-002): si este flag es true, EnableNewCancellationFlow tambien debe
+    /// ser true. Validacion en startup rechaza arranque con combinacion invalida.
     /// </summary>
     public bool EnablePartialCreditNotes { get; set; } = false;
 
     /// <summary>
     /// FC1.3 (ADR-009): por debajo de este monto en ARS, NC parcial se auto-emite si no
-    /// hay otros disparadores manuales (Factura A, items no reintegrables, retencion mix,
-    /// factura confusa). Default 500.000. Threshold del subagente integrado, sujeto a
-    /// confirmacion contador (F1). Editable en panel admin sin redeploy.
+    /// hay otros disparadores manuales. Default 500.000. Sujeto a confirmacion contador (F1).
     /// </summary>
-    [Column(TypeName = "decimal(18,2)")]
+    [Column(TypeName = "numeric(18,2)")]
     public decimal PartialNcAutoApprovalThreshold { get; set; } = 500_000m;
 
     /// <summary>
     /// FC1.3 (ADR-009): por encima de PartialNcAutoApprovalThreshold y hasta este monto,
     /// admin reforzada (comentario min 20 chars + 4-eyes). Default 2.000.000 ARS.
-    /// Confirmar contador.
     /// </summary>
-    [Column(TypeName = "decimal(18,2)")]
+    [Column(TypeName = "numeric(18,2)")]
     public decimal PartialNcAdminReviewThreshold { get; set; } = 2_000_000m;
 
     /// <summary>
     /// FC1.3 (ADR-009 + G5): por encima de PartialNcAdminReviewThreshold, admin reforzada
-    /// con comentario min 100 chars + flag AccountingReviewRequired=true en metadata. Sin
-    /// rol nuevo Fase 1. Si null, no hay tope superior y todo lo > Admin Review entra al
-    /// flujo G5. Default null. Confirmar contador.
+    /// con comentario min 100 chars + flag AccountingReviewRequired=true en metadata.
+    /// Si null, no hay tope superior y todo lo > Admin Review entra al flujo G5.
     /// </summary>
-    [Column(TypeName = "decimal(18,2)")]
+    [Column(TypeName = "numeric(18,2)")]
     public decimal? PartialNcAccountingReviewThreshold { get; set; } = null;
 
     /// <summary>
     /// FC1.3 (ADR-009): template de descripcion de la NC parcial. Variables soportadas:
     /// {invoiceType}, {invoiceNumber}, {pointOfSale}, {fiscalAmount}, {currency},
     /// {cancellationReason}, {nonRefundableAmount}, {operatorPenaltyAmount}, {customerName},
-    /// {customerTaxId}. Validacion al guardar (rechazar variables no soportadas).
+    /// {customerTaxId}. Validacion al guardar.
     /// </summary>
     [MaxLength(500)]
     public string PartialNcDescriptionTemplate { get; set; } =
@@ -431,106 +443,127 @@ public class OperationalFinanceSettings
     public int ManualReviewMaxDaysBeforeRg4540Alert { get; set; } = 10;
 
     /// <summary>
-    /// FC1.3 (ADR-009): timestamp del deploy de FC1.3 a prod. Heuristica caso 4
+    /// FC1.3 (ADR-009 + RH-013): timestamp del deploy de FC1.3 a prod. Heuristica caso 4
     /// (factura confusa): facturas emitidas antes de esta fecha se flagean como
-    /// "legacy invoice" para revision manual. Null = sin cutoff (legacy detection off).
+    /// "legacy invoice" para revision manual.
+    /// **Default null** (RH-008): la heuristica legacy esta DESACTIVADA por default.
+    /// La migracion M3 setea automaticamente UtcNow() solo si el contador lo pide explicitamente
+    /// en round 3. Si null + EnablePartialCreditNotes=true, startup setea UtcNow + log warning
+    /// (RH-013). Activar solo si contador lo pide.
     /// </summary>
-    public DateTime? Fc13DeployDate { get; set; }
+    public DateTime? Fc13DeployDate { get; set; } = null;
 
     /// <summary>
-    /// FC1.3 (ADR-009): patrones regex (uno por linea) que el clasificador caso 4 usa para
-    /// flagear "factura con descripcion generica unica". Default: "^(servicio|concepto|importe|operacion|reserva)".
-    /// Configurable por agencia. Cada patron se evalua case-insensitive sobre Description del unico InvoiceItem.
+    /// FC1.3 (ADR-009 + RH-008): unica expresion regex con alternativas separadas por '|' que
+    /// el clasificador caso 4 usa para flagear "factura con descripcion generica unica".
+    /// **Default vacio (string.Empty) — heuristica DESACTIVADA** (RH-008/RH-021).
+    /// Configurable por agencia. Si no esta vacio, se evalua case-insensitive sobre Description
+    /// del unico InvoiceItem. Activar solo si contador lo pide explicitamente en round 3 + test
+    /// previo contra dataset legacy (< 5% falsos positivos).
+    /// Ejemplo si activo: "^(servicio|concepto|importe|operacion|reserva)".
     /// </summary>
     [MaxLength(1000)]
-    public string GenericDescriptionPatterns { get; set; } =
-        "^(servicio|concepto|importe|operacion|reserva)";
+    public string GenericDescriptionPatterns { get; set; } = string.Empty;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 + GR-005): si true, permite self-approval cuando el sistema tiene 1 solo
+    /// admin y vendedor = admin. Requiere comentario reforzado 100+ chars + flag audit
+    /// SelfApprovedDueToSingleAdmin=true en Metadata. Default false (4-eyes estricto).
+    /// Pensado para agencias chicas (1 sola persona admin). NO afecta cuando hay 2+ admins.
+    /// </summary>
+    public bool Allow4EyesBypassWhenSingleAdmin { get; set; } = false;
 }
 ```
 
-#### 2.3.5 CHECK constraints SQL (T-SQL, SQL Server)
+#### 2.3.5 CHECK constraints SQL (sintaxis PostgreSQL)
+
+**Convencion**: `chk_<tabla>_<concepto>` + `migrationBuilder.Sql(@"ALTER TABLE ...")` + interceptor `PostgresException.SqlState='23514'` -> `BusinessInvariantViolationException` -> HTTP 409.
 
 ```sql
--- INV-FC1.3-005: suma de componentes = OriginalInvoiceAmount con tolerancia 0.01 por redondeo.
--- Solo aplica cuando FiscalLiquidation_OriginalInvoiceAmount > 0 (BC en Drafted puede tener
--- liquidacion vacia con todo en 0).
-ALTER TABLE [BookingCancellations]
-  ADD CONSTRAINT chk_BookingCancellations_fiscalliq_sum
+-- RH-014: PenaltyPolicyJson debe ser objeto top-level si no es null.
+ALTER TABLE "Suppliers"
+  ADD CONSTRAINT chk_Suppliers_penaltypolicy_object
   CHECK (
-    [FiscalLiquidation_OriginalInvoiceAmount] IS NULL
-    OR [FiscalLiquidation_OriginalInvoiceAmount] = 0
-    OR ABS(
-        ([FiscalLiquidation_FiscalAmountToCredit]
-         + [FiscalLiquidation_NonRefundableItemsAmount]
-         + [FiscalLiquidation_OperatorPenaltyAmount])
-        - [FiscalLiquidation_OriginalInvoiceAmount]
-      ) <= 0.01
+    "PenaltyPolicyJson" IS NULL
+    OR jsonb_typeof("PenaltyPolicyJson") = 'object'
   );
 
--- INV-FC1.3-006: items no reintegrables del FiscalLiquidation deben sumar exactamente lo que
--- la factura origen tiene marcado como IsRefundable=false. NO se puede expresar en CHECK
--- inline (requiere join). Se valida en service (en CalculateAsync) + test de integracion.
-
--- Coherencia FiscalAmountToCredit >= 0 (no se acredita negativo).
-ALTER TABLE [BookingCancellations]
-  ADD CONSTRAINT chk_BookingCancellations_fiscalliq_nonneg
-  CHECK (
-    [FiscalLiquidation_FiscalAmountToCredit] IS NULL
-    OR ([FiscalLiquidation_FiscalAmountToCredit] >= 0
-        AND [FiscalLiquidation_NonRefundableItemsAmount] >= 0
-        AND [FiscalLiquidation_OperatorPenaltyAmount] >= 0
-        AND [FiscalLiquidation_AmountToRefundCustomer] >= 0
-        AND [FiscalLiquidation_FinalNetInvoiced] >= 0)
-  );
-
--- ManualReviewPending requiere ApprovalRequest FK (INV-FC1.3-002).
-ALTER TABLE [BookingCancellations]
+-- ManualReviewPending/Approved/Rejected requiere ApprovalRequest FK (INV-FC1.3-002).
+ALTER TABLE "BookingCancellations"
   ADD CONSTRAINT chk_BookingCancellations_manualreview_approvalref
   CHECK (
-    [Status] NOT IN (9, 10, 11)
-    OR [PartialCreditNoteApprovalRequestId] IS NOT NULL
+    "Status" NOT IN (9, 10, 11)
+    OR "PartialCreditNoteApprovalRequestId" IS NOT NULL
   );
+
+-- Coherencia CreditNoteKind: si BC paso por clasificador (LiquidationComputedAt != null),
+-- CreditNoteKind no puede ser null.
+ALTER TABLE "BookingCancellations"
+  ADD CONSTRAINT chk_BookingCancellations_creditnotekind_consistent
+  CHECK (
+    "LiquidationComputedAt" IS NULL
+    OR "CreditNoteKind" IS NOT NULL
+  );
+
+-- Status enum acepta valores 0..11 (extiende CHECK FC1 si existe).
+-- Si el CHECK actual no enumera valores explicitos, esta linea no aplica.
+-- Verificar en migracion FC1 antes de M4.
+
+-- NOTA: INV-FC1.3-005 (suma de componentes = OriginalInvoiceAmount) NO existe como CHECK
+-- en BD Fase 1 porque NO persistimos los componentes (GR-004). Se valida en el calculator
+-- in-memory. Tests unit cubren.
 ```
 
-Convencion EF Core (heredada FC1): `chk_<tabla>_<concepto>` + `migrationBuilder.Sql(@"ALTER TABLE ...")` + interceptor `SqlException` (T-SQL error number 547 para CHECK violations) -> `BusinessInvariantViolationException` -> HTTP 409.
+### 2.4 Por que NO persistimos `FiscalLiquidation` Fase 1 (GR-004)
 
-### 2.4 Por que `FiscalLiquidation` es Owned VO y no entidad propia
+**Decision**: la liquidacion calculada se mantiene **in-memory** durante el flujo de Confirm. Solo se persisten 5 campos summary (`CreditNoteKind`, `ReviewRequiredReason`, `LiquidationComputedAt`, `LiquidationComputedByUserId/Name`). El detalle completo (montos, items, penalty, regla) se serializa al `ApprovalRequest.Metadata` JSON **solamente cuando hay manual review**.
 
-**Decision**: Owned VO siguiendo el patron de `FiscalSnapshot`.
+**Argumentos a favor de NO persistir**:
 
-**Argumentos a favor**:
-
-- **Cohesion**: la liquidacion no tiene vida fuera del BC. Si el BC se borra (no pasa por el flujo normal pero teoricamente), la liquidacion deberia desaparecer. Cascade implicito con owned.
-- **Ciclo de vida**: se calcula en el momento de Confirm, se modifica solo en revision manual, y se freeza tras `ManualReviewApproved`. Nunca se consulta independiente del BC.
-- **Sin necesidad de Id propio**: no hay queries de tipo "dame todas las liquidaciones con ComputedCase=8". Las queries siempre arrancan por el BC.
-- **Precedente repo**: `FiscalSnapshot` ya es Owned VO en `BookingCancellation` desde FC1.1 (commit `184134f`). Mantener simetria reduce curva de aprendizaje.
-- **Persistencia simple**: EF Core con `OwnsOne` mete las columnas con prefijo en la tabla padre. Menos joins, menos N+1 risk.
+- **Blast radius reducido**: Fase 1 NO toca AfipService (no emite NC parcial real al ARCA). Persistir montos que nadie lee es introducir columnas que luego habria que migrar/limpiar.
+- **Cero riesgo de divergencia**: si persistieramos `FiscalAmountToCredit` pero Fase 1 sigue emitiendo NC total via FC1.2, los datos en BD contradirian la NC emitida. **Era el bloqueante RH-004 del reviewer.**
+- **Auditabilidad preservada**: el snapshot completo se guarda en `ApprovalRequest.Metadata` para los casos que necesitan review humano (los unicos donde importa documentar la decision). Para auto-approval, el calculator corre, decide "OK pase a FC1.2 flow", y no genera approval — el log de la operacion queda en el audit log generico del BC.
+- **Fase 2 introduce persistencia completa** cuando AfipService emita NC parcial real. La migracion Fase 2 podra agregar columnas leyendo de los Metadata JSON ya guardados como backfill.
 
 **Argumentos en contra evaluados**:
 
-- *"Si necesitamos historial de versiones de la liquidacion (admin edito 3 veces antes de aprobar), un Owned no sirve"*. Respuesta: el historial vive en el `ApprovalRequest.Metadata` (cada edicion suma una entrada). El estado **actual** vive en el Owned. Si en futuro hace falta tabla de historial, se agrega `FiscalLiquidationHistory` como entidad propia sin tocar el Owned.
-- *"Otros aggregates podrian necesitar acceder a la liquidacion"*. Respuesta: no hay caso de uso. Si aparece, se promueve. YAGNI hoy.
+- *"Si Fase 2 demora, perdemos data historica de calculos auto-aprobados"*. Respuesta: el clasificador es deterministico. Re-correrlo Fase 2 sobre los inputs reproduce el mismo resultado. No hay perdida real.
+- *"Reporting necesita los montos"*. Respuesta: Fase 1 no genera reporting de NC parcial — eso es Fase 3 UI. Para los casos manual review (~10-30% del total), el JSON del approval tiene todo.
 
-**Costo de cambiar despues**: bajo. Migrar Owned -> Entity es script SQL (mover columnas de tabla padre a tabla nueva con FK) + cambio EF mapping. Sin riesgo de datos.
+**Costo de cambiar despues**: bajo. Fase 2 agrega 10 columnas `FiscalLiquidation_*` con backfill desde `ApprovalRequest.Metadata`. Aditivo, sin perdida.
 
-### 2.5 Por que `Supplier.PenaltyPolicyJson` es `nvarchar(max)` y no tabla normalizada
+### 2.5 Por que `Supplier.PenaltyPolicyJson` es `jsonb` y no tabla normalizada
 
-**Decision**: columna JSON.
+**Decision**: columna `jsonb` (RH-014 elevo de `text` a `jsonb`).
 
 **Argumentos a favor**:
 
-- **Acceso patron**: la tabla se lee al momento de calcular liquidacion (durante Draft o Confirm). No es hot path. Una sola lectura por flujo.
-- **Sin necesidad de queries cross-supplier**: no hay reporte "todos los suppliers con penalidad > 30% para 15 dias antes". Si aparece, se proyecta vista o se hace JOIN sobre el JSON.
-- **Schema evoluciona**: hoy 4 tiers, manana podria ser 7 tiers, o estructura curve-based en lugar de discrete. JSON acomoda sin migrar.
-- **Override manual del vendedor (D2)**: el vendedor puede ignorar la tabla y poner monto manual. Eso ya implica que la tabla es una sugerencia, no una restriccion dura — no necesita normalizar.
-- **Convencion existente**: `BookingCancellation.FiscalSnapshot.ExtrasJson`, `HotelBooking.RoomingAssignmentsJson`, `Invoice.AgencySnapshot`/`CustomerSnapshot` ya usan JSON columns para datos semi-estructurados de baja frecuencia. Consistencia con repo.
+- **Acceso patron**: la tabla se lee al momento de calcular liquidacion. No es hot path. Una sola lectura por flujo.
+- **Sin necesidad de queries cross-supplier**: no hay reporte "todos los suppliers con penalidad > 30% para 15 dias antes". Si aparece, `jsonb` permite `JSON_VALUE`-like queries (`->`, `->>`, `@>`).
+- **Schema evoluciona**: hoy 4 tiers, manana podria ser 7 tiers, o estructura curve-based. JSON acomoda sin migrar.
+- **Override manual del vendedor (D2)**: vendedor puede ignorar la tabla y poner monto manual. La tabla es sugerencia, no restriccion dura.
+- **Convencion existente**: `BookingCancellation.FiscalSnapshot.ExtrasJson`, `HotelBooking.RoomingAssignmentsJson` ya usan JSON columns. Consistencia con repo.
+- **`jsonb` vs `text`**: `jsonb` valida sintaxis SQL automaticamente al insert/update y soporta CHECK `jsonb_typeof = 'object'` (ver §2.3.5). `text` plano no.
 
 **Argumentos en contra evaluados**:
 
-- *"No queryable si manana hace falta reportar"*. Respuesta: SQL Server soporta `JSON_VALUE` y `OPENJSON` para queries ad-hoc. Performance suficiente para reportes de baja frecuencia. Si hace falta, se materializa vista o se normaliza despues.
-- *"Validacion mas dificil que en tabla con constraints"*. Respuesta: validacion en `SupplierService` con FluentValidation antes de persistir (verificar schema, tiers ordenados DESC, percentages 0..100). Mas robusto que CHECK constraints aislados.
+- *"No queryable nativamente para reportes complejos"*. Respuesta: `jsonb` soporta queries y indexing GIN.
+- *"Validacion de schema interno (tiers ordenados, percentages 0..100)"*. Respuesta: validacion en `SupplierService` con FluentValidation antes de persistir. Mas robusto que CHECK constraints aislados.
 
-**Costo de cambiar despues**: medio. Migrar JSON -> tabla normalizada requiere script de extraccion + crear tabla `SupplierPenaltyTier` + reescribir reads. Pero como el codigo cliente es local (clasificador llama a un service), el blast radius esta acotado.
+**Manejo de errores en calculator** (RH-014):
+
+```csharp
+// FiscalLiquidationCalculator
+try {
+    var policy = JsonSerializer.Deserialize<PenaltyPolicy>(supplier.PenaltyPolicyJson);
+    // ... usar policy.Tiers ...
+} catch (JsonException ex) {
+    _logger.LogError(ex, "Supplier {SupplierId} PenaltyPolicyJson malformed - falling back to manual input", supplier.Id);
+    // fallback: tratar como si fuera null (vendedor ingreso manual)
+}
+```
+
+**Costo de cambiar despues**: medio. Migrar `jsonb` -> tabla normalizada requiere script de extraccion + crear tabla `SupplierPenaltyTier`. Blast radius acotado al calculator.
 
 ### 2.6 `IFiscalLiquidationCalculator` como servicio aparte
 
@@ -544,10 +577,11 @@ public interface IFiscalLiquidationCalculator
 {
     /// <summary>
     /// Calcula la liquidacion fiscal y clasifica el caso (matriz 8 contador 2026-05-21).
-    /// Input: snapshot de datos ya cargados por el BC service (no toca DbContext).
-    /// Output: FiscalLiquidation + ReviewRequiredReason. Puro (sin side effects, sin IO).
+    /// Puro: sin DbContext, sin async, sin IO. Input: snapshot de datos ya cargados.
+    /// Output: DTO transitorio + narrativa. El caller decide si persiste el summary
+    /// + serializa al ApprovalRequest.Metadata.
     /// </summary>
-    FiscalLiquidationResult Calculate(FiscalLiquidationInput input, OperationalFinanceSettings settings);
+    FiscalLiquidationDto Calculate(FiscalLiquidationInput input, OperationalFinanceSettings settings);
 }
 
 public record FiscalLiquidationInput(
@@ -559,37 +593,25 @@ public record FiscalLiquidationInput(
     decimal OperatorPenaltyAmount,                // ingresado por vendedor (tabla o manual)
     bool RetentionNatureChangedByUser,            // checkbox manual vendedor (caso 7 manual)
     bool OriginalInvoiceUnclearByUser);           // checkbox manual vendedor (caso 4 manual)
-
-public record FiscalLiquidationResult(
-    FiscalLiquidation Liquidation,
-    string ClassificationExplanation);  // texto narrativo de por que cayo en X caso (audit + UI)
 ```
 
-**Argumentos a favor**:
+**Argumentos a favor**: ver round 1 ADR §2.6 (sin cambios). Testeable aislado, sin coupling al estado de transaccion, reuse futuro UI preview, inyectable/mockeable.
 
-- **Testeable aislado**: la matriz 8 casos son **unit tests rapidos** sin DbContext, sin TestContainers, sin Postgres/SqlServer. Se ejecuta toda la matriz en milisegundos. Critico porque el contador puede cambiar reglas y queremos cobertura.
-- **Sin acoplamiento al estado de transaccion**: `ConfirmAsync` ya hace 10+ pasos. Sumar 60 lineas de clasificador volveria al metodo ilegible.
-- **Reuse futuro**: pantalla UI de "previsualizacion de liquidacion" (cuando se implemente Fase 3) llama al mismo calculator sin Confirm. El service expone solo el calculo.
-- **Inyectable y mockeable**: el `BookingCancellationService` recibe `IFiscalLiquidationCalculator` en el constructor. Tests del BC service usan fake calculator que devuelve resultados predefinidos. Decouple del clasificador.
-
-**Argumentos en contra evaluados**:
-
-- *"Otro service mas para mantener"*. Respuesta: el costo de mantener es bajo (logica pura). El costo de tener todo en `ConfirmAsync` es alto (testear obliga a setup de Reserva + Invoice + Supplier + InvoiceItem completos en TestContainers para cada variante de matriz).
-
-**Costo de cambiar despues**: bajo. Si fuera necesario fusionar, se inlinea.
-
-### 2.7 Mapping al `ApprovalRequest` existente (cierre §17.1 item 4)
+### 2.7 Mapping al `ApprovalRequest` existente
 
 **Decision**: usar `ApprovalRequest` con `RequestType = PartialCreditNoteApproval`, `EntityType = "BookingCancellation"`, `EntityId = bc.Id`, `Metadata` JSON con la liquidacion + edicion admin. FK `BC.PartialCreditNoteApprovalRequestId` para join inverso.
 
-**Schema del `Metadata` JSON**:
+**Schema del `Metadata` JSON** (estable, versionado):
 
 ```json
 {
-  "liquidationVersion": 1,
+  "schemaVersion": 1,
   "computedAt": "2026-05-21T14:30:00Z",
+  "computedByUserId": "user-vendedor-1",
+  "computedByUserName": "Juan Vendedor",
   "computedCase": "Case8_FacturaA",
   "originalInvoiceAmount": 1000000.00,
+  "cancellationAmount": 1000000.00,
   "operatorPenaltyAmount": 200000.00,
   "nonRefundableItemsAmount": 50000.00,
   "fiscalAmountToCredit": 750000.00,
@@ -598,11 +620,14 @@ public record FiscalLiquidationResult(
   "creditNoteKind": "PartialOnOriginal",
   "reviewRequiredReason": ["CustomerIsRiOrFacturaA", "HasNonRefundableItems"],
   "currency": "ARS",
+  "classificationExplanation": "Factura A obligatoria a revision por criterio contador 2026-05-21.",
   "accountingReviewRequired": false,
+  "selfApprovedDueToSingleAdmin": false,
   "edits": [
     {
       "at": "2026-05-21T15:10:00Z",
       "by": "user-admin-1",
+      "byName": "Maria Admin",
       "fields": {
         "operatorPenaltyAmount": { "from": 200000.00, "to": 250000.00 },
         "fiscalAmountToCredit":  { "from": 750000.00, "to": 700000.00 }
@@ -613,40 +638,25 @@ public record FiscalLiquidationResult(
 }
 ```
 
-**Como funciona el flujo de edicion admin (G3)**:
+**Flujo de edicion admin (G3)**: ver round 1 §2.7 (sin cambios funcionales). RH-006 cubierto: `ApprovalRequest` tendra concurrency token via migracion M0 — admin que edita con `xmin` viejo recibe `DbUpdateConcurrencyException` y reintenta.
 
-1. Admin abre el approval pending desde `/api/approvals/{publicId}`.
-2. Admin invoca `POST /api/cancellations/{publicId}/edit-liquidation` con los campos modificados + comentario.
-3. `BookingCancellationService.EditLiquidationAsync`:
-   - Lee BC + approval por FK.
-   - Valida que BC esta en `ManualReviewPending`.
-   - Valida que admin != vendedor (4-eyes).
-   - Valida comentario min 20 chars.
-   - Llama a `IFiscalLiquidationCalculator.Calculate(...)` con los inputs nuevos (overrides).
-   - Verifica INV-FC1.3-005 (suma = original).
-   - Actualiza `BC.FiscalLiquidation` con los nuevos valores.
-   - Apenda entrada al `edits[]` del `approval.Metadata`.
-   - Audit log `BookingCancellationLiquidationEdited`.
-   - SaveChanges. BC sigue en `ManualReviewPending` (self-loop).
-4. Admin aprueba con `POST /api/approvals/{publicId}/approve` (endpoint existente, no se crea nada). El callback del approval service notifica al BC service via interface chica `IPartialCreditNoteApprovalBridge` (paralelo a `IInvoiceAnnulmentBcBridge`) que transiciona BC a `ManualReviewApproved`.
+**Auditoria extra (RH-012)**: cuando admin edita, el `AuditLog.Changes` registra el diff completo de campos modificados con shape:
 
-**Por que `Metadata` JSON y no tabla nueva `PartialCreditNoteApprovalDetails`**:
+```json
+{
+  "FiscalAmountToCredit": { "Old": "750000.00", "New": "700000.00" },
+  "OperatorPenaltyAmount": { "Old": "200000.00", "New": "250000.00" },
+  "ReviewRequiredReason": { "Old": "CustomerIsRiOrFacturaA, HasNonRefundableItems", "New": "CustomerIsRiOrFacturaA, HasNonRefundableItems" }
+}
+```
 
-- `ApprovalRequest.Metadata` ya esta tipado `string?` y documentado como "JSON arbitrario con context del request". Convencion existente.
-- Edicion del admin es naturalmente versionada (apend-only en `edits[]`). Tabla relacional para 3 ediciones promedio es overkill.
-- La tabla tendria FK 1:1 con `ApprovalRequest`, mismas reglas que Owned VO. Mismo overhead que `Metadata` con menos flexibilidad.
-
-**Por que FK `PartialCreditNoteApprovalRequestId` y no busqueda por `EntityType+EntityId`**:
-
-- Busqueda inversa rapida: dado un BC, en un solo SELECT obtenes el approval activo. Sin FK habria que filtrar por `(EntityType="BookingCancellation", EntityId=bc.Id, RequestType=PartialCreditNoteApproval, Status IN (Pending, Approved))`.
-- Audit cross-reference simetrico con `Invoice.AnnulmentApprovalRequestId` (FC1.2 v3).
-- `OnDelete: Restrict`: si alguien intenta borrar el approval, la BD rechaza. Preserva trazabilidad fiscal.
+Test que valida que post-edicion `AuditLog.Changes` deserializado tiene todos los campos modificados con `Old`/`New`.
 
 ### 2.8 Maquina de estados (FC1.3 Fase 1)
 
-Extiende ADR-002 §2.4 con los 4 estados nuevos insertados antes de `AwaitingFiscalConfirmation`. Los estados FC1.2 (`AwaitingFiscalConfirmation`..`ArcaRejected`) **quedan intactos** — FC1.3 inserta un sidetrack opcional, no reemplaza el flujo existente.
+Extiende ADR-002 §2.4 con los 4 estados nuevos.
 
-#### 2.8.1 Diagrama
+#### 2.8.1 Diagrama (revisado por GR-001/GR-003/GR-006)
 
 ```
                   ┌──────────────────────────────────────────────────────────────────────┐
@@ -656,25 +666,30 @@ Extiende ADR-002 §2.4 con los 4 estados nuevos insertados antes de `AwaitingFis
         │   Drafted (0)│                                                                  │
         └──────┬───────┘                                                                  │
                │ confirmCancellation()                                                    │
-               │ + Calculator.Calculate() corre                                            │
-               │ + flag EnablePartialCreditNotes evaluado                                  │
+               │ + EnsureFeatureFlagOn (FC1.2 kill switch — rechaza si FC1.2 OFF)         │
+               │ + Calculator.Calculate() corre solo si EnablePartialCreditNotes=true     │
                │                                                                          │
-               ├─── flag OFF                                                              │
+               ├─── FC1.3 flag OFF                                                        │
                │    -> AwaitingFiscalConfirmation (1) -> ... flujo FC1.2 vigente          │
                │                                                                          │
-               ├─── flag ON + caso 2 (NC total simple) + monto < threshold                │
+               ├─── FC1.3 flag ON + CreditNoteKind = TotalPlusNewInvoice                  │
+               │    -> THROW InvalidOperationException (GR-001)                           │
+               │       "Caso fiscal requiere FC1.3 Fase 2 - use flujo legacy"             │
+               │       BC vuelve a Drafted, sin persistir nada FC1.3.                     │
+               │                                                                          │
+               ├─── FC1.3 flag ON + CreditNoteKind = PartialOnOriginal + ReasonNone       │
+               │    + caso 2 trivial sin disparadores                                     │
                │    -> AwaitingFiscalConfirmation (1) -> ... flujo FC1.2 vigente          │
                │                                                                          │
-               ├─── flag ON + (caso 1, 3, 5, 6) + monto < threshold + sin disparadores   │
-               │    -> AwaitingFiscalConfirmation (1) -> ... flujo FC1.2 vigente          │
-               │                                                                          │
-               └─── flag ON + cualquier disparador (Factura A, items no reintegrables,    │
-                    monto > threshold, retencion mix, factura confusa, etc.)              │
-                    -> RequiresManualReview (8)                                            │
+               └─── FC1.3 flag ON + CreditNoteKind = PartialOnOriginal + Reason != None   │
+                    (incluye: Factura A, items no reintegrables, monto > threshold,       │
+                     CommissionOnly mode [GR-003], Penalty + TotalToCustomer [GR-006],    │
+                     LegacyInvoice si setting activo, MultiCurrency)                      │
+                    -> RequiresManualReview (8) [transitorio dentro misma tx]              │
                           │                                                               │
-                          │ submitForReview()                                             │
-                          │ (auto-invocado por Confirm si reason != None,                 │
-                          │  abre ApprovalRequest PartialCreditNoteApproval)              │
+                          │ submitForReview() (atomico, mismo Confirm)                    │
+                          │ abre ApprovalRequest PartialCreditNoteApproval                │
+                          │ + persiste Metadata JSON con detalle completo                 │
                           │                                                               │
                           v                                                               │
                     ManualReviewPending (9) <----+ self-loop editLiquidation()            │
@@ -682,11 +697,13 @@ Extiende ADR-002 §2.4 con los 4 estados nuevos insertados antes de `AwaitingFis
                           │                      │ + audit BC_LiquidationEdited           │
                           │                      │ + apend a Metadata.edits[]             │
                           │                      └─────────────────                       │
-                          ├─── approveLiquidation(comment) (4-eyes, comment >= 20 chars) │
+                          ├─── approveLiquidation(comment) (4-eyes o GR-005 bypass)       │
                           │    -> ManualReviewApproved (10)                                │
                           │            │                                                  │
                           │            │ emitCreditNote() invocado automaticamente       │
-                          │            │ (Fase 1: no emite real, marca y avanza)          │
+                          │            │ (Fase 1: avanza a FC1.2 path con NC total real, │
+                          │            │  log warning "Fase 1: NC parcial calculada pero │
+                          │            │  AfipService emite total. Fase 2 emite parcial.")│
                           │            v                                                  │
                           │     AwaitingFiscalConfirmation (1) -> ... flujo FC1.2         │
                           │                                                               │
@@ -700,7 +717,9 @@ Extiende ADR-002 §2.4 con los 4 estados nuevos insertados antes de `AwaitingFis
                                              -> Aborted (6)
 ```
 
-#### 2.8.2 Interaccion con `ApprovalRequest` (visual)
+**Nota importante**: el path `TotalPlusNewInvoice -> ManualReviewApproved -> queda colgado` del round 1 **fue eliminado**. Hoy esos casos son rechazo explicito en Confirm (GR-001).
+
+#### 2.8.2 Interaccion con `ApprovalRequest`
 
 ```
                    BookingCancellation                  ApprovalRequest
@@ -714,13 +733,13 @@ Extiende ADR-002 §2.4 con los 4 estados nuevos insertados antes de `AwaitingFis
                           │                                     EntityType="BookingCancellation"
                           │                                     EntityId=BC.Id
                           │                                     RequestType=PartialCreditNoteApproval=11
-                          │                                     Metadata={...liquidacion...}
+                          │                                     Metadata={...liquidacion completa...}
                           v                                   │
                    ManualReviewPending (9)                    │
                    PartialCreditNoteApprovalRequestId=AR.Id   │
                           │                                   │
    EditLiquidationAsync ─►│ self-loop, audit               ──► AR.Metadata.edits[] apend
-                          │ (no cambia status, no transiciona) │
+                          │ (no cambia status, no transiciona) │ AR.xmin (RH-006) protege race
                           │                                   │
    POST /approvals/.../approve ──────────────────────────►   AR.Status = Approved
                           │  (callback bridge notifica BC)   │
@@ -733,46 +752,54 @@ Extiende ADR-002 §2.4 con los 4 estados nuevos insertados antes de `AwaitingFis
                    ... flujo FC1.2 sigue
 ```
 
+**Job de reconciliacion bridge (RH-011)**: detalle en §2.12.
+
 #### 2.8.3 Tabla de transiciones
 
 | Estado origen | Trigger | Estado destino | Condiciones | Quien dispara | Override |
 |---|---|---|---|---|---|
-| `Drafted` | `confirmCancellation()` (flag off o sin disparadores) | `AwaitingFiscalConfirmation` | Flag `EnablePartialCreditNotes`=false OR (flag on + `ReviewRequiredReason=None`) | Vendedor con permiso `cobranzas.invoice_annul` | NO |
-| `Drafted` | `confirmCancellation()` (con disparadores) | `RequiresManualReview` | Flag on + `ReviewRequiredReason != None` | Vendedor (sistema fuerza) | NO |
+| `Drafted` | `confirmCancellation()` (flag off o sin disparadores) | `AwaitingFiscalConfirmation` | (FC1.2 flag on + FC1.3 flag off) OR (ambos on + `ReviewRequiredReason=None`) | Vendedor con permiso `cobranzas.invoice_annul` | NO |
+| `Drafted` | `confirmCancellation()` (FC1.2 off) | THROW InvalidOperationException | `EnableNewCancellationFlow=false` (kill switch FC1.2) | — | NO |
+| `Drafted` | `confirmCancellation()` (CreditNoteKind=TotalPlusNewInvoice) | THROW InvalidOperationException | FC1.3 flag on + calculator devuelve TotalPlusNewInvoice (GR-001) | — | NO |
+| `Drafted` | `confirmCancellation()` (con disparadores) | `RequiresManualReview` -> `ManualReviewPending` (atomico) | FC1.3 flag on + `ReviewRequiredReason != None` + CreditNoteKind=PartialOnOriginal | Vendedor (sistema fuerza) | NO |
 | `Drafted` | `abort()` | `Aborted` | — | Vendedor o admin | NO |
-| `RequiresManualReview` | `submitForReview()` (auto en mismo Confirm) | `ManualReviewPending` | `FiscalLiquidation` no nula + crea `ApprovalRequest` tipo `PartialCreditNoteApproval` | Sistema (BC service) | NO |
-| `RequiresManualReview` | `abort()` | `Aborted` | — | Vendedor o admin | NO |
-| `ManualReviewPending` | `editLiquidation(...)` | `ManualReviewPending` (self-loop) | Admin reforzada: modifica penalty/non-refundable/kind + comentario >= 20 chars + admin != vendedor | Admin | NO |
-| `ManualReviewPending` | `POST /approvals/{id}/approve` (callback) | `ManualReviewApproved` | `ApprovalRequest.Status = Approved` + admin != vendedor + comment >= 20 chars (o 100 si > AccountingReviewThreshold por G5) | Admin via callback bridge | NO |
+| `ManualReviewPending` | `editLiquidation(...)` | `ManualReviewPending` (self-loop) | Admin reforzada: modifica penalty/non-refundable/kind + comentario >= 20 chars + (admin != vendedor OR GR-005 bypass aplica) | Admin | NO |
+| `ManualReviewPending` | `POST /approvals/{id}/approve` (callback) | `ManualReviewApproved` | `ApprovalRequest.Status = Approved` + (admin != vendedor OR GR-005 bypass) + comment >= 20 chars (o 100 si AccountingReview) | Admin via callback bridge | NO |
 | `ManualReviewPending` | `POST /approvals/{id}/reject` (callback) | `ManualReviewRejected` | Comentario reject >= 20 chars | Admin via callback bridge | NO |
-| `ManualReviewApproved` | `emitCreditNote()` (auto inmediato post-approval) | `AwaitingFiscalConfirmation` | `CreditNoteKind=PartialOnOriginal`: Fase 1 marca BC, Fase 2 emite NC al ARCA real con monto parcial. `CreditNoteKind=TotalPlusNewInvoice`: Fase 1 marca BC, Fase 2 emite NC total + factura nueva. **Fase 1 no emite, solo deja BC listo.** | Sistema (service) | NO |
-| `ManualReviewRejected` | `resetToDraft()` (auto inmediato post-reject) | `Drafted` | Inmediato. BC limpia `FiscalLiquidation` + nulea `PartialCreditNoteApprovalRequestId`. Approval queda en Rejected (histórico). | Sistema | NO |
+| `ManualReviewApproved` | `emitCreditNote()` (auto inmediato post-approval) | `AwaitingFiscalConfirmation` | Solo CreditNoteKind=PartialOnOriginal (los TotalPlusNewInvoice ni siquiera llegan, GR-001) Fase 1: avanza a FC1.2 path con NC total real, log warning explicito | Sistema | NO |
+| `ManualReviewRejected` | `resetToDraft()` (auto inmediato post-reject) | `Drafted` | Inmediato. BC limpia `CreditNoteKind`, `ReviewRequiredReason`, `LiquidationComputed*`, nulea `PartialCreditNoteApprovalRequestId`. Approval queda en Rejected (histórico). | Sistema | NO |
 | `ManualReviewRejected` | `abort()` | `Aborted` | — | Vendedor o admin | NO |
 | `AwaitingFiscalConfirmation` y posteriores | — | Igual que FC1.2 vigente | — | — | — |
 
 #### 2.8.4 Invariantes Fase 1 (extiende Bucket G)
 
-Conforme convencion ADR-001 + ADR-002:
-
 | ID | Regla | `AdmitsOverride` |
 |---|---|---|
-| **INV-FC1.3-001** | BC no transiciona a `AwaitingFiscalConfirmation` directamente si `FiscalLiquidation.ReviewRequiredReason != None`. Debe pasar por `ManualReviewPending` + `ManualReviewApproved`. | `false` |
+| **INV-FC1.3-001** | BC no transiciona a `AwaitingFiscalConfirmation` directamente si `ReviewRequiredReason != None`. Debe pasar por `ManualReviewPending` + `ManualReviewApproved`. | `false` |
 | **INV-FC1.3-002** | `Status IN (ManualReviewPending, ManualReviewApproved, ManualReviewRejected)` requiere `PartialCreditNoteApprovalRequestId != NULL`. CHECK SQL. | `false` |
 | **INV-FC1.3-003** | `ManualReviewApproved` requiere `ApprovalRequest.Status = Approved`. Verificado en service callback. | `false` |
-| **INV-FC1.3-004** | `approveLiquidation()` requiere admin != vendedor (`DraftedByUserId != ResolvedByUserId`). 4-eyes. | `false` |
-| **INV-FC1.3-005** | `FiscalAmountToCredit + NonRefundableItemsAmount + OperatorPenaltyAmount = OriginalInvoiceAmount` (tolerancia 0.01). CHECK SQL + validacion en calculator. | `false` |
-| **INV-FC1.3-006** | Items con `IsRefundable=false` en la factura origen suman exactamente `FiscalLiquidation.NonRefundableItemsAmount`. Validacion en calculator (no inline en CHECK por requerir join). | `false` |
-| **INV-FC1.3-007** | BC FC1.3 solo acepta reservas 100% Hotel (`Reserva.Servicios` todos con `ProductType="Hotel"`). | `true` con justificacion admin >= 50 chars (en caso de mal clasificado) |
-| **INV-FC1.3-008** | `FiscalLiquidation.CreditNoteKind` no cambia post-`ManualReviewApproved`. | `false` |
-| **INV-FC1.3-009** | Edicion admin (G3) requiere comentario distinto al comentario de aprobacion. Validacion en service (no SQL). | `false` |
-| **INV-FC1.3-010** | Si `Status = ManualReviewApproved` y `CreditNoteKind = TotalPlusNewInvoice`, **Fase 1** mantiene BC en `ManualReviewApproved` indefinidamente (no avanza a `AwaitingFiscalConfirmation` hasta Fase 2 plumbing). Fase 1 emite warning visible. | `false` Fase 1 |
+| **INV-FC1.3-004** | `approveLiquidation()` requiere admin != vendedor (`DraftedByUserId != ResolvedByUserId`). **Excepcion (GR-005)**: si `Allow4EyesBypassWhenSingleAdmin=true` AND solo 1 usuario admin existe AND vendedor=admin, admite self-approval con comentario 100+ chars + flag `SelfApprovedDueToSingleAdmin=true` en Metadata. | `false` (la excepcion GR-005 NO es override, es regla distinta) |
+| **INV-FC1.3-005** | Calculator garantiza `FiscalAmountToCredit + NonRefundableItemsAmount + OperatorPenaltyAmount = OriginalInvoiceAmount` (tolerancia 0.01). Validado en calculator. **No es CHECK SQL Fase 1 porque no persistimos los componentes** (GR-004). Sera CHECK SQL en Fase 2 cuando se persistan. | `false` |
+| **INV-FC1.3-006** | Items con `IsRefundable=false` en factura origen suman exactamente `NonRefundableItemsAmount` calculado. Validacion en calculator. | `false` |
+| **INV-FC1.3-007** | BC FC1.3 solo acepta reservas 100% Hotel (`Reserva.Servicios` todos con `ProductType = ServiceTypes.Hotel`). Validacion en service. | `true` con justificacion admin (`ApprovalRequest` tipo `InvariantOverride=7`, justificacion >= 50 chars **distinta del comentario de aprobacion del BC**, RH-016). |
+| **INV-FC1.3-008** | `CreditNoteKind` no cambia post-`ManualReviewApproved`. | `false` |
+| **INV-FC1.3-009** | Edicion admin (G3) requiere comentario distinto al comentario de aprobacion. Validacion en service. | `false` |
+| **INV-FC1.3-010** | `CreditNoteKind = TotalPlusNewInvoice` NUNCA se persiste en `BookingCancellation` Fase 1 (GR-001). Si calculator lo devuelve, Confirm tira `InvalidOperationException` ANTES de persistir. Test cubre. | `false` |
 
-### 2.9 Reglas del clasificador (matriz 8 + disparadores)
+### 2.9 Reglas del clasificador (matriz 8 + disparadores) — revisado por GR-003/GR-006
 
-El calculator aplica estas reglas en orden. **La primera que matchea gana el `ComputedCase`**. Los `ReviewRequiredReason` se acumulan en bitflag (un BC puede tener Factura A + items no reintegrables + monto alto = 3 flags activos simultaneos).
+El calculator aplica estas reglas en orden. La primera que matchea gana el `ComputedCase`. Los `ReviewRequiredReason` se acumulan en bitflag.
 
 ```
 INPUT: FiscalLiquidationInput input + OperationalFinanceSettings s
+
+STEP 0 — EARLY EXIT por modo CommissionOnly (GR-003)
+   mode = input.InvoicingModeAtEvent ?? input.Supplier.InvoicingMode
+   if (mode == CommissionOnly):
+       reason = ReviewRequiredReason.InvoicingModeCommissionOnly
+       // NO calculamos formula — pendiente respuesta contador F2 round 3
+       // Devolvemos DTO con FiscalAmountToCredit=0, narrativa explicativa, kind=PartialOnOriginal
+       return DTO(case=Case5/6, reason=InvoicingModeCommissionOnly, kind=PartialOnOriginal, narrative=...)
 
 STEP 1 — disparadores siempre activos (acumulan a ReviewRequiredReason)
    ─ Si OriginalInvoice.TipoComprobante = 1 (Factura A):
@@ -781,118 +808,231 @@ STEP 1 — disparadores siempre activos (acumulan a ReviewRequiredReason)
         reason |= HasNonRefundableItems
    ─ Si OriginatingInvoice tiene OriginalInvoiceId != null (NC en cadena):
         reason |= Other
-   ─ Si OriginatingInvoice.CreatedAt < s.Fc13DeployDate (legacy):
-        reason |= LegacyInvoice
    ─ Si Currency != "ARS":
-        reason |= MultiCurrency  (Fase 1 no implementa multicurrency, lo manda a manual)
-
-STEP 2 — heuristicas caso 4 (factura confusa)
-   ─ Si Items.Count == 1 AND Description match cualquier pattern de s.GenericDescriptionPatterns:
-        reason |= OriginalInvoiceUnclear
-   ─ Si > 50% del Total tiene items con SourceServicioReservaId=null:
-        reason |= OriginalInvoiceUnclear
-   ─ Si SUM(InvoiceItem.ImporteIva) != Invoice.ImporteIva con tolerancia 0.50:
-        reason |= OriginalInvoiceUnclear
-   ─ Si input.OriginalInvoiceUnclearByUser (checkbox manual):
-        reason |= OriginalInvoiceUnclear
-
-STEP 3 — caso 7 (cambia naturaleza fiscal del retenido)
-   Nota Fase 1: como no tenemos DeductionLines en este punto (solo el OperatorPenaltyAmount
-   ingresado por vendedor), las senales 1 y 2 del plan funcional §11.1 quedan diferidas a
-   Fase 2 cuando T2 ya tiene allocations. En Fase 1 solo aplica senal 3 (InvoicingMode mismatch)
-   + checkbox manual.
-   ─ Si input.InvoicingModeAtEvent != null AND input.InvoicingModeAtEvent != input.Supplier.InvoicingMode:
-        reason |= RetentionChangesNature
+        reason |= MultiCurrency
+   ─ Si s.GenericDescriptionPatterns NO esta vacio AND OriginatingInvoice.CreatedAt < s.Fc13DeployDate:
+        reason |= LegacyInvoice
+        // RH-008: por default ambos settings estan vacio/null, no se dispara
+   ─ Si input.InvoicingModeAtEvent != null AND input.InvoicingModeAtEvent != current Supplier.InvoicingMode:
+        reason |= RetentionChangesNature  // (caso 7 — sera rechazado en STEP 7)
    ─ Si input.RetentionNatureChangedByUser:
         reason |= RetentionChangesNature
+   ─ Si input.OriginalInvoiceUnclearByUser:
+        reason |= OriginalInvoiceUnclear   // (caso 4 — sera rechazado en STEP 7)
 
-STEP 4 — calcular liquidacion segun InvoicingMode
-   mode = input.InvoicingModeAtEvent ?? input.Supplier.InvoicingMode
+STEP 2 — heuristicas caso 4 (factura confusa) — RH-008 DESACTIVADAS por default
+   if (s.GenericDescriptionPatterns NOT empty) {
+       ─ Si Items.Count == 1 AND Description match regex s.GenericDescriptionPatterns:
+            reason |= OriginalInvoiceUnclear
+       ─ Si > 50% del Total tiene items con SourceServicioReservaId=null:
+            reason |= OriginalInvoiceUnclear
+       ─ Si SUM(InvoiceItem.ImporteIva) != Invoice.ImporteIva con tolerancia 0.50:
+            reason |= OriginalInvoiceUnclear
+   }
+
+STEP 3 — calcular liquidacion (modo TotalToCustomer)
    nonRefundableTotal = SUM(items where IsRefundable=false → Total)
    penalty = input.OperatorPenaltyAmount  // ya validado >= 0
 
-   if (mode == TotalToCustomer) {
-       fiscalAmountToCredit = OriginalInvoiceAmount - nonRefundableTotal - penalty
-       amountToRefundCustomer = fiscalAmountToCredit  // modo reseller: lo fiscal = lo devuelto
-   }
-   else /* CommissionOnly */ {
-       // Hipótesis Fase 1: penalidad operador NO reduce NC al cliente (depende cuenta corriente operador).
-       // Confirmar contador respuesta F1 pregunta 2.
-       fiscalAmountToCredit = OriginalInvoiceAmount - nonRefundableTotal
-       amountToRefundCustomer = fiscalAmountToCredit
-   }
+   // GR-006: caso 3 con penalty>0 en TotalToCustomer requiere clarificacion contador F4
+   if (penalty > 0 AND mode == TotalToCustomer):
+       reason |= PenaltyResetUncertainInResellerMode
+       // Calculamos suponiendo "penalty resta" (hipotesis conservadora) pero marcamos para review.
 
+   fiscalAmountToCredit = OriginalInvoiceAmount - nonRefundableTotal - penalty
+   amountToRefundCustomer = fiscalAmountToCredit
    finalNetInvoiced = OriginalInvoiceAmount - fiscalAmountToCredit
 
-   if (fiscalAmountToCredit < 0) throw InvariantViolation INV-FC1.3-005  // bug en input
+   if (fiscalAmountToCredit < 0) throw InvariantViolation INV-FC1.3-005
 
-STEP 5 — disparadores de monto
-   if (fiscalAmountToCredit > s.PartialNcAccountingReviewThreshold ?? infinity):
+STEP 4 — disparadores de monto
+   if (s.PartialNcAccountingReviewThreshold != null AND fiscalAmountToCredit > s.PartialNcAccountingReviewThreshold):
         reason |= AmountAboveAccountingThreshold
    else if (fiscalAmountToCredit > s.PartialNcAdminReviewThreshold):
         reason |= AmountAboveAdminThreshold
    else if (fiscalAmountToCredit > s.PartialNcAutoApprovalThreshold):
-        reason |= AmountAboveAdminThreshold  // mismo flag, mismo tratamiento (admin reforzada)
+        reason |= AmountAboveAdminThreshold
 
-STEP 6 — clasificar caso 1..8
-   La clasificacion del caso es informativa (audit, UI, narrativa). El comportamiento del flujo
-   depende de reason, no del case directamente.
-
-   if (reason.HasFlag(CustomerIsRiOrFacturaA))         case = Case8_FacturaA;
-   else if (reason.HasFlag(OriginalInvoiceUnclear))    case = Case4_OriginalInvoiceUnclear;
-   else if (reason.HasFlag(RetentionChangesNature))    case = Case7_RetentionChangesNature;
-   else if (mode == CommissionOnly && cancelaciónFull) case = Case6_CommissionOnlyFull;
-   else if (mode == CommissionOnly)                    case = Case5_CommissionOnlyPartial;
-   else if (penalty > 0)                               case = Case3_FullCancellationWithPenalty;
+STEP 5 — clasificar caso 1..8 (informativo)
+   if (reason.HasFlag(CustomerIsRiOrFacturaA))           case = Case8_FacturaA;
+   else if (reason.HasFlag(OriginalInvoiceUnclear))      case = Case4_OriginalInvoiceUnclear;
+   else if (reason.HasFlag(RetentionChangesNature))      case = Case7_RetentionChangesNature;
+   else if (penalty > 0)                                 case = Case3_FullCancellationWithPenalty;
    else if (cancellationAmount == OriginalInvoiceAmount) case = Case2_FullCancellationNoRetention;
-   else                                                case = Case1_PartialRefundNoPenalty;
+   else                                                  case = Case1_PartialRefundNoPenalty;
 
-STEP 7 — CreditNoteKind
+STEP 6 — CreditNoteKind
    if (case == Case4 || case == Case7) creditNoteKind = TotalPlusNewInvoice
    else                                  creditNoteKind = PartialOnOriginal
 
-OUTPUT: FiscalLiquidationResult con liquidation + explicacion narrativa.
+STEP 7 — Devolver DTO. El SERVICE caller (BookingCancellationService.ConfirmAsync) decide:
+   ─ Si creditNoteKind == TotalPlusNewInvoice:
+        SERVICE throws InvalidOperationException (GR-001) "Caso fiscal requiere FC1.3 Fase 2"
+        BC NO se persiste con datos FC1.3. Queda en Drafted.
+   ─ Si creditNoteKind == PartialOnOriginal AND reason == None:
+        SERVICE transiciona BC a AwaitingFiscalConfirmation (FC1.2 path) sin abrir approval.
+   ─ Si creditNoteKind == PartialOnOriginal AND reason != None:
+        SERVICE persiste summary + abre ApprovalRequest + Metadata JSON con liquidation
+        completa. BC -> ManualReviewPending.
+
+OUTPUT: FiscalLiquidationDto inmutable.
 ```
 
-### 2.10 Feature flag separado
+### 2.10 Feature flag separado + pre-condicion GR-002
 
-**Decision**: nuevo `OperationalFinanceSettings.EnablePartialCreditNotes` (bool, default false). Independiente de `EnableNewCancellationFlow`.
+**Decision**: `OperationalFinanceSettings.EnablePartialCreditNotes` (bool, default false). Independiente de `EnableNewCancellationFlow`. **Pre-condicion startup**: si `EnablePartialCreditNotes=true && EnableNewCancellationFlow=false`, rechazar arranque con error claro.
 
-**Argumentos a favor**:
+**Implementacion pre-condicion** (en `Program.cs` post-build app, antes de `app.Run()`):
 
-- **Composabilidad**: FC1.2 puede estar prendido (necesario porque ya esta mergeado) sin que FC1.3 abra NC parciales en prod. Default `false` mantiene comportamiento legacy FC1.2.
-- **Rollback granular**: si FC1.3 explota en prod, apagar este flag deja FC1.2 funcionando. Si fuera el mismo flag, apagar tirarrar abajo TODO el modulo.
-- **QA escalonado**: staging puede tener ambos prendidos, prod arranca con FC1.3 off, se prende cuando contador firma.
-- **Sin interferencia con OPS-FISCAL-001**: ese signoff cubre FC1.2 (override de annulment). FC1.3 abre debate fiscal nuevo (prorrateo IVA, criterio matriz 8). Mantenerlos separados evita re-litigar.
+```csharp
+using (var scope = app.Services.CreateScope())
+{
+    var settings = await scope.ServiceProvider.GetRequiredService<IOperationalFinanceSettingsService>().GetEntityAsync();
+    if (settings.EnablePartialCreditNotes && !settings.EnableNewCancellationFlow)
+    {
+        throw new InvalidOperationException(
+            "Configuracion invalida: EnablePartialCreditNotes=true requiere EnableNewCancellationFlow=true. " +
+            "FC1.3 depende de FC1.2 (decision GR-002). Apague FC1.3 o prenda FC1.2 antes de arrancar.");
+    }
+}
+```
 
-**Argumentos en contra evaluados**:
+**Tabla de comportamiento por combinacion de flags** (GR-002 explicito):
 
-- *"Dos flags es mas complejidad"*. Respuesta: la tabla de verdad de ambos es chica (4 combos, solo 3 validos: off/off legacy, on/off FC1.2 vigente, on/on FC1.3 activo. on/off no tiene sentido y se rechaza al startup).
+| FC1.2 | FC1.3 | Resultado |
+|---|---|---|
+| OFF | OFF | Sistema legacy (pre-FC1.2). FC1.2 kill switch activo, modulo rechaza. |
+| ON | OFF | FC1.2 vigente sin NC parcial (estado actual pos-merge FC1.2). Comportamiento por default tras merge OPS-FISCAL-001. |
+| ON | ON | FC1.3 activo, NC parcial calculada cuando aplica. **Combinacion target despues de signoff FC1.3.** |
+| OFF | ON | **RECHAZO al arranque** (GR-002). Pre-condicion validada en `Program.cs` post-build. |
 
-### 2.11 Manejo de servicios no-Hotel (rechazo Fase 1)
+**Rollback granular**:
 
-`BookingCancellationService.DraftAsync` ya carga `Reserva.Servicios`. En FC1.3, antes de calcular liquidacion, validar:
+- **Rollback de FC1.3 (apagar `EnablePartialCreditNotes`)**: deja FC1.2 funcional. BCs en estados 8..11 quedan en limbo hasta que admin actua manualmente (mover a Drafted o Aborted).
+- **Rollback de FC1.2 (apagar `EnableNewCancellationFlow`)**: tambien apaga FC1.3 implicitamente porque el kill switch FC1.2 corre primero en Confirm. **Si FC1.3 estaba ON y FC1.2 se apaga**: en el siguiente startup, la pre-condicion GR-002 detecta combinacion invalida y exige operador apagar tambien FC1.3.
+
+**Argumentos a favor**: composabilidad, rollback granular, QA escalonado, sin interferencia con OPS-FISCAL-001. Round 1 §2.10 valido sin cambios.
+
+### 2.11 Manejo de servicios no-Hotel (rechazo Fase 1) - patron de override real
+
+`BookingCancellationService` ya tiene el patron real de override en lineas 261-281 (usando `ApprovalRequest` tipo `InvariantOverride=7`). FC1.3 reusa ese mismo patron.
 
 ```csharp
 // Pseudo
 if (settings.EnablePartialCreditNotes)
 {
-    var nonHotelServices = reserva.Servicios.Where(s => s.ProductType != "Hotel").ToList();
+    var nonHotelServices = reserva.Servicios
+        .Where(s => !string.Equals(s.ProductType, ServiceTypes.Hotel, StringComparison.OrdinalIgnoreCase))
+        .ToList();
     if (nonHotelServices.Any())
     {
         // INV-FC1.3-007 admite override
-        if (!ctx.HasOverrideForInvariant("INV-FC1.3-007"))
+        // Patron real (NO MutationContext.HasOverrideForInvariant — ese patron pertenece
+        // a ADR-001 que esta rechazado).
+        ApprovalRequest? overrideApproval = null;
+        if (request.IsAdminOverride && request.ApprovalRequestPublicId is not null)
+        {
+            overrideApproval = await _db.ApprovalRequests
+                .FirstOrDefaultAsync(a =>
+                    a.PublicId == request.ApprovalRequestPublicId
+                    && a.RequestType == ApprovalRequestType.InvariantOverride
+                    && a.EntityType == "BookingCancellation"
+                    && a.EntityId == bc.Id
+                    && a.Status == ApprovalStatus.Approved
+                    && a.RequestedByUserId == userId
+                    && a.ExpiresAt > DateTime.UtcNow
+                    && (a.Reason ?? string.Empty).Trim().Length >= 50
+                    // RH-016: justificacion del override DEBE ser distinta del ManualReviewComment
+                    // del BC. Validado en service (no SQL).
+                    , ct);
+        }
+        if (overrideApproval is null)
             throw new BusinessInvariantViolationException(
                 "INV-FC1.3-007",
                 $"FC1.3 Fase 1 solo soporta reservas 100% Hotel. " +
                 $"Servicios no-Hotel detectados: {string.Join(", ", nonHotelServices.Select(s => s.ProductType))}. " +
                 $"Use flujo legacy (apagar EnablePartialCreditNotes para esta operacion) " +
-                $"o esperar fases siguientes.");
+                $"o solicitar override via InvariantOverride approval.");
     }
 }
 ```
 
-Override admite via `InvariantOverride` aprobado tipo 7 con justificacion >= 50 chars.
+### 2.12 Job de reconciliacion bridge (RH-011 cerrado)
+
+**Problema**: si `ApprovalRequestService.ApproveAsync` aprueba el approval pero el callback bridge `IPartialCreditNoteApprovalBridge.OnApprovedAsync` falla (excepcion, timeout, deploy mid-flight), el `ApprovalRequest` queda `Approved` pero `BookingCancellation` queda `ManualReviewPending`. Sin reconciliacion, ese BC queda huerfano.
+
+**Mitigacion**: job nocturno + endpoint admin de force-callback.
+
+**Sub-fase FC1.3.6b** (agregada al plan tactico): `PartialCreditNoteBridgeReconciliationJob`.
+
+```csharp
+public class PartialCreditNoteBridgeReconciliationJob
+{
+    public async Task RunAsync(CancellationToken ct)
+    {
+        // Detectar: ApprovalRequest.Status=Approved AND ApprovalRequest.RequestType=PartialCreditNoteApproval
+        //           AND existe BC con PartialCreditNoteApprovalRequestId=AR.Id
+        //           AND BC.Status=ManualReviewPending
+        //           AND AR.ResolvedAt < UtcNow - 30 minutes
+        var orphans = await _db.ApprovalRequests
+            .Where(a => a.RequestType == ApprovalRequestType.PartialCreditNoteApproval
+                     && a.Status == ApprovalStatus.Approved
+                     && a.ResolvedAt < DateTime.UtcNow.AddMinutes(-30))
+            .Join(_db.BookingCancellations,
+                  a => a.Id,
+                  bc => bc.PartialCreditNoteApprovalRequestId,
+                  (a, bc) => new { Approval = a, BC = bc })
+            .Where(x => x.BC.Status == BookingCancellationStatus.ManualReviewPending)
+            .ToListAsync(ct);
+
+        foreach (var orphan in orphans)
+        {
+            _logger.LogWarning("FC1.3 bridge huerfano: AR {ARId} Approved pero BC {BCId} en ManualReviewPending. Forzando callback.", orphan.Approval.Id, orphan.BC.Id);
+            try {
+                await _bridge.OnApprovedAsync(
+                    orphan.Approval.Id,
+                    orphan.Approval.ResolvedByUserId ?? "system-reconciliation",
+                    orphan.Approval.ResolvedByUserName,
+                    orphan.Approval.ResolverNotes,
+                    ct);
+            } catch (Exception ex) {
+                _logger.LogError(ex, "FC1.3 reconciliation failed for AR {ARId}", orphan.Approval.Id);
+                await _notificationService.NotifyAdminsAsync(
+                    $"FC1.3 callback bridge fallo para AR {orphan.Approval.Id} - intervencion manual requerida", ct);
+            }
+        }
+    }
+}
+```
+
+**Endpoint admin de force-callback** (casos extremos cuando el job tampoco recupera):
+
+```
+POST /api/cancellations/{publicId}/force-approval-callback
+RequirePermission(Permissions.CobranzasInvoiceAnnul) + admin role
+```
+
+Llama `bridge.OnApprovedAsync` o `OnRejectedAsync` segun `ApprovalRequest.Status`. Audit reforzado.
+
+**Idempotencia del bridge**: `OnApprovedAsync` valida `BC.Status == ManualReviewPending`. Si ya esta `ManualReviewApproved`, log warning + return sin cambios. Mismo para `OnRejectedAsync`.
+
+### 2.13 Comportamiento al apagar flag con BCs en estados FC1.3 (RH-009 cerrado)
+
+**Regla**: el flag `EnablePartialCreditNotes` controla **CREACION** de nuevos BCs FC1.3 (transicion `Drafted -> RequiresManualReview/ManualReviewPending`). **NO controla procesamiento de BCs ya en estados 8..11**.
+
+**Comportamientos especificos**:
+
+| Estado BC | Flag se apaga | Resultado |
+|---|---|---|
+| `RequiresManualReview` (transitorio, dura microsegundos) | — | No se observa en BD (commit atomico) |
+| `ManualReviewPending` | Apago FC1.3 | BC sigue ahi. Admin puede approve/reject por el endpoint. El callback bridge corre normal. Avanza a `ManualReviewApproved` y luego a `AwaitingFiscalConfirmation` (FC1.2 path normal). |
+| `ManualReviewApproved` | Apago FC1.3 | BC sigue ahi. `emitCreditNote()` corre (sigue FC1.2 path). |
+| `ManualReviewRejected` | Apago FC1.3 | Auto-reset a Drafted corre normal. |
+| `AwaitingFiscalConfirmation` y posteriores | Apago FC1.3 | Sin impacto (ya esta en FC1.2 path). |
+
+**Test explicito**: simular BC en `ManualReviewPending`, apagar flag, ejecutar `approve` -> verificar que transiciona normal a `ManualReviewApproved`.
+
+**Justificacion**: apagar el flag no debe romper BCs en flight. Apagar es "no aceptes mas casos FC1.3", no "cancela todo lo que esta en proceso".
 
 ---
 
@@ -900,32 +1040,37 @@ Override admite via `InvariantOverride` aprobado tipo 7 con justificacion >= 50 
 
 ### 3.1 Positivas
 
-- **NC parcial fiscalmente correcta**: la NC refleja la parte que pierde causa fiscal (criterio contador 2026-05-21), no el monto devuelto. Cierra el riesgo R1 del plan funcional.
-- **Separacion de conceptos**: `FiscalAmountToCredit` vs `AmountToRefundCustomer` quedan separados en BD. Ningun bug futuro puede confundirlos.
-- **Items no reintegrables modelados explicitamente**: `IsRefundable` por item + `ItemCategory` para defaults + `NonRefundableConceptsJson` para conceptos adicionales. Cierra R2 + R9.
-- **Snapshot fiscal completo**: `InvoicingModeAtEvent` evita que un cambio de modo del operador rompa cancelaciones historicas. Cierra R3.
-- **Auto-Factura-A-a-revision**: cualquier Factura A va a revision manual sin importar monto. Cierra R4.
-- **4-eyes obligatorio**: admin que aprueba != vendedor que cargo. INV-FC1.3-004.
-- **Bandeja existente reusada**: `ApprovalRequestsController` con filtro por tipo. Sin codigo UI nuevo Fase 1.
+- **NC parcial fiscalmente correcta**: la NC refleja la parte que pierde causa fiscal (criterio contador 2026-05-21), no el monto devuelto.
+- **Persistencia minima Fase 1 (GR-004)**: blast radius reducido. Solo 7 columnas nuevas en `BookingCancellations` (vs 17 del round 1). Liquidacion completa solo persistida via `ApprovalRequest.Metadata` cuando hay review humano.
+- **Sin BCs colgados (GR-001)**: `TotalPlusNewInvoice` se rechaza en Confirm con error claro. No queda nada huerfano en `ManualReviewApproved` esperando Fase 2.
+- **`CommissionOnly` diferido a manual (GR-003)**: sin hipotesis sin validar. Cuando contador responde F2 round 3, se quita el flag via setting + se implementa formula.
+- **Caso 3 + penalty + TotalToCustomer diferido (GR-006)**: contradiccion interna del plan funcional NO se resuelve por adivinacion. Va a manual review hasta respuesta F4.
+- **Items no reintegrables modelados explicitamente**: `IsRefundable` por item + `ItemCategory` para defaults.
+- **Snapshot fiscal completo**: `InvoicingModeAtEvent` evita que un cambio de modo del operador rompa cancelaciones historicas.
+- **4-eyes obligatorio** con **escape valvula para agencias chicas (GR-005)**: `Allow4EyesBypassWhenSingleAdmin` permite operacion 1-persona con safeguards.
+- **Bandeja existente reusada**: sin codigo UI nuevo Fase 1.
 - **Clasificador testeable aislado**: matriz 8 casos cubierta por unit tests sin DB.
-- **Compatibilidad backward**: FC1.2 sigue funcionando si flag FC1.3 esta off. Migracion no destructiva (todas columnas nullable).
-- **Settings parametrizados**: thresholds + template + reglas de heuristicas en `OperationalFinanceSettings`. Cambios sin redeploy.
+- **Compatibilidad backward**: FC1.2 sigue funcionando si flag FC1.3 esta off. Migracion no destructiva.
+- **Settings parametrizados**: thresholds + template en `OperationalFinanceSettings`. Cambios sin redeploy.
+- **Concurrency token en `ApprovalRequest`** (RH-006): race en edicion admin protegida.
+- **Job de reconciliacion bridge** (RH-011): BCs huerfanos recuperados automaticamente.
+- **Heuristicas factura confusa OFF por default** (RH-008): solo se activan si contador lo pide explicitamente.
 
 ### 3.2 Negativas
 
-- **6 entidades modificadas + 1 Owned VO nuevo + 5 enums nuevos + 7 settings nuevos**: complejidad de modelo. Justificada por la matriz fiscal.
-- **Fase 1 NO emite NC al ARCA real**: si el BC cae en `ManualReviewApproved` con `PartialOnOriginal` y flag FC1.3 esta on, en Fase 1 el BC queda parado y avanza por flujo FC1.2 (NC total). Esto es **intencional** para no romper plumbing fiscal hasta Fase 2 — la marca queda en `BC.FiscalLiquidation.CreditNoteKind` para que Fase 2 lo levante. Riesgo: si Fase 2 demora, hay BCs con liquidacion calculada que no usan esa info. Mitigacion: si flag FC1.3 esta off (default prod), el calculator no corre y nada cambia.
-- **`TotalPlusNewInvoice` queda como decision documentada pero sin ejecucion Fase 1**: el BC en `ManualReviewApproved` con kind `TotalPlusNewInvoice` queda parado. Fase 2 implementa nueva factura. Tests cubren que Fase 1 no avanza ese caso (no emite NC, no factura).
-- **Heuristicas caso 4 (factura confusa) son arbitrarias**: 3 reglas + override manual + setting de regex configurable. Probable falsos positivos con facturas viejas bien hechas. Mitigacion: admin aprueba igual con justificacion.
-- **`Supplier.PenaltyPolicyJson` como columna JSON**: no queryable nativamente. Si reporting requiere consulta cross-supplier, tradeoff con `JSON_VALUE`. Aceptado por baja frecuencia.
-- **Plan funcional menciono Postgres**: ajustado a SQL Server en este ADR. El subagente integrado heredo el lenguaje de ADR-002 que originalmente fue Postgres (cambio de stack post-FC1.1). Cualquier referencia futura debe usar T-SQL.
-- **Penalidad operador en `CommissionOnly`**: hipotesis Fase 1 es "no reduce NC al cliente". Si contador responde lo contrario (F1), cambia formula en STEP 4 calculator. **Cambio aislado** (un metodo del service).
+- **3 entidades modificadas + 5 enums nuevos + 8 settings nuevos**: complejidad de modelo. Reducida del round 1 (Owned VO `FiscalLiquidation` eliminado).
+- **Fase 1 NO emite NC al ARCA real**: si el BC cae en `ManualReviewApproved` con `PartialOnOriginal`, en Fase 1 avanza por FC1.2 path (emite NC total real). La marca de `CreditNoteKind=PartialOnOriginal` queda en BD para que Fase 2 lo levante. Log warning explicito en cada caso.
+- **`Supplier.PenaltyPolicyJson` como columna `jsonb`**: queryable nativamente con `JSON_VALUE`-like. Convencion repo.
+- **Hipotesis "penalty reduce NC en TotalToCustomer" pendiente confirmacion** (F4): si contador responde lo contrario, formula en STEP 3 cambia. Cambio aislado.
+- **CommissionOnly bloquea operativa hasta respuesta F2 round 3**: si la mayoria de operadores son CommissionOnly, FC1.3 efectivamente solo opera para los `TotalToCustomer`. Mitigacion: contador prioriza respuesta F2.
+- **Heuristicas factura confusa OFF**: si manana legacy data rompe el clasificador, hay falsos negativos. Mitigacion: checkbox manual del vendedor sigue activo.
 
 ### 3.3 Neutras / a futuro
 
-- **Prorrateo IVA proporcional al neto**: asumido Fase 1, confirmado en Fase 2 con contador. Si cambia, afecta solo `AfipService.EmitirNotaCreditoAsync` (Fase 2).
-- **Multimoneda en NC parcial**: flagged como `MultiCurrency` reason que dispara revision manual. Fase 1 no implementa, Fase 2 si.
-- **Rol contador real (G5)**: hoy admin con comentario reforzado. Cuando exista rol nuevo, se agrega permiso `cancellations.partial_nc_accounting_review` + filtro en bandeja.
+- **Persistencia entera `FiscalLiquidation`**: Fase 2 con backfill desde `ApprovalRequest.Metadata`.
+- **Prorrateo IVA proporcional al neto**: Fase 2 con contador.
+- **Multimoneda en NC parcial**: flagged como `MultiCurrency` reason que dispara manual review Fase 1. Fase 2 implementa.
+- **Rol contador real (G5)**: hoy admin con comentario reforzado. Cuando exista rol nuevo, se agrega permiso especifico.
 
 ---
 
@@ -933,17 +1078,27 @@ Override admite via `InvariantOverride` aprobado tipo 7 con justificacion >= 50 
 
 | Alternativa | Por que NO |
 |---|---|
-| **`FiscalLiquidation` como entidad propia con su FK** | Sin caso de uso de consulta independiente del BC. Owned VO mantiene cohesion + simetria con `FiscalSnapshot` (precedente FC1.1). Si en futuro necesitamos historial de liquidaciones, se promueve a entidad sin perdida de datos. |
-| **`Supplier.PenaltyPolicyJson` como tabla `SupplierPenaltyTier` normalizada** | Sin caso de uso de queries cross-supplier (no hay reporte). Acceso patron es leer una tabla por flujo Draft/Confirm. JSON acomoda evolucion de schema (4 tiers hoy, curve-based manana). Validacion en service con FluentValidation. Convencion existente en repo (`FiscalSnapshot.ExtrasJson`, `HotelBooking.RoomingAssignmentsJson`). |
-| **Logica clasificador dentro de `BookingCancellationService.ConfirmAsync`** | El metodo ya tiene 10+ pasos. Sumar 60 lineas de clasificador lo hace ilegible. Testear obliga a setup TestContainers completo para cada variante de matriz. Service aparte es unit-test puro. |
-| **Tabla nueva `PartialCreditNoteApprovalDetails` con FK 1:1 a `ApprovalRequest`** | `ApprovalRequest.Metadata` ya tipado JSON arbitrario por convencion B1.15. Tabla relacional para data semi-estructurada con apend-only de ediciones es overkill. Mismo riesgo, mas mantenimiento. |
-| **Bandeja UI nueva separada del `ApprovalRequestsController`** | Decision G2 cerrada por Gaston: reusar bandeja existente. Soporta filtro por tipo + ownership en su diseno. |
-| **Reusar `EnableNewCancellationFlow` para FC1.3** | Acopla rollback de FC1.2 con FC1.3. Si FC1.3 explota, apagar este flag mata tambien FC1.2 funcional. Composabilidad rota. Dos flags es minima complejidad para maxima granularidad. |
-| **Auto-emision sin disparadores hasta cualquier monto** | El contador dijo textual "casos sensibles requieren revision manual". Auto-emision para todo viola criterio. Thresholds + Factura A + items no reintegrables son barreras minimas. |
-| **Sin enum `CreditNoteKind`, inferir del valor `FiscalAmountToCredit`** | Casos 4 y 7 (NC total + nueva factura) tienen mismo `FiscalAmountToCredit` que casos 2 y 6 (NC total simple). Sin enum explicito, Fase 2 no sabria que hacer. |
-| **ND complementaria para cliente RI por `FinalNetInvoiced`** | G4 cerrada: NO. Factura A original + NC parcial alcanzan. ADR-002 §2.2 punto 2 vigente. |
-| **Persistir TODA la matriz 8 en BD como tabla `PartialCreditNoteCaseRule` para queryability** | YAGNI. La matriz son 8 reglas que ya son codigo. Si manana cambia, edit codigo + redeploy (15 min). Persistir reglas en BD agrega complejidad sin ventaja. |
-| **Bloquear cambio de `Supplier.InvoicingMode` post-emisiones de factura para evitar mismatch** | Operativamente molesto (el operador puede cambiar contractualmente). Solucion correcta es snapshot (`InvoicingModeAtEvent`) que permite reconstruir el contexto historico. |
+| **Persistir `FiscalLiquidation` como Owned VO Fase 1** | GR-004: blast radius reducido. Fase 2 agrega cuando AfipService emita real. Round 1 lo proponia, reviewer marco riesgo de divergencia (RH-004). |
+| **Auto-procesar `TotalPlusNewInvoice` Fase 1 con BC en `ManualReviewApproved` parado** | GR-001: deja BCs colgados sin avance. Reviewer marco RH-005. Mejor rechazar Confirm. |
+| **Hipotesis `CommissionOnly + penalty no reduce`** sin validar | GR-003 + RH-015: sin confirmacion contador. Fase 1 manda a manual. |
+| **`Supplier.PenaltyPolicyJson` como `text`** | RH-014: `jsonb` valida sintaxis + soporta CHECK `jsonb_typeof`. |
+| **`MutationContext.HasOverrideForInvariant`** (round 1) | RH-003: ADR-001 esta rechazado, ese patron NO existe. Patron real es `ApprovalRequest` tipo `InvariantOverride=7`. |
+| **`ApprovalRequest` sin concurrency token** | RH-006: race en edicion admin. Migracion M0 pre-requisito agrega `xmin`. |
+| **Una sola migracion FC1.3.0 con todos los cambios** | RH-007: 5 migraciones agrupadas por aggregate (patron FC1.2 v3). El argumento "ruido en `__EFMigrationsHistory`" no era valido. |
+| **Heuristicas factura confusa activas por default** | RH-008: alto riesgo falsos positivos. Defaults vacios. Activar solo si contador lo pide + test contra 100 facturas legacy reales (< 5% falsos positivos). |
+| **4-eyes estricto sin escape valvula** | RH-010: bloquea agencias 1-persona. GR-005: `Allow4EyesBypassWhenSingleAdmin` setting opt-in. |
+| **Sin job de reconciliacion bridge** | RH-011: BCs huerfanos. FC1.3.6b agrega job + endpoint force-callback. |
+| **`Fc13DeployDate` set manual** | RH-013: human error. Migracion M3 setea automaticamente. Startup validation log + auto-set si flag on + null. |
+| **`FiscalLiquidation` como entidad propia con tabla nueva** | YAGNI Fase 1. Si en Fase 2 hace falta, se agrega entidad propia con backfill desde `ApprovalRequest.Metadata`. |
+| **Tabla `SupplierPenaltyTier` normalizada** | Sin caso de uso queries cross-supplier. `jsonb` acomoda evolucion schema. |
+| **Logica clasificador dentro de `BookingCancellationService.ConfirmAsync`** | Metodo ya largo + testeo obliga TestContainers Postgres. Service aislado es unit-test puro. |
+| **Tabla nueva `PartialCreditNoteApprovalDetails`** | `ApprovalRequest.Metadata` ya tipado JSON. Overkill. |
+| **Bandeja UI nueva separada** | G2 cerrada Gaston: reusar bandeja existente. |
+| **Reusar `EnableNewCancellationFlow` para FC1.3** | Acopla rollback. Flag separado preserva granularidad. |
+| **Sin enum `CreditNoteKind`, inferir** | Casos 4/7 vs 2/6 tienen mismo monto. Enum explicito necesario. |
+| **ND complementaria para cliente RI** | G4 cerrada Gaston: NO. |
+| **Persistir matriz 8 en BD como tabla `PartialCreditNoteCaseRule`** | YAGNI. Reglas son codigo. |
+| **Bloquear cambio de `Supplier.InvoicingMode`** | Operativamente molesto. Snapshot resuelve. |
 
 ---
 
@@ -951,35 +1106,45 @@ Override admite via `InvariantOverride` aprobado tipo 7 con justificacion >= 50 
 
 ### 5.1 Migraciones EF (orden + dependencias)
 
-5 migraciones agrupadas por aggregate afectado. Cada una es **aditiva no destructiva** (columnas nullable, sin DROP). Orden de aplicacion sequential. Dependencias entre filas explicitas.
+**5 migraciones agrupadas por aggregate (RH-007)** + **1 pre-requisito M0 (RH-006)**. Cada una aditiva no destructiva (columnas nullable, sin DROP). Orden sequential. Dependencias explicitas.
 
 | # | Nombre | Cambios | Depende de |
 |---|---|---|---|
-| **M1** | `FC1_3_0_AddSupplierInvoicingModeAndPenaltyPolicy` | `Supplier.InvoicingMode` (int default 0) + `Supplier.PenaltyPolicyJson` (nvarchar(max) null). | — |
-| **M2** | `FC1_3_1_AddInvoiceItemRefundabilityAndCategory` | `InvoiceItem.IsRefundable` (bit default 1) + `InvoiceItem.ItemCategory` (int default 0) + `InvoiceItem.SourceServicioReservaId` (int? FK `ServiciosReserva.Id`, `OnDelete: SetNull`) + index. | — |
-| **M3** | `FC1_3_2_AddOperationalFinanceSettingsThresholdsAndTemplate` | 7 columnas nuevas en `OperationalFinanceSettings`: `EnablePartialCreditNotes`, `PartialNcAutoApprovalThreshold`, `PartialNcAdminReviewThreshold`, `PartialNcAccountingReviewThreshold`, `PartialNcDescriptionTemplate`, `ManualReviewMaxDaysBeforeRg4540Alert`, `Fc13DeployDate`, `GenericDescriptionPatterns`. Defaults: ver §2.3.4. | — |
-| **M4** | `FC1_3_3_AddBcFiscalLiquidationAndManualReviewFields` | `BookingCancellation.FiscalLiquidation_*` (10 columnas owned VO prefijadas) + `PartialCreditNoteApprovalRequestId` (int? FK `ApprovalRequests.Id`, `OnDelete: Restrict`) + `ManualReviewerUserId/UserName/At/Comment` + extension de check de `Status` para incluir valores 8..11. Extension de `FiscalSnapshot_InvoicingModeAtEvent` + `FiscalSnapshot_OriginalInvoiceTypeAtEvent` (parte del mismo owned config). CHECK constraints `chk_BookingCancellations_fiscalliq_sum`, `chk_BookingCancellations_fiscalliq_nonneg`, `chk_BookingCancellations_manualreview_approvalref`. | M3 (settings deben existir para defaults referenciables — aunque no es estricta FK). |
-| **M5** | `FC1_3_4_AddHotelBookingNonRefundableConcepts` | `HotelBooking.NonRefundableConceptsJson` (nvarchar(max) null). | — |
+| **M0** (pre-requisito FC1.3) | `FC1_3_PRE_AddApprovalRequestConcurrencyToken` | Agregar `xmin` shadow + `entity.UseXminAsConcurrencyToken()` a `ApprovalRequests`. Resuelve RH-006 race en edicion admin. **Se mergea ANTES de FC1.3 mainline**, idealmente como hotfix post FC1.2. | FC1 (existente) |
+| **M1** | `FC1_3_1_AddSupplierInvoicingModeAndPenaltyPolicy` | `Supplier.InvoicingMode` (`integer NOT NULL DEFAULT 0`) + `Supplier.PenaltyPolicyJson` (`jsonb NULL`) + CHECK `chk_Suppliers_penaltypolicy_object`. | M0 |
+| **M2** | `FC1_3_2_AddInvoiceItemRefundabilityAndCategory` | `InvoiceItem.IsRefundable` (`boolean NOT NULL DEFAULT true`) + `InvoiceItem.ItemCategory` (`integer NOT NULL DEFAULT 0`) + `InvoiceItem.SourceServicioReservaId` (`integer NULL` FK `ServiciosReserva.Id`, `OnDelete: SetNull`) + index. | M0 |
+| **M3** | `FC1_3_3_AddOperationalFinanceSettingsThresholdsAndTemplate` | 8 columnas nuevas en `OperationalFinanceSettings`: `EnablePartialCreditNotes`, `PartialNcAutoApprovalThreshold`, `PartialNcAdminReviewThreshold`, `PartialNcAccountingReviewThreshold`, `PartialNcDescriptionTemplate`, `ManualReviewMaxDaysBeforeRg4540Alert`, `Fc13DeployDate`, `GenericDescriptionPatterns`, `Allow4EyesBypassWhenSingleAdmin`. Defaults RH-008/RH-013: `Fc13DeployDate` se setea via `migrationBuilder.Sql("UPDATE \"OperationalFinanceSettings\" SET \"Fc13DeployDate\" = NOW() WHERE \"Fc13DeployDate\" IS NULL AND \"EnablePartialCreditNotes\" = true")`. Para flag off, queda null. | M0 |
+| **M4** | `FC1_3_4_AddBcPartialCreditNoteFieldsAndFiscalSnapshotExtras` | `BookingCancellation`: 7 columnas (`CreditNoteKind int?`, `ReviewRequiredReason int NOT NULL DEFAULT 0`, `LiquidationComputedAt timestamptz?`, `LiquidationComputedByUserId varchar(450)?`, `LiquidationComputedByUserName varchar(200)?`, `PartialCreditNoteApprovalRequestId int? FK ApprovalRequests.Id OnDelete:Restrict`, `ManualReviewerUserId/UserName/At/Comment`). Extension de `FiscalSnapshot_InvoicingModeAtEvent` + `FiscalSnapshot_OriginalInvoiceTypeAtEvent` (parte del mismo owned config). CHECK constraints `chk_BookingCancellations_manualreview_approvalref` + `chk_BookingCancellations_creditnotekind_consistent`. Extension de CHECK `Status` para 0..11. | M3 |
+| **M5** | `FC1_3_5_AddHotelBookingNonRefundableConcepts` | `HotelBooking.NonRefundableConceptsJson` (`jsonb NULL`). | M0 |
 
-**Nota sobre `ApprovalRequestType` enum**: como es enum en codigo, agregar `PartialCreditNoteApproval=11` **no requiere migracion** (los valores enum se almacenan como int). El seeding de `ApprovalRequestPolicy` con defaults para este tipo se agrega en M3 (`OperationalFinanceSettings` migration) o en un seed extra dentro de M4.
+**Nota sobre `ApprovalRequestType` enum**: agregar `PartialCreditNoteApproval=11` **no requiere migracion** (enums se almacenan como int). El seeding de `ApprovalRequestPolicy` con defaults para este tipo se agrega en M3 o M4.
 
-**Nota sobre `BookingCancellationStatus` enum**: agregar valores 8..11 **no requiere migracion** salvo que haya un CHECK constraint que enumere valores validos (heredado de ADR-002 §2.3.3 — verificar en M4 si el CHECK actual lista valores 0..7 y extender a 0..11).
+**Nota sobre `BookingCancellationStatus` enum**: agregar valores 8..11 **no requiere migracion** salvo CHECK constraint que enumere valores validos. Verificar en M4 si el CHECK actual lista valores 0..7 y extender a 0..11.
+
+**Auto-set `Fc13DeployDate` (RH-013)**:
+- En migracion M3, si `EnablePartialCreditNotes=true` ya estaba en true (caso raro de re-merge), setea `Fc13DeployDate = NOW()`.
+- En startup, si `EnablePartialCreditNotes=true && Fc13DeployDate IS NULL`, log warning + UPDATE automatico a `NOW()`.
+- Para activar FC1.3 limpio: admin actualiza `EnablePartialCreditNotes=true` via panel admin -> al guardar settings, service detecta cambio y setea `Fc13DeployDate=NOW()` si null.
 
 ### 5.2 Backfill datos legacy
 
-- `Supplier.InvoicingMode = TotalToCustomer` para todos los existentes (default conservador, asume reseller — comportamiento legacy).
-- `Supplier.PenaltyPolicyJson = NULL` para todos los existentes (sin tabla = vendedor ingresa manual).
-- `InvoiceItem.IsRefundable = true` para todos los existentes (legacy: nada se trato como no reintegrable). Confirmar con contador que esto no genera deuda fiscal — si lo hace, se ofrece script de revision manual.
+- `Supplier.InvoicingMode = TotalToCustomer` para todos los existentes (default conservador).
+- `Supplier.PenaltyPolicyJson = NULL` para todos los existentes.
+- `InvoiceItem.IsRefundable = true` para todos los existentes. Confirmar con contador que esto no genera deuda fiscal — si lo hace, se ofrece script de revision manual.
 - `InvoiceItem.ItemCategory = Service` para todos los existentes.
 - `InvoiceItem.SourceServicioReservaId = NULL` para todos los existentes.
-- `BookingCancellation.FiscalLiquidation = NULL` para BCs preexistentes (FC1.2). El service ignora BCs sin liquidacion (flag off path).
-- `OperationalFinanceSettings.Fc13DeployDate = fecha de deploy FC1.3 a prod` (set manual al merge).
+- `BookingCancellation.CreditNoteKind = NULL`, `ReviewRequiredReason = 0`, `LiquidationComputedAt = NULL` para BCs preexistentes (FC1.2).
+- `OperationalFinanceSettings.Fc13DeployDate = NULL` por default (heuristica legacy OFF).
+- `OperationalFinanceSettings.GenericDescriptionPatterns = ""` por default (heuristica caso 4 OFF).
+- `OperationalFinanceSettings.Allow4EyesBypassWhenSingleAdmin = false` por default (4-eyes estricto).
+- `ApprovalRequest.xmin` se inicializa automaticamente por Postgres (transaction id de la primera tupla).
 
 ### 5.3 Rollback
 
-- **Feature flag `EnablePartialCreditNotes`**: default false. Si FC1.3 explota en prod, apagar deja FC1.2 funcional. **Camino primario de rollback**.
-- **Migraciones EF**: reverse por orden inverso (M5 -> M4 -> M3 -> M2 -> M1). Como todas son aditivas con columnas nullable, reverse no pierde datos. Tiempo estimado: < 5 min en BD prod.
-- **Estado intermedio**: si se rollbackea M4 con BCs ya migrados a `RequiresManualReview`/`ManualReviewPending`/`ManualReviewApproved`/`ManualReviewRejected`, esos BCs quedan con Status invalido para el enum FC1.2 (8..11). **Mitigacion**: antes de rollback M4, script "BCs en estados FC1.3 -> mover a Drafted o Aborted segun corresponda" + audit log de rollback.
+- **Camino primario (granular)**: apagar `EnablePartialCreditNotes`. Si FC1.3 explota, FC1.2 sigue funcional. BCs en estados 8..11 quedan en limbo hasta intervencion manual.
+- **Camino secundario (apagar FC1.2 tambien)**: si OPS-FISCAL-001 se revierte, apagar `EnableNewCancellationFlow` apaga FC1.2. Pre-condicion GR-002 exige apagar FC1.3 antes (en proximo arranque rechaza si FC1.3 quedo on).
+- **Camino terciario (reverse migraciones)**: reverse por orden inverso (M5 -> M4 -> M3 -> M2 -> M1 -> M0). Como todas son aditivas con columnas nullable, reverse no pierde datos. Antes de reverse M4: script "BCs en estados 8..11 != 0 -> bloquear reverse + alerta admin para mover a Drafted/Aborted". Tiempo estimado: < 5 min en BD prod.
+- **Rollback de M0** (concurrency token `ApprovalRequest`): inocuo. Quitar `UseXminAsConcurrencyToken()` no afecta datos. Pero pierde proteccion race. Si FC1.3 vuelve a prenderse, re-aplicar M0.
 
 ---
 
@@ -987,66 +1152,80 @@ Override admite via `InvariantOverride` aprobado tipo 7 con justificacion >= 50 
 
 ### 6.1 Tests unit (clasificador) — sin DB
 
-`IFiscalLiquidationCalculator` tests cubren la matriz 8 casos completa + edge cases. Sin TestContainers, sin DbContext. Ejecutan en milisegundos.
+`IFiscalLiquidationCalculator` tests cubren la matriz 8 + edge cases. Sin TestContainers, sin DbContext. Ejecutan en milisegundos.
 
 | Test | Caso esperado | Disparadores esperados |
 |---|---|---|
 | `Calculate_Case1_PartialNoPenalty_BelowThreshold_ReturnsAutoApprovable` | Case1 | None |
 | `Calculate_Case2_FullCancellationNoRetention_BelowThreshold_ReturnsAutoApprovable` | Case2 | None |
-| `Calculate_Case3_FullWithPenalty_BelowThreshold_ReturnsAutoApprovable` | Case3 | None |
-| `Calculate_Case3_FullWithPenalty_AboveAdminThreshold_ReturnsRequiresReview` | Case3 | AmountAboveAdminThreshold |
-| `Calculate_Case4_GenericDescriptionMatchesPattern_ReturnsRequiresReview` | Case4 | OriginalInvoiceUnclear |
-| `Calculate_Case5_CommissionOnly_PartialReturn_ReturnsAutoApprovable` | Case5 | None |
-| `Calculate_Case6_CommissionOnly_FullReturn_ReturnsAutoApprovable` | Case6 | None |
+| `Calculate_Case3_FullWithPenalty_TotalToCustomer_FlagsPenaltyResetUncertain` | Case3 | PenaltyResetUncertainInResellerMode (GR-006) |
+| `Calculate_Case3_FullWithPenalty_AboveAdminThreshold_ReturnsRequiresReview` | Case3 | AmountAboveAdminThreshold + PenaltyResetUncertain |
+| `Calculate_Case4_GenericDescriptionMatchesPattern_WhenSettingEnabled` | Case4 | OriginalInvoiceUnclear (solo si setting NO vacio) |
+| `Calculate_Case4_GenericDescriptionMatchesPattern_WhenSettingDisabled_Default` | Case1/2 | None (RH-008: setting default vacio NO dispara) |
+| `Calculate_Case4_ManualCheckboxOriginalInvoiceUnclear_AlwaysFlags` | Case4 | OriginalInvoiceUnclear |
+| `Calculate_Case5_CommissionOnly_PartialReturn_FlagsCommissionOnly` | Case5 | InvoicingModeCommissionOnly (GR-003) |
+| `Calculate_Case6_CommissionOnly_FullReturn_FlagsCommissionOnly` | Case6 | InvoicingModeCommissionOnly (GR-003) |
 | `Calculate_Case7_InvoicingModeChanged_ReturnsRequiresReview` | Case7 | RetentionChangesNature |
 | `Calculate_Case8_FacturaA_AnyAmount_ReturnsRequiresReview` | Case8 | CustomerIsRiOrFacturaA |
 | `Calculate_FacturaA_PlusNonRefundable_ReturnsTwoFlags` | Case8 | CustomerIsRiOrFacturaA \| HasNonRefundableItems |
-| `Calculate_LegacyInvoice_ReturnsRequiresReview` | (algun caso) | LegacyInvoice |
+| `Calculate_LegacyInvoice_WhenSettingEnabled_Flags` | (algun caso) | LegacyInvoice (solo si Fc13DeployDate NO null) |
+| `Calculate_LegacyInvoice_WhenSettingDisabled_Default_DoesNotFlag` | (algun caso) | sin LegacyInvoice (RH-008) |
 | `Calculate_MultiCurrency_ReturnsRequiresReview` | (algun caso) | MultiCurrency |
-| `Calculate_SumValidation_NonRefundablePlusPenaltyPlusFiscal_EqualsOriginal_WithinTolerance` | — | INV-FC1.3-005 valido |
 | `Calculate_SumValidation_BreaksTolerance_ThrowsInvariantViolation` | — | INV-FC1.3-005 violado |
-| `Calculate_CommissionOnly_PenaltyDoesNotReduceFiscalAmount` | Case3/5 | (verifica hipótesis Fase 1) |
-| `Calculate_TotalToCustomer_PenaltyReducesFiscalAmount` | Case3 | (verifica modo reseller) |
+| `Calculate_CommissionOnly_EarlyExit_NoComputationOfPenaltyFormula` | Case5/6 | (verifica GR-003 short-circuit) |
 | `Calculate_AccountingThresholdNull_DoesNotFlagAccountingReview` | — | sin flag accounting |
 | `Calculate_AmountAboveAccountingThreshold_FlagsAccountingReview` | — | AmountAboveAccountingThreshold |
 | `Calculate_ExplanationContainsCaseName_AndReasonFlags` | — | (output narrativo) |
+| `Calculate_TotalToCustomer_NoPenalty_NoFlagPenaltyResetUncertain` | Case1/2 | sin PenaltyResetUncertain |
+| `Calculate_GenericDescriptionPatternsMalformedRegex_FallsBackGracefully` | (algun caso) | sin OriginalInvoiceUnclear + log warning |
+| `Calculate_SupplierPenaltyPolicyJsonMalformed_FallsBackToManualInput` | (algun caso) | log warning + usa input.OperatorPenaltyAmount |
+| `Calculate_FacturaA_PlusCommissionOnly_BothFlagsSet` | Case8 | CustomerIsRiOrFacturaA \| InvoicingModeCommissionOnly |
 
-Total estimado: ~20 unit tests. Pattern xUnit + FluentAssertions (convencion repo).
+Total estimado: ~24 unit tests. Pattern xUnit + FluentAssertions.
 
-### 6.2 Tests integration (BC service + ApprovalRequest) — con TestContainers SQL Server
+### 6.2 Tests integration (BC service + ApprovalRequest) — con TestContainers Postgres
 
-Ubicacion: `src/TravelApi.Tests/Cancellation/Integration/`. Reusan `PostgresIntegrationFixture` (rename pendiente a `SqlServerIntegrationFixture` o mantener nombre por deuda tecnica heredada).
+Ubicacion: `src/TravelApi.Tests/Cancellation/Integration/`. Usa `PostgresIntegrationFixture` existente (NO renombrar — RH-018).
 
 | Test | Setup | Assert |
 |---|---|---|
-| `Confirm_CaseAutoApprovable_TransitionsToAwaitingFiscalConfirmation` | Reserva Hotel + factura $300k Tipo C + sin items no refundable + sin penalidad | BC.Status = AwaitingFiscalConfirmation, FiscalLiquidation.ComputedCase = Case2, ApprovalRequest no creado |
-| `Confirm_AboveThreshold_TransitionsToManualReviewPending` | Reserva + factura $600k Tipo C | BC.Status = ManualReviewPending, ApprovalRequest tipo PartialCreditNoteApproval Pending |
+| `Confirm_CaseAutoApprovable_TransitionsToAwaitingFiscalConfirmation` | Reserva Hotel + factura $300k Tipo C + sin items no refundable + sin penalidad + InvoicingMode=TotalToCustomer | BC.Status = AwaitingFiscalConfirmation, BC.CreditNoteKind = PartialOnOriginal, BC.ReviewRequiredReason = None, ApprovalRequest no creado |
+| `Confirm_AboveThreshold_TransitionsToManualReviewPending` | Reserva + factura $600k Tipo C | BC.Status = ManualReviewPending, ApprovalRequest tipo PartialCreditNoteApproval Pending con Metadata JSON |
 | `Confirm_FacturaA_AnyAmount_TransitionsToManualReviewPending` | Factura A $200k + cliente RI | BC.Status = ManualReviewPending, ReviewRequiredReason flag CustomerIsRiOrFacturaA |
-| `Confirm_NonRefundableItem_ExcludedFromFiscalAmountToCredit` | InvoiceItem IsRefundable=false por $50k de un total $500k | FiscalLiquidation.NonRefundableItemsAmount = 50k, FiscalAmountToCredit = 450k |
+| `Confirm_TotalPlusNewInvoice_RejectsBeforePersistingFC13Fields` (GR-001) | Reserva Hotel + heuristica caso 4 activa + factura confusa | InvalidOperationException con mensaje "Caso fiscal requiere FC1.3 Fase 2". BC NO se persiste con datos FC1.3. BC queda en Drafted o NO se crea. |
+| `Confirm_CommissionOnlySupplier_GoesDirectlyToManualReview` (GR-003) | Supplier.InvoicingMode = CommissionOnly | BC.Status = ManualReviewPending, ReviewRequiredReason flag InvoicingModeCommissionOnly, calculator early-exit (sin computar formula) |
+| `Confirm_TotalToCustomerPlusPenalty_GoesDirectlyToManualReview` (GR-006) | TotalToCustomer + OperatorPenaltyAmount > 0 | BC.Status = ManualReviewPending, ReviewRequiredReason flag PenaltyResetUncertainInResellerMode |
+| `Confirm_NonRefundableItem_FlagsHasNonRefundableItems` | InvoiceItem IsRefundable=false por $50k | BC.ReviewRequiredReason flag HasNonRefundableItems |
 | `Confirm_MixedServices_RejectsByInvariant007` | Reserva con Hotel + Vuelo | BusinessInvariantViolationException codigo INV-FC1.3-007 |
-| `EditLiquidation_ByDifferentAdmin_UpdatesValuesAndAppendsAuditTrail` | BC en ManualReviewPending + admin distinto al vendedor | FiscalLiquidation actualizado + approval.Metadata.edits[] tiene entrada nueva + AuditLog BookingCancellationLiquidationEdited |
-| `EditLiquidation_BySameUserAsVendor_Rejects4Eyes` | BC en ManualReviewPending + admin = vendedor | BusinessInvariantViolationException INV-FC1.3-004 |
+| `Confirm_MixedServices_WithInvariantOverride_Allows` | Reserva mixta + ApprovalRequest tipo InvariantOverride=7 Approved con justificacion 60 chars | BC.Status = ManualReviewPending (continua flujo) |
+| `EditLiquidation_ByDifferentAdmin_UpdatesMetadataAndAuditTrail` | BC en ManualReviewPending + admin distinto al vendedor | ApprovalRequest.Metadata.edits[] tiene entrada nueva + AuditLog BookingCancellationLiquidationEdited con Changes JSON con diff |
+| `EditLiquidation_BySameUserAsVendor_Rejects4Eyes` | BC en ManualReviewPending + admin = vendedor + Allow4EyesBypass=false | BusinessInvariantViolationException INV-FC1.3-004 |
+| `EditLiquidation_BySameUserAsVendor_With4EyesBypassAndSingleAdmin_Allows` (GR-005) | Setting Allow4EyesBypass=true + 1 solo usuario admin + admin=vendedor + comentario 110 chars | Permite edicion + AuditLog tiene `SelfApprovedDueToSingleAdmin=true` en JSON |
+| `EditLiquidation_With4EyesBypassButTwoAdmins_StillRequires4Eyes` (GR-005) | Setting Allow4EyesBypass=true + 2 usuarios admin + vendedor=admin1 + intenta self-approve | BusinessInvariantViolationException INV-FC1.3-004 |
+| `EditLiquidation_ConcurrentEdit_xminConflict_ThrowsConcurrencyException` (RH-006) | 2 admins editan el mismo approval en paralelo | DbUpdateConcurrencyException en el segundo |
 | `ApproveLiquidation_TransitionsToManualReviewApproved` | BC en ManualReviewPending + admin distinto + comment >= 20 chars | BC.Status = ManualReviewApproved, ApprovalRequest.Status = Approved |
-| `ApproveLiquidation_BelowAccountingThreshold_DoesNotRequireExtraComment` | BC con FiscalAmountToCredit < AccountingThreshold | Comment 20 chars OK |
-| `ApproveLiquidation_AboveAccountingThreshold_RequiresCommentMin100Chars` | BC con FiscalAmountToCredit > AccountingThreshold (G5) | Comment 50 chars rechaza, 100 chars OK |
-| `RejectLiquidation_TransitionsToManualReviewRejectedThenDrafted` | BC en ManualReviewPending + reject | BC.Status = Drafted (auto reset), FiscalLiquidation null, PartialCreditNoteApprovalRequestId null, ApprovalRequest Status = Rejected |
-| `EmitCreditNote_PartialOnOriginal_TransitionsToAwaitingFiscalConfirmation_Fase1` | BC en ManualReviewApproved con CreditNoteKind=PartialOnOriginal | BC.Status = AwaitingFiscalConfirmation (Fase 1: comportamiento FC1.2 vigente con NC total — Fase 2 emite parcial real) |
-| `EmitCreditNote_TotalPlusNewInvoice_StaysInManualReviewApproved_Fase1` | BC en ManualReviewApproved con CreditNoteKind=TotalPlusNewInvoice | BC.Status = ManualReviewApproved (Fase 1 no emite nueva factura), log warning visible |
-| `Confirm_FeatureFlagOff_IgnoresPartialCreditNoteLogic` | Flag EnablePartialCreditNotes=false + reserva que normalmente caeria a manual review | BC.Status = AwaitingFiscalConfirmation (comportamiento FC1.2 vigente, calculator no corre) |
-| `Confirm_InvoicingModeChangedSinceFactura_FlagsRetentionNature` | Supplier.InvoicingMode = CommissionOnly + FiscalSnapshot.InvoicingModeAtEvent = TotalToCustomer | BC.Status = ManualReviewPending, ReviewRequiredReason flag RetentionChangesNature |
-| `Abort_FromManualReviewPending_TransitionsToAborted` | BC en ManualReviewPending + abort() | BC.Status = Aborted, ApprovalRequest.Status (queda como esta, NO se borra), audit logged |
-| `Sum_FiscalAmount_NonRefundable_Penalty_NotEqualOriginal_RejectsCheckConstraint` | Bug fabricado: alterar FiscalLiquidation con valores inconsistentes | DbUpdateException por CHECK violado, mapped a HTTP 409 INV-FC1.3-005 |
-| `Confirm_LegacyInvoice_FlagsLegacyAndRequiresReview` | OriginalInvoice.CreatedAt < Fc13DeployDate | reason flag LegacyInvoice |
-| `Confirm_NcInChain_FlagsOtherAndRequiresReview` | OriginatingInvoice.OriginalInvoiceId != null | reason flag Other |
+| `ApproveLiquidation_AboveAccountingThreshold_RequiresCommentMin100Chars` (G5) | BC con AmountAboveAccountingThreshold | Comment 50 chars rechaza, 100 chars OK |
+| `RejectLiquidation_TransitionsToManualReviewRejectedThenDrafted` | BC en ManualReviewPending + reject | BC.Status = Drafted (auto reset), CreditNoteKind=null, ReviewRequiredReason=0, LiquidationComputed*=null, PartialCreditNoteApprovalRequestId=null |
+| `EmitCreditNote_PartialOnOriginal_TransitionsToAwaitingFiscalConfirmation_Fase1` | BC en ManualReviewApproved con CreditNoteKind=PartialOnOriginal | BC.Status = AwaitingFiscalConfirmation (Fase 1: FC1.2 path con NC total real). Log warning "Fase 1 emite total — Fase 2 emite parcial" |
+| `Confirm_FeatureFlagOff_IgnoresPartialCreditNoteLogic` | EnablePartialCreditNotes=false + reserva que normalmente caeria a manual review | BC.Status = AwaitingFiscalConfirmation (calculator no corre) |
+| `Confirm_Fc12FeatureFlagOff_RejectsWithKillSwitch` | EnableNewCancellationFlow=false | InvalidOperationException "modulo de cancelacion/refund no esta habilitado" (kill switch FC1.2) |
+| `Startup_Fc13OnWithoutFc12_RejectsWithError` (GR-002) | EnablePartialCreditNotes=true + EnableNewCancellationFlow=false | App falla al arrancar con mensaje claro pre-condicion violada |
+| `Confirm_FlagToggledOffMidFlight_BCsInManualReviewStillProcessNormally` (RH-009) | BC en ManualReviewPending + admin apaga flag + admin approve | BC transiciona normal a ManualReviewApproved (no se bloquea) |
+| `Abort_FromManualReviewPending_TransitionsToAborted` | BC en ManualReviewPending + abort() | BC.Status = Aborted, ApprovalRequest queda como esta (NO se borra), audit logged |
+| `BridgeReconciliationJob_OrphanBCInManualReviewPendingWithApprovedAR_ForcesCallback` (RH-011) | BC stuck en ManualReviewPending + AR Approved hace > 30 min | Job detecta + invoca OnApprovedAsync + BC transiciona a ManualReviewApproved |
+| `BridgeReconciliationJob_NotStaleEnough_DoesNotForceCallback` | AR Approved hace 10 min | Job no actua |
+| `InvariantOverride_ForInv007_RequiresJustificationDistinctFromBCComment` (RH-016) | ApprovalRequest InvariantOverride con `Reason` igual al `ManualReviewComment` futuro | Service rechaza al confirmar override |
+| `Confirm_HeuristicasFacturaConfusaPorDefaultOff_NoFalsosPositivos` (RH-008) | 100 facturas legacy seed (datos reales anonimizados) + setting GenericDescriptionPatterns="" + Fc13DeployDate=null | < 5% se marcan OriginalInvoiceUnclear (idealmente 0%) |
 
-Total estimado: ~20 integration tests.
+Total estimado: ~27 integration tests.
 
-### 6.3 Tests E2E (happy path completo)
+### 6.3 Tests E2E (happy paths)
 
 | Test | Flujo |
 |---|---|
 | `E2E_PartialCreditNote_Case8_FullHappyPath` | Reserva Hotel + factura A $1M -> Draft -> Confirm -> ManualReviewPending -> Admin Approve -> ManualReviewApproved -> EmitCreditNote -> AwaitingFiscalConfirmation -> ... resto FC1.2 |
-| `E2E_PartialCreditNote_Case4_FactureUnclear_AdminRejectsAndReDrafts` | Reserva Hotel + factura confusa -> Draft -> Confirm -> ManualReviewPending -> Admin Reject -> Drafted -> Vendedor corrige -> Confirm de nuevo -> auto-approve |
+| `E2E_PartialCreditNote_Case5_CommissionOnly_AdminAcceptsAndProcessesManually` (GR-003) | Reserva Hotel + Supplier CommissionOnly -> Draft -> Confirm -> ManualReviewPending -> Admin Edit con monto manual -> Admin Approve -> AwaitingFiscalConfirmation |
+| `E2E_PartialCreditNote_Case4_TotalPlusNewInvoice_RejectsWithExplicitError` (GR-001) | Reserva Hotel + factura confusa con heuristica activa + setting activado -> Draft -> Confirm -> InvalidOperationException con mensaje claro. BC queda en Drafted. |
 
 ### 6.4 Performance baseline
 
@@ -1055,10 +1234,11 @@ Total estimado: ~20 integration tests.
 
 ### 6.5 Migration tests
 
-- Aplicar M1..M5 contra dump anonimizado de staging.
+- Aplicar M0..M5 contra dump anonimizado de staging.
 - Verificar que BCs preexistentes (FC1.2) **no cambian estado** post-migracion.
-- Verificar `SELECT COUNT(*) FROM BookingCancellations WHERE FiscalLiquidation_OriginalInvoiceAmount IS NOT NULL` = 0 post-migracion.
-- Rollback M5..M1, verificar que dump original es restituido sin perdida.
+- Verificar `SELECT COUNT(*) FROM "BookingCancellations" WHERE "CreditNoteKind" IS NOT NULL` = 0 post-migracion.
+- Rollback M5..M0, verificar que dump original es restituido sin perdida.
+- Verificar que `ApprovalRequests` post-M0 tienen `xmin` no-null en todas las filas.
 
 ---
 
@@ -1066,84 +1246,138 @@ Total estimado: ~20 integration tests.
 
 | Riesgo | Mitigacion |
 |---|---|
-| **Heuristicas caso 4 producen falsos positivos masivos** (facturas viejas bien hechas flageadas como "legacy" o "confusa") | Admin puede aprobar igual con justificacion. Ademas `Fc13DeployDate` configurable: si genera mucho ruido, mover a fecha anterior o null. Settings `GenericDescriptionPatterns` ajustable. |
-| **Operador cambia `InvoicingMode` durante cancelacion en vuelo** | Snapshot `InvoicingModeAtEvent` capturado en T0. Calculator usa snapshot, no valor actual. |
-| **Plazo RG 4540 (15 dias) se vence con BC en `ManualReviewPending`** | Alerta a partir de `ManualReviewMaxDaysBeforeRg4540Alert` dias (default 10). Job nocturno consulta y notifica via mismo mecanismo de notification de `ApprovalRequestService`. **No auto-aprueba** — eso seria peligroso. Si admin no actua, queda mora fiscal documentada. |
-| **Threshold $500k/$2M no son los del contador** | Default editable en `OperationalFinanceSettings` sin redeploy. Cuando contador responde F1, admin actualiza via panel. |
-| **Items legacy con `IsRefundable=true` por backfill, y eran no reintegrables fiscalmente** | Riesgo de deuda fiscal preexistente. Mitigacion: reporte separado al contador con `InvoiceItem.ItemCategory = AdministrativeFee/Insurance/OperatorAdvance` que tienen `IsRefundable=true`. Decision contable manual. |
+| **Heuristicas caso 4 producen falsos positivos masivos** | Defaults OFF (RH-008). Admin habilita explicitamente solo si contador lo pide. Setting ajustable sin redeploy. Test seed con 100 facturas legacy reales antes de habilitar. |
+| **Operador cambia `InvoicingMode` durante cancelacion en vuelo** | Snapshot `InvoicingModeAtEvent` capturado en T0. Calculator usa snapshot. |
+| **Plazo RG 4540 (15 dias) se vence con BC en `ManualReviewPending`** | Alerta a partir de `ManualReviewMaxDaysBeforeRg4540Alert` dias (default 10). Job nocturno notifica. **No auto-aprueba**. |
+| **Threshold $500k/$2M no son los del contador** | Default editable en `OperationalFinanceSettings` sin redeploy. |
+| **Items legacy con `IsRefundable=true` por backfill, y eran no reintegrables fiscalmente** | Reporte separado al contador con `InvoiceItem.ItemCategory = AdministrativeFee/Insurance/OperatorAdvance` que tienen `IsRefundable=true`. Decision contable manual. |
 | **Calculator clasifica mal por bug** | Tests unit cubren matriz 8 + edges. Si pasa a prod con bug, flag off -> rollback inmediato. |
-| **Admin edita liquidacion + aprueba sin descansar la firma del contador** | INV-FC1.3-009 (comment edicion != comment aprobacion) + audit log `BookingCancellationLiquidationEdited` separado de `BookingCancellationManualReviewApproved`. Trazable. |
+| **Admin edita liquidacion + aprueba sin firmar contador** | INV-FC1.3-009 (comment edicion != comment aprobacion) + audit log separado. |
 | **Multimoneda cancelacion** | reason flag `MultiCurrency` dispara manual review obligatorio Fase 1. Fase 2 implementa logica completa. |
-| **Fase 1 marca `TotalPlusNewInvoice` pero no factura** | BC queda en `ManualReviewApproved` con warning visible. Admin sabe que tiene que esperar Fase 2 o emitir manualmente. Test cubre que no se emite. |
+| **Fase 1 marca `PartialOnOriginal` pero AfipService emite NC total** | Comportamiento esperado Fase 1. Log warning explicito en cada Approve. Fase 2 emite parcial real. |
+| **Callback bridge falla (RH-011)** | Job de reconciliacion FC1.3.6b + endpoint admin force-callback. |
+| **Race condition en edicion admin (RH-006)** | `ApprovalRequest.xmin` via M0 protege. Segundo admin con xmin viejo recibe DbUpdateConcurrencyException + reintenta. |
+| **Combinacion invalida de flags (FC1.3 ON + FC1.2 OFF)** | Pre-condicion startup (GR-002) rechaza arranque con error claro. |
+| **CommissionOnly mode bloquea operativa** (GR-003) | Manual review obligatorio. Mitigacion: priorizar respuesta contador F2. Admin puede ingresar liquidacion a mano. |
+| **Penalty + TotalToCustomer en caso 3 indeterminado** (GR-006) | Flag `PenaltyResetUncertainInResellerMode` dispara manual review. Hipotesis conservadora "penalty resta" persiste en Metadata para auditoria pero requiere confirmacion humana. |
 
 ---
 
 ## 8. Security / audit risks
 
-- **4-eyes obligatorio en aprobacion**: INV-FC1.3-004 (admin != vendedor) + INV-FC1.3-009 (comment edicion != comment aprobacion).
-- **Cross-reference auditable**: `BC.PartialCreditNoteApprovalRequestId` + `ApprovalRequest.Metadata.edits[]` + `AuditLog`. Cualquier auditor reconstruye el flujo.
-- **Permisos**: reusar `cobranzas.invoice_annul` para Confirm (existente). Reusar `approvals.review` para aprobacion (existente). **No se crea permiso nuevo Fase 1.**
-- **`BookingCancellationLiquidationEdited` audit log**: separado de `BookingCancellationConfirmed` para que queries de auditoria los distingan facilmente.
-- **`FiscalLiquidation` immutability post-Approved**: INV-FC1.3-008. Cualquier modificacion requiere admin con override + nuevo `ApprovalRequest` (no cubierto Fase 1 — operacion no expuesta).
-- **`BC.FiscalLiquidation` queda en BD aunque BC se aborte**: para audit historico. Solo se nulea en `resetToDraft()` (post-Rejection).
+- **4-eyes obligatorio**: INV-FC1.3-004 + escape valvula controlada (GR-005).
+- **GR-005 self-approval auditable**: cuando aplica, `Metadata.selfApprovedDueToSingleAdmin=true` + comentario 100+ chars + `AuditLog.Changes` con justificacion. Auditor puede filtrar.
+- **Cross-reference auditable**: `BC.PartialCreditNoteApprovalRequestId` + `ApprovalRequest.Metadata.edits[]` + `AuditLog`.
+- **Permisos**: reusar `cobranzas.invoice_annul` para Confirm + `approvals.review` para aprobacion. **No se crea permiso nuevo Fase 1.**
+- **Audit log con diff completo (RH-012)**: `AuditLog.Changes` JSON con shape `{"Field": {"Old":"...", "New":"..."}}` por cada campo editado.
+- **`CreditNoteKind` immutability post-Approved**: INV-FC1.3-008.
+- **Datos FC1.3 quedan en BD aunque BC se aborte**: para audit historico. Solo se nulean en `resetToDraft()` (post-Rejection).
+- **`InvariantOverride` para INV-FC1.3-007 requiere justificacion distinta** (RH-016): evita reusar el comment del BC como justificacion del override.
 
 ---
 
 ## 9. Open questions (no bloquean Fase 1, bloquean Fase 2/3)
 
-### 9.1 Fiscales (round 3 al contador — mensaje ya redactado en `docs/operations/2026-05-21-mensaje-contador-fc1-3-round-3.md`)
+### 9.1 Fiscales (round 3 al contador — mensaje en `docs/operations/2026-05-21-mensaje-contador-fc1-3-round-3.md`)
 
-- **F1**: threshold $500k/$2M es estricto menor o menor igual? Es el valor adecuado para MagnaTravel? Y los thresholds intermedios?
-- **F2**: NC parcial cuando operador devuelve en cuotas (regla 12 ADR-002): una sola NC en T0 por total fiscal, o NCs sucesivas a medida que llega plata? **Hipótesis Fase 1**: una sola NC en T0.
-- **F3**: si NC parcial ya emitida necesita correccion (admin se equivoco post-aprobacion), ND complementaria o anular + nueva NC parcial? ADR-002 §2.2 punto 2 dice "no ND" — FC1.3 podria cambiar eso.
+- **F1**: threshold $500k/$2M es estricto menor o menor igual? Es el valor adecuado para MagnaTravel?
+- **F2**: en modo `CommissionOnly`, como se calcula `FiscalAmountToCredit`? (GR-003 dispara manual hasta respuesta.)
+- **F3**: si NC parcial ya emitida necesita correccion, ND complementaria o anular + nueva NC parcial?
+- **F4**: en modo `TotalToCustomer` + penalty operador > 0, la penalty resta del monto fiscal acreditable o no? (GR-006 dispara manual hasta respuesta.)
 
-### 9.2 De negocio / G a Gaston (resueltas 2026-05-21 pero confirmacion final)
+### 9.2 De negocio / G a Gaston (resueltas 2026-05-21 + GR-001..GR-006)
 
-- G1..G6 cerradas en plan funcional. Confirmacion via firma post-merge Fase 1.
+- G1..G6 + GR-001..GR-006 cerradas.
 
-### 9.3 Plan tactico (al architect-reviewer)
+### 9.3 Plan tactico (al architect-reviewer round 2)
 
-- ¿`FiscalLiquidation` como Owned VO es el patron correcto a largo plazo, o conviene entidad propia desde el dia 1?
-- ¿`PenaltyPolicyJson` JSON es aceptable o reviewer prefiere tabla normalizada upfront?
-- ¿Calculator como service separado vs metodo del BC service?
-- ¿Feature flag separado es necesario?
+- ¿Deberiamos persistir tambien `OriginalInvoiceAmount` Fase 1 (un solo campo) para queries de reporting basicos sin abrir Metadata JSON?
+- ¿El job de reconciliacion bridge deberia tener configurable el threshold de 30 min (actualmente hardcoded)?
+- ¿El endpoint admin force-callback necesita auditoria reforzada extra (ej. tipo `ApprovalRequest.InvariantOverride`)?
 
 ---
 
 ## 10. Auto-critica explicita (transparencia)
 
-1. **Verifique todo en el repo?** Si — lei plan funcional FC1.3 entero (847 lineas), ADR-002 entero (779 lineas), plan FC1.2 v3 (1106 lineas, partes relevantes), entidades clave (`BookingCancellation`, `BookingCancellationStatus`, `Invoice`, `InvoiceItem`, `Supplier`, `FiscalSnapshot`, `HotelBooking`, `OperationalFinanceSettings`, `ApprovalRequest`, `ApprovalRequestType`), `ApprovalRequestsController`, fragmento de `BookingCancellationService`. Verifique que el stack es SQL Server (override del plan funcional que decia Postgres).
-2. **Asumi algo sin decirlo?** Si: (a) que `Invoice.AnnulmentApprovalRequestId` (FC1.2 v3) se puede reutilizar como patron para `BC.PartialCreditNoteApprovalRequestId`. (b) Que el callback bridge `IInvoiceAnnulmentBcBridge` (FC1.2) puede tener un primo `IPartialCreditNoteApprovalBridge` analogamente. (c) Que SQL Server 547 es el error number para CHECK violation (correcto — `error_number()=547`). Estos estan marcados en el ADR donde aparecen.
-3. **Disenio coupling oculto?** El BC service recibe `IFiscalLiquidationCalculator` por DI + el callback bridge `IPartialCreditNoteApprovalBridge`. Si el bridge se rompe (ApprovalRequestService olvida llamar al callback), BC queda en `ManualReviewPending` huerfano. Mitigacion: job nocturno que reconcilia (analogamente a `ArcaAnnulmentReconciliationJob` de FC1.2). Tarea para sub-fase FC1.3.5 (no detallada Fase 1, pero anotada como deuda).
-4. **Tests cubiertos?** Unit (clasificador, ~20) + Integration (BC service, ~20) + E2E (~2). Falta: tests de carga (calculator < 10ms) + tests de fallover del callback bridge.
+### 10.0 Confesion explicita (round 2)
+
+**Round 1 use sintaxis SQL Server por error en el brief de la sesion principal.** La sesion principal me indico "Stack es SQL Server, NO Postgres" — esto era falso. El repo usa PostgreSQL (Npgsql 8.x) con `UseXminAsConcurrencyToken` (verificado en `AppDbContext.cs:1180`), `PostgresIntegrationFixture` (verificado), migracion FC1 con `using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata` + `xmin` shadow + tipos `numeric/jsonb/text/timestamptz` + identificadores con comillas dobles. **Round 2 corregido a Postgres en TODA seccion SQL/EF**.
+
+**Round 1 tambien tuvo 6 decisiones de Gaston nuevas (GR-001..GR-006)** que cambiaron alcance:
+- **GR-001**: `TotalPlusNewInvoice` ahora se RECHAZA en Confirm. Round 1 lo dejaba colgado en `ManualReviewApproved`.
+- **GR-002**: FC1.3 depende de FC1.2 ON. Pre-condicion startup explicita.
+- **GR-003**: `CommissionOnly` ahora va directo a manual review. Round 1 tenia hipotesis sin validar.
+- **GR-004**: NO persistir `FiscalLiquidation` entera Fase 1. Eliminado Owned VO completo. Reduce blast radius y elimina riesgo divergencia.
+- **GR-005**: `Allow4EyesBypassWhenSingleAdmin` para agencias chicas.
+- **GR-006**: caso 3 + penalty + TotalToCustomer diferido a manual hasta respuesta F4 contador.
+
+Y los 13 hallazgos del reviewer (RH-001..RH-022, prefijo RH para distinguir de Reviewer Hallazgo) cerrados en §11 abajo.
+
+### 10.1 Self-review estructurado
+
+1. **Verifique todo en el repo?** Si — verifique stack Postgres (5 fuentes), `ApprovalRequest` actual (no tiene xmin -> M0), `EnsureFeatureFlagOnAsync` (es kill switch real), patron override real (`BookingCancellationService:261-281`), `ServiceTypes.Hotel` constante, `AssignmentServiceType.Hotel`, `AuditLog.Changes` shape, `PostgresErrorCodes.UndefinedTable`/`UniqueViolation` constantes usadas.
+2. **Asumi algo sin decirlo?** (a) Que el callback bridge `IInvoiceAnnulmentBcBridge` (FC1.2) es el patron a copiar — verificado. (b) Que el seeding de `ApprovalRequestPolicy` para `PartialCreditNoteApproval=11` se hace en migracion M3/M4 — anotado. (c) Que `migrationBuilder.Sql("UPDATE ... SET Fc13DeployDate = NOW()")` corre dentro de la tx de la migracion — Postgres lo soporta sin issues.
+3. **Diseno coupling oculto?** Bridge + job reconciliacion + endpoint force-callback son 3 vias para resolver el mismo problema (callback fallido). Es redundancia INTENCIONAL para alta criticidad fiscal. Documentado en §2.12.
+4. **Tests cubiertos?** Unit (24) + Integration (27) + E2E (3). Mejor que round 1 (que tenia 20 + 19 + 2).
 5. **Edge case que falta?**
    - NC parcial sobre NC parcial (cadena): flag `Other`, va a manual.
-   - Cancelacion con BC ya creado en estado `ClientCreditApplied` (FC1.2 vigente con NC total) y vendedor quiere "convertir" a NC parcial despues. Fase 1 NO permite: el BC ya esta avanzado, no se puede retro-clasificar. Fuera de scope.
-   - Operador devuelve menos de lo esperado por la liquidacion (T2 detecta mismatch): FC1.2 ya tiene `DeductionLine.RequiresAccountingReview`. Fase 1 no agrega nada nuevo.
-6. **Riesgo de datos/rollback?** Migraciones todas aditivas + nullable. Rollback por inversion. Feature flag default off. Riesgo bajo. Tarea pre-deploy: script de "BCs en estados 8..11 antes de reverse de M4".
-7. **Overcomplicado?** Owned VO + 1 calculator + 1 bridge nuevo (analogo al existente) + 4 estados nuevos + 1 flag nuevo + 5 enums nuevos. **Es el minimo para cubrir la matriz 8 casos sin perder cohesion**. No introduzco MediatR, no introduzco outbox, no introduzco saga.
-8. **Underdesigned?** El callback bridge `IPartialCreditNoteApprovalBridge` no esta desarrollado en detalle aca (solo mencionado). Sub-fase tactico FC1.3.4 lo cubre. Job de reconciliacion para BCs huerfanos en `ManualReviewPending` queda mencionado pero no implementado Fase 1.
-9. **Mantenible por otros?** Si — patron heredado (Owned VO + bridge + service aislado). Mismo lenguaje que ADR-002 (con override de stack). Tests unit del calculator hacen la matriz 8 muy facil de re-leer y mantener.
-10. **Reviewer podria rechazar?** Puntos debiles:
-    - **Hipotesis "penalidad operador en `CommissionOnly` no reduce NC al cliente"** sin confirmacion contador. Cambio aislado si se equivoca.
-    - **Heuristicas caso 4 son arbitrarias**. Reviewer podria pedir suprimirlas y dejar solo el checkbox manual del vendedor.
-    - **Fase 1 no emite NC al ARCA real**: si el reviewer prefiere alcance bigger, Fase 1 podria incluir el plumbing de AfipService. Mi posicion: separar para reducir blast radius y para no entrar a litigar prorrateo IVA antes de tener respuesta a F1 del contador.
-    - **No defini explicitamente el job de reconciliacion** para BCs huerfanos en `ManualReviewPending`. Anotado como deuda Fase 1 -> ticket FC1.3.5.
-    - **Override `INV-FC1.3-007`** (servicios mixtos) admite override admin: reviewer podria rechazar porque mezcla peligrosa. Mi argumento: el over necesita justificacion 50+ chars + audit, y resuelve casos legitimos de servicios mal clasificados en repo.
+   - Cancelacion con BC ya creado en `ClientCreditApplied` (FC1.2 con NC total) y vendedor quiere "convertir" a NC parcial: Fase 1 NO permite.
+   - Operador devuelve menos de lo esperado por la liquidacion: FC1.2 ya tiene `DeductionLine.RequiresAccountingReview`.
+   - **GR-005 caveat**: si admin se borra, queda 0 admins -> singleadmin check falla. Mitigacion: settings UI bloquea apagar el ultimo admin.
+6. **Riesgo de datos/rollback?** Migraciones aditivas + nullable. M0 pre-requisito separado (no se mezcla con FC1.3). Rollback por inversion. Feature flag default off. Riesgo bajo. Script pre-deploy: BCs en estados 8..11 antes de reverse de M4.
+7. **Overcomplicado?** Menos que round 1 (eliminamos Owned VO `FiscalLiquidation`, `TotalPlusNewInvoice` colgado, hipotesis CommissionOnly). Sumamos GR-005 (1 setting + logica condicional) + M0 (pequeno) + job reconciliacion + endpoint force-callback. Net: simplificacion.
+8. **Underdesigned?** Bridge + reconciliacion + force-callback OK Fase 1. Falta diseño UI Fase 3 (admin modal, vendedor checkbox `IsRefundable`).
+9. **Mantenible por otros?** Si — patron heredado FC1.2. Tests unit del calculator hacen matriz 8 facil de re-leer.
+10. **Reviewer podria rechazar?** Puntos discutibles:
+    - **No persistir `FiscalLiquidation` entera (GR-004)**: si reviewer prefiere persistir para queries de reporting, agregar `OriginalInvoiceAmount` solo (un campo) es trivial.
+    - **Endpoint admin force-callback**: si reviewer prefiere job-only, eliminar endpoint.
+    - **GR-005 setting** podria ser per-user en lugar de global, pero global es simpler Fase 1.
+    - **Heuristicas caso 4 OFF por default** podria ser mas restrictivo (eliminar heuristicas entero, dejar solo checkbox). Compromiso elegido: mantener codigo + setting OFF + activar si contador pide.
 
 ---
 
-## 11. Trazabilidad
+## 11. Cierre de hallazgos del reviewer round 1
 
-- **Plan funcional FC1.3**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\plan-tactico-fc1-3.md` §1..§20 (autoria `travel-agency-accountant-argentina` 2026-05-21).
+| Hallazgo | Como se cerro | Seccion del ADR |
+|---|---|---|
+| **RH-001** Postgres vs SQL Server | Rewrite total con sintaxis Postgres (jsonb, text, timestamptz, comillas dobles, xmin, SqlState=23514). §10.0 confesion explicita. | §1.3, §2.2, §2.3.5, §2.5, §5.1, §10.0 |
+| **RH-002** `EnableNewCancellationFlow=OFF` es kill switch | Diagrama §2.8.1 muestra rechazo explicito con `InvalidOperationException` via `EnsureFeatureFlagOnAsync`. Tabla §2.8.3 fila "Drafted FC1.2 off". | §1.3, §2.8.1, §2.8.3 |
+| **RH-003** `MutationContext.HasOverrideForInvariant` no existe (ADR-001 rechazado) | §2.11 reescrita con patron real `ApprovalRequest` tipo `InvariantOverride=7`, busqueda por EntityType/EntityId/Status/RequestedByUserId/ExpiresAt, mismo patron que `BookingCancellationService:261-281`. | §2.11 |
+| **RH-004** Divergencia `FiscalLiquidation` persistida vs NC emitida | GR-004: NO persistir Fase 1. Solo 5 campos summary. Liquidacion completa solo en `ApprovalRequest.Metadata` cuando hay review. | §2, §2.3.2, §2.4 |
+| **RH-005** BCs colgados en `ManualReviewApproved` con `TotalPlusNewInvoice` | GR-001: rechazar Confirm con `InvalidOperationException`. Eliminado path colgado. INV-FC1.3-010 enforza. | §2.8.1, §2.8.3, §2.8.4 (INV-010), §2.9 STEP 7 |
+| **RH-006** `ApprovalRequest.Metadata` sin row version | M0 pre-requisito FC1.3 agrega `xmin` shadow + `UseXminAsConcurrencyToken()`. Documentado dependency en §5.1. Test integration cubre. | §1.3, §2.2 punto 10, §5.1 M0, §6.2 test concurrencia |
+| **RH-007** Contradiccion 1 migracion vs 5 migraciones | Resuelto: 5 migraciones agrupadas por aggregate + M0 pre-requisito. Patron FC1.2 v3 (4 migraciones). §5.1 actualizado. Plan tactico §T1 fila #5 actualizado. | §5.1, plan tactico T1/T3 |
+| **RH-008** Heuristicas factura confusa demasiado agresivas | Defaults: `GenericDescriptionPatterns=""`, `Fc13DeployDate=null`. Heuristica OFF. Test seed con 100 facturas legacy reales antes de habilitar. Activar solo si contador pide. | §2.2 punto 9, §2.3.4 (settings), §2.9 STEP 2, §7 |
+| **RH-009** Semantica flag mixto | §2.13 explicita: flag controla CREACION, no procesamiento. Test integration cubre BCs en estados 8..11 cuando flag se apaga. | §2.13, §6.2 test `FlagToggledOffMidFlight` |
+| **RH-010** 4-eyes en agencias chicas | GR-005: setting `Allow4EyesBypassWhenSingleAdmin` opt-in con safeguards (comentario 100+ chars + flag audit + check de 1 solo admin). | §2.3.4 setting, §2.8.4 INV-004 excepcion, §6.2 tests GR-005 |
+| **RH-011** Bridge sin job reconciliacion | §2.12: job `PartialCreditNoteBridgeReconciliationJob` + endpoint admin force-callback. Sub-fase FC1.3.6b en plan tactico. | §2.12, plan tactico FC1.3.6b |
+| **RH-012** Audit edicion admin solo JSON metadata | `AuditLog.Changes` con shape `{"Field": {"Old":"...", "New":"..."}}` por cada campo modificado en edicion. Test valida diff completo. | §2.7, §6.2 test `EditLiquidation` |
+| **RH-013** `Fc13DeployDate` set manual = bug | Migracion M3 auto-set si `EnablePartialCreditNotes=true`. Startup validation: si flag on + null, log warning + UPDATE auto. Settings UI al guardar tambien setea. | §2.3.4 setting, §5.1 M3 |
+| **RH-014** `Supplier.PenaltyPolicyJson` sin validacion schema | Tipo `jsonb` (no `text`). CHECK Postgres `jsonb_typeof = 'object'`. Try/catch en calculator + fallback + log warning. | §2.3.2 Supplier, §2.3.5 CHECK, §2.5 |
+| **RH-015** Hipotesis CommissionOnly sin validar | GR-003: diferir a manual review obligatorio Fase 1. Calculator early-exit. Quitar disparador via setting cuando contador responde F2. | §2.9 STEP 0, §2.2, §6.1 tests, §6.2 tests |
+| **RH-016** INV-FC1.3-007 override requiere comentario distinto | §2.11 + §2.8.4 INV-FC1.3-007: justificacion del `InvariantOverride` >= 50 chars + DISTINTA del `ManualReviewComment` del BC. Validacion en service. | §2.8.4 INV-007, §2.11 |
+| **RH-017** Naming `Servicios`/`ProductType` literal vs constante | `ServiceTypes.Hotel = "Hotel"` constante (verificado `ServicioReserva.cs:8`). §2.11 usa constante via `string.Equals(..., ServiceTypes.Hotel, StringComparison.OrdinalIgnoreCase)`. | §1.3, §2.11 |
+| **RH-018** Mencion al rename `PostgresIntegrationFixture` | Eliminada. El fixture es Npgsql vigente, queda como esta. §6.2 lo aclara. | §6.2 |
+| **RH-020** Naming `ResolverNotes` vs "comment >= 20 chars" | Usar `ApprovalRequest.ResolverNotes` (max 1000 chars). FluentValidation min length cuando `RequestType == PartialCreditNoteApproval`. | §2.8.3 tabla transiciones, §2.7 |
+| **RH-021** `GenericDescriptionPatterns` typing | Una unica regex con alternativas separadas por `|` (no multilinea). Default vacio `""`. | §2.3.4 setting, §2.9 STEP 2 |
+| **RH-022** `FiscalLiquidationDto` ubicacion | GR-004 elimina persistencia. DTO se ubica en `src/TravelApi.Application/DTOs/Cancellation/FiscalLiquidationDto.cs` y se usa en FC1.3.1 (calculator). | §2.3.1 DTO, plan tactico FC1.3.1 |
+
+---
+
+## 12. Trazabilidad
+
+- **Plan funcional FC1.3**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\plan-tactico-fc1-3.md` §1..§16 (autoria `travel-agency-accountant-argentina` 2026-05-21).
 - **Doc criterio contador**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\explicaciones\2026-05-21-criterio-contador-nc-parcial-y-nuevo-agente.md`.
-- **Mensaje round 3 al contador**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\operations\2026-05-21-mensaje-contador-fc1-3-round-3.md`.
-- **ADR-002 base (cancelacion/refund)**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\adr\ADR-002-cancellation-refund.md`.
-- **Plan FC1.2 v3 (referencia estilo + patrones bridge/feature-flag)**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\plan-tactico-fc1-2.md`.
-- **Entidades inspeccionadas** en `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Domain\Entities\`: `BookingCancellation.cs`, `BookingCancellationStatus.cs`, `Invoice.cs`, `InvoiceItem.cs`, `Supplier.cs`, `FiscalSnapshot.cs`, `HotelBooking.cs`, `OperationalFinanceSettings.cs`, `ApprovalRequest.cs`, `ApprovalRequestType.cs`.
-- **Service vigente BC**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi.Infrastructure\Services\BookingCancellationService.cs` (lineas 1-100 leidas).
-- **Controller approvals**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\src\TravelApi\Controllers\ApprovalRequestsController.cs` (verificado: acepta cualquier RequestType).
+- **Mensaje round 3 al contador** (con F1..F4): `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\operations\2026-05-21-mensaje-contador-fc1-3-round-3.md`.
+- **ADR-002 base**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\adr\ADR-002-cancellation-refund.md`.
+- **Plan FC1.2 v3**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\plan-tactico-fc1-2.md`.
+- **Entidades inspeccionadas** en `src/TravelApi.Domain/Entities/`: `BookingCancellation.cs`, `BookingCancellationStatus.cs`, `Invoice.cs`, `InvoiceItem.cs`, `Supplier.cs`, `FiscalSnapshot.cs`, `HotelBooking.cs`, `OperationalFinanceSettings.cs`, `ApprovalRequest.cs`, `ApprovalRequestType.cs`, `ServicioReserva.cs`, `PassengerServiceAssignment.cs`, `AuditLog.cs`.
+- **Service vigente BC**: `src/TravelApi.Infrastructure/Services/BookingCancellationService.cs` (lineas 250-310 + 970-987 verificadas como patron real de override y kill switch).
+- **AppDbContext** (xmin + Owned VO + interceptor): `src/TravelApi.Infrastructure/Persistence/AppDbContext.cs` (lineas 1140-1210).
+- **Migracion FC1** (patron Postgres): `src/TravelApi.Infrastructure/Persistence/Migrations/App/20260514030142_FC1_AddCancellationModule.cs`.
+- **Interceptor**: `src/TravelApi.Infrastructure/Persistence/BusinessInvariantInterceptor.cs` (linea 36: `PgCheckViolationSqlState = "23514"`).
+- **Controller approvals**: `src/TravelApi/Controllers/ApprovalRequestsController.cs`.
 
 ---
 
-**Fin del ADR-009.** Listo para `software-architect-reviewer` round 1.
+**Fin del ADR-009 round 2.** Cierra 13 hallazgos reviewer + 6 decisiones Gaston + rewrite Postgres total. Listo para `software-architect-reviewer` round 2.
