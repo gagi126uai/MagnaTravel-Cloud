@@ -844,4 +844,539 @@ Sí, para definir los 13 criterios de aceptación de §13 como tests E2E sobre `
 
 ---
 
-**Fin del plan Fase 1 FC1.3.** Listo para que Gaston revise y luego pase a `software-architect` con este documento como input.
+**Fin del plan funcional Fase 1 FC1.3.** Plan tactico tecnico abajo.
+
+---
+---
+
+# Plan tactico tecnico FC1.3 Fase 1 (software-architect)
+
+**Fecha**: 2026-05-21
+**Autor**: `software-architect` agent (round 1, basado en plan funcional arriba)
+**Status**: Propuesta para `software-architect-reviewer`
+**Sigue formato del plan FC1.2 v3** (sin estimaciones de horas — regla operativa de Gaston).
+**ADR asociado**: [ADR-009 Partial Credit Note](adr/ADR-009-partial-credit-note.md).
+
+> **IMPORTANTE — stack es SQL Server**: el plan funcional menciona Postgres por reflejo del lenguaje ADR-002 (cambio de stack post-FC1.1). Las constraints/CHECKs aca son T-SQL.
+
+---
+
+## T1. Resumen del diseno tecnico (cierre §17.1 del plan funcional)
+
+Las 8 decisiones que pidio el agente integrado (§17.1) se resuelven asi:
+
+| # | Item §17.1 plan funcional | Decision architect | Justificacion corta (detalle ADR-009 §2) |
+|---|---|---|---|
+| 1 | Bounded context y naming | `FiscalLiquidation` como **Owned VO** de `BookingCancellation`, no entidad propia | Cohesion + simetria con `FiscalSnapshot` + sin queries independientes. ADR-009 §2.4. |
+| 2 | Persistencia `Supplier.PenaltyPolicyJson` | **JSON column `nvarchar(max)`**, no tabla normalizada | Acceso baja frecuencia + schema evoluciona + override manual vendedor + convencion repo. ADR-009 §2.5. |
+| 3 | Servicio nuevo vs metodo en `BookingCancellationService` | **`IFiscalLiquidationCalculator` separado** (puro, sin DbContext) | Testeable aislado (matriz 8 = unit tests) + reuse para UI preview. ADR-009 §2.6. |
+| 4 | Mapping al `ApprovalRequest` existente | **`Metadata` JSON con liquidacion + edicion admin** + FK `BC.PartialCreditNoteApprovalRequestId` | Convencion B1.15 existente + apend-only edits + cross-reference auditable. ADR-009 §2.7. |
+| 5 | Plan de migraciones EF | **5 migraciones** (no 8) agrupadas por aggregate, todas aditivas | M1 Supplier, M2 InvoiceItem, M3 Settings, M4 BC+FiscalLiquidation+FiscalSnapshot, M5 HotelBooking. ADR-009 §5.1. |
+| 6 | CHECK SQL INV-FC1.3-005 | **T-SQL con tolerancia 0.01** (no Postgres) + chk_nonneg + chk_manualreview_approvalref | 3 CHECKs en M4. ADR-009 §2.3.5. |
+| 7 | Feature flag | **Nuevo `EnablePartialCreditNotes`** separado de `EnableNewCancellationFlow` | Composabilidad + rollback granular. ADR-009 §2.10. |
+| 8 | Sub-fases ejecutables | **FC1.3.0 a FC1.3.7** (ver §T3 abajo) | Cada sub-fase = atomica, con dependencias explicitas, sin horas. |
+
+---
+
+## T2. Orden de implementacion + dependencias
+
+```
+FC1.3.0  Migraciones EF (M1..M5) + enums + settings
+         (Supplier.InvoicingMode/PenaltyPolicyJson, InvoiceItem.IsRefundable/
+          ItemCategory/SourceServicioReservaId, OperationalFinanceSettings 7
+          nuevos, BC.FiscalLiquidation OwnedVO + FiscalSnapshot 2 nuevos +
+          BC.PartialCreditNoteApprovalRequestId FK + ManualReviewer*,
+          HotelBooking.NonRefundableConceptsJson, BookingCancellationStatus
+          8..11, ApprovalRequestType.PartialCreditNoteApproval=11,
+          CHECK constraints SQL)                                          ─┐
+                                                                           │
+FC1.3.1  IFiscalLiquidationCalculator interface + impl + unit tests       │ depende M1..M5
+         (logica matriz 8, sin DbContext, ~20 unit tests)                 │ (necesita enums)
+                                                                ──────────┤
+                                                                           │
+FC1.3.2  IPartialCreditNoteApprovalBridge interface + impl                │ depende calculator
+         (callback del ApprovalService al BC service post-approve/reject) │ (no estricto, pero
+         + DI wiring en Program.cs + comentario explicativo               │  ordena diseno)
+                                                                ──────────┤
+                                                                           │
+FC1.3.3  BookingCancellationService extension:                            │ depende 1.3.1 + 1.3.2
+           - ConfirmAsync: leer flag, llamar calculator, decidir flujo    │
+             (FC1.2 path vs FC1.3 manual review path)                     │
+           - SubmitForReviewAsync (interno, llamado por Confirm)           │
+           - EditLiquidationAsync (G3 self-loop)                           │
+           - ApproveLiquidationAsync (callback bridge handler)             │
+           - RejectLiquidationAsync (callback bridge handler)              │
+           - EmitCreditNoteAsync Fase 1 (PartialOnOriginal -> avanza,     │
+             TotalPlusNewInvoice -> queda parado con log warning)          │
+           - ResetToDraftAsync (post-reject)                               │
+           - Validacion INV-FC1.3-001..010 inline                          │
+         + integration tests (~20 tests)                          ────────┤
+                                                                           │
+FC1.3.4  ApprovalRequestService callbacks:                                │ depende 1.3.3
+           - En ApproveAsync, si tipo == PartialCreditNoteApproval,       │
+             invocar bridge.OnApprovedAsync(approval, ct)                  │
+           - En RejectAsync, idem -> bridge.OnRejectedAsync                │
+         + integration tests (~5 tests)                            ───────┤
+                                                                           │
+FC1.3.5  Endpoint nuevo: POST /api/cancellations/{publicId}/edit-         │ depende 1.3.3
+         liquidation (G3 admin edit). Permiso reusa cobranzas.invoice_     │
+         annul. Controller delgado, llama service.                          │
+         + controller tests (~3 tests)                              ──────┤
+                                                                           │
+FC1.3.6  Default seeding ApprovalRequestPolicy para                       │ depende M3
+         PartialCreditNoteApproval (expiration days = setting default)    │
+         + alerta job nocturno BCs en ManualReviewPending > N dias        │
+           (mismo patron ArcaAnnulmentReconciliationJob FC1.2)             │
+                                                                ──────────┤
+                                                                           │
+FC1.3.7  E2E tests (~2 happy paths + edge case multiservicio)              │ depende todo
+         + doc explicativo docs/explicaciones/2026-05-XX-fc1-3-          │
+           fase1-implementacion.md                                          │
+         + actualizar memoria MEMORY.md con cierre Fase 1            ─────┘
+```
+
+---
+
+## T3. Sub-fases detalladas con criterios de aceptacion
+
+### FC1.3.0 — Migraciones EF + enums + settings
+
+**Tareas atomicas**:
+
+1. Crear archivo `src/TravelApi.Domain/Entities/SupplierInvoicingMode.cs` (enum). Agregar 2 props a `Supplier.cs`.
+2. Crear archivos `src/TravelApi.Domain/Entities/InvoiceItemCategory.cs`. Agregar 3 props a `InvoiceItem.cs` (incluyendo navigation a `ServicioReserva`).
+3. Crear archivos `src/TravelApi.Domain/Entities/FiscalLiquidation.cs`, `PartialCreditNoteCase.cs`, `CreditNoteKind.cs`, `ReviewRequiredReason.cs` (bitflag).
+4. Extender `BookingCancellationStatus.cs` con valores 8..11.
+5. Extender `ApprovalRequestType.cs` con `PartialCreditNoteApproval=11`.
+6. Agregar a `BookingCancellation.cs`: `FiscalLiquidation` (owned VO), `PartialCreditNoteApprovalRequestId` (FK), `ManualReviewer*` fields.
+7. Agregar a `FiscalSnapshot.cs`: `InvoicingModeAtEvent`, `OriginalInvoiceTypeAtEvent`.
+8. Agregar a `OperationalFinanceSettings.cs`: 7 nuevos settings (defaults segun ADR-009 §2.3.4).
+9. Agregar a `HotelBooking.cs`: `NonRefundableConceptsJson`.
+10. Configurar `OwnsOne(bc => bc.FiscalLiquidation)` en `AppDbContext.OnModelCreating`. Verificar que las columnas owned generen prefijo `FiscalLiquidation_*`.
+11. Crear migracion EF unica `FC1_3_0_AddPartialCreditNoteSchema` que agrupa M1..M5 (no necesitan ser migraciones separadas — agrupar reduce ruido en `__EFMigrationsHistory`).
+12. Agregar CHECK constraints T-SQL via `migrationBuilder.Sql(@"ALTER TABLE [BookingCancellations] ADD CONSTRAINT chk_BookingCancellations_fiscalliq_sum CHECK (...)")` para las 3 CHECKs de ADR-009 §2.3.5.
+13. Verificar que el CHECK actual de `BookingCancellationStatus` (si existe en BD por FC1.2) incluye valores 8..11. Si no, extender.
+
+**Criterio de aceptacion FC1.3.0**:
+
+- `dotnet build` verde.
+- Migracion compila y aplica contra BD vacia + contra dump de staging sin errores.
+- Rollback (`dotnet ef database update <PrevMigration>`) revierte sin errores ni perdida.
+- BCs preexistentes FC1.2 quedan con `FiscalLiquidation = null` post-migracion (verificable SQL).
+- Unit test: crear un BC sin liquidacion, persistir, recuperar -> `FiscalLiquidation` es null. Persistir con liquidacion -> recuperar trae las columnas correctas.
+- Smoke test SQL: intentar insertar BC con `FiscalLiquidation_OriginalInvoiceAmount=100` + suma componentes != 100 + tolerancia > 0.01 -> CHECK violado, INSERT rechaza.
+
+**Dependencias**: ninguna.
+
+---
+
+### FC1.3.1 — `IFiscalLiquidationCalculator` + unit tests
+
+**Tareas atomicas**:
+
+1. Crear `src/TravelApi.Application/Interfaces/IFiscalLiquidationCalculator.cs` con la interface + records `FiscalLiquidationInput` + `FiscalLiquidationResult` (ADR-009 §2.6).
+2. Crear `src/TravelApi.Infrastructure/Services/FiscalLiquidationCalculator.cs` con la logica (matriz 8, STEP 1..7 de ADR-009 §2.9). Sin DbContext, sin async, sin IO.
+3. Registrar `services.AddScoped<IFiscalLiquidationCalculator, FiscalLiquidationCalculator>()` en `Program.cs`.
+4. Escribir `src/TravelApi.Tests/Unit/FiscalLiquidationCalculatorTests.cs` con los ~20 tests de ADR-009 §6.1.
+
+**Criterio de aceptacion FC1.3.1**:
+
+- Los 20 unit tests pasan en < 1 segundo total.
+- Cobertura del calculator >= 95% (mide con `coverlet` si esta configurado).
+- Smoke test: instanciar calculator manualmente, ejecutar 100 inputs, latencia < 10ms p99.
+
+**Dependencias**: FC1.3.0 (enums + settings).
+
+---
+
+### FC1.3.2 — `IPartialCreditNoteApprovalBridge` + DI wiring
+
+**Tareas atomicas**:
+
+1. Crear `src/TravelApi.Application/Interfaces/IPartialCreditNoteApprovalBridge.cs`:
+   ```csharp
+   public interface IPartialCreditNoteApprovalBridge
+   {
+       /// <summary>
+       /// Callback invocado por ApprovalRequestService.ApproveAsync cuando el tipo de
+       /// approval es PartialCreditNoteApproval. Transiciona el BC de
+       /// ManualReviewPending a ManualReviewApproved y dispara emitCreditNote.
+       /// </summary>
+       Task OnApprovedAsync(int approvalRequestId, string resolverUserId, string? resolverUserName, string? resolverNotes, CancellationToken ct);
+
+       /// <summary>
+       /// Callback simetrico para reject. Transiciona BC a ManualReviewRejected
+       /// y luego auto-reset a Drafted con audit.
+       /// </summary>
+       Task OnRejectedAsync(int approvalRequestId, string resolverUserId, string? resolverUserName, string? resolverNotes, CancellationToken ct);
+   }
+   ```
+2. `BookingCancellationService` implementa ambos: `IBookingCancellationService` (existente FC1.2), `IInvoiceAnnulmentBcBridge` (existente FC1.2), `IPartialCreditNoteApprovalBridge` (nuevo).
+3. Registrar en `Program.cs`:
+   ```csharp
+   services.AddScoped<BookingCancellationService>();
+   services.AddScoped<IBookingCancellationService>(sp => sp.GetRequiredService<BookingCancellationService>());
+   services.AddScoped<IInvoiceAnnulmentBcBridge>(sp => sp.GetRequiredService<BookingCancellationService>());
+   services.AddScoped<IPartialCreditNoteApprovalBridge>(sp => sp.GetRequiredService<BookingCancellationService>());
+   ```
+4. Agregar comentario explicativo (patron MR-V2-02 de FC1.2) en `Program.cs`.
+
+**Criterio de aceptacion FC1.3.2**:
+
+- `dotnet build` verde.
+- Smoke test `BuildServiceProvider_ResolvesAllServices` (heredado FC1.2.5a) sigue verde con las nuevas interfaces.
+- Unit test: resolver `IPartialCreditNoteApprovalBridge` y `IBookingCancellationService` desde IServiceProvider -> misma instancia (verifica scope).
+
+**Dependencias**: FC1.3.1 (calculator inyectado en BC service).
+
+---
+
+### FC1.3.3 — `BookingCancellationService` extension
+
+**Tareas atomicas**:
+
+1. Inyectar `IFiscalLiquidationCalculator` en constructor.
+2. Extender `IBookingCancellationService` con metodos publicos nuevos:
+   - `Task<BookingCancellationDto> EditLiquidationAsync(Guid publicId, EditLiquidationRequest req, string userId, string? userName, CancellationToken ct);`
+   - (los `Approve`/`Reject` se exponen via bridge interno, no como metodos publicos del service)
+3. Extender `ConfirmAsync`:
+   - Despues del CHECK actual de FC1.2 (factura activa, snapshot fiscal), leer `settings.EnablePartialCreditNotes`.
+   - Si flag off: continuar flujo FC1.2 (NC total — codigo actual).
+   - Si flag on:
+     - Validar `Reserva.Servicios` todos `ProductType=Hotel` (INV-FC1.3-007). Si no, rechazar (admite override admin con justificacion 50+ chars).
+     - Construir `FiscalLiquidationInput` (load Items de OriginatingInvoice + Supplier + InvoicingModeAtEvent del snapshot).
+     - Invocar `calculator.Calculate(input, settings)`.
+     - Persistir `BC.FiscalLiquidation = result.Liquidation`.
+     - Si `result.Liquidation.ReviewRequiredReason == ReviewRequiredReason.None`: BC -> `AwaitingFiscalConfirmation` (sigue FC1.2 path).
+     - Si `!= None`: BC -> `RequiresManualReview` -> llamar `SubmitForReviewAsync` (atomico misma tx).
+4. Implementar `SubmitForReviewAsync` (privado):
+   - Crear `ApprovalRequest` tipo `PartialCreditNoteApproval`, `EntityType="BookingCancellation"`, `EntityId=bc.Id`, `Metadata=JsonSerializer.Serialize(...liquidation...)`, expiration default.
+   - Persistir `BC.PartialCreditNoteApprovalRequestId`.
+   - BC -> `ManualReviewPending`.
+   - Audit `BookingCancellationSubmittedForReview` con metadata del case.
+5. Implementar `EditLiquidationAsync` (G3):
+   - Validar BC.Status == ManualReviewPending.
+   - Validar admin != vendedor (INV-FC1.3-004) — el caller pasa userId, comparar con `bc.DraftedByUserId`.
+   - Validar comentario min 20 chars.
+   - Reconstruir `FiscalLiquidationInput` con overrides del request (penalty + non-refundable + checkbox manuales).
+   - Llamar calculator -> obtener nueva liquidacion.
+   - Validar INV-FC1.3-005 + INV-FC1.3-006 (suma componentes + items no refundable matching).
+   - Apend a `approval.Metadata.edits[]` (deserializar, push entry, serializar).
+   - Actualizar BC.FiscalLiquidation.
+   - Audit `BookingCancellationLiquidationEdited`.
+   - BC se queda en ManualReviewPending (self-loop).
+6. Implementar `IPartialCreditNoteApprovalBridge.OnApprovedAsync`:
+   - Load BC by `PartialCreditNoteApprovalRequestId = approvalId`.
+   - Validar BC.Status == ManualReviewPending (idempotente: si ya esta Approved, log warning + return).
+   - Validar resolverUserId != bc.DraftedByUserId (INV-FC1.3-004).
+   - Validar resolverNotes >= 20 chars (o 100 si `bc.FiscalLiquidation.FiscalAmountToCredit > PartialNcAccountingReviewThreshold` per G5) + setear `metadata.accountingReviewRequired = true` si aplica.
+   - BC -> ManualReviewApproved + setear `ManualReviewer*` fields.
+   - Audit `BookingCancellationManualReviewApproved`.
+   - Invocar `EmitCreditNoteAsync` automatico inmediato:
+     - Si `CreditNoteKind == PartialOnOriginal`: BC -> AwaitingFiscalConfirmation. **Fase 1**: sigue path FC1.2 (NC total real al ARCA). Log warning explicito "Fase 1: NC parcial calculada pero AfipService emite NC total. Fase 2 emite parcial real."
+     - Si `CreditNoteKind == TotalPlusNewInvoice`: BC **se queda en ManualReviewApproved**. Log warning "Fase 1: caso TotalPlusNewInvoice no avanza, esperar Fase 2 plumbing AfipService."
+7. Implementar `IPartialCreditNoteApprovalBridge.OnRejectedAsync`:
+   - Load BC por FK.
+   - Idempotente.
+   - Validar resolverNotes >= 20 chars.
+   - BC -> ManualReviewRejected.
+   - Auto-reset inmediato:
+     - BC.FiscalLiquidation = null.
+     - BC.PartialCreditNoteApprovalRequestId = null.
+     - BC.Status = Drafted.
+   - Audit `BookingCancellationManualReviewRejected`.
+   - (Approval queda en Rejected, historico.)
+8. Validacion `INV-FC1.3-007` (servicios mixtos) implementada en Confirm.
+9. Escribir 20 integration tests segun ADR-009 §6.2.
+
+**Criterio de aceptacion FC1.3.3**:
+
+- Los 20 integration tests pasan.
+- Manual review path no rompe FC1.2 (re-correr los 94 tests FC1.2 verdes existentes).
+- Test de bridge: aprobar approval con `ApprovalRequestService.ApproveAsync` directamente -> verificar callback se invoca y BC transiciona.
+
+**Dependencias**: FC1.3.1 (calculator) + FC1.3.2 (bridge interface registrada).
+
+---
+
+### FC1.3.4 — `ApprovalRequestService` callbacks
+
+**Tareas atomicas**:
+
+1. Inyectar `IPartialCreditNoteApprovalBridge` en `ApprovalRequestService` (opcional con `IEnumerable<...>` para no romper FC1.2 si no esta registrado — pero en FC1.3 se registra siempre).
+2. En `ApproveAsync`, post-SaveChanges del approval, si `approval.RequestType == PartialCreditNoteApproval`, invocar `bridge.OnApprovedAsync(approval.Id, ..., ct)`. Try/catch + log error si falla (sin rollback del approval — el bridge debe ser idempotente).
+3. Idem en `RejectAsync` invocando `OnRejectedAsync`.
+4. Escribir 5 integration tests:
+   - Approve PartialCreditNoteApproval -> BC transiciona.
+   - Reject -> BC transiciona.
+   - Approve mismo approval dos veces -> segunda llamada no-op (idempotencia).
+   - Approve con bridge throw -> approval queda Approved + log error visible.
+   - Approve approval de tipo OTRO (ej. InvoiceAnnulment) -> bridge NO se invoca.
+
+**Criterio de aceptacion FC1.3.4**:
+
+- 5 tests pasan.
+- Tests existentes de ApprovalRequestService (los 94 de FC1.2) siguen verdes.
+
+**Dependencias**: FC1.3.3.
+
+---
+
+### FC1.3.5 — Endpoint `edit-liquidation`
+
+**Tareas atomicas**:
+
+1. Crear DTO `EditLiquidationRequest` en `src/TravelApi.Application/DTOs/Cancellation/`.
+2. En `BookingCancellationsController` (existente), agregar:
+   ```csharp
+   [HttpPost("{publicId:guid}/edit-liquidation")]
+   [RequirePermission(Permissions.CobranzasInvoiceAnnul)]  // reusar permiso existente
+   public async Task<ActionResult<BookingCancellationDto>> EditLiquidation(Guid publicId, [FromBody] EditLiquidationRequest req, CancellationToken ct)
+   {
+       try { /* extract userId/userName, llamar service */ return Ok(result); }
+       catch (KeyNotFoundException) { return NotFound(); }
+       catch (BusinessInvariantViolationException ex) { return Conflict(new { code = ex.Code, message = ex.Message }); }
+       catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+   }
+   ```
+3. 3 controller tests: sin permiso -> 403, BC en estado invalido -> 409, happy path -> 200 con DTO actualizado.
+
+**Criterio de aceptacion FC1.3.5**:
+
+- 3 tests pasan.
+
+**Dependencias**: FC1.3.3.
+
+---
+
+### FC1.3.6 — Defaults seeding + job alerta
+
+**Tareas atomicas**:
+
+1. En el seeding inicial de `ApprovalRequestPolicy` (existente B1.15 Fase B'), agregar entrada para `PartialCreditNoteApproval` con `DefaultExpirationDays = OperationalFinanceSettings.ApprovalDefaultExpirationDays` o un override especifico (ej. 5 dias — menor que el default 7 para forzar atencion del admin sobre BCs sensibles).
+2. Crear `src/TravelApi.Infrastructure/Jobs/PartialCreditNoteReviewAlertJob.cs` siguiendo patron `ArcaAnnulmentReconciliationJob` (FC1.2):
+   ```csharp
+   public class PartialCreditNoteReviewAlertJob
+   {
+       public async Task RunAsync(CancellationToken ct)
+       {
+           var settings = await _settings.GetEntityAsync(ct);
+           var alertDays = settings.ManualReviewMaxDaysBeforeRg4540Alert;
+           var threshold = DateTime.UtcNow.AddDays(-alertDays);
+
+           var stale = await _db.BookingCancellations
+               .Where(bc => bc.Status == BookingCancellationStatus.ManualReviewPending
+                         && bc.ConfirmedWithClientAt < threshold)
+               .Include(bc => bc.OriginatingInvoice)
+               .ToListAsync(ct);
+
+           foreach (var bc in stale) {
+               _logger.LogWarning("BC {PublicId} en ManualReviewPending desde {Date} — riesgo RG 4540", bc.PublicId, bc.ConfirmedWithClientAt);
+               await _notificationService.NotifyAdminsAsync($"BC {bc.PublicId} requiere revision (NC parcial pendiente)", ct);
+           }
+       }
+   }
+   ```
+3. En `Program.cs`, registrar el job recurrente diario:
+   ```csharp
+   RecurringJob.AddOrUpdate<PartialCreditNoteReviewAlertJob>(
+       "PartialCreditNoteReviewAlert",
+       job => job.RunAsync(CancellationToken.None),
+       "0 8 * * *");  // 8am UTC diario
+   ```
+
+**Criterio de aceptacion FC1.3.6**:
+
+- Test integration: crear BC en ManualReviewPending con `ConfirmedWithClientAt = NOW - 11 dias`, correr job manual -> log warning emitido + notification mock invocada.
+- Test integration: BC con `ConfirmedWithClientAt = NOW - 5 dias` -> job no alerta.
+
+**Dependencias**: FC1.3.3 (BC service genera ManualReviewPending).
+
+---
+
+### FC1.3.7 — E2E + doc explicativo + memoria
+
+**Tareas atomicas**:
+
+1. E2E test happy path Case 8 Factura A: ver ADR-009 §6.3.
+2. E2E test Case 4 con reject + re-draft.
+3. E2E test rechazo INV-FC1.3-007 (reserva mixta Hotel + Vuelo).
+4. Crear `docs/explicaciones/2026-05-XX-fc1-3-fase1-implementacion.md` nivel trainee con:
+   - Que cambio (NC parcial vs total).
+   - Ejemplo pelotudo (kiosco fiambreria).
+   - Como usar (vendedor confirma -> sistema decide auto vs manual -> admin aprueba).
+   - Como apagar (flag `EnablePartialCreditNotes = false`).
+   - Que NO hace Fase 1 (NC parcial real al ARCA — Fase 2).
+5. Actualizar `MEMORY.md` con cierre Fase 1 + apuntar a Fase 2.
+
+**Criterio de aceptacion FC1.3.7**:
+
+- 3 tests E2E pasan.
+- Doc explicativo revisado por Gaston (no por reviewer agent — es doc humana).
+- Memoria proxima sesion actualizada.
+
+**Dependencias**: FC1.3.3, FC1.3.4, FC1.3.5, FC1.3.6.
+
+---
+
+## T4. Archivos a tocar / crear (con rationale)
+
+### T4.1 Archivos NUEVOS
+
+| Archivo | Sub-fase | Rationale |
+|---|---|---|
+| `src/TravelApi.Domain/Entities/SupplierInvoicingMode.cs` | FC1.3.0 | Enum nuevo. Default `TotalToCustomer`. |
+| `src/TravelApi.Domain/Entities/InvoiceItemCategory.cs` | FC1.3.0 | Enum nuevo para defaults G1 + alertas UI. |
+| `src/TravelApi.Domain/Entities/FiscalLiquidation.cs` | FC1.3.0 | Owned VO con liquidacion fiscal calculada (ADR-009 §2.3.1). |
+| `src/TravelApi.Domain/Entities/PartialCreditNoteCase.cs` | FC1.3.0 | Enum case 1..8 matriz contador. |
+| `src/TravelApi.Domain/Entities/CreditNoteKind.cs` | FC1.3.0 | Enum PartialOnOriginal vs TotalPlusNewInvoice. |
+| `src/TravelApi.Domain/Entities/ReviewRequiredReason.cs` | FC1.3.0 | Bitflag disparadores manual review. |
+| `src/TravelApi.Infrastructure/Migrations/{timestamp}_FC1_3_0_AddPartialCreditNoteSchema.cs` | FC1.3.0 | Migracion EF unica con M1..M5 + CHECK constraints. |
+| `src/TravelApi.Application/Interfaces/IFiscalLiquidationCalculator.cs` | FC1.3.1 | Interface puro service clasificador. |
+| `src/TravelApi.Infrastructure/Services/FiscalLiquidationCalculator.cs` | FC1.3.1 | Impl matriz 8 + STEP 1..7. |
+| `src/TravelApi.Tests/Unit/FiscalLiquidationCalculatorTests.cs` | FC1.3.1 | 20 unit tests sin DbContext. |
+| `src/TravelApi.Application/Interfaces/IPartialCreditNoteApprovalBridge.cs` | FC1.3.2 | Bridge callback ApprovalService -> BC service. |
+| `src/TravelApi.Application/DTOs/Cancellation/EditLiquidationRequest.cs` | FC1.3.5 | DTO endpoint G3. |
+| `src/TravelApi.Application/DTOs/Cancellation/FiscalLiquidationDto.cs` | FC1.3.0 | DTO para exponer en `BookingCancellationDto` al frontend. |
+| `src/TravelApi.Infrastructure/Jobs/PartialCreditNoteReviewAlertJob.cs` | FC1.3.6 | Job nocturno alerta RG 4540. |
+| `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteFlowTests.cs` | FC1.3.3 | 20 integration tests. |
+| `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteApprovalBridgeTests.cs` | FC1.3.4 | 5 tests bridge. |
+| `src/TravelApi.Tests/Cancellation/Integration/EditLiquidationEndpointTests.cs` | FC1.3.5 | 3 controller tests. |
+| `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteE2ETests.cs` | FC1.3.7 | 3 E2E. |
+| `docs/explicaciones/2026-05-XX-fc1-3-fase1-implementacion.md` | FC1.3.7 | Doc trainee post-cierre. |
+
+### T4.2 Archivos MODIFICADOS
+
+| Archivo | Sub-fase | Que cambia |
+|---|---|---|
+| `src/TravelApi.Domain/Entities/Supplier.cs` | FC1.3.0 | + `InvoicingMode`, `PenaltyPolicyJson`. |
+| `src/TravelApi.Domain/Entities/InvoiceItem.cs` | FC1.3.0 | + `IsRefundable`, `ItemCategory`, `SourceServicioReservaId` + navigation. |
+| `src/TravelApi.Domain/Entities/HotelBooking.cs` | FC1.3.0 | + `NonRefundableConceptsJson`. |
+| `src/TravelApi.Domain/Entities/FiscalSnapshot.cs` | FC1.3.0 | + `InvoicingModeAtEvent`, `OriginalInvoiceTypeAtEvent`. |
+| `src/TravelApi.Domain/Entities/BookingCancellation.cs` | FC1.3.0 | + `FiscalLiquidation` (owned), `PartialCreditNoteApprovalRequestId` (FK), `ManualReviewer*` fields. |
+| `src/TravelApi.Domain/Entities/BookingCancellationStatus.cs` | FC1.3.0 | + valores 8..11 con comentarios. |
+| `src/TravelApi.Domain/Entities/ApprovalRequestType.cs` | FC1.3.0 | + `PartialCreditNoteApproval = 11`. |
+| `src/TravelApi.Domain/Entities/OperationalFinanceSettings.cs` | FC1.3.0 | + 7 settings nuevos. |
+| `src/TravelApi.Infrastructure/Persistence/AppDbContext.cs` | FC1.3.0 | + `OwnsOne(bc => bc.FiscalLiquidation)` config + index + FK config. |
+| `src/TravelApi.Application/Interfaces/IBookingCancellationService.cs` | FC1.3.3 | + metodo `EditLiquidationAsync`. |
+| `src/TravelApi.Infrastructure/Services/BookingCancellationService.cs` | FC1.3.3 | Implementa `IPartialCreditNoteApprovalBridge`. Extiende `ConfirmAsync`. Agrega `EditLiquidationAsync`, `SubmitForReviewAsync` (privado), handlers de bridge. |
+| `src/TravelApi.Infrastructure/Services/ApprovalRequestService.cs` | FC1.3.4 | Inyecta bridge. En Approve/Reject, si tipo PartialCreditNoteApproval, invoca callback. |
+| `src/TravelApi/Controllers/BookingCancellationsController.cs` | FC1.3.5 | + endpoint `POST /{publicId}/edit-liquidation`. |
+| `src/TravelApi/Program.cs` | FC1.3.2, FC1.3.6 | + DI registration de calculator + bridge + comentario explicativo + recurring job. |
+| `src/TravelApi.Application/DTOs/Cancellation/BookingCancellationDto.cs` | FC1.3.0 | + campo `FiscalLiquidation` (FiscalLiquidationDto) nullable. |
+| `src/TravelApi.Application/Constants/AuditActions.cs` | FC1.3.3 | + `BookingCancellationSubmittedForReview`, `BookingCancellationLiquidationEdited`, `BookingCancellationManualReviewApproved`, `BookingCancellationManualReviewRejected`. |
+
+### T4.3 Archivos NO TOCADOS (Fase 1)
+
+- `src/TravelApi.Infrastructure/Services/AfipService.cs`: **NO se toca Fase 1**. Sigue emitiendo NC total por default. Fase 2 implementa NC parcial real (prorrateo IVA + `<ImpTotal>` parcial).
+- `src/TravelApi.Infrastructure/Services/InvoiceService.cs`: NO toca Fase 1 (la integracion FC1.2 con `IInvoiceAnnulmentBcBridge` ya cubre el callback ARCA). FC1.3 reusa esa misma cadena.
+- Frontend: NO toca Fase 1. UI modal admin para revisar liquidacion + flujo vendedor con `IsRefundable` checkbox = Fase 3.
+
+---
+
+## T5. Diagrama de la maquina de estados + interaccion ApprovalRequest
+
+(Ver ADR-009 §2.8.1 + §2.8.2 — los diagramas estan ahi para no duplicar.)
+
+Resumen visual condensado:
+
+```
+Drafted (0)
+   │ confirmCancellation()
+   │ + calculator.Calculate()
+   │
+   ├─[flag OFF | reason=None]→ AwaitingFiscalConfirmation (1) → FC1.2 vigente
+   │
+   └─[flag ON | reason != None]→ RequiresManualReview (8)
+                                    │ submitForReview() (auto)
+                                    │ + create ApprovalRequest type 11
+                                    │ + Metadata JSON liquidacion
+                                    ↓
+                              ManualReviewPending (9) ←─┐ editLiquidation()
+                                    │                  │ (self-loop, audit)
+                                    │                  │
+                                    ├─[approve]→ ManualReviewApproved (10)
+                                    │             │
+                                    │             │ emitCreditNote() auto
+                                    │             │   PartialOnOriginal → AwaitingFiscalConfirmation (Fase 1: NC total via FC1.2)
+                                    │             │   TotalPlusNewInvoice → stays here (Fase 2 termina)
+                                    │             ↓
+                                    │     AwaitingFiscalConfirmation (1)
+                                    │
+                                    └─[reject]→ ManualReviewRejected (11)
+                                                  │ auto resetToDraft()
+                                                  ↓
+                                                Drafted (0)
+```
+
+---
+
+## T6. Feature flag + rollback estrategia
+
+| Flag | Default prod | Que hace si OFF | Que hace si ON |
+|---|---|---|---|
+| `EnableNewCancellationFlow` (FC1.2 existente) | `false` (hasta signoff OPS-FISCAL-001) | Todos los services FC1.2 rechazan operaciones | FC1.2 activo |
+| `EnablePartialCreditNotes` (FC1.3 nuevo) | `false` | BC service ignora calculator + flujo FC1.2 vigente sin cambios | Calculator corre + estados manual review se pueden activar |
+
+Combinaciones validas:
+
+| FC1.2 | FC1.3 | Resultado |
+|---|---|---|
+| OFF | OFF | Sistema legacy (pre-FC1.2). Comportamiento original. |
+| ON | OFF | FC1.2 vigente sin NC parcial (estado actual pos-merge). |
+| ON | ON | FC1.3 activo, NC parcial calculada cuando aplica. |
+| OFF | ON | **INVALIDA** — sin FC1.2, FC1.3 no tiene base. Validation en startup: si `EnablePartialCreditNotes=true && !EnableNewCancellationFlow`, log error + setear FC1.3=false con warning. |
+
+**Rollback primario**: apagar `EnablePartialCreditNotes` deja FC1.2 funcional. BCs en estados 8..11 quedan en limbo — script de migracion manual (mover a Drafted o Aborted segun audit) antes de reverse de migracion.
+
+**Rollback total**: reverse `FC1_3_0_AddPartialCreditNoteSchema` -> verifica BCs en estados 8..11 = 0 antes (script bloquea reverse si hay > 0).
+
+---
+
+## T7. Decisiones rechazadas con justificacion
+
+| Alternativa rechazada | Por que NO | A que se prefirio |
+|---|---|---|
+| `FiscalLiquidation` como entidad propia con tabla nueva | Sin caso de uso de queries independientes. Owned VO simetria + cohesion. | Owned VO en `BookingCancellations`. |
+| Tabla `SupplierPenaltyTier` normalizada | Baja frecuencia + override manual + schema evoluciona. | `nvarchar(max)` JSON. |
+| Logica clasificador dentro de `ConfirmAsync` | Metodo ya largo, testeo obliga TestContainers para matriz 8. | Service aislado `IFiscalLiquidationCalculator`. |
+| Tabla nueva `PartialCreditNoteApprovalDetails` para edits | Convencion `ApprovalRequest.Metadata` ya tipada JSON. Tabla overkill. | `Metadata` JSON con array `edits[]`. |
+| Bandeja UI nueva separada | Decision G2 cerrada Gaston: reusar `ApprovalRequestsController`. | Filtro por `RequestType` en endpoint existente. |
+| Reusar `EnableNewCancellationFlow` para FC1.3 | Acopla rollback. | Flag nuevo `EnablePartialCreditNotes`. |
+| Sin enum `CreditNoteKind`, inferir | Casos 4/7 vs 2/6 tienen mismo monto, no se puede inferir. | Enum explicito. |
+| ND complementaria para cliente RI | G4 cerrada Gaston: NO. | Sin cambios en Invoice ND. |
+| 8 migraciones separadas (segun sugerencia §17.1 plan funcional) | Genera ruido en `__EFMigrationsHistory` sin beneficio. Todas son aditivas + columnas nullable. | 1 migracion unica `FC1_3_0_AddPartialCreditNoteSchema` agrupada. |
+| Persistir matriz 8 en BD como tabla `PartialCreditNoteCaseRule` | YAGNI. Reglas son codigo. | Logica hardcoded en calculator + tests unit. |
+| Implementar AfipService NC parcial real en Fase 1 | Bigger blast radius + bloqueo por F1 (prorrateo IVA). | Diferir a Fase 2. Fase 1 marca BC + log warning. |
+| Job de reconciliacion completo en Fase 1 (analogamente a `ArcaAnnulmentReconciliationJob`) | YAGNI Fase 1 — el caso es raro (admin no aprueba). Solo alerta. | Job de alerta simple FC1.3.6. Reconciliation job propio queda en deuda Fase 2. |
+| Permiso nuevo `cancellations.partial_nc_approve` | G5 cerrada: sin rol/permiso nuevo Fase 1. Admin existente con comment reforzado. | Reusar `approvals.review`. |
+| Permiso nuevo `cancellations.partial_nc_edit_liquidation` | Idem G5. | Reusar `cobranzas.invoice_annul`. |
+| Hipotesis "penalidad en `CommissionOnly` reduce NC al cliente" | Sin confirmacion contador (F1 round 3 pregunta 2). Hipotesis Fase 1 mas conservadora. | Hipotesis "NO reduce". Cambio aislado si contador rectifica. |
+
+---
+
+## T8. Open questions del architect (para reviewer)
+
+1. **`FiscalLiquidation` como Owned VO**: el reviewer puede preferir entidad propia para flexibilidad futura (historial de versiones). Discutible.
+2. **`Supplier.PenaltyPolicyJson` JSON**: el reviewer puede preferir tabla normalizada upfront. Discutible.
+3. **Heuristicas caso 4 (factura confusa)**: 3 reglas + checkbox manual + regex configurable. Reviewer puede pedir suprimir heuristicas y dejar solo checkbox manual.
+4. **`EmitCreditNoteAsync` Fase 1 para `TotalPlusNewInvoice`**: BC se queda en `ManualReviewApproved` indefinidamente con warning. Alternativa: rechazar Confirm si el clasificador sugiere `TotalPlusNewInvoice` y flag FC1.3 esta on pero plumbing Fase 2 no esta. Mas estricto pero rompe casos legitimos hoy.
+5. **Job de reconciliacion completo vs solo alerta**: Fase 1 solo emite alerta diaria. Reviewer puede pedir auto-recovery cuando ApprovalRequest expira sin accion (mover BC a Aborted con audit). Yo prefiero NO automatizar eso porque pierde plata de cliente sin intervencion.
+
+---
+
+## T9. Trazabilidad
+
+- **ADR asociado**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\adr\ADR-009-partial-credit-note.md`.
+- **Plan funcional FC1.3**: arriba (§1..§20 de este documento).
+- **Plan FC1.2 v3 (referencia patrones bridge + flag + sub-fases)**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\plan-tactico-fc1-2.md`.
+- **ADR-002 base (cancelacion/refund)**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\adr\ADR-002-cancellation-refund.md`.
+- **Criterio contador**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\explicaciones\2026-05-21-criterio-contador-nc-parcial-y-nuevo-agente.md`.
+- **Mensaje round 3**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\operations\2026-05-21-mensaje-contador-fc1-3-round-3.md`.
+- **Convencion naming `Permissions.CobranzasInvoiceAnnul`**: `src\TravelApi.Authorization\Permissions.cs` (verificado existe FC1.2).
+- **Patron bridge `IInvoiceAnnulmentBcBridge`**: `src\TravelApi.Application\Interfaces\IInvoiceAnnulmentBcBridge.cs` + `src\TravelApi.Infrastructure\Services\BookingCancellationService.cs:42` (implementa ambas).
+- **Patron CHECK constraints**: convencion `chk_<tabla>_<concepto>` heredada ADR-002 §2.3.3 (adaptada a T-SQL en ADR-009 §2.3.5).
+
+---
+
+**Fin del plan tactico tecnico Fase 1 FC1.3.** Listo para `software-architect-reviewer` round 1.
