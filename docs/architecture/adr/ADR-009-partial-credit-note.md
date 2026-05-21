@@ -1,7 +1,7 @@
 # ADR-009 — Nota de Credito parcial fiscal para cancelaciones Hotel (FC1.3 Fase 1)
 
-- **Status**: Proposed (Round 2 - corrige Round 1 con 13 hallazgos del reviewer + 6 decisiones Gaston GR-001..GR-006).
-- **Date**: 2026-05-21 (round 1) / 2026-05-21 (round 2).
+- **Status**: Proposed (Round 3 — cierra 4 hallazgos round 2 N-001..N-004 + responde 5 open questions Q1..Q5 + cosmetica menor N-005..N-008).
+- **Date**: 2026-05-21 (round 1) / 2026-05-21 (round 2) / 2026-05-21 (round 3).
 - **Author(s)**: software-architect agent.
 - **Supersedes**:
   - Round 1 de este mismo ADR (sintaxis SQL Server por error de brief de la sesion principal; persistencia de `FiscalLiquidation` Fase 1; auto-procesamiento de `TotalPlusNewInvoice`; hipotesis CommissionOnly + penalty no reduce; uso de `MutationContext`).
@@ -470,10 +470,75 @@ public class OperationalFinanceSettings
     /// admin y vendedor = admin. Requiere comentario reforzado 100+ chars + flag audit
     /// SelfApprovedDueToSingleAdmin=true en Metadata. Default false (4-eyes estricto).
     /// Pensado para agencias chicas (1 sola persona admin). NO afecta cuando hay 2+ admins.
+    /// Definicion precisa de "1 solo admin": ver N-002 §2.3.4 abajo.
+    /// **Q5 reviewer round 2**: setting GLOBAL Fase 1 (MagnaTravel es single-tenant).
+    /// Si MagnaTravel evoluciona a multi-tenant, revisitar: cada agencia podria querer
+    /// politica distinta. Anotar en backlog.
     /// </summary>
     public bool Allow4EyesBypassWhenSingleAdmin { get; set; } = false;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 + GR-005, round 3): cooldown configurable del job de reconciliacion
+    /// bridge (FC1.3.6b). Default 30. **Q2 reviewer round 2**: setting en lugar de hardcode.
+    /// Tests cubren tanto valores bajos (10) como altos (120) para validar comportamiento.
+    /// </summary>
+    public int BridgeReconciliationStalenessMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// FC1.3 (ADR-009 round 3, N-003): umbral de reintentos del job de reconciliacion
+    /// bridge antes de marcar el approval como `ManualInterventionRequired` y dejar de
+    /// reintentar (anti-spam). Default 5. Despues de N intentos fallidos consecutivos,
+    /// el job: (a) NO vuelve a llamar al bridge, (b) emite UNA SOLA notificacion adicional
+    /// con flag `ManualInterventionRequired=true`, (c) requiere force-callback explicito
+    /// del admin con InvariantOverride (§2.12).
+    /// </summary>
+    public int BridgeReconciliationMaxRetries { get; set; } = 5;
 }
 ```
+
+#### 2.3.4.bis Definicion precisa de "1 solo admin" (N-002 round 3)
+
+El reviewer round 2 marco que GR-005 menciona "1 solo admin" sin definir como se cuenta ni que rol cuenta. Round 3 cierra:
+
+**Query exacta** (en `IUserAdminCountService` nuevo o helper inline en `BookingCancellationService`):
+
+```csharp
+// Cuenta admins ACTIVOS. Verificado: ApplicationUser.IsActive existe (Identity/ApplicationUser.cs:15).
+// Usa UserManager<ApplicationUser> con role "Admin" (string canonico en RoleSeeder, sin alternativas).
+public async Task<int> CountActiveAdminsAsync(CancellationToken ct)
+{
+    var admins = await _userManager.GetUsersInRoleAsync("Admin"); // role string canonico
+    return admins.Count(u => u.IsActive);
+}
+```
+
+**Criterio precisado**:
+
+| Pregunta | Respuesta Fase 1 |
+|---|---|
+| Que rol cuenta como "admin"? | String `"Admin"` (mismo string que usa `RolePolicies`/`RoleSeeder` del repo). NO usar permission strings (`Permissions.Approvals.Review`) — un rol "Colaborador" tambien podria tener ese permiso y NO debe contar para el bypass GR-005. |
+| Filtra `IsActive=true`? | Si. Cuentas desactivadas NO cuentan. |
+| Excluye cuentas dormidas (last login > 90d)? | NO Fase 1 (overkill, no se persiste last login dedicado para esto). Si se vuelve necesario, agregar Fase 2 con threshold configurable. |
+| Que pasa si 0 admins activos? | El bypass NO aplica (count < 1). El sistema rechaza el self-approval con `INV-FC1.3-004` igual que si hubiera 2+ admins. **No es bug**: si no hay admins, el sistema esta en un estado degenerado que requiere intervencion (settings UI debe bloquear apagar el ultimo admin, ver §10.0 self-review item 5). |
+| Que pasa si exactly 1 admin activo? | Bypass aplica si setting GR-005 esta ON. Self-approval permitido con comentario 100+ chars + flag `SelfApprovedDueToSingleAdmin=true` en `ApprovalRequest.Metadata` + `AuditLog.Changes` reforzado. |
+| Que pasa si 2+ admins activos? | Bypass NO aplica. 4-eyes estricto. |
+
+**Tabla de decision compacta**:
+
+```
+count_active_admins | setting_bypass_on | vendedor == admin | resultado
+---------------------|-------------------|-------------------|------------------------------
+        0           |        ANY        |        ANY        | INV-FC1.3-004 violado (rechaza)
+        1           |       false       |        ANY        | INV-FC1.3-004 violado si vendedor==admin
+        1           |       true        |       false       | OK (4-eyes normal, otro admin)
+        1           |       true        |       true        | OK con bypass (comment 100+ + flag audit)
+       2+           |        ANY        |       false       | OK (4-eyes normal)
+       2+           |        ANY        |       true        | INV-FC1.3-004 violado (rechaza)
+```
+
+**Test integration nuevo** (§6.2): `SingleAdminCheck_IgnoresInactiveUsers_AndPendingDeletion`. Seed: 1 admin activo + 1 admin con `IsActive=false`. Verificar que `CountActiveAdminsAsync` devuelve 1 (no 2) y bypass GR-005 aplica.
+
+**Race condition admin se desactiva mid-flight**: si admin se desactiva entre el check y el save, `EditLiquidationAsync` puede aprobar bypass que ya no aplica. Mitigacion: el check corre dentro de la misma tx + `ApplicationUser.xmin` (si se agrega Fase 2) detecta race. Fase 1 acepta riesgo: ventana de microsegundos, audit log capta vendedor real, no es exploit.
 
 #### 2.3.5 CHECK constraints SQL (sintaxis PostgreSQL)
 
@@ -513,6 +578,47 @@ ALTER TABLE "BookingCancellations"
 -- en BD Fase 1 porque NO persistimos los componentes (GR-004). Se valida en el calculator
 -- in-memory. Tests unit cubren.
 ```
+
+**N-001 (round 3): colision con CHECK heredado FC1.2 `chk_BookingCancellations_fiscalsnapshot_consistent`.**
+
+El CHECK actual (migracion `FC1_AddCancellationModule.cs:574-587`, verificado) exige:
+
+```sql
+"Status" IN (0, 6)
+OR (
+  "FiscalSnapshot_Source" <> 0
+  AND "FiscalSnapshot_ExchangeRateAtOriginalInvoice" > 0
+  AND "FiscalSnapshot_CurrencyAtEvent" IS NOT NULL
+)
+```
+
+Es decir, para cualquier `Status != 0 (Drafted)` y `!= 6 (Aborted)`, el snapshot fiscal tiene que estar populado. FC1.3 agrega estados 8, 9, 10, 11 — todos quedan fuera de la lista (0, 6), o sea **todos exigen snapshot populado**.
+
+**Decision Fase 1 (opcion B preferida del reviewer): NO extender el CHECK. Mantener la invariante fiscal heredada (`Status > Drafted/Aborted = snapshot completo`). El service nuevo DEBE poblar el `FiscalSnapshot` ANTES de transicionar a `RequiresManualReview (8)` o `ManualReviewPending (9)`, dentro de la MISMA transaccion.**
+
+Justificacion:
+
+- Aplica la misma garantia de integridad fiscal que FC1.2 (verificado en `BookingCancellationService:313-330`, donde `bc.FiscalSnapshot = new FiscalSnapshot {...}` ocurre ANTES de `bc.Status = AwaitingFiscalConfirmation`).
+- Evita debilitar la invariante para permitir un caso que es facil de garantizar por contrato.
+- `ManualReviewPending` durando dias sin snapshot fiscal valido seria un agujero auditable: el snapshot es input critico del calculator y de cualquier emision posterior de NC.
+
+**Orden obligatorio del nuevo `ConfirmAsync` con flag FC1.3 ON** (precondicion enforzada por contrato del service, defendida por el CHECK heredado como red de seguridad):
+
+1. Validar kill switch FC1.2 (`EnsureFeatureFlagOnAsync`).
+2. Validar `Reserva.Servicios` 100% Hotel (INV-FC1.3-007).
+3. Validar y normalizar `request.SnapshotData` (mismo bloque que FC1.2:284-311).
+4. **Setear `bc.FiscalSnapshot = new FiscalSnapshot {...}`** con TODOS los campos requeridos por el CHECK (`Source != 0`, `ExchangeRateAtOriginalInvoice > 0`, `CurrencyAtEvent != NULL`). Adicionalmente FC1.3 agrega `InvoicingModeAtEvent` y `OriginalInvoiceTypeAtEvent` (§2.3.2).
+5. Construir `FiscalLiquidationInput` (leyendo del snapshot ya seteado).
+6. Invocar `calculator.Calculate(...)`.
+7. Branch (GR-001/GR-003/GR-006 + reason):
+   - Si `TotalPlusNewInvoice`: throw `InvalidOperationException` (BC nunca se persiste con `Status != 0`, asi que el CHECK no se evalua sobre datos nuevos).
+   - Si `reason == None`: transicionar a `AwaitingFiscalConfirmation (1)` (igual que FC1.2).
+   - Si `reason != None`: setear FK y campos summary, transicionar a `ManualReviewPending (9)` directo. **El snapshot ya esta populado, el CHECK pasa.**
+8. `SaveChangesAsync(ct)`.
+
+**Auditoria de seguridad**: tests integration `Confirm_NewStatusInsertedWithoutFiscalSnapshot_RejectedByCheckConstraint` (§6.2) simula seteo manual de `Status = 9` sin snapshot completo y verifica que Postgres rechaza con `SqlState=23514` y el interceptor lo mapea a `BusinessInvariantViolationException`. Garantiza que el CHECK heredado sigue cubriendo aunque el service tenga un bug de orden en el futuro.
+
+**Estado `RequiresManualReview (8)` transitorio**: en el diseno se documenta como "transitorio dentro de la misma tx" (§2.8.1). En la practica **el service NO escribe `Status = 8` a BD**: pasa directo de `Drafted (0)` a `ManualReviewPending (9)` con snapshot completo. El estado 8 existe solo como marker semantico en el enum para futuras evoluciones. Tests cubren que no aparece en BD bajo el flujo normal.
 
 ### 2.4 Por que NO persistimos `FiscalLiquidation` Fase 1 (GR-004)
 
@@ -652,6 +758,10 @@ public record FiscalLiquidationInput(
 
 Test que valida que post-edicion `AuditLog.Changes` deserializado tiene todos los campos modificados con `Old`/`New`.
 
+**N-006 round 3: `ApprovalRequest.Metadata` queda como `string?` Fase 1.** Verificado en `src/TravelApi.Domain/Entities/ApprovalRequest.cs:81`. Migracion futura a columna `jsonb` queda **fuera de scope Fase 1**: requeriria backfill de todos los Metadata existentes (FC1.2 ya los usa) + cambios en serializacion + cambios en queries que filtren por contenido. Fase 1 acepta string + parse on-read. Si Fase 2 necesita queries dentro del JSON (ej. "todos los approvals con `accountingReviewRequired=true`"), promover a `jsonb` con backfill controlado. Costo de cambiar despues: medio (requiere migracion + adaptacion del codigo que lee Metadata).
+
+**N-007 round 3: `ApproveAsync` NO es transaccional con bridge.** El approval se persiste y commitea (tx 1). Despues se invoca `bridge.OnApprovedAsync` (tx 2 si modifica BC). Si tx 2 falla, AR queda Approved y BC queda ManualReviewPending — divergencia esperada y saneada por (a) job de reconciliacion §2.12 + (b) endpoint force-callback con InvariantOverride §2.12. Esta decision es deliberada: una tx distribuida (TransactionScope sobre ApprovalRequestService + BookingCancellationService) introduciria locks cross-aggregate sin ganancia real. La idempotencia del bridge + las dos vias de reconciliacion cubren el caso fallido sin spam (N-003).
+
 ### 2.8 Maquina de estados (FC1.3 Fase 1)
 
 Extiende ADR-002 §2.4 con los 4 estados nuevos.
@@ -778,7 +888,7 @@ Extiende ADR-002 §2.4 con los 4 estados nuevos.
 | **INV-FC1.3-001** | BC no transiciona a `AwaitingFiscalConfirmation` directamente si `ReviewRequiredReason != None`. Debe pasar por `ManualReviewPending` + `ManualReviewApproved`. | `false` |
 | **INV-FC1.3-002** | `Status IN (ManualReviewPending, ManualReviewApproved, ManualReviewRejected)` requiere `PartialCreditNoteApprovalRequestId != NULL`. CHECK SQL. | `false` |
 | **INV-FC1.3-003** | `ManualReviewApproved` requiere `ApprovalRequest.Status = Approved`. Verificado en service callback. | `false` |
-| **INV-FC1.3-004** | `approveLiquidation()` requiere admin != vendedor (`DraftedByUserId != ResolvedByUserId`). **Excepcion (GR-005)**: si `Allow4EyesBypassWhenSingleAdmin=true` AND solo 1 usuario admin existe AND vendedor=admin, admite self-approval con comentario 100+ chars + flag `SelfApprovedDueToSingleAdmin=true` en Metadata. | `false` (la excepcion GR-005 NO es override, es regla distinta) |
+| **INV-FC1.3-004** | `approveLiquidation()` requiere admin != vendedor (`DraftedByUserId != ResolvedByUserId`). **Excepcion (GR-005, definicion precisa en §2.3.4.bis N-002)**: si `Allow4EyesBypassWhenSingleAdmin=true` AND `CountActiveAdminsAsync() == 1` (rol string `"Admin"` + `IsActive=true`) AND vendedor=admin, admite self-approval con comentario 100+ chars + flag `SelfApprovedDueToSingleAdmin=true` en Metadata. Si count=0 -> rechaza (no aplica). Si count>=2 -> 4-eyes normal. | `false` (la excepcion GR-005 NO es override, es regla distinta) |
 | **INV-FC1.3-005** | Calculator garantiza `FiscalAmountToCredit + NonRefundableItemsAmount + OperatorPenaltyAmount = OriginalInvoiceAmount` (tolerancia 0.01). Validado en calculator. **No es CHECK SQL Fase 1 porque no persistimos los componentes** (GR-004). Sera CHECK SQL en Fase 2 cuando se persistan. | `false` |
 | **INV-FC1.3-006** | Items con `IsRefundable=false` en factura origen suman exactamente `NonRefundableItemsAmount` calculado. Validacion en calculator. | `false` |
 | **INV-FC1.3-007** | BC FC1.3 solo acepta reservas 100% Hotel (`Reserva.Servicios` todos con `ProductType = ServiceTypes.Hotel`). Validacion en service. | `true` con justificacion admin (`ApprovalRequest` tipo `InvariantOverride=7`, justificacion >= 50 chars **distinta del comentario de aprobacion del BC**, RH-016). |
@@ -878,11 +988,54 @@ STEP 7 — Devolver DTO. El SERVICE caller (BookingCancellationService.ConfirmAs
 OUTPUT: FiscalLiquidationDto inmutable.
 ```
 
-### 2.10 Feature flag separado + pre-condicion GR-002
+### 2.10 Feature flag separado + pre-condicion GR-002 (round 3: enforce runtime + startup)
 
-**Decision**: `OperationalFinanceSettings.EnablePartialCreditNotes` (bool, default false). Independiente de `EnableNewCancellationFlow`. **Pre-condicion startup**: si `EnablePartialCreditNotes=true && EnableNewCancellationFlow=false`, rechazar arranque con error claro.
+**Decision**: `OperationalFinanceSettings.EnablePartialCreditNotes` (bool, default false). Independiente de `EnableNewCancellationFlow`. **Pre-condicion enforzada en DOS niveles** (N-004 round 3):
 
-**Implementacion pre-condicion** (en `Program.cs` post-build app, antes de `app.Run()`):
+1. **Runtime** (canonico): `OperationalFinanceSettingsService.UpdateAsync` rechaza el guardado si la combinacion seria invalida.
+2. **Startup** (defense-in-depth): si la BD ya tiene combinacion invalida por escritura legacy, manual UPDATE, restore de backup, etc., la app no arranca.
+
+**Problema que cierra N-004**: round 2 solo tenia la validacion al startup. Si admin (via panel de settings) cambia `EnableNewCancellationFlow` a `false` mientras `EnablePartialCreditNotes=true`, el sistema sigue corriendo con la combinacion invalida hasta el proximo restart. El runtime check cierra esa ventana.
+
+**Implementacion runtime** (en `OperationalFinanceSettingsService.UpdateAsync`):
+
+```csharp
+public async Task<OperationalFinanceSettings> UpdateAsync(UpdateOperationalFinanceSettingsRequest req, CancellationToken ct)
+{
+    var current = await GetEntityAsync(ct);
+
+    // ... aplicar campos de req sobre 'current' ...
+
+    // N-004: pre-condicion GR-002 enforcement runtime.
+    // Cubre los dos sentidos: prender FC1.3 sin FC1.2 ON, y apagar FC1.2 mientras FC1.3 esta ON.
+    if (current.EnablePartialCreditNotes && !current.EnableNewCancellationFlow)
+    {
+        throw new ValidationException(
+            "Combinacion de flags invalida (GR-002): para tener EnablePartialCreditNotes=true se requiere " +
+            "EnableNewCancellationFlow=true. Si quiere apagar FC1.2, primero apague FC1.3 " +
+            "(EnablePartialCreditNotes=false) en el mismo UPDATE o en uno anterior.");
+    }
+
+    // Validacion adicional: ambos cambios pueden venir en el mismo request.
+    // FluentValidation a nivel request valida lo mismo antes de llegar aca, defense-in-depth.
+
+    await _db.SaveChangesAsync(ct);
+    _logger.LogInformation("Settings actualizados por {UserId}: FC12={Fc12}, FC13={Fc13}",
+        _currentUser.UserId, current.EnableNewCancellationFlow, current.EnablePartialCreditNotes);
+
+    return current;
+}
+```
+
+**FluentValidation a nivel `UpdateOperationalFinanceSettingsRequest`** (defense-in-depth, opcional pero recomendado para mejor mensaje de error en el endpoint):
+
+```csharp
+RuleFor(x => x)
+    .Must(req => !(req.EnablePartialCreditNotes && !req.EnableNewCancellationFlow))
+    .WithMessage("EnablePartialCreditNotes=true requiere EnableNewCancellationFlow=true (GR-002).");
+```
+
+**Implementacion startup** (mantener como red de seguridad, en `Program.cs` post-build app, antes de `app.Run()`):
 
 ```csharp
 using (var scope = app.Services.CreateScope())
@@ -892,10 +1045,21 @@ using (var scope = app.Services.CreateScope())
     {
         throw new InvalidOperationException(
             "Configuracion invalida: EnablePartialCreditNotes=true requiere EnableNewCancellationFlow=true. " +
-            "FC1.3 depende de FC1.2 (decision GR-002). Apague FC1.3 o prenda FC1.2 antes de arrancar.");
+            "FC1.3 depende de FC1.2 (decision GR-002). Apague FC1.3 o prenda FC1.2 antes de arrancar. " +
+            "Este check existe por defense-in-depth: el runtime UpdateAsync ya rechaza la combinacion invalida, " +
+            "pero un restore de backup o UPDATE manual podria saltearse el validation. Si llegaste aca, " +
+            "loguea que paso para revisar.");
     }
 }
 ```
+
+**Argumento por que mantener AMBOS niveles**:
+
+- Sin runtime: vulnerable a setting cambiado mid-flight. **Este es el bug N-004 que el reviewer marco.**
+- Sin startup: vulnerable a estados inconsistentes que llegan por fuera del service (restore, UPDATE manual, otra app que escribe la misma tabla). Aunque no esperable hoy, es bajo costo y alta seguridad.
+- Costo combinado: 2 tests integration (`Settings_AdminTriesToDisableFc12WhileFc13On_Rejects` + `Startup_Fc13OnWithoutFc12_RejectsWithError`) + 6 lineas codigo. Trivial.
+
+**Test integration nuevo** (§6.2): `Settings_AdminTriesToDisableFc12WhileFc13On_Rejects`. Setup: settings con FC12=ON + FC13=ON. Admin invoca `UpdateAsync` con FC12=OFF. Verificar `ValidationException` (HTTP 400). Verificar que en BD queda FC12=ON (no se persistio el cambio invalido).
 
 **Tabla de comportamiento por combinacion de flags** (GR-002 explicito):
 
@@ -957,27 +1121,69 @@ if (settings.EnablePartialCreditNotes)
 }
 ```
 
-### 2.12 Job de reconciliacion bridge (RH-011 cerrado)
+### 2.12 Job de reconciliacion bridge (RH-011 + N-003 round 3)
 
 **Problema**: si `ApprovalRequestService.ApproveAsync` aprueba el approval pero el callback bridge `IPartialCreditNoteApprovalBridge.OnApprovedAsync` falla (excepcion, timeout, deploy mid-flight), el `ApprovalRequest` queda `Approved` pero `BookingCancellation` queda `ManualReviewPending`. Sin reconciliacion, ese BC queda huerfano.
 
-**Mitigacion**: job nocturno + endpoint admin de force-callback.
+**Riesgo N-003 round 3**: si el bridge falla por causa permanente (data corrupta, regla nueva, schema mismatch), el job re-intenta cada 30 min + notifica admin cada vez. Con 5 BCs huerfanos y 1 semana de fallas, son ~1680 notificaciones spam.
 
-**Sub-fase FC1.3.6b** (agregada al plan tactico): `PartialCreditNoteBridgeReconciliationJob`.
+**Mitigacion**: job cada `BridgeReconciliationStalenessMinutes` (Q2 round 2: setting, default 30) con **contador de reintentos por approval** + **cooldown anti-spam** + endpoint admin de force-callback con `InvariantOverride` (Q3 round 2).
+
+**Columnas nuevas en `ApprovalRequest`** (N-003 round 3) — agregadas en migracion M0 junto con `xmin` (RH-006) o como migracion separada M0b si se quiere aislar:
+
+```csharp
+// src/TravelApi.Domain/Entities/ApprovalRequest.cs — 3 props nuevas (N-003 round 3)
+public class ApprovalRequest : IHasPublicId
+{
+    // ... props existentes (no se tocan) ...
+
+    /// <summary>
+    /// FC1.3 round 3 (N-003): cantidad de reintentos del job de reconciliacion bridge
+    /// sobre este approval. Se incrementa cuando el job intenta llamar al bridge y falla.
+    /// Si llega a OperationalFinanceSettings.BridgeReconciliationMaxRetries, el job deja
+    /// de reintentar + emite UNA notificacion final + el approval requiere force-callback
+    /// admin explicito para reactivar.
+    /// </summary>
+    public int BridgeRetryCount { get; set; } = 0;
+
+    /// <summary>
+    /// FC1.3 round 3 (N-003): mensaje (truncado) del ultimo error del bridge. Sirve para
+    /// que el admin lea desde el endpoint admin antes de decidir si forzar callback o
+    /// abortar manualmente.
+    /// </summary>
+    [MaxLength(2000)]
+    public string? BridgeLastError { get; set; }
+
+    /// <summary>
+    /// FC1.3 round 3 (N-003): timestamp del ultimo intento del job. Permite calcular
+    /// cooldown y limitar la frecuencia de notificaciones spam.
+    /// </summary>
+    public DateTime? BridgeLastAttemptAt { get; set; }
+}
+```
+
+**Sub-fase FC1.3.6b** (agregada al plan tactico): `PartialCreditNoteBridgeReconciliationJob` con anti-spam.
 
 ```csharp
 public class PartialCreditNoteBridgeReconciliationJob
 {
     public async Task RunAsync(CancellationToken ct)
     {
-        // Detectar: ApprovalRequest.Status=Approved AND ApprovalRequest.RequestType=PartialCreditNoteApproval
+        var settings = await _settings.GetEntityAsync(ct);
+        var staleness = settings.BridgeReconciliationStalenessMinutes; // Q2 round 2: setting, default 30
+        var maxRetries = settings.BridgeReconciliationMaxRetries;       // N-003: default 5
+        var threshold = DateTime.UtcNow.AddMinutes(-staleness);
+
+        // Detectar: ApprovalRequest.Status=Approved AND RequestType=PartialCreditNoteApproval
         //           AND existe BC con PartialCreditNoteApprovalRequestId=AR.Id
         //           AND BC.Status=ManualReviewPending
-        //           AND AR.ResolvedAt < UtcNow - 30 minutes
+        //           AND AR.ResolvedAt < threshold
+        //           AND AR.BridgeRetryCount < maxRetries  <-- N-003 anti-spam
         var orphans = await _db.ApprovalRequests
             .Where(a => a.RequestType == ApprovalRequestType.PartialCreditNoteApproval
                      && a.Status == ApprovalStatus.Approved
-                     && a.ResolvedAt < DateTime.UtcNow.AddMinutes(-30))
+                     && a.ResolvedAt < threshold
+                     && a.BridgeRetryCount < maxRetries)
             .Join(_db.BookingCancellations,
                   a => a.Id,
                   bc => bc.PartialCreditNoteApprovalRequestId,
@@ -987,7 +1193,10 @@ public class PartialCreditNoteBridgeReconciliationJob
 
         foreach (var orphan in orphans)
         {
-            _logger.LogWarning("FC1.3 bridge huerfano: AR {ARId} Approved pero BC {BCId} en ManualReviewPending. Forzando callback.", orphan.Approval.Id, orphan.BC.Id);
+            _logger.LogWarning("FC1.3 bridge huerfano: AR {ARId} Approved pero BC {BCId} en ManualReviewPending. Forzando callback (intento {Retry}/{Max}).",
+                orphan.Approval.Id, orphan.BC.Id, orphan.Approval.BridgeRetryCount + 1, maxRetries);
+
+            orphan.Approval.BridgeLastAttemptAt = DateTime.UtcNow;
             try {
                 await _bridge.OnApprovedAsync(
                     orphan.Approval.Id,
@@ -995,26 +1204,72 @@ public class PartialCreditNoteBridgeReconciliationJob
                     orphan.Approval.ResolvedByUserName,
                     orphan.Approval.ResolverNotes,
                     ct);
+                orphan.Approval.BridgeLastError = null; // limpiar al exito
+                // BridgeRetryCount NO se resetea: si el bridge volvio a fallar despues, el contador refleja historial.
             } catch (Exception ex) {
-                _logger.LogError(ex, "FC1.3 reconciliation failed for AR {ARId}", orphan.Approval.Id);
-                await _notificationService.NotifyAdminsAsync(
-                    $"FC1.3 callback bridge fallo para AR {orphan.Approval.Id} - intervencion manual requerida", ct);
+                orphan.Approval.BridgeRetryCount += 1;
+                orphan.Approval.BridgeLastError = TruncateTo2000(ex.Message);
+                _logger.LogError(ex, "FC1.3 reconciliation failed for AR {ARId} (retry {Retry}/{Max})",
+                    orphan.Approval.Id, orphan.Approval.BridgeRetryCount, maxRetries);
+
+                // N-003 anti-spam: notifica UNA SOLA VEZ cuando se alcanza el umbral.
+                if (orphan.Approval.BridgeRetryCount >= maxRetries) {
+                    await _notificationService.NotifyAdminsAsync(
+                        $"FC1.3 INTERVENCION MANUAL REQUERIDA: AR {orphan.Approval.Id} fallo {maxRetries} veces. " +
+                        $"Use endpoint POST /api/approval-requests/{orphan.Approval.PublicId}/force-bridge-callback " +
+                        $"con InvariantOverride scoped. Ultimo error: {orphan.Approval.BridgeLastError}",
+                        ct);
+                }
+                // Si retry < max, NO notifica — solo loguea. Evita spam.
             }
+            await _db.SaveChangesAsync(ct);
         }
     }
 }
 ```
 
-**Endpoint admin de force-callback** (casos extremos cuando el job tampoco recupera):
+**Endpoint admin de force-callback** (casos extremos cuando el job tampoco recupera, **Q3 reviewer round 2: requiere InvariantOverride**):
 
 ```
-POST /api/cancellations/{publicId}/force-approval-callback
+POST /api/approval-requests/{publicId}/force-bridge-callback
 RequirePermission(Permissions.CobranzasInvoiceAnnul) + admin role
+Body: {
+  "approvalRequestOverridePublicId": "guid",  // ApprovalRequest tipo InvariantOverride=7 scoped al approval target
+  "reason": "string >= 50 chars, distinta del ResolverNotes original del approval target"
+}
 ```
 
-Llama `bridge.OnApprovedAsync` o `OnRejectedAsync` segun `ApprovalRequest.Status`. Audit reforzado.
+**Validacion del endpoint** (en `BookingCancellationService.ForceApprovalCallbackAsync` o service equivalente):
 
-**Idempotencia del bridge**: `OnApprovedAsync` valida `BC.Status == ManualReviewPending`. Si ya esta `ManualReviewApproved`, log warning + return sin cambios. Mismo para `OnRejectedAsync`.
+1. Load `targetApproval` (`ApprovalRequest` tipo `PartialCreditNoteApproval=11`) por `publicId`.
+2. Validar `targetApproval.Status == Approved` o `== Rejected` (estados terminales).
+3. Load `overrideApproval` por `approvalRequestOverridePublicId`. Validar:
+   - `RequestType == InvariantOverride (7)`.
+   - `Status == Approved`.
+   - `EntityType == "ApprovalRequest"` AND `EntityId == targetApproval.Id` (scoped al approval target, NO al BC — porque puede usarse incluso si el BC ya fue abortado).
+   - `Reason.Length >= 50` AND `Reason != targetApproval.ResolverNotes` (RH-016 mismo principio: justificacion distinta del comentario original).
+   - `RequestedByUserId == currentUserId` AND `ExpiresAt > UtcNow`.
+4. Si todo OK, invocar `bridge.OnApprovedAsync(...)` o `OnRejectedAsync(...)` segun `targetApproval.Status`.
+5. **Idempotente**: si el bridge ya callbackeo OK y `BC.Status != ManualReviewPending`, log warning + return sin cambios + audit `BookingCancellationForceApprovalCallbackNoop`.
+6. Audit reforzado: `BookingCancellationForceApprovalCallback` con `Changes` JSON `{ "ForcedBy": userId, "OverrideApprovalId": ..., "TargetApprovalId": ..., "TargetApprovalStatusAtForce": "Approved" }`.
+7. Resetea `BridgeRetryCount = 0` y `BridgeLastError = null` despues del exito (si el admin quiere reintentar tipico flujo futuro).
+
+**Justificacion de la doble proteccion** (job auto + endpoint manual con InvariantOverride):
+
+- Job auto cubre el 95% de fallas transitorias (red, deploy, timeout) sin intervencion.
+- Endpoint manual cubre el 5% restante (bug permanente, data corrupta, regla nueva) con trazabilidad maxima.
+- El `InvariantOverride` extra **NO es burocracia inutil**: documenta quien decidio re-intentar manualmente y por que, despues de que la red de seguridad automatica ya se rindio. Es el patron real del repo (mismo que INV-FC1.3-007).
+
+**Idempotencia del bridge**: `OnApprovedAsync` valida `BC.Status == ManualReviewPending`. Si ya esta `ManualReviewApproved`, log warning + return sin cambios. Mismo para `OnRejectedAsync`. **Esta propiedad es critica** porque el job auto + endpoint manual pueden competir.
+
+**Nota sobre transaccionalidad (N-007 round 3)**: `ApprovalRequestService.ApproveAsync` NO es transaccional con el bridge — el approval se commitea, despues se invoca el bridge en una llamada separada. Si el bridge falla, el approval queda Approved pero el BC no transiciona. Esa divergencia es **deliberada** y se sanea con (a) job de reconciliacion (este §2.12) + (b) endpoint force-callback. La alternativa (transaccion distribuida) es overkill para Fase 1 y no aporta valor real. Documentado tambien en §7.
+
+**Test integration nuevo** (§6.2): `BridgeReconciliationJob_PersistentFailure_DoesNotSpamNotifications`. Bridge mockeado tira siempre. Verificar que tras `maxRetries` (5) intentos:
+- `BridgeRetryCount == 5`.
+- `BridgeLastError != null`.
+- Solo se invoca `NotifyAdminsAsync` UNA VEZ (no 5).
+- En el intento 6+ el job ya no llama al bridge.
+- Endpoint force-callback con InvariantOverride scoped permite reintentar manualmente (`BridgeRetryCount` se resetea a 0).
 
 ### 2.13 Comportamiento al apagar flag con BCs en estados FC1.3 (RH-009 cerrado)
 
@@ -1114,7 +1369,7 @@ Llama `bridge.OnApprovedAsync` o `OnRejectedAsync` segun `ApprovalRequest.Status
 | **M1** | `FC1_3_1_AddSupplierInvoicingModeAndPenaltyPolicy` | `Supplier.InvoicingMode` (`integer NOT NULL DEFAULT 0`) + `Supplier.PenaltyPolicyJson` (`jsonb NULL`) + CHECK `chk_Suppliers_penaltypolicy_object`. | M0 |
 | **M2** | `FC1_3_2_AddInvoiceItemRefundabilityAndCategory` | `InvoiceItem.IsRefundable` (`boolean NOT NULL DEFAULT true`) + `InvoiceItem.ItemCategory` (`integer NOT NULL DEFAULT 0`) + `InvoiceItem.SourceServicioReservaId` (`integer NULL` FK `ServiciosReserva.Id`, `OnDelete: SetNull`) + index. | M0 |
 | **M3** | `FC1_3_3_AddOperationalFinanceSettingsThresholdsAndTemplate` | 8 columnas nuevas en `OperationalFinanceSettings`: `EnablePartialCreditNotes`, `PartialNcAutoApprovalThreshold`, `PartialNcAdminReviewThreshold`, `PartialNcAccountingReviewThreshold`, `PartialNcDescriptionTemplate`, `ManualReviewMaxDaysBeforeRg4540Alert`, `Fc13DeployDate`, `GenericDescriptionPatterns`, `Allow4EyesBypassWhenSingleAdmin`. Defaults RH-008/RH-013: `Fc13DeployDate` se setea via `migrationBuilder.Sql("UPDATE \"OperationalFinanceSettings\" SET \"Fc13DeployDate\" = NOW() WHERE \"Fc13DeployDate\" IS NULL AND \"EnablePartialCreditNotes\" = true")`. Para flag off, queda null. | M0 |
-| **M4** | `FC1_3_4_AddBcPartialCreditNoteFieldsAndFiscalSnapshotExtras` | `BookingCancellation`: 7 columnas (`CreditNoteKind int?`, `ReviewRequiredReason int NOT NULL DEFAULT 0`, `LiquidationComputedAt timestamptz?`, `LiquidationComputedByUserId varchar(450)?`, `LiquidationComputedByUserName varchar(200)?`, `PartialCreditNoteApprovalRequestId int? FK ApprovalRequests.Id OnDelete:Restrict`, `ManualReviewerUserId/UserName/At/Comment`). Extension de `FiscalSnapshot_InvoicingModeAtEvent` + `FiscalSnapshot_OriginalInvoiceTypeAtEvent` (parte del mismo owned config). CHECK constraints `chk_BookingCancellations_manualreview_approvalref` + `chk_BookingCancellations_creditnotekind_consistent`. Extension de CHECK `Status` para 0..11. | M3 |
+| **M4** | `FC1_3_4_AddBcPartialCreditNoteFieldsAndFiscalSnapshotExtras` | `BookingCancellation`: 7 columnas (`CreditNoteKind int?`, `ReviewRequiredReason int NOT NULL DEFAULT 0`, `LiquidationComputedAt timestamptz?`, `LiquidationComputedByUserId varchar(450)?`, `LiquidationComputedByUserName varchar(200)?`, `PartialCreditNoteApprovalRequestId int? FK ApprovalRequests.Id OnDelete:Restrict`, `ManualReviewerUserId/UserName/At/Comment`). Extension de `FiscalSnapshot_InvoicingModeAtEvent` + `FiscalSnapshot_OriginalInvoiceTypeAtEvent` (parte del mismo owned config). CHECK constraints `chk_BookingCancellations_manualreview_approvalref` + `chk_BookingCancellations_creditnotekind_consistent`. Extension de CHECK `Status` para 0..11. **N-001 (round 3): el CHECK heredado `chk_BookingCancellations_fiscalsnapshot_consistent` (FC1.2) se MANTIENE INTACTO**. No se extiende para incluir estados 8..11. El service `ConfirmAsync` se compromete por contrato a poblar `FiscalSnapshot` ANTES de transicionar a `Status >= 8` dentro de la misma tx (§2.3.5 N-001). Tests integration cubren regresion. | M3 |
 | **M5** | `FC1_3_5_AddHotelBookingNonRefundableConcepts` | `HotelBooking.NonRefundableConceptsJson` (`jsonb NULL`). | M0 |
 
 **Nota sobre `ApprovalRequestType` enum**: agregar `PartialCreditNoteApproval=11` **no requiere migracion** (enums se almacenan como int). El seeding de `ApprovalRequestPolicy` con defaults para este tipo se agrega en M3 o M4.
@@ -1216,8 +1471,13 @@ Ubicacion: `src/TravelApi.Tests/Cancellation/Integration/`. Usa `PostgresIntegra
 | `BridgeReconciliationJob_NotStaleEnough_DoesNotForceCallback` | AR Approved hace 10 min | Job no actua |
 | `InvariantOverride_ForInv007_RequiresJustificationDistinctFromBCComment` (RH-016) | ApprovalRequest InvariantOverride con `Reason` igual al `ManualReviewComment` futuro | Service rechaza al confirmar override |
 | `Confirm_HeuristicasFacturaConfusaPorDefaultOff_NoFalsosPositivos` (RH-008) | 100 facturas legacy seed (datos reales anonimizados) + setting GenericDescriptionPatterns="" + Fc13DeployDate=null | < 5% se marcan OriginalInvoiceUnclear (idealmente 0%) |
+| **`Confirm_NewStatusInsertedWithoutFiscalSnapshot_RejectedByCheckConstraint`** (N-001 round 3) | INSERT manual de BC con `Status=9` y `FiscalSnapshot_Source=0` (snapshot incompleto) saltando el service | `PostgresException` con `SqlState=23514` -> interceptor -> `BusinessInvariantViolationException`. Garantiza que el CHECK heredado `chk_BookingCancellations_fiscalsnapshot_consistent` sigue siendo red de seguridad si el service tiene bug de orden. |
+| **`SingleAdminCheck_IgnoresInactiveUsers_AndPendingDeletion`** (N-002 round 3) | Seed: 1 admin con `IsActive=true` + 1 admin con `IsActive=false`. Setting `Allow4EyesBypassWhenSingleAdmin=true`. Vendedor=admin activo intenta self-approval con comentario 110 chars | `CountActiveAdminsAsync` devuelve 1 (no 2). Bypass GR-005 aplica. Operacion OK con flag audit. |
+| **`BridgeReconciliationJob_PersistentFailure_DoesNotSpamNotifications`** (N-003 round 3) | Bridge mockeado tira siempre. Setting `BridgeReconciliationMaxRetries=5`. Job se ejecuta 7 veces simulando 7 cooldown windows | Tras intento 5: `BridgeRetryCount=5`, `BridgeLastError` poblado, `NotifyAdminsAsync` invocado EXACTAMENTE 1 vez (no 5 ni 7). En intentos 6 y 7 el job NO llama al bridge (`BridgeRetryCount < maxRetries` filtra). Endpoint force-callback con InvariantOverride scoped permite reintento manual + reset de counter. |
+| **`Settings_AdminTriesToDisableFc12WhileFc13On_Rejects`** (N-004 round 3) | Setup: FC12=ON + FC13=ON. Admin invoca `UpdateAsync` con FC12=OFF | `ValidationException` HTTP 400 con mensaje GR-002. BD queda con FC12=ON (no se persistio cambio invalido). Tx rollback. |
+| **`Calculator_LegacyInvoiceWithNullSnapshot_AndSupplierModeChanged_UsesNullDefaultBehavior`** (cobertura adicional pedida por reviewer) | Factura legacy con `FiscalSnapshot.InvoicingModeAtEvent=null` + Supplier cambio de `TotalToCustomer` a `CommissionOnly` post-emision | Calculator usa `Supplier.InvoicingMode` actual (CommissionOnly) como fallback porque snapshot es null. Dispara `InvoicingModeCommissionOnly` reason. Sin throw. Documentado comportamiento. |
 
-Total estimado: ~27 integration tests.
+Total estimado: ~32 integration tests (27 + 5 nuevos round 3).
 
 ### 6.3 Tests E2E (happy paths)
 
@@ -1260,6 +1520,8 @@ Total estimado: ~27 integration tests.
 | **Combinacion invalida de flags (FC1.3 ON + FC1.2 OFF)** | Pre-condicion startup (GR-002) rechaza arranque con error claro. |
 | **CommissionOnly mode bloquea operativa** (GR-003) | Manual review obligatorio. Mitigacion: priorizar respuesta contador F2. Admin puede ingresar liquidacion a mano. |
 | **Penalty + TotalToCustomer en caso 3 indeterminado** (GR-006) | Flag `PenaltyResetUncertainInResellerMode` dispara manual review. Hipotesis conservadora "penalty resta" persiste en Metadata para auditoria pero requiere confirmacion humana. |
+| **N-008 round 3: inundacion de bandeja por GR-003 + GR-006** | Muchos disparadores van a manual review obligatorio Fase 1 (CommissionOnly, Penalty + TotalToCustomer, Factura A, items no reintegrables, monto > threshold). **Riesgo**: en prod la bandeja podria llenarse de cientos de items que admin no puede procesar. **Mitigacion pre-flag-on**: ejecutar test seed con dataset real anonimizado de los ultimos 6 meses ANTES de prender `EnablePartialCreditNotes` en prod. Contar cuantos casos caerian a manual review por dia. Si > 20/dia, replantear umbrales o priorizar respuestas F1..F4 contador. Doc operativo recomienda este check pre-deploy (ver `docs/operations/pre-prod-fc1-3-checks.md` cuando se cree). |
+| **Race admin desactivado mid-flight (GR-005)** | Ventana microsegundos entre `CountActiveAdminsAsync` check y SaveChanges. Audit captura vendedor real. Fase 1 acepta. Fase 2 puede agregar `ApplicationUser.xmin` si se vuelve relevante. |
 
 ---
 
@@ -1289,17 +1551,33 @@ Total estimado: ~27 integration tests.
 
 - G1..G6 + GR-001..GR-006 cerradas.
 
-### 9.3 Plan tactico (al architect-reviewer round 2)
+### 9.3 Plan tactico (cerradas por reviewer round 2)
 
-- ¿Deberiamos persistir tambien `OriginalInvoiceAmount` Fase 1 (un solo campo) para queries de reporting basicos sin abrir Metadata JSON?
-- ¿El job de reconciliacion bridge deberia tener configurable el threshold de 30 min (actualmente hardcoded)?
-- ¿El endpoint admin force-callback necesita auditoria reforzada extra (ej. tipo `ApprovalRequest.InvariantOverride`)?
+Las 5 preguntas Q1..Q5 fueron respondidas y aplicadas en el ADR:
+
+| # | Pregunta | Respuesta reviewer | Donde se aplico |
+|---|---|---|---|
+| Q1 | Persistir `OriginalInvoiceAmount` solo (1 campo) Fase 1 para reporting basico | **NO** | YAGNI Fase 1. Si reporting Fase 1 lo pide, leer directo de `Invoice.ImporteTotal` via join. No se agrega columna. |
+| Q2 | Threshold 30 min del job reconciliacion deberia ser setting | **SI** | Setting `OperationalFinanceSettings.BridgeReconciliationStalenessMinutes` (int, default 30) agregado en §2.3.4. Tests cubren valores bajos/altos. Job lo lee dinamicamente (§2.12). |
+| Q3 | Endpoint force-callback requiere `InvariantOverride` extra | **SI** | Endpoint `POST /api/approval-requests/{publicId}/force-bridge-callback` exige `ApprovalRequest` tipo `InvariantOverride=7` scoped al approval target, justificacion >= 50 chars y distinta del `ResolverNotes` original. Detalle en §2.12. |
+| Q4 | Eliminar codigo de heuristicas caso 4 (dejar solo checkbox manual) | **NO** | Mantener heuristicas con default OFF (`GenericDescriptionPatterns=""` + `Fc13DeployDate=null`). Si el contador las pide alguna vez, se activa via setting sin redeploy. Codigo dormido es barato. |
+| Q5 | `Allow4EyesBypassWhenSingleAdmin` global o per-agency | **GLOBAL** Fase 1 | MagnaTravel es single-tenant hoy. Setting global en `OperationalFinanceSettings`. Comentario doc en la prop indica "revisitar si multi-tenant en el futuro" (§2.3.4). |
+
+Sin open questions abiertas al cierre de round 3.
 
 ---
 
 ## 10. Auto-critica explicita (transparencia)
 
-### 10.0 Confesion explicita (round 2)
+### 10.0 Cierre round 3 + nota Ready for Implementation
+
+**Round 3 cierra N-001..N-004 (bloqueante chico + 3 majors) + responde Q1..Q5 + aplica menores N-005..N-008 (ver tabla §11 extension).** ADR considerado **Ready for Implementation** tras esta version, condicionado a:
+
+- Signoff `software-architect-reviewer` round 3.
+- Signoff Gaston de las 5 respuestas Q1..Q5.
+- F1..F4 al contador siguen abiertas pero **NO bloquean Fase 1 mainline** (los casos afectados van a manual review obligatorio Fase 1 — GR-003 y GR-006).
+
+### 10.0.bis Confesion explicita (round 2 — mantenida para historia)
 
 **Round 1 use sintaxis SQL Server por error en el brief de la sesion principal.** La sesion principal me indico "Stack es SQL Server, NO Postgres" — esto era falso. El repo usa PostgreSQL (Npgsql 8.x) con `UseXminAsConcurrencyToken` (verificado en `AppDbContext.cs:1180`), `PostgresIntegrationFixture` (verificado), migracion FC1 con `using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata` + `xmin` shadow + tipos `numeric/jsonb/text/timestamptz` + identificadores con comillas dobles. **Round 2 corregido a Postgres en TODA seccion SQL/EF**.
 
@@ -1362,6 +1640,29 @@ Y los 13 hallazgos del reviewer (RH-001..RH-022, prefijo RH para distinguir de R
 | **RH-021** `GenericDescriptionPatterns` typing | Una unica regex con alternativas separadas por `|` (no multilinea). Default vacio `""`. | §2.3.4 setting, §2.9 STEP 2 |
 | **RH-022** `FiscalLiquidationDto` ubicacion | GR-004 elimina persistencia. DTO se ubica en `src/TravelApi.Application/DTOs/Cancellation/FiscalLiquidationDto.cs` y se usa en FC1.3.1 (calculator). | §2.3.1 DTO, plan tactico FC1.3.1 |
 
+### 11.1 Cierre de hallazgos del reviewer round 2 (round 3)
+
+| Hallazgo | Severidad | Como se cerro | Seccion del ADR |
+|---|---|---|---|
+| **N-001** Colision con CHECK heredado `chk_BookingCancellations_fiscalsnapshot_consistent` (estados 8..11 no estan en la whitelist Status IN (0, 6)) | Bloqueante chico | **Opcion B preferida (mantener invariante)**: CHECK heredado NO se extiende. Service `ConfirmAsync` se compromete por contrato a poblar `FiscalSnapshot` ANTES de transicionar a `Status >= 8` dentro de la misma tx. Test de regresion `Confirm_NewStatusInsertedWithoutFiscalSnapshot_RejectedByCheckConstraint` garantiza red de seguridad. Verificado patron FC1.2 en `BookingCancellationService:313-330` (snapshot ANTES de transicion). | §2.3.5 N-001 (detalle), §5.1 M4 (nota explicita NO extender), §6.2 nuevo test |
+| **N-002** GR-005 "1 solo admin" sin definicion precisa | Major | §2.3.4.bis define: query `UserManager.GetUsersInRoleAsync("Admin").Where(IsActive=true).Count()`. Rol string `"Admin"` canonico. NO filtra last login. Tabla de decision para 0, 1, 2+ admins. Test `SingleAdminCheck_IgnoresInactiveUsers_AndPendingDeletion`. INV-FC1.3-004 actualizado. | §2.3.4.bis (definicion), §2.8.4 INV-004 (referencia), §6.2 nuevo test |
+| **N-003** Job FC1.3.6b puede formar loop infinito + spam notificaciones | Major | 3 columnas nuevas en `ApprovalRequest`: `BridgeRetryCount`, `BridgeLastError`, `BridgeLastAttemptAt`. Setting `BridgeReconciliationMaxRetries` default 5. Job filtra `BridgeRetryCount < maxRetries` y deja de reintentar. Notificacion UNICA al alcanzar umbral. Endpoint `POST /api/approval-requests/{publicId}/force-bridge-callback` exige `InvariantOverride` scoped al approval target, reason >= 50 chars distinta del `ResolverNotes` original. Resetea counter al exito. Test `BridgeReconciliationJob_PersistentFailure_DoesNotSpamNotifications`. | §2.12 (rewrite con anti-spam + endpoint detallado), §6.2 nuevo test, §2.3.2 (cols nuevas AR), §2.3.4 settings nuevos |
+| **N-004** Pre-condicion GR-002 solo se enforza en startup, no en runtime | Major | `OperationalFinanceSettingsService.UpdateAsync` rechaza con `ValidationException` si el guardado dejaria FC12=OFF + FC13=ON. Validation tambien en FluentValidation del request DTO (defense-in-depth a nivel endpoint). Startup mantiene la check como red de seguridad para restore/UPDATE manual. Test `Settings_AdminTriesToDisableFc12WhileFc13On_Rejects`. | §2.10 (rewrite enforce runtime + startup), §6.2 nuevo test |
+| **N-005** Plan tactico round 1 (lineas 1530+) puede confundir devs | Menor | Header gigante `SUPERSEDED` al comienzo del bloque + 4 advertencias inline indicando SQL Server, sin GR-001..GR-006, sin RH-001..RH-022. NO eliminado para historia. | Plan tactico §SUPERSEDED ROUND 1 |
+| **N-006** `ApprovalRequest.Metadata` queda `string?` Fase 1 | Menor | Documentado en §2.7: migracion futura a `jsonb` queda fuera de scope. Acepta string + parse on-read. Promover Fase 2 si reporting necesita queries dentro del JSON. | §2.7 N-006 (parrafo final) |
+| **N-007** `ApproveAsync` no es transaccional con bridge | Menor | Documentado en §2.7 y §2.12: divergencia deliberada saneada por job reconciliacion + endpoint force-callback. Tx distribuida es overkill. Idempotencia del bridge cubre dobles llamadas. | §2.7 N-007, §2.12 (nota transaccionalidad) |
+| **N-008** Riesgo inundacion bandeja por GR-003 + GR-006 | Menor | Riesgo agregado a §7 con mitigacion: test seed con dataset real anonimizado de los ultimos 6 meses ANTES de prender flag en prod. Si > 20/dia de casos manual review, replantear umbrales o priorizar respuestas F1..F4 contador. | §7 N-008 |
+
+### 11.2 Respuestas a las 5 open questions del architect (Q1..Q5)
+
+Ver §9.3 (tabla completa). Resumen:
+
+- Q1 (persistir `OriginalInvoiceAmount` Fase 1): **NO**. YAGNI. Leer de `Invoice.ImporteTotal` via join.
+- Q2 (threshold 30 min setting): **SI**. `BridgeReconciliationStalenessMinutes` agregado.
+- Q3 (endpoint force-callback requiere InvariantOverride): **SI**. Implementado con scope al approval target + reason distinta del original.
+- Q4 (eliminar heuristicas caso 4): **NO**. Mantener con default OFF (RH-008 ya las desactiva). Activacion futura sin redeploy.
+- Q5 (`Allow4EyesBypassWhenSingleAdmin` global o per-agency): **GLOBAL** Fase 1 (single-tenant). Comentario doc indica revisitar si multi-tenant.
+
 ---
 
 ## 12. Trazabilidad
@@ -1380,4 +1681,4 @@ Y los 13 hallazgos del reviewer (RH-001..RH-022, prefijo RH para distinguir de R
 
 ---
 
-**Fin del ADR-009 round 2.** Cierra 13 hallazgos reviewer + 6 decisiones Gaston + rewrite Postgres total. Listo para `software-architect-reviewer` round 2.
+**Fin del ADR-009 round 3.** Cierra N-001..N-004 (4 hallazgos reviewer round 2) + Q1..Q5 (5 respuestas reviewer) + N-005..N-008 (4 cosmeticos). Round 2 cerro 13 hallazgos reviewer round 1 + 6 decisiones Gaston + rewrite Postgres total. **Status: Proposed (Ready for Implementation tras signoff round 3).**
