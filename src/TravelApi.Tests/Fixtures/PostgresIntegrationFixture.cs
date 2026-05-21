@@ -326,6 +326,12 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
 
         // TRUNCATE CASCADE en un solo statement: Postgres lo procesa atomicamente.
         // RESTART IDENTITY resetea las secuencias asociadas a cada tabla.
+        //
+        // FC1.3.0a (2026-05-21): se agrega "ApprovalRequests" al TRUNCATE. Los
+        // tests de concurrencia xmin de FC1.3 (M0) seedean approvals reales y
+        // necesitan que la tabla este limpia entre tests para no contaminar
+        // los queries por EntityId/RequestType. El CASCADE arrastra tambien
+        // los FKs de Invoices.AnnulmentApprovalRequestId si los hubiera.
         await ctx.Database.ExecuteSqlRawAsync("""
             TRUNCATE TABLE
                 "ClientCreditWithdrawals",
@@ -341,6 +347,7 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
                 "TravelFiles",
                 "Customers",
                 "Suppliers",
+                "ApprovalRequests",
                 "AuditLogs"
             RESTART IDENTITY CASCADE;
             """);

@@ -128,6 +128,80 @@ public sealed class XminConcurrencyTests : IClassFixture<PostgresIntegrationFixt
         await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => ctxB.SaveChangesAsync());
     }
 
+    /// <summary>
+    /// FC1.3.0a (ADR-009 §2.2 punto 10 / §6.2 / RH-006, 2026-05-21): valida que
+    /// la migracion M0 (<c>FC1_3_PRE_AddApprovalRequestConcurrencyToken</c>)
+    /// haya activado el concurrency token <c>xmin</c> en <c>ApprovalRequests</c>.
+    ///
+    /// Escenario real (que FC1.3 va a habilitar):
+    ///   - Admin A abre la bandeja y empieza a editar el Metadata de un approval
+    ///     pending (recalcula la liquidacion partial NC).
+    ///   - Admin B, en paralelo, abre el mismo approval y agrega un comentario
+    ///     al Metadata.
+    ///   - Sin xmin, el ultimo SaveChanges pisa silenciosamente al primero —
+    ///     incidente fiscal: cambios de un admin se pierden y el AuditLog no
+    ///     refleja la divergencia.
+    ///   - Con xmin, el segundo SaveChanges tira <see cref="DbUpdateConcurrencyException"/>
+    ///     y el frontend obliga a recargar la bandeja antes de re-intentar.
+    ///
+    /// Por que se valida ahora (M0) y no junto con el resto FC1.3:
+    /// la edicion admin del Metadata es la unica via para mutar un approval
+    /// pending. Subir el flag <c>EnablePartialCreditNotes</c> sin xmin
+    /// expondria el race instantaneamente. M0 entra como hotfix separado.
+    /// </summary>
+    [Fact]
+    public async Task ApprovalRequest_TwoConcurrentMetadataUpdates_SecondShouldThrowDbUpdateConcurrencyException()
+    {
+        // ARRANGE: persistir un ApprovalRequest pending. No hay FKs hacia
+        // Customer/Supplier/Reserva, asi que no usamos SeedBaseAsync — la
+        // entidad es self-contained (EntityType+EntityId son strings/int sin FK).
+        int approvalId;
+        await using (var setup = _fixture.CreateDbContext())
+        {
+            var approval = new ApprovalRequest
+            {
+                // Tipo existente Fase 1.2 (FC1.3 todavia no agrega PartialCreditNoteApproval=11,
+                // eso entra en FC1.3.0). Para el test alcanza con cualquier tipo —
+                // xmin protege la fila, no el RequestType.
+                RequestType = ApprovalRequestType.InvoiceAnnulment,
+                RequestedByUserId = "user-vendedor-A",
+                RequestedByUserName = "Vendedor A",
+                RequestedAt = DateTime.UtcNow,
+                EntityType = "Invoice",
+                EntityId = 12345,
+                Reason = "Test FC1.3.0a — concurrency token xmin.",
+                Status = ApprovalStatus.Pending,
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+                Metadata = """{"draft":"liquidation original"}""",
+            };
+            setup.ApprovalRequests.Add(approval);
+            await setup.SaveChangesAsync();
+            approvalId = approval.Id;
+        }
+
+        // ACT: dos admins cargan el MISMO approval, modifican el Metadata
+        // (campo donde FC1.3 va a guardar el JSON de la liquidacion + edits[])
+        // y persisten.
+        await using var ctxA = _fixture.CreateDbContext();
+        await using var ctxB = _fixture.CreateDbContext();
+
+        var approvalInA = await ctxA.ApprovalRequests.FirstAsync(a => a.Id == approvalId);
+        var approvalInB = await ctxB.ApprovalRequests.FirstAsync(a => a.Id == approvalId);
+
+        // Admin A persiste primero -> xmin de la fila avanza en la BD.
+        approvalInA.Metadata = """{"draft":"liquidation editada por admin A"}""";
+        await ctxA.SaveChangesAsync();
+
+        // Admin B trabajaba con el xmin viejo. Su SaveChanges va a comparar el
+        // xmin que cargo contra el actual de la fila y van a diferir.
+        approvalInB.Metadata = """{"draft":"liquidation editada por admin B"}""";
+
+        // ASSERT: el segundo SaveChanges DEBE disparar el conflicto optimista.
+        // Si no se lanza, significa que UseXminAsConcurrencyToken no aplico a
+        // ApprovalRequests -> race silencioso en edicion admin habilitado.
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => ctxB.SaveChangesAsync());
+    }
+
     [Fact]
     public async Task ClientCreditEntry_TwoConcurrentUpdates_SecondShouldThrowDbUpdateConcurrencyException()
     {

@@ -1067,6 +1067,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(a => new { a.EntityType, a.EntityId, a.Status });
             // Job nightly de expiracion: filter por ExpiresAt + Status pending/approved.
             entity.HasIndex(a => a.ExpiresAt);
+
+            // FC1.3.0a (ADR-009 §2.2 punto 10 / RH-006, 2026-05-21): concurrency
+            // token via xmin para proteger la edicion concurrente del Metadata
+            // por parte de dos admins en paralelo (ej. ambos editan la
+            // liquidacion partial NC al mismo tiempo desde la bandeja).
+            //
+            // Por que aca y no en FC1.3.0: la edicion admin del Metadata es la
+            // unica via mediante la cual un approval pending puede mutar; sin
+            // xmin, el "last write wins" pisa silenciosamente cambios fiscales.
+            // Migracion M0 separada para permitir hotfix antes del resto FC1.3.
+            //
+            // Nota tecnica: UseXminAsConcurrencyToken NO agrega columna fisica
+            // (xmin es pseudo-columna nativa de Postgres en TODAS las tablas) —
+            // solo registra una shadow property uint en el modelo EF para que
+            // los UPDATE/DELETE comparen contra ella y tiren
+            // DbUpdateConcurrencyException si la fila cambio.
+            entity.UseXminAsConcurrencyToken();
         });
 
         // B1.15 Fase B'' (2026-05-11): policies por RequestType.
