@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Domain.Exceptions;
@@ -51,6 +52,31 @@ public class GlobalExceptionHandler : IExceptionHandler
 
             httpContext.Response.StatusCode = problem.Status.Value;
             await httpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
+            return true;
+        }
+
+        // FC1.3.2 (ADR-009 §2.10, 2026-05-21): los services que validan reglas de
+        // negocio simples sobre el request (por ejemplo, GR-002 en
+        // OperationalFinanceSettingsService.UpdateAsync) tiran ValidationException
+        // de System.ComponentModel.DataAnnotations. Sin este mapeo caerian a 500.
+        // El ADR garantiza HTTP 400 al admin que intenta una combinacion invalida
+        // de flags, asi que mapeamos a ProblemDetails 400 con el mensaje real
+        // (los ValidationException llevan mensajes pensados para el usuario, no
+        // exponen detalles internos). Idem mensaje en idioma del modulo.
+        if (exception is ValidationException validation)
+        {
+            _logger.LogWarning(exception, "Validation failed: {Message}", validation.Message);
+
+            var validationProblem = new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "Solicitud invalida.",
+                Detail = validation.Message,
+            };
+            validationProblem.Extensions["code"] = "validation_failed";
+
+            httpContext.Response.StatusCode = validationProblem.Status.Value;
+            await httpContext.Response.WriteAsJsonAsync(validationProblem, cancellationToken);
             return true;
         }
 

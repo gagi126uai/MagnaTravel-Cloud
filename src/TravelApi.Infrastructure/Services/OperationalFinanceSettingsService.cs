@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TravelApi.Application.DTOs;
@@ -37,6 +38,27 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
         entity.UpcomingUnpaidReservationAlertDays = Math.Clamp(request.UpcomingUnpaidReservationAlertDays, 1, 60);
         entity.MaxDiscountPercentWithoutOverride = request.MaxDiscountPercentWithoutOverride;
         entity.UpdatedAt = DateTime.UtcNow;
+
+        // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
+        // FC1.3 (EnablePartialCreditNotes=true) DEPENDE de FC1.2 (EnableNewCancellationFlow=true).
+        // No tiene sentido tener NC parcial activa si el modulo base de cancelacion esta apagado.
+        //
+        // Por que validamos contra 'entity' y NO contra 'request': hoy el DTO no expone los flags
+        // FC1.2/FC1.3 (no hay endpoint admin que los modifique via UpdateAsync — se cambian via
+        // SQL/seed/migration). El check defensivo lee el estado actual de la entidad y rechaza
+        // re-guardar si la combinacion es invalida. Cuando una sub-fase futura agregue esos flags
+        // al DTO, este mismo check seguira funcionando porque 'entity' ya tiene los valores
+        // post-aplicacion del request.
+        //
+        // Tiramos ValidationException (System.ComponentModel.DataAnnotations) que el
+        // GlobalExceptionHandler ya mapea a HTTP 400 — mismo manejo que [Range] sobre el DTO.
+        if (entity.EnablePartialCreditNotes && !entity.EnableNewCancellationFlow)
+        {
+            throw new ValidationException(
+                "Combinacion de flags invalida (GR-002): para tener EnablePartialCreditNotes=true se requiere " +
+                "EnableNewCancellationFlow=true. Si quiere apagar FC1.2, primero apague FC1.3 " +
+                "(EnablePartialCreditNotes=false) en el mismo UPDATE o en uno anterior.");
+        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return Map(entity);

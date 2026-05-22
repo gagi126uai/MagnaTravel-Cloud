@@ -418,24 +418,33 @@ builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IApprovalRequestService, ApprovalRequestService>();
 
-// FC1.2.1 v3 (MR-V2-02, 2026-05-17) — BookingCancellationService implementa
-// AMBAS interfaces:
+// FC1.2.1 v3 (MR-V2-02, 2026-05-17) + FC1.3.2 (ADR-009 §2.7, 2026-05-21) —
+// BookingCancellationService implementa TRES interfaces:
 //   - IBookingCancellationService (API publica que llaman controllers).
 //   - IInvoiceAnnulmentBcBridge (interface chica de 2 metodos que InvoiceService
-//     inyecta opcional para sincronizar el BC post-CAE).
-// Sin este split, IInvoiceService <-> IBookingCancellationService genera ciclo
-// DI rechazado por el resolver al startup (Scoped circular reference). Con el
-// split, el ciclo queda solo logico (uno llama al otro en runtime) pero NO en
-// el grafo de tipos del DI container.
+//     inyecta para sincronizar el BC post-CAE de AFIP).
+//   - IPartialCreditNoteApprovalBridge (interface chica de 2 metodos que
+//     ApprovalRequestService inyecta para sincronizar el BC despues de aprobar
+//     o rechazar un PartialCreditNoteApproval). Stubs en FC1.3.2, logica real FC1.3.3.
 //
-// Registramos la clase concreta una vez + ambas interfaces como factory que
-// resuelve la misma instancia dentro del scope. Asi comparten AppDbContext y
-// ChangeTracker — critico para que los callbacks del bridge vean los cambios
-// commiteados por el flujo principal.
+// Sin este split, los services hermanos (InvoiceService, ApprovalRequestService)
+// tendrian que inyectar IBookingCancellationService completo y se abriria un
+// ciclo DI bidireccional (BC tambien inyecta esos servicios). El resolver
+// detecta el ciclo al startup y aborta ("Scoped circular reference"). Con el
+// split, el ciclo queda solo logico (uno llama al otro en runtime via los
+// callbacks) pero NO en el grafo de tipos del DI container.
+//
+// Registramos la clase concreta una vez + las tres interfaces como factory que
+// resuelve la MISMA instancia dentro del scope. Es critico que sea la misma
+// instancia: comparten AppDbContext y ChangeTracker, asi los callbacks ven los
+// cambios commiteados por el flujo principal. Si fueran instancias distintas,
+// cada una tendria su propio tracker y los reads no verian los writes recientes.
 builder.Services.AddScoped<BookingCancellationService>();
 builder.Services.AddScoped<IBookingCancellationService>(sp =>
     sp.GetRequiredService<BookingCancellationService>());
 builder.Services.AddScoped<IInvoiceAnnulmentBcBridge>(sp =>
+    sp.GetRequiredService<BookingCancellationService>());
+builder.Services.AddScoped<IPartialCreditNoteApprovalBridge>(sp =>
     sp.GetRequiredService<BookingCancellationService>());
 
 // FC1.2.2 (2026-05-18) — OperatorRefundService gestiona los ingresos del operador
@@ -840,6 +849,77 @@ using (var scope = app.Services.CreateScope())
             await userManager.AddToRoleAsync(firstUser, "Admin");
             app.Logger.LogInformation("Seeded 'Admin' role to user {Email}", firstUser.Email);
         }
+    }
+}
+
+// =========================================================================
+// FC1.3.2 (ADR-009 §2.10, 2026-05-21) — startup defense-in-depth (GR-002)
+// =========================================================================
+//
+// Hay tres lugares donde la combinacion EnablePartialCreditNotes=true +
+// EnableNewCancellationFlow=false puede ser invalida:
+//   1) Runtime: OperationalFinanceSettingsService.UpdateAsync ya rechaza el
+//      guardado con ValidationException (canonico).
+//   2) FluentValidation request DTO: PENDIENTE — el proyecto no tiene
+//      FluentValidation registrado. Reportado al reviewer para decidir si se
+//      agrega como dependency o se mantiene el check en el service (que ya
+//      cubre el caso).
+//   3) Startup (este bloque): ultima red de seguridad. Si la BD llego a la
+//      combinacion invalida por restore de backup, UPDATE manual, escritura
+//      legacy o cualquier camino que se saltee el service, la app no arranca.
+//
+// Tambien aprovechamos este scope para RH-013: si FC1.3 esta prendido pero
+// nadie seteo Fc13DeployDate, auto-set a UtcNow + warning. La heuristica
+// "factura legacy" del clasificador depende de esa fecha.
+//
+// El scope es independiente del scope de seed de roles para que el read del
+// service no se confunda con el ChangeTracker que viene de seed users.
+using (var startupValidationScope = app.Services.CreateScope())
+{
+    var settingsService = startupValidationScope.ServiceProvider
+        .GetRequiredService<IOperationalFinanceSettingsService>();
+    var settings = await settingsService.GetEntityAsync(CancellationToken.None);
+
+    if (settings.EnablePartialCreditNotes && !settings.EnableNewCancellationFlow)
+    {
+        // Pre-condicion GR-002 incumplida. Tiramos InvalidOperationException
+        // dentro del bloque catch externo -> Log.Fatal -> proceso termina.
+        // El operador tiene que decidir: o apaga FC1.3, o prende FC1.2 antes
+        // del proximo arranque.
+        throw new InvalidOperationException(
+            "Configuracion invalida: EnablePartialCreditNotes=true requiere " +
+            "EnableNewCancellationFlow=true (GR-002). " +
+            "Apague FC1.3 o prenda FC1.2 antes de arrancar. " +
+            "El runtime UpdateAsync ya rechaza esta combinacion: si llegaste aca, " +
+            "hubo UPDATE manual a BD, restore de backup o escritura por fuera del service. " +
+            "Loguea el escenario para revisar como llegaron los settings a este estado.");
+    }
+
+    // RH-013: si FC1.3 esta prendido pero falta Fc13DeployDate, lo seteamos
+    // automaticamente a UtcNow y emitimos warning. El clasificador caso 4
+    // (factura legacy / confusa) usa esa fecha para flagear facturas viejas
+    // como "revision manual". Sin la fecha, no se puede decidir cual es
+    // "antes" y la heuristica queda muda.
+    if (settings.EnablePartialCreditNotes && settings.Fc13DeployDate is null)
+    {
+        var now = DateTime.UtcNow;
+        app.Logger.LogWarning(
+            "FC1.3 (EnablePartialCreditNotes=true) esta prendido pero Fc13DeployDate=null. " +
+            "Auto-set a {Now} para que la heuristica de factura legacy funcione. " +
+            "Si esto no era lo esperado, ajusta el setting manualmente.",
+            now);
+
+        // Update directo via DbContext: el service de settings hoy no expone un
+        // setter especifico para Fc13DeployDate, y agregarlo requeriria tocar
+        // DTO + controller + tests (fuera de scope FC1.3.2). El update directo
+        // es seguro porque corremos en un scope aislado de startup.
+        var dbContext = startupValidationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var entity = await dbContext.OperationalFinanceSettings
+            .OrderBy(x => x.Id)
+            .FirstAsync();
+        entity.Fc13DeployDate = now;
+        entity.UpdatedAt = now;
+        await dbContext.SaveChangesAsync();
     }
 }
 

@@ -39,7 +39,10 @@ namespace TravelApi.Infrastructure.Services;
 /// cuando el job arranca.
 /// </para>
 /// </summary>
-public class BookingCancellationService : IBookingCancellationService, IInvoiceAnnulmentBcBridge
+public class BookingCancellationService
+    : IBookingCancellationService,
+      IInvoiceAnnulmentBcBridge,
+      IPartialCreditNoteApprovalBridge
 {
     private readonly AppDbContext _db;
     private readonly IInvoiceService _invoiceService;
@@ -966,6 +969,60 @@ public class BookingCancellationService : IBookingCancellationService, IInvoiceA
             bc.PublicId, originatingInvoiceId,
             // Truncamos a 80 chars para que el log no se ensucie con XML completo.
             bc.ArcaErrorMessage.Length > 80 ? bc.ArcaErrorMessage[..80] : bc.ArcaErrorMessage);
+    }
+
+    // =========================================================================
+    // IPartialCreditNoteApprovalBridge (FC1.3.2 — STUBS)
+    // =========================================================================
+    //
+    // FC1.3.2 (ADR-009 §2.7, 2026-05-21): estos 2 metodos son stubs por ahora.
+    // La logica real (transicion BC ManualReviewPending -> ManualReviewApproved
+    // o -> ManualReviewRejected + disparo de InvoiceService.EnqueuePartialCreditNoteAsync
+    // o auto-reset a Drafted) se implementa en la sub-fase FC1.3.3, junto con la
+    // extension de ConfirmAsync para arrancar el flujo NC parcial.
+    //
+    // Por que stubs y no NotImplementedException: necesitamos que el DI resuelva
+    // la interface YA en FC1.3.2 para que ApprovalRequestService (que se va a
+    // tocar en FC1.3.3) pueda inyectarla sin romper la build incremental.
+    // Loguear "stub invocado" permite detectar en QA si alguna sub-fase posterior
+    // dispara el callback antes de que la logica real este lista — eso seria un
+    // bug de coordinacion entre sub-fases, no un caso fiscal valido.
+    // =========================================================================
+
+    /// <summary>
+    /// FC1.3.2 STUB. Implementacion real en FC1.3.3.
+    /// </summary>
+    public Task OnApprovedAsync(
+        int approvalRequestId,
+        string resolverUserId,
+        string? resolverUserName,
+        string? resolverNotes,
+        CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "PartialCreditNoteApprovalBridge.OnApprovedAsync stub invocado " +
+            "(ApprovalRequestId={ApprovalRequestId}, ResolverUserId={ResolverUserId}). " +
+            "Logica real pendiente para FC1.3.3 — no se transiciona BC.",
+            approvalRequestId, resolverUserId);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// FC1.3.2 STUB. Implementacion real en FC1.3.3.
+    /// </summary>
+    public Task OnRejectedAsync(
+        int approvalRequestId,
+        string resolverUserId,
+        string? resolverUserName,
+        string? resolverNotes,
+        CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "PartialCreditNoteApprovalBridge.OnRejectedAsync stub invocado " +
+            "(ApprovalRequestId={ApprovalRequestId}, ResolverUserId={ResolverUserId}). " +
+            "Logica real pendiente para FC1.3.3 — no se transiciona BC.",
+            approvalRequestId, resolverUserId);
+        return Task.CompletedTask;
     }
 
     // =========================================================================
