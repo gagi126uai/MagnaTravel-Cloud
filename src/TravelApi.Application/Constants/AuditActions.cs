@@ -154,4 +154,43 @@ public static class AuditActions
 
     /// <summary>FC1.2.3: entityName para eventos sobre el saldo del cliente (entry).</summary>
     public const string ClientCreditEntryEntityName = "ClientCreditEntry";
+
+    // ===== Modulo NC parcial Hotel (FC1.3.3) =====
+
+    /// <summary>
+    /// FC1.3.3 (ADR-009 §2.8.3, 2026-05-21): el clasificador identifico un caso
+    /// que requiere revision manual y se abrio un <c>ApprovalRequest</c> tipo
+    /// <c>PartialCreditNoteApproval</c>. El BC paso a <c>ManualReviewPending</c>.
+    /// El JSON detail incluye <c>creditNoteKind</c>, <c>reviewRequiredReason</c>
+    /// (bitflag string), <c>fiscalAmountToCredit</c>, <c>approvalRequestPublicId</c>.
+    /// </summary>
+    public const string BookingCancellationSubmittedForReview = "BookingCancellationSubmittedForReview";
+
+    /// <summary>
+    /// FC1.3.3 (ADR-009 §2.7 G3, 2026-05-21): el admin edito la liquidacion del
+    /// BC mientras estaba en <c>ManualReviewPending</c>. El JSON detail incluye
+    /// el diff <c>Changes</c> (RH-012, shape {"Field":{"Old":"...","New":"..."}}),
+    /// el comentario del admin y el flag <c>selfApprovedDueToSingleAdmin</c>
+    /// cuando GR-005 aplico.
+    /// </summary>
+    public const string BookingCancellationLiquidationEdited = "BookingCancellationLiquidationEdited";
+
+    /// <summary>
+    /// FC1.3.3 (ADR-009 §2.8.3, 2026-05-21): el admin aprobo la liquidacion del
+    /// BC. El BC paso de <c>ManualReviewPending</c> a <c>ManualReviewApproved</c>.
+    /// En Fase 1, inmediatamente despues avanza a <c>AwaitingFiscalConfirmation</c>
+    /// y sigue el flujo FC1.2 (NC total real al ARCA). El JSON detail incluye el
+    /// resolverNotes, el bypass GR-005 si aplico, y el flag de accounting review.
+    /// </summary>
+    public const string BookingCancellationManualReviewApproved = "BookingCancellationManualReviewApproved";
+
+    /// <summary>
+    /// FC1.3.3 (ADR-009 §2.8.3, 2026-05-21): el admin rechazo la liquidacion.
+    /// El BC paso transitoriamente a <c>ManualReviewRejected</c> y en la misma
+    /// transaccion se auto-reseteo a <c>Drafted</c> (limpia CreditNoteKind,
+    /// ReviewRequiredReason, LiquidationComputed* y nulea la FK al approval).
+    /// El detail JSON incluye el motivo del rechazo del admin y el snapshot
+    /// pre-reset para auditoria.
+    /// </summary>
+    public const string BookingCancellationManualReviewRejected = "BookingCancellationManualReviewRejected";
 }

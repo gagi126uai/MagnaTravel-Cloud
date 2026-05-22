@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
+using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -50,6 +51,14 @@ public class BookingCancellationService
     private readonly IAuditService _auditService;
     private readonly ILogger<BookingCancellationService> _logger;
     private readonly IOperationalFinanceSettingsService _settings;
+    // FC1.3.3 (ADR-009 §2.6): clasificador fiscal puro. Lo inyectamos como
+    // interface para poder mockearlo en tests unit del service sin levantar
+    // toda la cadena (Invoice + Items + Supplier reales).
+    private readonly IFiscalLiquidationCalculator _calculator;
+    // FC1.3.3 (ADR-009 §2.3.4.bis N-002): abstraccion chica que cuenta admins
+    // activos. Existe como interface dedicada para evitar mockear UserManager
+    // entero en tests (su ctor pide 8+ dependencias).
+    private readonly IAdminUserCountService _adminUserCount;
 
     public BookingCancellationService(
         AppDbContext db,
@@ -57,7 +66,9 @@ public class BookingCancellationService
         IApprovalRequestService approvalService,
         IAuditService auditService,
         ILogger<BookingCancellationService> logger,
-        IOperationalFinanceSettingsService settings)
+        IOperationalFinanceSettingsService settings,
+        IFiscalLiquidationCalculator calculator,
+        IAdminUserCountService adminUserCount)
     {
         _db = db;
         _invoiceService = invoiceService;
@@ -65,6 +76,8 @@ public class BookingCancellationService
         _auditService = auditService;
         _logger = logger;
         _settings = settings;
+        _calculator = calculator;
+        _adminUserCount = adminUserCount;
     }
 
     // =========================================================================
@@ -314,6 +327,14 @@ public class BookingCancellationService
                 invariantCode: "INV-120");
 
         // 7) Completar FiscalSnapshot.
+        //
+        // N-001 (ADR-009 §2.3.5, round 3): el snapshot DEBE quedar populado ANTES
+        // de cualquier transicion a Status >= 8 (ManualReviewPending, etc.). El
+        // CHECK heredado `chk_BookingCancellations_fiscalsnapshot_consistent` (FC1.2)
+        // exige que cualquier Status != Drafted/Aborted tenga Source != 0,
+        // ExchangeRate > 0 y Currency != NULL. Esto se cubre seteando el snapshot
+        // ACA y dejando la transicion de Status para mas abajo (en step 8 FC1.2 o
+        // en SubmitForReviewAsync FC1.3).
         bc.FiscalSnapshot = new FiscalSnapshot
         {
             CurrencyAtEvent = request.SnapshotData.CurrencyAtEvent.ToUpperInvariant(),
@@ -326,6 +347,136 @@ public class BookingCancellationService
             CustomerTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(customerCanonical),
         };
 
+        // ===================================================================
+        // FC1.3.3 (ADR-009 §2.3.5 + §2.9 + §2.11, 2026-05-21): rama NC parcial.
+        //
+        // Si el flag EnablePartialCreditNotes esta OFF, todo este bloque se
+        // saltea y caemos al path FC1.2 vigente (step 8). Esto preserva la
+        // compatibilidad backward sin tocar el flow existente.
+        //
+        // Si esta ON:
+        //  - Validamos que la reserva sea 100% Hotel (INV-FC1.3-007), salvo
+        //    override admin con ApprovalRequest tipo InvariantOverride=7
+        //    (justificacion >= 50 chars, distinta del comentario futuro del BC
+        //    por RH-016).
+        //  - Cargamos el OriginatingInvoice completo (items + supplier) e
+        //    invocamos el calculator.
+        //  - Si el calculator devuelve TotalPlusNewInvoice (casos 4/7): GR-001
+        //    rechaza con InvalidOperationException ANTES de cualquier persistencia
+        //    FC1.3. La fila del BC se queda en Drafted (rollback EF porque nunca
+        //    llamamos a SaveChanges).
+        //  - Si el calculator devuelve reason None: persistimos summary y caemos
+        //    al path FC1.2 (step 8) — la NC se emite como total real.
+        //  - Si el calculator devuelve reason != None: llamamos a
+        //    SubmitForReviewAsync que crea el ApprovalRequest, transiciona el
+        //    BC a ManualReviewPending y retorna directo. NO caemos al step 8.
+        // ===================================================================
+        var settings = await _settings.GetEntityAsync(ct);
+        if (settings.EnablePartialCreditNotes)
+        {
+            // (a) INV-FC1.3-007: solo Hotel. Patron real lineas 256-285 de override.
+            // Cargamos Servicios (no estaba en el Include inicial) para validar.
+            await _db.Entry(bc.Reserva).Collection(r => r.Servicios).LoadAsync(ct);
+            var nonHotelServices = bc.Reserva.Servicios
+                .Where(s => !string.Equals(s.ProductType, ServiceTypes.Hotel, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (nonHotelServices.Count > 0)
+            {
+                // El override usa el MISMO approvalRequest del IsAdminOverride
+                // si su Reason >= 50 chars (mayor exigencia que los 20 del override
+                // de FC1.2). Si no, rechaza.
+                var validOverrideForHotelInvariant =
+                    approvalRequest != null
+                    && approvalRequest.RequestType == ApprovalRequestType.InvariantOverride
+                    && approvalRequest.Status == ApprovalStatus.Approved
+                    && approvalRequest.EntityType == "BookingCancellation"
+                    && approvalRequest.EntityId == bc.Id
+                    && approvalRequest.RequestedByUserId == userId
+                    && approvalRequest.ExpiresAt > DateTime.UtcNow
+                    && !string.IsNullOrWhiteSpace(approvalRequest.Reason)
+                    && approvalRequest.Reason.Trim().Length >= 50;
+
+                if (!validOverrideForHotelInvariant)
+                {
+                    throw new BusinessInvariantViolationException(
+                        $"FC1.3 Fase 1 solo soporta reservas 100% Hotel. " +
+                        $"Servicios no-Hotel detectados: {string.Join(", ", nonHotelServices.Select(s => s.ProductType ?? "(null)"))}. " +
+                        "Use flujo legacy (apagar EnablePartialCreditNotes para esta operacion) o " +
+                        "solicitar override via InvariantOverride approval con justificacion >= 50 chars.",
+                        invariantCode: "INV-FC1.3-007");
+                }
+                // Si llega aca el override cubre el caso, seguimos adelante.
+            }
+
+            // (b) Cargar items + supplier necesarios para el calculator.
+            var invoiceItems = await _db.Set<InvoiceItem>()
+                .Where(i => i.InvoiceId == bc.OriginatingInvoiceId)
+                .ToListAsync(ct);
+            var supplier = await _db.Suppliers
+                .FirstOrDefaultAsync(s => s.Id == bc.SupplierId, ct)
+                ?? throw new InvalidOperationException(
+                    $"No se encontro el Supplier {bc.SupplierId} del BC {bc.PublicId}.");
+
+            // (c) Armar input. CancellationAmount = ImporteTotal por defecto:
+            // Fase 1 solo soporta cancelacion total (cancelacion parcial sub-monto
+            // queda para Fase 2). OperatorPenaltyAmount = 0 por ahora — el endpoint
+            // todavia no recibe el monto. En Fase 1.3.5 se agrega al request.
+            var calculatorInput = new FiscalLiquidationInput(
+                OriginatingInvoice: bc.OriginatingInvoice,
+                Items: invoiceItems,
+                Supplier: supplier,
+                InvoicingModeAtEvent: bc.FiscalSnapshot.InvoicingModeAtEvent,
+                OriginalInvoiceAmount: bc.OriginatingInvoice.ImporteTotal,
+                CancellationAmount: bc.OriginatingInvoice.ImporteTotal,
+                OperatorPenaltyAmount: 0m,
+                RetentionNatureChangedByUser: false,
+                OriginalInvoiceUnclearByUser: false,
+                Currency: bc.FiscalSnapshot.CurrencyAtEvent ?? "ARS");
+
+            // (d) Correr clasificador (puro, sin IO).
+            var liquidation = _calculator.Calculate(calculatorInput, settings);
+
+            // (e) GR-001: rechazo ANTES de persistir nada FC1.3. La fila del BC
+            // queda intacta en Drafted (sin SaveChanges no hay efecto). Tests
+            // verifican que `bc.CreditNoteKind` sigue null post-throw.
+            if (liquidation.Kind == CreditNoteKind.TotalPlusNewInvoice)
+            {
+                throw new InvalidOperationException(
+                    "Caso fiscal requiere FC1.3 Fase 2 - use flujo legacy. " +
+                    $"Calculator devolvio CreditNoteKind=TotalPlusNewInvoice " +
+                    $"(case {liquidation.Case}, motivos {liquidation.ReviewRequiredReason}). " +
+                    "Apague EnablePartialCreditNotes para esta operacion o espere a Fase 2.");
+            }
+
+            // (f) Persistir summary minimo (GR-004): NO guardamos los montos del
+            // calculator en BD. Solo el resultado + timestamps + quien lo corrio.
+            // El detalle entero se serializa al Metadata del approval en
+            // SubmitForReviewAsync (si aplica).
+            bc.CreditNoteKind = liquidation.Kind;
+            bc.ReviewRequiredReason = liquidation.ReviewRequiredReason;
+            bc.LiquidationComputedAt = DateTime.UtcNow;
+            bc.LiquidationComputedByUserId = userId;
+            bc.LiquidationComputedByUserName = userName;
+
+            // (g) Si hay motivos para review manual -> abrir approval + transicionar
+            //     a ManualReviewPending + retornar. No caemos al step 8 de FC1.2.
+            if (liquidation.ReviewRequiredReason != ReviewRequiredReason.None)
+            {
+                return await SubmitForReviewAsync(bc, liquidation, userId, userName, ct);
+            }
+
+            // (h) Reason == None y Kind == PartialOnOriginal: la liquidacion es
+            //     auto-aprobable. Caemos al path FC1.2 (step 8) que emite NC total
+            //     real (Fase 1). El summary FC1.3 queda persistido para que Fase 2
+            //     pueda detectar BCs auto-clasificados y migrarlos cuando AfipService
+            //     emita NC parcial real.
+            _logger.LogInformation(
+                "FC1.3 auto-aprobable: BC {BcPublicId} clasificado Kind={Kind} sin motivos manual review. " +
+                "Continua flujo FC1.2 (NC total real Fase 1).",
+                bc.PublicId, liquidation.Kind);
+        }
+
         // 8) Transicionar BC + Reserva (HC2 plan v3: bypass UpdateStatusAsync —
         //    el state machine general no contempla la transicion lateral a
         //    PendingOperatorRefund, lo hacemos directo y dejamos el comentario
@@ -334,8 +485,7 @@ public class BookingCancellationService
         bc.ConfirmedWithClientAt = DateTime.UtcNow;
         bc.ConfirmedByUserId = userId;
         bc.ConfirmedByUserName = userName;
-        bc.OperatorRefundDueBy = DateTime.UtcNow.AddDays(
-            (await _settings.GetEntityAsync(ct)).OperatorRefundTimeoutDays);
+        bc.OperatorRefundDueBy = DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
 
         // HC2 plan v3 §6.1 step 5: bypass UpdateStatusAsync porque
         // AllowedRevertTransitions no contempla esta salida. La transicion
@@ -864,6 +1014,177 @@ public class BookingCancellationService
     }
 
     // =========================================================================
+    // FC1.3.3 (ADR-009 §2.7 G3, 2026-05-21): edicion admin de la liquidacion
+    // =========================================================================
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> EditLiquidationAsync(
+        Guid publicId,
+        EditLiquidationRequest req,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        if (req is null) throw new ArgumentNullException(nameof(req));
+
+        await EnsureFeatureFlagOnAsync(ct);
+
+        // 1) Cargar BC + approval + reserva + factura origen. Necesitamos todo
+        //    para correr el calculator de nuevo y validar el flow.
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva).ThenInclude(r => r.Servicios)
+            .Include(b => b.OriginatingInvoice)
+            .Include(b => b.PartialCreditNoteApprovalRequest)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // 2) Estado: solo se edita desde ManualReviewPending. Si esta en otro
+        //    estado, rechazamos: el flujo G3 es self-loop, no es para destrabar
+        //    BCs aprobados/rechazados.
+        if (bc.Status != BookingCancellationStatus.ManualReviewPending)
+        {
+            throw new BusinessInvariantViolationException(
+                $"EditLiquidation solo se permite desde ManualReviewPending (actual: {bc.Status}).",
+                invariantCode: "INV-093");
+        }
+
+        if (bc.PartialCreditNoteApprovalRequest is null)
+        {
+            // Defensive: el CHECK chk_BookingCancellations_manualreview_approvalref
+            // ya garantiza esto. Si llegamos aca, hubo corrupcion o bypass.
+            throw new BusinessInvariantViolationException(
+                $"BC {bc.PublicId} en ManualReviewPending sin PartialCreditNoteApprovalRequestId. " +
+                "Estado inconsistente.",
+                invariantCode: "INV-FC1.3-002");
+        }
+
+        // 3) 4-eyes (INV-FC1.3-004) con bypass GR-005. Si el admin que edita es el
+        //    mismo que solicito (DraftedByUserId), aplicar la regla.
+        var settings = await _settings.GetEntityAsync(ct);
+        var isSelfEdit = string.Equals(bc.DraftedByUserId, userId, StringComparison.Ordinal);
+        var bypassApplied = false;
+
+        if (isSelfEdit)
+        {
+            bypassApplied = await TryApplyGr005BypassAsync(req.Comment, settings, ct);
+            if (!bypassApplied)
+            {
+                throw new BusinessInvariantViolationException(
+                    "INV-FC1.3-004 violado: el admin que edita no puede ser el mismo " +
+                    "que solicito la cancelacion (4-eyes). Bypass GR-005 no aplica " +
+                    "(setting Allow4EyesBypassWhenSingleAdmin=false, o hay mas de 1 admin " +
+                    "activo, o comentario < 100 chars).",
+                    invariantCode: "INV-FC1.3-004");
+            }
+        }
+        // Si !isSelfEdit, 4-eyes esta cumplido naturalmente. No hace falta bypass.
+
+        // 4) Cargar inputs para recorrer calculator. Items + supplier ya estan en BD.
+        var invoiceItems = await _db.Set<InvoiceItem>()
+            .Where(i => i.InvoiceId == bc.OriginatingInvoiceId)
+            .ToListAsync(ct);
+        var supplier = await _db.Suppliers
+            .FirstOrDefaultAsync(s => s.Id == bc.SupplierId, ct)
+            ?? throw new InvalidOperationException($"Supplier {bc.SupplierId} no encontrado.");
+
+        // 5) Aplicar overrides del admin sobre el input.
+        var penaltyOverride = req.OperatorPenaltyAmountOverride ?? 0m;
+        var calculatorInput = new FiscalLiquidationInput(
+            OriginatingInvoice: bc.OriginatingInvoice,
+            Items: invoiceItems,
+            Supplier: supplier,
+            InvoicingModeAtEvent: bc.FiscalSnapshot.InvoicingModeAtEvent,
+            OriginalInvoiceAmount: bc.OriginatingInvoice.ImporteTotal,
+            CancellationAmount: bc.OriginatingInvoice.ImporteTotal,
+            OperatorPenaltyAmount: penaltyOverride,
+            RetentionNatureChangedByUser: false,
+            OriginalInvoiceUnclearByUser: false,
+            Currency: bc.FiscalSnapshot.CurrencyAtEvent ?? "ARS");
+
+        var newLiquidation = _calculator.Calculate(calculatorInput, settings);
+
+        // 6) Re-validacion GR-001: la nueva clasificacion puede haber pasado a
+        //    TotalPlusNewInvoice (cambio de inputs). Misma politica que Confirm.
+        if (newLiquidation.Kind == CreditNoteKind.TotalPlusNewInvoice)
+        {
+            throw new InvalidOperationException(
+                "Re-clasificacion despues del edit dio CreditNoteKind=TotalPlusNewInvoice. " +
+                "Fase 1 no soporta este caso. Pedir Reject del admin y abortar el BC.");
+        }
+
+        // 7) Capturar snapshot anterior para construir el diff (RH-012).
+        var oldKind = bc.CreditNoteKind;
+        var oldReason = bc.ReviewRequiredReason;
+
+        // 8) Actualizar summary en el BC.
+        bc.CreditNoteKind = req.CreditNoteKindOverride ?? newLiquidation.Kind;
+        bc.ReviewRequiredReason = newLiquidation.ReviewRequiredReason;
+
+        // 9) Apend al Metadata.edits[] del approval. RH-006 cubierto: si otro
+        //    admin edito entre la lectura y el save, EF tira
+        //    DbUpdateConcurrencyException via xmin del ApprovalRequest.
+        var approval = bc.PartialCreditNoteApprovalRequest;
+        var metadataObj = DeserializeMetadataOrEmpty(approval.Metadata);
+        var newEdit = new
+        {
+            at = DateTime.UtcNow,
+            by = userId,
+            byName = userName,
+            comment = req.Comment,
+            selfApprovedDueToSingleAdmin = bypassApplied,
+            previousKind = oldKind?.ToString(),
+            newKind = bc.CreditNoteKind?.ToString(),
+            previousReason = oldReason.ToString(),
+            newReason = bc.ReviewRequiredReason.ToString(),
+            newFiscalAmountToCredit = newLiquidation.FiscalAmountToCredit,
+            newOperatorPenaltyAmount = newLiquidation.OperatorPenaltyAmount,
+            newNonRefundableItemsAmount = newLiquidation.NonRefundableItemsAmount,
+        };
+        metadataObj["edits"] = (metadataObj.TryGetValue("edits", out var existing) && existing is List<object> list)
+            ? new List<object>(list) { newEdit }
+            : new List<object> { newEdit };
+        approval.Metadata = JsonSerializer.Serialize(metadataObj);
+
+        // 10) Audit con diff RH-012. Shape canonico {"Field":{"Old":"...","New":"..."}}.
+        var changes = new Dictionary<string, object>
+        {
+            ["CreditNoteKind"] = new { Old = oldKind?.ToString(), New = bc.CreditNoteKind?.ToString() },
+            ["ReviewRequiredReason"] = new { Old = oldReason.ToString(), New = bc.ReviewRequiredReason.ToString() },
+            ["FiscalAmountToCredit"] = new { Old = (decimal?)null, New = newLiquidation.FiscalAmountToCredit },
+            ["OperatorPenaltyAmount"] = new { Old = (decimal?)null, New = newLiquidation.OperatorPenaltyAmount },
+            ["NonRefundableItemsAmount"] = new { Old = (decimal?)null, New = newLiquidation.NonRefundableItemsAmount },
+        };
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationLiquidationEdited,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                approvalRequestPublicId = approval.PublicId,
+                comment = req.Comment,
+                selfApprovedDueToSingleAdmin = bypassApplied,
+                Changes = changes,
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        // 11) Commit. Si hay race entre dos admins editando el mismo approval,
+        //     EF tira DbUpdateConcurrencyException por xmin y el caller decide
+        //     reintentar (RH-006). NO catcheamos aca: el caller (controller)
+        //     mapea 409 al cliente.
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "FC1.3 EditLiquidation: BC {BcPublicId} editado por {UserId} (selfBypass={Bypass}).",
+            bc.PublicId, userId, bypassApplied);
+
+        return (await MapToDtoAsync(bc.Id, ct))!;
+    }
+
+    // =========================================================================
     // Bridge callbacks (IInvoiceAnnulmentBcBridge)
     // =========================================================================
 
@@ -972,57 +1293,292 @@ public class BookingCancellationService
     }
 
     // =========================================================================
-    // IPartialCreditNoteApprovalBridge (FC1.3.2 — STUBS)
-    // =========================================================================
+    // FC1.3.3 (ADR-009 §2.8.3, 2026-05-21): IPartialCreditNoteApprovalBridge.
     //
-    // FC1.3.2 (ADR-009 §2.7, 2026-05-21): estos 2 metodos son stubs por ahora.
-    // La logica real (transicion BC ManualReviewPending -> ManualReviewApproved
-    // o -> ManualReviewRejected + disparo de InvoiceService.EnqueuePartialCreditNoteAsync
-    // o auto-reset a Drafted) se implementa en la sub-fase FC1.3.3, junto con la
-    // extension de ConfirmAsync para arrancar el flujo NC parcial.
-    //
-    // Por que stubs y no NotImplementedException: necesitamos que el DI resuelva
-    // la interface YA en FC1.3.2 para que ApprovalRequestService (que se va a
-    // tocar en FC1.3.3) pueda inyectarla sin romper la build incremental.
-    // Loguear "stub invocado" permite detectar en QA si alguna sub-fase posterior
-    // dispara el callback antes de que la logica real este lista — eso seria un
-    // bug de coordinacion entre sub-fases, no un caso fiscal valido.
+    // Estos dos callbacks los dispara `ApprovalRequestService.ApproveAsync` /
+    // `RejectAsync` DESPUES de haber commiteado el cambio de Status en el
+    // ApprovalRequest. Por lo tanto:
+    //  - Si el bridge tira o crashea, el approval queda en su estado final
+    //    (Approved/Rejected) pero el BC queda en ManualReviewPending. Esa
+    //    divergencia la sanea el job de reconciliacion bridge (FC1.3.6b) +
+    //    endpoint admin de force-callback (ADR §2.12). No usamos tx distribuida
+    //    intencionalmente (N-007 round 3).
+    //  - Por eso ambos metodos son idempotentes: si el BC ya esta en el estado
+    //    destino, log warning + return SIN tirar (no romper el flow de approval).
     // =========================================================================
 
     /// <summary>
-    /// FC1.3.2 STUB. Implementacion real en FC1.3.3.
+    /// FC1.3.3: callback que dispara <c>ApprovalRequestService.ApproveAsync</c>
+    /// cuando aprueba un <c>PartialCreditNoteApproval=11</c>. Transiciona el BC
+    /// de <c>ManualReviewPending</c> a <c>ManualReviewApproved</c> y, si el
+    /// kind es <c>PartialOnOriginal</c>, avanza inmediatamente a
+    /// <c>AwaitingFiscalConfirmation</c> (path FC1.2 — Fase 1 emite NC total).
     /// </summary>
-    public Task OnApprovedAsync(
+    public async Task OnApprovedAsync(
         int approvalRequestId,
         string resolverUserId,
         string? resolverUserName,
         string? resolverNotes,
         CancellationToken ct)
     {
+        // 1) Localizar BC por la FK.
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.PartialCreditNoteApprovalRequest)
+            .FirstOrDefaultAsync(b => b.PartialCreditNoteApprovalRequestId == approvalRequestId, ct);
+
+        if (bc is null)
+        {
+            // No hay BC vinculado (ApprovalRequest huerfana). Log + return: el
+            // job de reconciliacion no puede reabrir esto (no hay BC). Si llegamos
+            // aca, lo mas probable es que el BC fue abortado/eliminado.
+            _logger.LogWarning(
+                "OnApprovedAsync FC1.3: no se encontro BC con PartialCreditNoteApprovalRequestId={ApprovalRequestId}. " +
+                "Approval queda Approved sin efecto. No-op.",
+                approvalRequestId);
+            return;
+        }
+
+        // 2) Idempotencia: si ya esta en estado destino, log + return.
+        if (bc.Status == BookingCancellationStatus.ManualReviewApproved
+            || bc.Status == BookingCancellationStatus.AwaitingFiscalConfirmation
+            || bc.Status == BookingCancellationStatus.AwaitingOperatorRefund
+            || bc.Status == BookingCancellationStatus.ClientCreditApplied
+            || bc.Status == BookingCancellationStatus.Closed)
+        {
+            _logger.LogWarning(
+                "OnApprovedAsync FC1.3 no-op: BC {BcPublicId} ya esta en {Status}. " +
+                "El bridge probablemente fue invocado dos veces (job reconciliacion + bridge real).",
+                bc.PublicId, bc.Status);
+            return;
+        }
+
+        // 3) Si no esta en ManualReviewPending, algo raro: no transicionamos.
+        if (bc.Status != BookingCancellationStatus.ManualReviewPending)
+        {
+            _logger.LogWarning(
+                "OnApprovedAsync FC1.3: BC {BcPublicId} esta en {Status}, no en ManualReviewPending. " +
+                "No-op (no es seguro forzar la transicion sin entender por que llego aca).",
+                bc.PublicId, bc.Status);
+            return;
+        }
+
+        // 4) Validar 4-eyes con bypass GR-005 SOBRE EL RESOLVER. El admin que
+        //    aprueba puede ser distinto del que edito; lo que importa para
+        //    INV-FC1.3-004 es que el approver != vendedor original.
+        var settings = await _settings.GetEntityAsync(ct);
+        var isSelfApproval = string.Equals(bc.DraftedByUserId, resolverUserId, StringComparison.Ordinal);
+        var bypassApplied = false;
+
+        if (isSelfApproval)
+        {
+            bypassApplied = await TryApplyGr005BypassAsync(resolverNotes, settings, ct);
+            if (!bypassApplied)
+            {
+                // No tiramos: el approval ya esta aprobado en BD. Loguear como
+                // ERROR (no warning) y dejar el BC en ManualReviewPending. El
+                // admin del sistema debe intervenir manualmente (revertir el
+                // approval o forzar el callback con InvariantOverride scoped).
+                _logger.LogError(
+                    "OnApprovedAsync FC1.3 RECHAZADO: BC {BcPublicId} aprobado por el mismo vendedor " +
+                    "({UserId}), bypass GR-005 no aplica. BC se queda en ManualReviewPending. " +
+                    "Intervencion manual requerida (revertir approval o force-callback con InvariantOverride).",
+                    bc.PublicId, resolverUserId);
+                return;
+            }
+        }
+
+        // 5) Validar longitud minima del resolverNotes. Si el monto supera el
+        //    accounting threshold, exigir 100 chars (G5). Si no, 20 basta.
+        //    Esto es defensive: ApprovalRequestService probablemente ya valido
+        //    longitud minima, pero la regla "100 si accounting" es de FC1.3.
+        var commentMinLength = bc.ReviewRequiredReason.HasFlag(ReviewRequiredReason.AmountAboveAccountingThreshold) ? 100 : 20;
+        if (string.IsNullOrWhiteSpace(resolverNotes) || resolverNotes.Trim().Length < commentMinLength)
+        {
+            _logger.LogError(
+                "OnApprovedAsync FC1.3 RECHAZADO: BC {BcPublicId} comment del resolver muy corto " +
+                "({Actual} chars, requeridos {Required}). BC se queda en ManualReviewPending.",
+                bc.PublicId, resolverNotes?.Length ?? 0, commentMinLength);
+            return;
+        }
+
+        // 6) Transicion fiscal a ManualReviewApproved.
+        bc.Status = BookingCancellationStatus.ManualReviewApproved;
+        bc.ManualReviewerUserId = resolverUserId;
+        bc.ManualReviewerUserName = resolverUserName;
+        bc.ManualReviewedAt = DateTime.UtcNow;
+        bc.ManualReviewComment = resolverNotes;
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationManualReviewApproved,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                approvalRequestId,
+                resolverUserId,
+                resolverNotes,
+                creditNoteKind = bc.CreditNoteKind?.ToString(),
+                reviewRequiredReason = bc.ReviewRequiredReason.ToString(),
+                selfApprovedDueToSingleAdmin = bypassApplied,
+                accountingReviewRequired = bc.ReviewRequiredReason.HasFlag(ReviewRequiredReason.AmountAboveAccountingThreshold),
+            }),
+            userId: resolverUserId,
+            userName: resolverUserName,
+            ct: ct);
+
+        // 7) Fase 1: emision automatica AVANZANDO A AwaitingFiscalConfirmation con
+        //    el path FC1.2 (NC total real al ARCA). En Fase 2 esto se reemplaza
+        //    por InvoiceService.EnqueuePartialCreditNoteAsync que emitira NC
+        //    parcial real.
+        if (bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal)
+        {
+            _logger.LogWarning(
+                "FC1.3 Fase 1: BC {BcPublicId} aprobado con CreditNoteKind=PartialOnOriginal pero " +
+                "AfipService emite NC TOTAL real (no parcial). Fase 2 implementa parcial real. " +
+                "Razon FC1.3: {Reason}. Monto facturado: {Total}.",
+                bc.PublicId, bc.ReviewRequiredReason, bc.OriginatingInvoice?.ImporteTotal);
+
+            // Recuperamos settings de nuevo para OperatorRefundTimeoutDays
+            // (no es hot path; lo importante es que la transicion sea atomica).
+            bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
+            bc.ConfirmedWithClientAt ??= DateTime.UtcNow;
+            bc.ConfirmedByUserId ??= resolverUserId;
+            bc.ConfirmedByUserName ??= resolverUserName;
+            bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+
+            await _db.SaveChangesAsync(ct);
+
+            // Encolar la NC en AFIP. En Fase 1 emite total (mismo path que FC1.2).
+            // Pasamos requesterIsAdmin=true porque el approval FC1.3 ya cubrio la
+            // autorizacion (no necesitamos otro approval InvoiceAnnulment).
+            await _invoiceService.EnqueueAnnulmentAsync(
+                id: bc.OriginatingInvoiceId,
+                userId: resolverUserId,
+                userName: resolverUserName,
+                reason: $"FC1.3 manual review approved: {resolverNotes?.Trim()}",
+                requesterIsAdmin: true,
+                ct: ct,
+                approvalRequestId: approvalRequestId);
+
+            // Marcar el approval como Consumed para que no se reuse.
+            await _approvalService.MarkConsumedAsync(approvalRequestId, ct);
+        }
+        else
+        {
+            // Defensive: si llega un kind raro (Unset, futuro TotalPlusNewInvoice
+            // si Fase 2 lo permite), persistir lo que hicimos hasta aca y dejar
+            // la decision al admin que llamara al endpoint de Fase 2.
+            await _db.SaveChangesAsync(ct);
+        }
+
         _logger.LogInformation(
-            "PartialCreditNoteApprovalBridge.OnApprovedAsync stub invocado " +
-            "(ApprovalRequestId={ApprovalRequestId}, ResolverUserId={ResolverUserId}). " +
-            "Logica real pendiente para FC1.3.3 — no se transiciona BC.",
-            approvalRequestId, resolverUserId);
-        return Task.CompletedTask;
+            "FC1.3 OnApprovedAsync: BC {BcPublicId} -> ManualReviewApproved (selfBypass={Bypass}).",
+            bc.PublicId, bypassApplied);
     }
 
     /// <summary>
-    /// FC1.3.2 STUB. Implementacion real en FC1.3.3.
+    /// FC1.3.3: callback que dispara <c>ApprovalRequestService.RejectAsync</c>
+    /// cuando rechaza un <c>PartialCreditNoteApproval=11</c>. Transiciona el BC
+    /// a <c>ManualReviewRejected</c> e inmediatamente despues auto-resetea a
+    /// <c>Drafted</c> dentro de la misma tx, limpiando los campos FC1.3.
     /// </summary>
-    public Task OnRejectedAsync(
+    public async Task OnRejectedAsync(
         int approvalRequestId,
         string resolverUserId,
         string? resolverUserName,
         string? resolverNotes,
         CancellationToken ct)
     {
+        // 1) Localizar BC por la FK.
+        var bc = await _db.BookingCancellations
+            .FirstOrDefaultAsync(b => b.PartialCreditNoteApprovalRequestId == approvalRequestId, ct);
+
+        if (bc is null)
+        {
+            _logger.LogWarning(
+                "OnRejectedAsync FC1.3: no se encontro BC con PartialCreditNoteApprovalRequestId={ApprovalRequestId}. " +
+                "No-op.",
+                approvalRequestId);
+            return;
+        }
+
+        // 2) Idempotencia: si ya esta en Drafted/Aborted/Rejected, no hacer nada.
+        if (bc.Status == BookingCancellationStatus.Drafted
+            || bc.Status == BookingCancellationStatus.Aborted
+            || bc.Status == BookingCancellationStatus.ManualReviewRejected)
+        {
+            _logger.LogWarning(
+                "OnRejectedAsync FC1.3 no-op: BC {BcPublicId} ya esta en {Status}.",
+                bc.PublicId, bc.Status);
+            return;
+        }
+
+        if (bc.Status != BookingCancellationStatus.ManualReviewPending)
+        {
+            _logger.LogWarning(
+                "OnRejectedAsync FC1.3: BC {BcPublicId} esta en {Status}, no en ManualReviewPending. No-op.",
+                bc.PublicId, bc.Status);
+            return;
+        }
+
+        // 3) Validar longitud minima del resolverNotes (20 chars).
+        if (string.IsNullOrWhiteSpace(resolverNotes) || resolverNotes.Trim().Length < 20)
+        {
+            _logger.LogError(
+                "OnRejectedAsync FC1.3 RECHAZADO: BC {BcPublicId} resolverNotes muy cortos " +
+                "({Actual} chars, requeridos 20). BC se queda en ManualReviewPending.",
+                bc.PublicId, resolverNotes?.Length ?? 0);
+            return;
+        }
+
+        // 4) Audit del rechazo ANTES del reset — guarda el snapshot pre-reset
+        //    para auditoria (si despues miras el BC en Drafted, no sabrias que
+        //    paso por FC1.3 si no fuera por este audit).
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationManualReviewRejected,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                approvalRequestId,
+                resolverUserId,
+                resolverNotes,
+                preResetSnapshot = new
+                {
+                    creditNoteKind = bc.CreditNoteKind?.ToString(),
+                    reviewRequiredReason = bc.ReviewRequiredReason.ToString(),
+                    liquidationComputedAt = bc.LiquidationComputedAt,
+                    liquidationComputedByUserId = bc.LiquidationComputedByUserId,
+                },
+            }),
+            userId: resolverUserId,
+            userName: resolverUserName,
+            ct: ct);
+
+        // 5) Auto-reset: limpiar todos los campos FC1.3 + volver a Drafted.
+        bc.Status = BookingCancellationStatus.Drafted;
+        bc.CreditNoteKind = null;
+        bc.ReviewRequiredReason = ReviewRequiredReason.None;
+        bc.LiquidationComputedAt = null;
+        bc.LiquidationComputedByUserId = null;
+        bc.LiquidationComputedByUserName = null;
+        bc.PartialCreditNoteApprovalRequestId = null;
+        // ManualReviewer* fields NO se limpian: el rechazo en si es un evento
+        // que vale la pena trazar inline en el BC (ademas del audit log).
+        bc.ManualReviewerUserId = resolverUserId;
+        bc.ManualReviewerUserName = resolverUserName;
+        bc.ManualReviewedAt = DateTime.UtcNow;
+        bc.ManualReviewComment = resolverNotes;
+
+        await _db.SaveChangesAsync(ct);
+
         _logger.LogInformation(
-            "PartialCreditNoteApprovalBridge.OnRejectedAsync stub invocado " +
-            "(ApprovalRequestId={ApprovalRequestId}, ResolverUserId={ResolverUserId}). " +
-            "Logica real pendiente para FC1.3.3 — no se transiciona BC.",
-            approvalRequestId, resolverUserId);
-        return Task.CompletedTask;
+            "FC1.3 OnRejectedAsync: BC {BcPublicId} rechazado y auto-reseteado a Drafted por {ResolverUserId}.",
+            bc.PublicId, resolverUserId);
     }
 
     // =========================================================================
@@ -1041,6 +1597,167 @@ public class BookingCancellationService
             throw new InvalidOperationException(
                 "El modulo de cancelacion/refund no esta habilitado en este ambiente " +
                 "(EnableNewCancellationFlow=false).");
+    }
+
+    // =========================================================================
+    // FC1.3.3 (ADR-009 §2.7 + §2.3.4.bis, 2026-05-21): helpers privados FC1.3
+    // =========================================================================
+
+    /// <summary>
+    /// FC1.3.3 (ADR-009 §2.8.3 + §2.7): abre el <c>ApprovalRequest</c> tipo
+    /// <c>PartialCreditNoteApproval</c>, transiciona el BC a
+    /// <c>ManualReviewPending</c>, serializa la liquidacion al Metadata JSON
+    /// (schemaVersion=1) y emite el audit log. SIN llamadas a AFIP — eso solo
+    /// pasa al aprobar.
+    /// </summary>
+    private async Task<BookingCancellationDto> SubmitForReviewAsync(
+        BookingCancellation bc,
+        FiscalLiquidationDto liquidation,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // 1) Armar metadata JSON con schemaVersion=1 (ADR-009 §2.7). Si en el
+        //    futuro cambia el schema, se versiona y el reader detecta.
+        var metadata = new Dictionary<string, object?>
+        {
+            ["schemaVersion"] = 1,
+            ["computedAt"] = DateTime.UtcNow,
+            ["computedByUserId"] = userId,
+            ["computedByUserName"] = userName,
+            ["computedCase"] = liquidation.Case.ToString(),
+            ["originalInvoiceAmount"] = liquidation.OriginalInvoiceAmount,
+            ["cancellationAmount"] = liquidation.CancellationAmount,
+            ["operatorPenaltyAmount"] = liquidation.OperatorPenaltyAmount,
+            ["nonRefundableItemsAmount"] = liquidation.NonRefundableItemsAmount,
+            ["fiscalAmountToCredit"] = liquidation.FiscalAmountToCredit,
+            ["amountToRefundCustomer"] = liquidation.AmountToRefundCustomer,
+            ["finalNetInvoiced"] = liquidation.FinalNetInvoiced,
+            ["creditNoteKind"] = liquidation.Kind.ToString(),
+            ["reviewRequiredReason"] = liquidation.ReviewRequiredReason.ToString(),
+            ["currency"] = liquidation.Currency,
+            ["classificationExplanation"] = liquidation.ClassificationExplanation,
+            ["accountingReviewRequired"] = liquidation.ReviewRequiredReason.HasFlag(ReviewRequiredReason.AmountAboveAccountingThreshold),
+            ["selfApprovedDueToSingleAdmin"] = false,
+            ["edits"] = new List<object>(),
+        };
+        var metadataJson = JsonSerializer.Serialize(metadata);
+
+        // 2) Crear el ApprovalRequest via el service (ApprovalRequestService lo
+        //    persiste con sus defaults — expiration, cooldown, etc.).
+        var approvalDto = await _approvalService.CreateAsync(
+            new CreateApprovalRequestPayload(
+                RequestType: ApprovalRequestType.PartialCreditNoteApproval.ToString(),
+                EntityType: "BookingCancellation",
+                EntityId: bc.Id,
+                Reason: $"NC parcial Hotel - case {liquidation.Case}, motivos {liquidation.ReviewRequiredReason}",
+                Metadata: metadataJson),
+            requestedByUserId: userId,
+            requestedByUserName: userName,
+            ct: ct);
+
+        // 3) Vincular FK del approval al BC. ApprovalRequestService.CreateAsync
+        //    devuelve el dto sin el Id legacy, asi que lo buscamos por PublicId.
+        var approvalEntity = await _db.ApprovalRequests
+            .FirstOrDefaultAsync(a => a.PublicId == approvalDto.PublicId, ct)
+            ?? throw new InvalidOperationException(
+                $"ApprovalRequest {approvalDto.PublicId} no encontrado despues de crearlo.");
+
+        bc.PartialCreditNoteApprovalRequestId = approvalEntity.Id;
+
+        // 4) Transicion atomica Drafted -> ManualReviewPending. El estado
+        //    intermedio RequiresManualReview (8) existe solo como marker
+        //    semantico del enum y NO se persiste (ADR §2.8.1).
+        bc.Status = BookingCancellationStatus.ManualReviewPending;
+        bc.ConfirmedWithClientAt = DateTime.UtcNow;
+        bc.ConfirmedByUserId = userId;
+        bc.ConfirmedByUserName = userName;
+
+        // 5) Audit del submit. Incluimos el detail completo de la liquidacion
+        //    para que el reviewer pueda buscar por monto/caso sin abrir el
+        //    approval. El JSON queda duplicado entre AuditLog y ApprovalRequest
+        //    a proposito — son dos audits con TTL distintos.
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationSubmittedForReview,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                ReservaPublicId = bc.Reserva.PublicId,
+                approvalRequestPublicId = approvalEntity.PublicId,
+                creditNoteKind = liquidation.Kind.ToString(),
+                reviewRequiredReason = liquidation.ReviewRequiredReason.ToString(),
+                computedCase = liquidation.Case.ToString(),
+                fiscalAmountToCredit = liquidation.FiscalAmountToCredit,
+                amountToRefundCustomer = liquidation.AmountToRefundCustomer,
+                accountingReviewRequired = liquidation.ReviewRequiredReason.HasFlag(ReviewRequiredReason.AmountAboveAccountingThreshold),
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        // 6) Save final: ApprovalRequest, BC summary, transicion de status,
+        //    todo en un solo commit. Si EF tira (concurrency en BC, validacion
+        //    constraint, etc.), nada se persiste y el caller recibe la excepcion.
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "FC1.3 SubmitForReview: BC {BcPublicId} -> ManualReviewPending, ApprovalRequest {ApprovalPublicId} creado. " +
+            "Razon: {Reason}.",
+            bc.PublicId, approvalEntity.PublicId, liquidation.ReviewRequiredReason);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException($"BC {bc.PublicId} no encontrado despues de submit for review.");
+    }
+
+    /// <summary>
+    /// FC1.3.3 (ADR-009 §2.3.4.bis N-002 + GR-005): evalua si aplica el bypass
+    /// de 4-ojos para single admin. Devuelve <c>true</c> si:
+    ///  - <c>Allow4EyesBypassWhenSingleAdmin</c> setting esta en true.
+    ///  - Hay EXACTAMENTE 1 admin activo (rol "Admin" + IsActive=true).
+    ///  - El comentario es >= 100 chars (refuerzo G5).
+    /// Devuelve <c>false</c> si alguno falla. El caller decide si tirar
+    /// excepcion (en EditLiquidationAsync) o solo loguear (en OnApprovedAsync).
+    /// </summary>
+    private async Task<bool> TryApplyGr005BypassAsync(
+        string? comment,
+        OperationalFinanceSettings settings,
+        CancellationToken ct)
+    {
+        if (!settings.Allow4EyesBypassWhenSingleAdmin)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(comment) || comment.Trim().Length < 100)
+            return false;
+
+        var activeAdminCount = await _adminUserCount.CountActiveAdminsAsync(ct);
+        return activeAdminCount == 1;
+    }
+
+    /// <summary>
+    /// FC1.3.3: deserializa el <c>Metadata</c> JSON del approval a un Dictionary
+    /// mutable. Si esta vacio o malformed, devuelve dict vacio (no tira) — el
+    /// caller seguira escribiendo y guardando un JSON valido.
+    /// </summary>
+    private Dictionary<string, object?> DeserializeMetadataOrEmpty(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson))
+            return new Dictionary<string, object?>();
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson);
+            return parsed ?? new Dictionary<string, object?>();
+        }
+        catch (JsonException ex)
+        {
+            // Si el JSON estaba corrupto (no deberia pasar — siempre lo escribimos
+            // nosotros), log warning y empezamos limpio. El audit log si guarda
+            // el diff aparte.
+            _logger.LogWarning(ex, "ApprovalRequest.Metadata JSON corrupto. Empezamos con dict vacio.");
+            return new Dictionary<string, object?>();
+        }
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using TravelApi.Application.DTOs;
+using TravelApi.Application.DTOs.Cancellation;
 
 namespace TravelApi.Application.Interfaces;
 
@@ -135,6 +136,38 @@ public interface IBookingCancellationService
     /// </para>
     /// </summary>
     Task OnAllCreditConsumedAsync(int bookingCancellationId, CancellationToken ct);
+
+    // ===== FC1.3.3 — comando publico para NC parcial (admin edita liquidacion en manual review) =====
+
+    /// <summary>
+    /// FC1.3.3 (ADR-009 §2.7 G3, 2026-05-21): el admin edita los inputs de la
+    /// liquidacion fiscal de un BC que esta en
+    /// <c>BookingCancellationStatus.ManualReviewPending</c>. Reglas resumidas:
+    /// <list type="bullet">
+    ///   <item>BC debe estar en <c>ManualReviewPending</c> (sino rechaza).</item>
+    ///   <item>4-eyes (INV-FC1.3-004): admin != vendedor original, salvo bypass
+    ///         GR-005 (single admin) con comentario reforzado 100+ chars.</item>
+    ///   <item>El calculator vuelve a correr con los overrides y se persiste
+    ///         el resultado en el <c>ApprovalRequest.Metadata.edits[]</c>.</item>
+    ///   <item>El BC se queda en <c>ManualReviewPending</c> (self-loop). El
+    ///         approve/reject se hace por el endpoint generico de approvals,
+    ///         no por este metodo.</item>
+    ///   <item>Audit obligatorio (<c>BookingCancellationLiquidationEdited</c>)
+    ///         con diff JSON {"Field":{"Old":"...","New":"..."}}.</item>
+    /// </list>
+    ///
+    /// <para><b>Approve/Reject NO se exponen como metodos publicos del service</b>:
+    /// el flujo canonico es invocar <c>ApprovalRequestService.ApproveAsync</c> /
+    /// <c>RejectAsync</c> del controller generico de approvals, que despues
+    /// dispara los callbacks del bridge <c>IPartialCreditNoteApprovalBridge</c>.
+    /// Asi se evita duplicar la maquina de estados del approval en dos lados.</para>
+    /// </summary>
+    Task<BookingCancellationDto> EditLiquidationAsync(
+        Guid publicId,
+        EditLiquidationRequest req,
+        string userId,
+        string? userName,
+        CancellationToken ct);
 
     // ===== Queries =====
 

@@ -93,13 +93,22 @@ public sealed class BookingCancellationServiceTests
 
         var auditMock = new Mock<IAuditService>();
 
+        // FC1.3.3: el ctor ahora pide tambien el calculator y el contador de admins.
+        // Para tests FC1.2 alcanza con mocks no configurados — el flag
+        // EnablePartialCreditNotes esta OFF por default, asi que el calculator nunca
+        // se invoca y el contador tampoco.
+        var calculatorMock = new Mock<IFiscalLiquidationCalculator>();
+        var adminCountMock = new Mock<IAdminUserCountService>();
+
         var service = new BookingCancellationService(
             ctx,
             invoiceMock.Object,
             approvalService,
             auditMock.Object,
             NullLogger<BookingCancellationService>.Instance,
-            settingsMock.Object);
+            settingsMock.Object,
+            calculatorMock.Object,
+            adminCountMock.Object);
 
         return (service, ctx, invoiceMock, settingsMock);
     }

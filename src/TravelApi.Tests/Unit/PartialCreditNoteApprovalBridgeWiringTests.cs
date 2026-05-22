@@ -51,7 +51,7 @@ public class PartialCreditNoteApprovalBridgeWiringTests
     {
         var services = new ServiceCollection();
 
-        // Dependencias del constructor de BookingCancellationService (6).
+        // Dependencias del constructor de BookingCancellationService (8 desde FC1.3.3).
         // AppDbContext usa InMemory porque las 4 registraciones de wiring necesitan
         // poder INSTANCIAR el service para verificar same-instance — sin DbContext
         // resolvible el GetRequiredService<BookingCancellationService>() tira.
@@ -61,6 +61,9 @@ public class PartialCreditNoteApprovalBridgeWiringTests
         services.AddSingleton(Mock.Of<IAuditService>());
         services.AddSingleton<ILogger<BookingCancellationService>>(NullLogger<BookingCancellationService>.Instance);
         services.AddSingleton(Mock.Of<IOperationalFinanceSettingsService>());
+        // FC1.3.3: dos deps nuevas inyectadas en el ctor del BC service.
+        services.AddSingleton(Mock.Of<IFiscalLiquidationCalculator>());
+        services.AddSingleton(Mock.Of<IAdminUserCountService>());
 
         // === Wiring REAL FC1.3.2 (copia textual de Program.cs:442-448) ===
         // Si Program.cs cambia, este bloque tambien cambia. El test detecta drift

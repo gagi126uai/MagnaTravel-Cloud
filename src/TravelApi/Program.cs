@@ -465,6 +465,12 @@ builder.Services.AddScoped<IClientCreditService, ClientCreditService>();
 // rechaza (TotalPlusNewInvoice por GR-001).
 builder.Services.AddScoped<IFiscalLiquidationCalculator, FiscalLiquidationCalculator>();
 
+// FC1.3.3 (ADR-009 §2.3.4.bis N-002, 2026-05-21) — service chico que cuenta
+// admins activos para la regla GR-005 (bypass 4-ojos en agencias de 1 sola
+// persona). Existe como interface dedicada para evitar que el BC tenga que
+// inyectar UserManager directamente (mockearlo en tests requiere 8+ deps).
+builder.Services.AddScoped<IAdminUserCountService, AdminUserCountService>();
+
 builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
