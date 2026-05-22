@@ -59,12 +59,34 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
     // Helpers de seed.
     // =========================================================================
 
-    private record SeedBundle(string AdminUserId, Guid ReservaPublicId, int CustomerId, int SupplierId);
+    /// <summary>
+    /// Bundle de seed con DOS usuarios distintos: <c>VendorUserId</c> es el vendedor
+    /// que dibuja y confirma la cancelacion; <c>AdminUserId</c> es el admin que
+    /// aprueba el approval.
+    ///
+    /// <para>
+    /// <b>Por que dos usuarios y no uno solo</b>: el bridge FC1.3 enforce 4-eyes
+    /// (INV-FC1.3-004) — el aprobador no puede ser el mismo que el solicitante
+    /// del approval (que se setea con <c>DraftedByUserId</c> al momento del Draft).
+    /// Si usaramos un solo userId para Draft + Approve, el bridge logueaba
+    /// "aprobado por el mismo vendedor, bypass GR-005 no aplica" y dejaba el BC
+    /// trabado en <c>ManualReviewPending</c> — el assert <c>AwaitingFiscalConfirmation</c>
+    /// fallaria. Ver <c>BookingCancellationService.OnApprovedAsync</c>.
+    /// </para>
+    /// </summary>
+    private record SeedBundle(string AdminUserId, string VendorUserId, Guid ReservaPublicId, int CustomerId, int SupplierId);
 
     /// <summary>
-    /// Crea usuario admin con permisos minimos + customer + supplier (modo
-    /// configurable) + reserva Hotel + factura segun <paramref name="tipoComprobante"/>.
-    /// Tambien activa los flags FC1.2 + FC1.3 del setting global.
+    /// Crea usuario admin + usuario vendedor con permisos minimos por rol +
+    /// customer + supplier (modo configurable) + reserva Hotel + factura segun
+    /// <paramref name="tipoComprobante"/>. Tambien activa los flags FC1.2 + FC1.3
+    /// del setting global.
+    ///
+    /// <para>
+    /// La reserva queda asignada al <c>VendorUserId</c> (no al admin). Asi el
+    /// vendedor puede pasar el guard <c>RequireOwnership</c> al hacer Draft+Confirm,
+    /// y despues el admin (que tiene <c>ApprovalsReview</c>) entra a aprobar.
+    /// </para>
     /// </summary>
     private async Task<SeedBundle> SeedAsync(
         string suffix,
@@ -86,20 +108,38 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
 
         if (!await roleMgr.RoleExistsAsync("Admin"))
             await roleMgr.CreateAsync(new IdentityRole("Admin"));
+        if (!await roleMgr.RoleExistsAsync("Vendedor"))
+            await roleMgr.CreateAsync(new IdentityRole("Vendedor"));
 
-        // Permisos para que Admin pueda cancelar + ver approvals + editar liquidacion.
-        foreach (var perm in new[]
+        // Permisos por rol. Admin = todo. Vendedor = solo lo necesario para
+        // Draft + Confirm + ver su propia reserva. Asi simulamos roles reales
+        // de produccion y el guard de 4-eyes del bridge no se rompe.
+        var adminPermissions = new[]
         {
             Permissions.ReservasCancel,
             Permissions.ReservasView,
             Permissions.ReservasViewAll,
             Permissions.CobranzasInvoiceAnnul,
             Permissions.ApprovalsReview,
-        })
+        };
+        var vendorPermissions = new[]
+        {
+            Permissions.ReservasCancel,
+            Permissions.ReservasView,
+        };
+
+        foreach (var perm in adminPermissions)
         {
             if (!await db.RolePermissions.AnyAsync(rp => rp.RoleName == "Admin" && rp.Permission == perm))
             {
                 db.RolePermissions.Add(new RolePermission { RoleName = "Admin", Permission = perm });
+            }
+        }
+        foreach (var perm in vendorPermissions)
+        {
+            if (!await db.RolePermissions.AnyAsync(rp => rp.RoleName == "Vendedor" && rp.Permission == perm))
+            {
+                db.RolePermissions.Add(new RolePermission { RoleName = "Vendedor", Permission = perm });
             }
         }
         await db.SaveChangesAsync();
@@ -117,6 +157,21 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
             };
             await userMgr.CreateAsync(user, "Test1234!Aa");
             await userMgr.AddToRoleAsync(user, "Admin");
+        }
+
+        var vendorId = "vendor-e2e-" + suffix;
+        if (await userMgr.FindByIdAsync(vendorId) is null)
+        {
+            var vendor = new ApplicationUser
+            {
+                Id = vendorId,
+                UserName = vendorId + "@t.local",
+                Email = vendorId + "@t.local",
+                FullName = "Vendedor E2E " + suffix,
+                IsActive = true,
+            };
+            await userMgr.CreateAsync(vendor, "Test1234!Aa");
+            await userMgr.AddToRoleAsync(vendor, "Vendedor");
         }
 
         var customer = new Customer
@@ -141,7 +196,10 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
             PublicId = Guid.NewGuid(),
             Name = "E2E " + suffix,
             NumeroReserva = "E2E-" + suffix,
-            ResponsibleUserId = adminId,
+            // Reserva pertenece al vendedor — el ownership guard del Confirm chequea
+            // que el caller sea el ResponsibleUserId (o tenga ReservasViewAll, que el
+            // vendor NO tiene). Asi simulamos el flujo real: vendor abre, admin aprueba.
+            ResponsibleUserId = vendorId,
             PayerId = customer.Id,
             Status = EstadoReserva.Confirmed,
         };
@@ -197,16 +255,34 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
 
         scope.ServiceProvider.GetRequiredService<IUserPermissionResolver>().InvalidateAll();
 
-        return new SeedBundle(adminId, reserva.PublicId, customer.Id, supplier.Id);
+        return new SeedBundle(adminId, vendorId, reserva.PublicId, customer.Id, supplier.Id);
     }
 
-    private void SetAdminHeaders(HttpClient client, string userId)
+    /// <summary>
+    /// Setea los headers de autenticacion del <see cref="TestAuthHandler"/> con
+    /// el <paramref name="userId"/> + <paramref name="role"/> indicados. Limpia
+    /// los valores previos para que llamadas sucesivas no acumulen.
+    ///
+    /// <para>
+    /// El handler emite <c>NameIdentifier = userId</c> + <c>Role = role</c>. Las
+    /// claims de permisos se resuelven server-side via <c>IUserPermissionResolver</c>
+    /// (no por header) — por eso solo necesitamos pasar userId + role.
+    /// </para>
+    /// </summary>
+    private void SetUserHeaders(HttpClient client, string userId, string role)
     {
         client.DefaultRequestHeaders.Remove(TestAuthHandler.TestUserIdHeader);
         client.DefaultRequestHeaders.Remove(TestAuthHandler.TestUserRolesHeader);
         client.DefaultRequestHeaders.Add(TestAuthHandler.TestUserIdHeader, userId);
-        client.DefaultRequestHeaders.Add(TestAuthHandler.TestUserRolesHeader, "Admin");
+        client.DefaultRequestHeaders.Add(TestAuthHandler.TestUserRolesHeader, role);
     }
+
+    /// <summary>
+    /// Atajo retro-compatible: setea headers como Admin. Equivale a
+    /// <c>SetUserHeaders(client, userId, "Admin")</c>.
+    /// </summary>
+    private void SetAdminHeaders(HttpClient client, string userId) =>
+        SetUserHeaders(client, userId, "Admin");
 
     /// <summary>
     /// Crea un HttpClient con <see cref="IInvoiceService"/> reemplazado por un Mock
@@ -283,9 +359,13 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         // Necesitamos el mock de IInvoiceService para evitar el hang con InMemoryDb
         // (ver helper).
         var client = CreateClientWithInvoiceServiceMock();
-        SetAdminHeaders(client, seed.AdminUserId);
+        // Primero el vendedor: el Draft + Confirm los hace el "Vendedor" para que
+        // DraftedByUserId quede con su id (no con el del admin). Si los hiciera
+        // el mismo admin que despues aprueba, el bridge enforce 4-eyes y deja el
+        // BC en ManualReviewPending — el assert AwaitingFiscalConfirmation rompe.
+        SetUserHeaders(client, seed.VendorUserId, "Vendedor");
 
-        // ACT 1 — Draft.
+        // ACT 1 — Draft (lo emite el vendedor).
         var draftReq = new DraftCancellationRequest(seed.ReservaPublicId, "Cliente cambio de planes por motivos personales");
         var draftResp = await client.PostAsJsonAsync("/api/cancellations", draftReq);
         Assert.Equal(HttpStatusCode.Created, draftResp.StatusCode);
@@ -293,7 +373,7 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         Assert.NotNull(draftDto);
         Assert.Equal(BookingCancellationStatus.Drafted.ToString(), draftDto!.Status);
 
-        // ACT 2 — Confirm. El calculator detecta Factura A -> ManualReviewPending.
+        // ACT 2 — Confirm (lo emite el vendedor). El calculator detecta Factura A -> ManualReviewPending.
         var confirmResp = await client.PatchAsJsonAsync(
             $"/api/cancellations/{draftDto.PublicId}/confirm", BuildValidConfirm());
         Assert.Equal(HttpStatusCode.OK, confirmResp.StatusCode);
@@ -315,6 +395,10 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
             Assert.True(bc.ReviewRequiredReason.HasFlag(ReviewRequiredReason.CustomerIsRiOrFacturaA));
             approvalPublicId = bc.PartialCreditNoteApprovalRequest.PublicId;
         }
+
+        // Cambiamos identidad al admin para el Approve. Asi el bridge ve
+        // approver (admin) != drafter (vendor) y no enforce GR-005.
+        SetAdminHeaders(client, seed.AdminUserId);
 
         // ACT 3 — Admin aprueba el approval via endpoint generico.
         // Comment >= 20 chars (no es threshold-accounting con monto 100k).
@@ -359,7 +443,10 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         // Necesitamos el mock de IInvoiceService para evitar el hang con InMemoryDb
         // (ver helper).
         var client = CreateClientWithInvoiceServiceMock();
-        SetAdminHeaders(client, seed.AdminUserId);
+        // Vendedor abre la cancelacion (Draft + Confirm). Asi DraftedByUserId
+        // queda con el id del vendor y el admin puede aprobar despues sin que
+        // el bridge enforce 4-eyes (GR-005). Ver comentario en SeedBundle.
+        SetUserHeaders(client, seed.VendorUserId, "Vendedor");
 
         // Draft + Confirm.
         var draftReq = new DraftCancellationRequest(seed.ReservaPublicId, "Cancelacion modo intermediario");
@@ -382,6 +469,11 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
             Assert.True(bc.ReviewRequiredReason.HasFlag(ReviewRequiredReason.InvoicingModeCommissionOnly));
             approvalPublicId = bc.PartialCreditNoteApprovalRequest!.PublicId;
         }
+
+        // Cambio de identidad: admin distinto del vendor para el Approve.
+        // Asi el bridge ve approver (admin) != drafter (vendor) y no enforce
+        // GR-005 — el BC transiciona limpio a AwaitingFiscalConfirmation.
+        SetAdminHeaders(client, seed.AdminUserId);
 
         // ACT — admin aprueba sin modificar.
         var approveResp = await client.PostAsJsonAsync(
@@ -429,7 +521,14 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
             var settings = await settingsSvc.GetEntityAsync(CancellationToken.None);
             // Pattern que matchea "Hotel 5 noches" (palabra "hotel").
             settings.GenericDescriptionPatterns = @"\b(hotel|servicios?)\b";
-            // Fc13DeployDate puede quedar null — no usamos LegacyInvoice aca.
+            // Reseteamos Fc13DeployDate = null defensivamente. El startup validator
+            // del factory base lo auto-setea a DateTime.UtcNow cuando se prende
+            // EnablePartialCreditNotes — si otros tests previos (Case5 / Case8)
+            // disparan ese startup en su factory hija, queda persistido en la
+            // InMemoryDb compartida. Acá no usamos LegacyInvoice (la heuristica
+            // que mira Fc13DeployDate), pero lo limpiamos para que el test sea
+            // autocontenido y no dependa del orden de ejecucion.
+            settings.Fc13DeployDate = null;
             await db.SaveChangesAsync();
 
             // Modificamos el InvoiceItem para que tenga UNA SOLA linea con
@@ -441,8 +540,22 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
             await db.SaveChangesAsync();
         }
 
-        var client = _factory.CreateClient();
-        SetAdminHeaders(client, seed.AdminUserId);
+        // Usamos el helper con mock de IInvoiceService aunque ESTE test rechace
+        // en Confirm (GR-001). Razon: si por cualquier motivo el calculator NO
+        // detecta TotalPlusNewInvoice (por ej. el setting Fc13DeployDate quedo
+        // contaminado por un test previo y el item description matchea distinto),
+        // el flow cae al path normal FC1.2 ConfirmAsync, que invoca
+        // InvoiceService.EnqueueAnnulmentAsync — y ese path con InMemoryDb +
+        // service real se cuelga de forma deterministica (mismo hang que motivo
+        // el primer fix de este archivo). El mock per-test es seguro: si el
+        // GR-001 dispara antes de llegar al bridge (como deberia), el mock NUNCA
+        // se invoca; si no dispara, evitamos el hang y el assert de status
+        // detecta la regresion. Belt + suspenders.
+        var client = CreateClientWithInvoiceServiceMock();
+        // El vendedor dibuja la cancelacion; el rechazo por GR-001 ocurre en
+        // Confirm antes de llegar al Approve, asi que no necesitamos cambiar a
+        // admin en este test. Igual usamos el vendor por consistencia.
+        SetUserHeaders(client, seed.VendorUserId, "Vendedor");
 
         // Draft OK.
         var draftReq = new DraftCancellationRequest(seed.ReservaPublicId, "Test caso 4 factura confusa");
