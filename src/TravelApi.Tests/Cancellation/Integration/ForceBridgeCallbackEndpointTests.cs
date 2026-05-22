@@ -4,9 +4,11 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Interfaces;
@@ -253,6 +255,44 @@ public class ForceBridgeCallbackEndpointTests : IClassFixture<CustomWebApplicati
         client.DefaultRequestHeaders.Add(TestAuthHandler.TestUserRolesHeader, "Admin");
     }
 
+    /// <summary>
+    /// Crea un HttpClient con <see cref="IInvoiceService"/> reemplazado por un Mock
+    /// no-op SOLO para los tests que ejercitan el happy path del bridge.
+    ///
+    /// <para>
+    /// <b>Por que el mock per-test y no en el factory global</b>: el factory base se
+    /// comparte con tests B1.15 (anulacion de facturas) que dependen del service real
+    /// para validar los guards de approval y de tipos fiscales. Mockearlo globalmente
+    /// rompe esos guards y los tests pasan en falso. Ver doc explicativa
+    /// 2026-05-22 (FC1.3 hang post-merge) y comentario en
+    /// PostgresIntegrationFixture sobre la misma estrategia.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Por que solo en el bridge happy path</b>: el flow E2E que pasa por el bridge
+    /// invoca <c>InvoiceService.EnqueueAnnulmentAsync</c> con InMemoryDb. La cadena
+    /// sincronica del service real (lectura de settings + RequiresApprovalAsync +
+    /// SaveChanges sobre Invoice) se cuelga de forma deterministica sobre InMemory.
+    /// Los path defensivos (409/403/404/no-op) NO llegan al bridge y por eso usan
+    /// <c>_factory.CreateClient()</c> directo — corren con el service real sin colgarse.
+    /// </para>
+    /// </summary>
+    private HttpClient CreateClientWithInvoiceServiceMock()
+    {
+        var factoryWithMock = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                // Mantenemos Scoped para paridad con la registracion real en
+                // TravelApi/Program.cs (IInvoiceService). El Mock es stateless,
+                // asi que el scope no afecta correctitud — solo evita divergencias
+                // innecesarias en la inspeccion del container.
+                var descriptor = services.SingleOrDefault(s => s.ServiceType == typeof(IInvoiceService));
+                if (descriptor is not null) services.Remove(descriptor);
+                services.AddScoped<IInvoiceService>(_ => new Mock<IInvoiceService>().Object);
+            }));
+        return factoryWithMock.CreateClient();
+    }
+
     // =========================================================================
     // 1) Happy path: admin destraba BC stuck con override valido.
     // =========================================================================
@@ -271,7 +311,9 @@ public class ForceBridgeCallbackEndpointTests : IClassFixture<CustomWebApplicati
         var (targetPid, targetId, bcPid) = await SeedOrphanBcAsync(suffix, vendorUserId: "vendor-stuck");
         var overridePid = await SeedValidOverrideAsync(targetId, adminId);
 
-        var client = _factory.CreateClient();
+        // Happy path -> entra al bridge -> EnqueueAnnulmentAsync. Necesitamos el mock
+        // de IInvoiceService para evitar el hang con InMemoryDb (ver helper).
+        var client = CreateClientWithInvoiceServiceMock();
         SetAdminHeaders(client, adminId);
 
         // ACT

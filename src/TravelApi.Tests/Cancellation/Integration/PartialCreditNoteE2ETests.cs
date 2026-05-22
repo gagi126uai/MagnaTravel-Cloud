@@ -4,9 +4,11 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Interfaces;
@@ -206,6 +208,45 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         client.DefaultRequestHeaders.Add(TestAuthHandler.TestUserRolesHeader, "Admin");
     }
 
+    /// <summary>
+    /// Crea un HttpClient con <see cref="IInvoiceService"/> reemplazado por un Mock
+    /// no-op SOLO para los tests que ejercitan el happy path del bridge (admin aprueba
+    /// approval y el bridge transiciona el BC).
+    ///
+    /// <para>
+    /// <b>Por que el mock per-test y no en el factory global</b>: el factory base se
+    /// comparte con tests B1.15 (anulacion de facturas) que dependen del service real
+    /// para validar los guards de approval y de tipos fiscales. Mockearlo globalmente
+    /// rompe esos guards y los tests pasan en falso. Ver doc explicativa
+    /// 2026-05-22 (FC1.3 hang post-merge) y comentario en
+    /// PostgresIntegrationFixture sobre la misma estrategia.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Por que solo en el happy path</b>: el flow E2E que pasa por el Approve
+    /// dispara el bridge -> <c>InvoiceService.EnqueueAnnulmentAsync</c>. Con
+    /// InMemoryDb la cadena sincronica del service real (lectura de settings +
+    /// RequiresApprovalAsync + SaveChanges sobre Invoice) se cuelga de forma
+    /// deterministica. Los tests que rechazan en Confirm (caso 4 GR-001) NO llegan
+    /// al Approve y por eso usan <c>_factory.CreateClient()</c> directo.
+    /// </para>
+    /// </summary>
+    private HttpClient CreateClientWithInvoiceServiceMock()
+    {
+        var factoryWithMock = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                // Mantenemos Scoped para paridad con la registracion real en
+                // TravelApi/Program.cs (IInvoiceService). El Mock es stateless,
+                // asi que el scope no afecta correctitud — solo evita divergencias
+                // innecesarias en la inspeccion del container.
+                var descriptor = services.SingleOrDefault(s => s.ServiceType == typeof(IInvoiceService));
+                if (descriptor is not null) services.Remove(descriptor);
+                services.AddScoped<IInvoiceService>(_ => new Mock<IInvoiceService>().Object);
+            }));
+        return factoryWithMock.CreateClient();
+    }
+
     private static ConfirmCancellationRequest BuildValidConfirm() =>
         new ConfirmCancellationRequest(
             SnapshotData: new FiscalSnapshotData(
@@ -238,7 +279,10 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         // ARRANGE — Factura A.
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var seed = await SeedAsync(suffix, tipoComprobante: 1, importeTotal: 100_000m);
-        var client = _factory.CreateClient();
+        // Happy path -> approve dispara el bridge -> EnqueueAnnulmentAsync.
+        // Necesitamos el mock de IInvoiceService para evitar el hang con InMemoryDb
+        // (ver helper).
+        var client = CreateClientWithInvoiceServiceMock();
         SetAdminHeaders(client, seed.AdminUserId);
 
         // ACT 1 — Draft.
@@ -311,7 +355,10 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var seed = await SeedAsync(suffix, tipoComprobante: 6,
             supplierMode: SupplierInvoicingMode.CommissionOnly, importeTotal: 200_000m);
-        var client = _factory.CreateClient();
+        // Happy path -> approve dispara el bridge -> EnqueueAnnulmentAsync.
+        // Necesitamos el mock de IInvoiceService para evitar el hang con InMemoryDb
+        // (ver helper).
+        var client = CreateClientWithInvoiceServiceMock();
         SetAdminHeaders(client, seed.AdminUserId);
 
         // Draft + Confirm.
