@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TravelApi.Application.DTOs;
+using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
@@ -269,6 +271,94 @@ public class CancellationsController : ControllerBase
         var dto = await _bcService.GetByPublicIdAsync(publicId, cancellationToken);
         if (dto is null) return NotFound();
         return Ok(dto);
+    }
+
+    /// <summary>
+    /// FC1.3.5 (ADR-009 §2.7 G3 + §2.11, 2026-05-21): G3 self-loop. El admin
+    /// (o el Vendedor que tenga <c>CobranzasInvoiceAnnul</c> + ownership)
+    /// edita los inputs de la liquidacion fiscal de un BC que esta esperando
+    /// revision manual. El service re-corre el calculator con los overrides,
+    /// persiste el diff en <c>ApprovalRequest.Metadata.edits[]</c> y deja el
+    /// BC en <c>ManualReviewPending</c> (self-loop). El approve/reject final
+    /// lo hace el endpoint generico de approvals, no este metodo.
+    ///
+    /// <para><b>Permiso</b>: <see cref="Permissions.CobranzasInvoiceAnnul"/>
+    /// — reusamos el mismo permiso que usa el annul de facturas, porque la
+    /// edicion de la liquidacion fiscal queda en el mismo dominio funcional
+    /// (decision plan tactico FC1.3 §1574). La regla 4-eyes (INV-FC1.3-004)
+    /// la enforza el service, no el controller — no podemos saber aca si el
+    /// que edita es el mismo que solicito sin cargar el BC.</para>
+    ///
+    /// <para><b>Ownership</b>: el responsable del BC es el responsable de la
+    /// reserva padre. Reusamos <see cref="OwnedEntity.BookingCancellation"/>
+    /// con bypass por <c>ReservasViewAll</c> (admin/back-office).</para>
+    ///
+    /// <para><b>Mapeo de errores</b>:
+    /// <list type="bullet">
+    ///   <item><c>KeyNotFoundException</c> → 404.</item>
+    ///   <item><c>BusinessInvariantViolationException</c> → 409 via
+    ///     <see cref="Middleware.GlobalExceptionHandler"/>. No la catcheamos
+    ///     aca (mismo patron que <c>Draft</c> y <c>Confirm</c>).</item>
+    ///   <item><c>InvalidOperationException</c> → 409 (ej. re-clasificacion
+    ///     dio <c>TotalPlusNewInvoice</c> que Fase 1 no soporta).</item>
+    ///   <item><c>DbUpdateConcurrencyException</c> → 409 con
+    ///     <c>code=CONCURRENT_EDIT</c> (otro admin edito el mismo
+    ///     <c>ApprovalRequest</c> en simultaneo y EF detecto el conflicto
+    ///     por <c>xmin</c> — el frontend pide reintentar).</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    [HttpPost("{publicId:guid}/edit-liquidation")]
+    [RequirePermission(Permissions.CobranzasInvoiceAnnul)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> EditLiquidation(
+        Guid publicId,
+        EditLiquidationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        try
+        {
+            var dto = await _bcService.EditLiquidationAsync(publicId, request, userId, userName, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Re-clasificacion a TotalPlusNewInvoice (no soportado Fase 1),
+            // feature flag off, supplier no encontrado, etc. 409 expresa
+            // "estado actual incompatible con la operacion".
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            // ArgumentNullException(req) o validacion de argumentos del service.
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // RH-006: dos admins editaron el mismo ApprovalRequest en simultaneo.
+            // EF detecta el conflicto por xmin del approval. El frontend muestra
+            // "reintentar" — el segundo admin lee el estado fresco y vuelve a
+            // mandar su edit.
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        // BusinessInvariantViolationException la atrapa GlobalExceptionHandler
+        // (409 ProblemDetails con invariantCode + constraintName + code).
+        // Mismo criterio que Draft/Confirm — no la catcheamos aca.
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
     }
 
     // =========================================================================
