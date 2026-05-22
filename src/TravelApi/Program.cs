@@ -484,6 +484,9 @@ builder.Services.AddScoped<IOperationalFinanceSettingsService, OperationalFinanc
 builder.Services.AddScoped<ITreasuryService, TreasuryService>();
 builder.Services.AddScoped<OperationalFinanceMonitorService>();
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.ReservaLifecycleAutomationService>();
+// FC1.3.6 (ADR-009 §2.10, 2026-05-21): job que alerta a Admins cuando un BC
+// queda mucho tiempo en ManualReviewPending (riesgo plazo RG 4540 fiscal).
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteReviewAlertJob>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
 builder.Services.AddScoped<ICountryService, CountryService>();
@@ -749,6 +752,15 @@ if (hangfireSchedulerEnabled)
         "reserva-lifecycle-automation",
         service => service.RunDailyAsync(CancellationToken.None),
         Cron.Daily(3));
+
+    // FC1.3.6 (ADR-009 §2.10, 2026-05-21): chequeo diario de BCs trabados en
+    // ManualReviewPending. Corre 8am UTC para que la alerta caiga apenas el
+    // admin entra al sistema (no a las 3am cuando nadie esta mirando).
+    // El job es no-op si EnablePartialCreditNotes=false.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.PartialCreditNoteReviewAlertJob>(
+        "partial-credit-note-review-alert",
+        job => job.RunAsync(CancellationToken.None),
+        "0 8 * * *");
 }
 
 // 3. Health Check
