@@ -193,4 +193,25 @@ public static class AuditActions
     /// pre-reset para auditoria.
     /// </summary>
     public const string BookingCancellationManualReviewRejected = "BookingCancellationManualReviewRejected";
+
+    /// <summary>
+    /// FC1.3.6b (ADR-009 §2.12 round 3, 2026-05-21): un admin uso el endpoint
+    /// <c>POST /api/approvals/{publicId}/force-bridge-callback</c> para forzar
+    /// la re-emision del callback del bridge sobre un approval que quedo
+    /// desincronizado con su BC (job reconciliacion agoto los reintentos).
+    /// El detail JSON incluye <c>ForcedBy</c>, <c>OverrideApprovalId</c>,
+    /// <c>TargetApprovalId</c>, <c>TargetApprovalStatusAtForce</c>. Auditoria
+    /// reforzada porque la accion bypassea el mecanismo automatico de
+    /// reconciliacion y la decision queda 100% en manos del admin.
+    /// </summary>
+    public const string BookingCancellationForceApprovalCallback = "BookingCancellationForceApprovalCallback";
+
+    /// <summary>
+    /// FC1.3.6b (ADR-009 §2.12 round 3, 2026-05-21): el admin invoco
+    /// force-callback pero el BC ya transiciono fuera de
+    /// <c>ManualReviewPending</c> (ej. otro admin tambien forzo, o el job
+    /// concilio justo antes). Es no-op idempotente: igualmente queda el
+    /// rastro de auditoria para que se vea quien intento forzar y cuando.
+    /// </summary>
+    public const string BookingCancellationForceApprovalCallbackNoop = "BookingCancellationForceApprovalCallback_NoOp";
 }

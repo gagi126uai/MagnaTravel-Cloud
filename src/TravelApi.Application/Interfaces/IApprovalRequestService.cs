@@ -73,4 +73,42 @@ public interface IApprovalRequestService
     /// cuyo <c>ExpiresAt</c> ya paso. Idempotente.
     /// </summary>
     Task<int> ExpireOverdueAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// FC1.3.6b (ADR-009 §2.12 round 3, 2026-05-21): admin fuerza la re-emision
+    /// del callback del bridge sobre un <c>PartialCreditNoteApproval</c> que el
+    /// job de reconciliacion agoto sus reintentos.
+    ///
+    /// <para>Valida exhaustivamente el InvariantOverride asociado (tipo,
+    /// estado, scope, reason length, reason distinto del original, no expirado,
+    /// pedido por el mismo admin que llama). Si OK, invoca el callback del
+    /// bridge y resetea el counter. Si el BC ya transiciono (caso raro: otro
+    /// admin tambien forzo, o el bridge real se destrabo justo antes), no-op
+    /// idempotente con audit.</para>
+    ///
+    /// <para>Throws:
+    /// <list type="bullet">
+    ///   <item><see cref="KeyNotFoundException"/> si el target approval no existe.</item>
+    ///   <item><see cref="Domain.Exceptions.BusinessInvariantViolationException"/>
+    ///     si el target approval no es <c>PartialCreditNoteApproval</c>, no esta
+    ///     Approved/Rejected, o el override es invalido por cualquier motivo.</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    /// <param name="targetApprovalPublicId">PublicId del approval cuyo callback
+    ///   se quiere re-disparar.</param>
+    /// <param name="overrideApprovalPublicId">PublicId del approval tipo
+    ///   <see cref="ApprovalRequestType.InvariantOverride"/> aprobado que respalda la accion.</param>
+    /// <param name="reason">Motivo libre del admin (espanol), &gt;= 50 chars,
+    ///   distinto del ResolverNotes del target.</param>
+    /// <param name="currentUserId">UserId del admin que invoca el endpoint
+    ///   (4-eyes: debe coincidir con el RequestedByUserId del override).</param>
+    /// <param name="currentUserName">Nombre display del admin para audit.</param>
+    Task ForceBridgeCallbackAsync(
+        Guid targetApprovalPublicId,
+        Guid overrideApprovalPublicId,
+        string reason,
+        string currentUserId,
+        string? currentUserName,
+        CancellationToken ct = default);
 }

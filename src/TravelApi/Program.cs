@@ -487,6 +487,11 @@ builder.Services.AddScoped<TravelApi.Infrastructure.Services.ReservaLifecycleAut
 // FC1.3.6 (ADR-009 §2.10, 2026-05-21): job que alerta a Admins cuando un BC
 // queda mucho tiempo en ManualReviewPending (riesgo plazo RG 4540 fiscal).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteReviewAlertJob>();
+
+// FC1.3.6b (ADR-009 §2.12 round 3, 2026-05-21): job que reconcilia approvals
+// resueltos cuyo BC quedo huerfano en ManualReviewPending. Reaplica el callback
+// del bridge con anti-spam (max N reintentos, una notificacion al limite).
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteBridgeReconciliationJob>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
 builder.Services.AddScoped<ICountryService, CountryService>();
@@ -761,6 +766,17 @@ if (hangfireSchedulerEnabled)
         "partial-credit-note-review-alert",
         job => job.RunAsync(CancellationToken.None),
         "0 8 * * *");
+
+    // FC1.3.6b (ADR-009 §2.12 round 3, 2026-05-21): reconciliacion bridge cada
+    // 30 min. La "ventana de gracia" para considerar un approval staleness se
+    // controla por setting BridgeReconciliationStalenessMinutes (default 30
+    // tambien) — la cron y el setting estan desacoplados a proposito: la cron
+    // dispara el job, el filtro de antiguedad evita re-disparar callbacks frescos.
+    // Es no-op si EnablePartialCreditNotes=false.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.PartialCreditNoteBridgeReconciliationJob>(
+        "partial-credit-note-bridge-reconciliation",
+        job => job.RunAsync(CancellationToken.None),
+        "*/30 * * * *");
 }
 
 // 3. Health Check

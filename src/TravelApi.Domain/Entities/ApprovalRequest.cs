@@ -79,4 +79,43 @@ public class ApprovalRequest : IHasPublicId
 
     /// <summary>JSON arbitrario con context del request (montos, fechas, etc.). Frontend interpreta segun RequestType.</summary>
     public string? Metadata { get; set; }
+
+    // ============================================================
+    // FC1.3.6b (ADR-009 §2.12 round 3, 2026-05-21): trazabilidad
+    // del job de reconciliacion bridge. Aplica SOLO a approvals tipo
+    // PartialCreditNoteApproval=11; el resto los ignora.
+    //
+    // Por que viven en la entidad generica y no en una tabla aparte:
+    //  - El job lee y filtra por (RequestType, Status, BridgeRetryCount)
+    //    en una sola query. Tabla 1:1 nos forzaria a LEFT JOIN o a
+    //    nullables igual de feos, sin ganancia real.
+    //  - Cardinality: las 3 columnas estan en NULL/0 para el 99% de los
+    //    approvals (los no-FC1.3) — costo de storage despreciable
+    //    (8 bytes int + null = 1 byte de payload por fila no-FC1.3).
+    // ============================================================
+
+    /// <summary>
+    /// FC1.3.6b: cuantas veces el job de reconciliacion intento invocar el
+    /// bridge para este approval. Resetea a 0 cuando el bridge tiene exito o
+    /// cuando un admin fuerza el callback via endpoint dedicado. Una vez que
+    /// supera <c>BridgeReconciliationMaxRetries</c>, el job deja de intentar
+    /// y exige force-callback manual con InvariantOverride.
+    /// </summary>
+    public int BridgeRetryCount { get; set; } = 0;
+
+    /// <summary>
+    /// FC1.3.6b: ultimo mensaje de error que el bridge devolvio (truncado a
+    /// 2000 chars). Sirve para el admin que abre el endpoint force-callback
+    /// y entiende por que el job no pudo conciliar. Null si nunca fallo o si
+    /// el ultimo intento fue exitoso.
+    /// </summary>
+    [MaxLength(2000)]
+    public string? BridgeLastError { get; set; }
+
+    /// <summary>
+    /// FC1.3.6b: timestamp UTC del ultimo intento del job (haya sido exitoso
+    /// o no). Sirve para diagnostico ("el job lo tomo o el problema es que
+    /// el approval no entra en la query del job?").
+    /// </summary>
+    public DateTime? BridgeLastAttemptAt { get; set; }
 }

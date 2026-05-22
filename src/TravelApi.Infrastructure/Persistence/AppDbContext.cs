@@ -1105,6 +1105,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // los UPDATE/DELETE comparen contra ella y tiren
             // DbUpdateConcurrencyException si la fila cambio.
             entity.UseXminAsConcurrencyToken();
+
+            // FC1.3.6b (ADR-009 §2.12 round 3, 2026-05-21): mappings de las 3
+            // columnas que el job de reconciliacion bridge usa para tracking de
+            // reintentos. BridgeRetryCount tiene default explicito 0 para que
+            // las filas legacy backfilleadas por la migracion arranquen "sin
+            // intentos previos". BridgeLastError limitado a 2000 chars para no
+            // explotar el log con stack traces enormes. BridgeLastAttemptAt es
+            // timestamptz para alinearse con el resto de timestamps de la tabla.
+            entity.Property(a => a.BridgeRetryCount).HasDefaultValue(0);
+            entity.Property(a => a.BridgeLastError).HasMaxLength(2000);
+            entity.Property(a => a.BridgeLastAttemptAt).HasColumnType("timestamp with time zone");
         });
 
         // B1.15 Fase B'' (2026-05-11): policies por RequestType.
