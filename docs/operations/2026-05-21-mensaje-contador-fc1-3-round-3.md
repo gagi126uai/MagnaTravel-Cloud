@@ -1,12 +1,14 @@
 # 2026-05-21 - Mensaje al contador (round 3) - FC1.3 Fase 1
 
-> Para mandar al contador antes de implementar Fase 2 (no bloquea Fase 1). Mensaje unico con 12 puntos: 3 fiscales nuevas + 8 confirmaciones profesionales + 1 confirmacion G4.
+> Para mandar al contador antes de implementar Fase 2 (no bloquea Fase 1). Mensaje unico con 13 puntos: 4 fiscales nuevas + 8 confirmaciones profesionales + 1 confirmacion G4.
+>
+> **Editado 2026-05-22 (round 2 del plan tactico Fase 2)**: se sumo F5 sobre TC en NC parcial multimoneda. El resto del mensaje queda intacto.
 
 ---
 
 ## Asunto sugerido
 
-**MagnaTravel FC1.3 - Round 3: cierre operativo NC parcial Hotel (12 puntos)**
+**MagnaTravel FC1.3 - Round 3: cierre operativo NC parcial Hotel (13 puntos)**
 
 ---
 
@@ -14,11 +16,11 @@
 
 Hola [contador],
 
-Gracias por el criterio que nos diste el 2026-05-21 sobre NC parcial (matriz 8 casos + escenarios A y B). Lo estamos implementando en lo que llamamos FC1.3 Fase 1 (solo Hotel por ahora). Antes de la implementacion definitiva al ARCA (Fase 2), nos quedaron 12 puntos para cerrar con vos. Estan agrupados en 3 bloques.
+Gracias por el criterio que nos diste el 2026-05-21 sobre NC parcial (matriz 8 casos + escenarios A y B). Lo estamos implementando en lo que llamamos FC1.3 Fase 1 (solo Hotel por ahora). Antes de la implementacion definitiva al ARCA (Fase 2), nos quedaron 13 puntos para cerrar con vos. Estan agrupados en 3 bloques.
 
 ---
 
-### Bloque 1 - Fiscales nuevas (3 puntos)
+### Bloque 1 - Fiscales nuevas (4 puntos)
 
 **F1 - Criterio de borde en thresholds monetarios**
 
@@ -59,6 +61,17 @@ Escenario concreto: cliente paga $1.000.000 por hotel (modo revendedor, Factura 
 - **Opcion B**: NC parcial al cliente por **$1.000.000**. La penalidad es costo de la agencia, no afecta lo que el cliente "perdio de credito fiscal". La agencia se come la penalidad como gasto en su balance. (Lo que decia la parte general del criterio).
 
 **Pregunta**: cual es la regla correcta?
+
+**F5 - TC en NC parcial multimoneda** (agregada round 2 del plan tactico, 2026-05-22)
+
+Cuando emitimos NC parcial sobre una factura USD, el `<MonCotiz>` del XML que se manda a la AFIP/ARCA tiene que ir con:
+
+- **Opcion A**: el **tipo de cambio del comprobante original** (el TC del dia en que se emitio la factura USD). Esto es lo que tenemos guardado como snapshot al momento de la confirmacion de la factura.
+- **Opcion B**: el **tipo de cambio del dia de la NC** (el TC vigente cuando se emite la nota de credito parcial).
+
+Nuestra propuesta default es **Opcion A** (TC del comprobante original) porque entendemos que mantiene coherencia entre la factura origen y la NC asociada (regla fiscal estandar). Pero queremos confirmar antes de implementarlo.
+
+**Pregunta**: confirmas Opcion A? O hay algun caso donde la NC parcial deba usar el TC del dia de la emision?
 
 ---
 
@@ -163,7 +176,7 @@ Internamente decidimos NO emitir una ND complementaria por esos $250.000, asumie
 
 ## Pie del mensaje
 
-Lo que vos respondas en estos 12 puntos lo incorporamos al plan tactico de Fase 2 (emision real al ARCA) y a la configuracion del sistema (`OperationalFinanceSettings`).
+Lo que vos respondas en estos 13 puntos lo incorporamos al plan tactico de Fase 2 (emision real al ARCA) y a la configuracion del sistema (`OperationalFinanceSettings`).
 
 Fase 1 (que ya esta funcionalmente disenada) puede arrancar implementacion sin esperar estas respuestas, porque solo persiste la liquidacion y bloquea los casos sensibles a revision admin - no emite NC todavia.
 

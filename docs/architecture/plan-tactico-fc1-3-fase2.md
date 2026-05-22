@@ -1,13 +1,30 @@
 # Plan tactico tecnico FC1.3 Fase 2 (NC parcial real al ARCA)
 
-- **Fecha**: 2026-05-22.
+- **Version**: v2 round 2 (post review `software-architect-reviewer` round 1).
+- **Fecha original**: 2026-05-22. **Editado**: 2026-05-22 (round 2).
 - **Autor**: `software-architect` agent.
-- **Status**: Propuesta para `software-architect-reviewer`.
+- **Status**: Propuesta v2 para `software-architect-reviewer` round 2.
 - **Base**: Fase 1 mergeada (HEAD `06585e6`, 9 sub-fases, 66 unit tests verdes). Doc cierre Fase 1: `docs/explicaciones/2026-05-22-fc1-3-fase-1-implementacion-completa.md`.
-- **ADR asociado**: extension del [ADR-009](adr/ADR-009-partial-credit-note.md) (NO ADR nuevo — ver §T7 decision al final).
+- **ADR asociado**: extension del [ADR-009](adr/ADR-009-partial-credit-note.md) con `§12 Fase 2 Amendments` (NO ADR nuevo — decision validada por reviewer round 1).
 - **Stack confirmado**: .NET 8 + EF Core 8.x + PostgreSQL via Npgsql 8.0.11 + xmin shadow concurrency token + `BusinessInvariantInterceptor` mapea `SqlState=23514` a `BusinessInvariantViolationException`. Verificado durante Fase 1.
 
 > **Regla operativa Gaston aplicada**: este documento NO contiene estimaciones de horas. Las sub-fases estan listadas con dependencias + criterios de aceptacion verificables. La cadencia real depende del orden en que el subagente backend las tome.
+
+## Changelog v1 -> v2 (round 2)
+
+Esta version cierra 6 bloqueantes (RH-001..RH-006) + 4 majors + 5 minors del reviewer round 1, mas 3 decisiones nuevas G-F2-A/C/D de Gaston. Ver §T10 al final para la tabla detallada de cierre.
+
+Cambios principales:
+
+1. **G-F2-A**: F2.4 (flow dual `TotalPlusNewInvoice`) pasa a **GATED por criterio cuantitativo post-prod**. Si casos 4 y 7 son < 5% del volumen total de cancelaciones, queda en backlog. Si >= 5%, se hace en sesion separada. Ver §FC1.3.F2.4 reescrita.
+2. **G-F2-C**: tributos provinciales (`Invoice.Tributes.Any() == true`) ahora son **disparador de manual review obligatorio**. Nuevo flag `ReviewRequiredReason.HasProvincialTributes = 1 << 11`. Cierra OQ-3 v1.
+3. **G-F2-D**: multi-recibos es **comun en MagnaTravel** (no raro). El cascade de receipts en NC parcial NO es trivial. Politica: dejar todos los receipts vivos + audit explicito + UI Fase 3 permitira marcar manualmente. Ver §FC1.3.F2.3 punto 6 (nuevo) + §T8 OQ-4 actualizada.
+4. **RH-001**: backfill F2.1 ahora tiene pre-step `F2.1.0` con script de validacion sobre dump staging/prod ANTES de la migracion + dos pasos en la migracion con abort defensivo.
+5. **RH-002**: el caller persiste doble representacion (Metadata JSON + columnas dedicadas) **obligatoriamente**, sin opcion de skip. Test integration `Confirm_PostFase2_BothRepresentationsMatch`.
+6. **RH-003**: eliminada referencia incorrecta a "Factura A MiPyME (51) -> NC tipo 53". Tipo 51 es Factura M, **fuera de scope Fase 2**.
+7. **RH-004**: idempotencia ARCA pos-reintento Hangfire via `IdempotencyKey` persistido pre-POST + chequeo `FECompUltimoAutorizado` opcional.
+8. **RH-005**: `OnApprovedAsync` distingue NC total vs NC parcial — NC parcial NO hace cascade receipts (alineado con G-F2-D).
+9. **RH-006**: job `PartialCreditNotePostingReconciliationJob` es **NUEVO**, no extension. Patron del job existente `PartialCreditNoteBridgeReconciliationJob`.
 
 ---
 
@@ -50,7 +67,7 @@ Lo que NO esta verificado y se asume razonable hasta que el contador o un provee
 1. **El ARCA acepta `<ImpIVA>` con dos decimales redondeado bancariamente** (round-half-to-even) cuando el prorrateo no da entero. Hoy `AfipService.cs:870-875` usa `ToString("0.00", InvariantCulture)`. Verificado el formato — NO verificado el comportamiento del ARCA con sumas que no cuadran por 0.01.
 2. **El `<CbtesAsoc>` con factura origen sigue valido para NC parcial**. Hoy `AfipService.cs:827-838` emite `<CbtesAsoc>` SOLO cuando `invoice.OriginalInvoiceId.HasValue`. Asumo que ARCA acepta multiples NCs (parcial 1 + parcial 2 + ...) asociadas a la misma factura origen sin rechazar por correlativo duplicado. **A verificar en QA staging con ARCA homologacion antes de prod**.
 3. **Multimoneda factura USD pagada en ARS**: hoy `FiscalSnapshot.ExchangeRateAtOriginalInvoice` se carga al confirmar (verificado FC1.2). Asumo que ARCA acepta NC en USD con `MonId=DOL` + `MonCotiz` igual al TC del momento del **comprobante original**, no al TC del dia de la NC. Esto es regla fiscal estandar pero a confirmar con contador (sub-pregunta nueva para round 4).
-4. **Casos `TotalPlusNewInvoice` (4 y 7) son raros** (< 5% del total). Si fueran mayoritarios, la complejidad del flow doble (NC total + factura nueva, ver §T5) cambiaria el orden de prioridades. Esto se valida con auditoria de `BookingCancellation.ReviewRequiredReason & (OriginalInvoiceUnclear | RetentionChangesNature)` post-Fase 1.
+4. **Casos `TotalPlusNewInvoice` (4 y 7)**: **G-F2-A round 2 formaliza esta asuncion como GATE cuantitativo**. La query SQL §FC1.3.F2.4.0 se corre post-prod (al menos 30 dias despues de prender Fase 2). Si `casos_4_y_7 / total >= 5%`, sesion separada para F2.4. Si `< 5%`, queda en backlog indefinidamente. F2.4 NO entra al PR Fase 2 base — solo el flag `EnableTotalPlusNewInvoiceAutoProcessing` se crea (default OFF, validacion startup garantiza que no se puede activar sin codigo merged).
 
 ---
 
@@ -59,21 +76,35 @@ Lo que NO esta verificado y se asume razonable hasta que el contador o un provee
 ```
 FC1.3.F2.0  Settings nuevos + flag maestro Fase 2 (default OFF)         ─┐
             (EnablePartialCreditNoteRealEmission default false,           │
-             EnableTotalPlusNewInvoiceAutoProcessing default false,        │
+             EnableTotalPlusNewInvoiceAutoProcessing default false [GATED]│
              IvaProrrateoMode default ProportionalToNet,                   │
              PartialCreditNoteRoundingTolerance default 0.01)             │
                                                                           │
             Migracion Fase2.M0 + extension OperationalFinanceSettings     │
             + validacion startup (pre-condicion: si F2.flag ON, F1.flag    │
             tambien ON). Mismo patron GR-002.                              │
+                                                                          │
+            G-F2-C: nuevo flag bitwise ReviewRequiredReason                │
+              HasProvincialTributes = 1 << 11                              │
                                                                 ─────────┤
                                                                           │
-FC1.3.F2.1  Persistir FiscalLiquidation completo                          │ depende F2.0
+FC1.3.F2.1.0 Pre-step VALIDACION script (NO migracion).                   │ depende F2.0
+            Script SQL standalone que cuenta filas tipo 11                 │
+              con Metadata vacio, malformado o claves criticas faltantes.  │
+            Correr contra dump staging Y prod. Si count > 0,               │
+              revisar caso a caso ANTES de avanzar a F2.1 real.            │
+            Output: count + lista filas (id + razon).                      │
+                                                                ─────────┤
+                                                                          │
+FC1.3.F2.1  Persistir FiscalLiquidation completo                          │ depende F2.1.0
             (Owned VO en BookingCancellation, 10 columnas prefijo          │
              FiscalLiquidation_*, CHECK suma componentes,                  │
-             backfill desde ApprovalRequest.Metadata)                      │
+             backfill desde ApprovalRequest.Metadata).                     │
                                                                           │
-            Migracion Fase2.M1 + backfill SQL leyendo Metadata JSON.       │
+            Migracion Fase2.M1 con DOS PASOS atomicos:                     │
+              Paso A: UPDATE solo filas validas + RAISE NOTICE count       │
+                       de filas saltadas + ABORT si count > 0.             │
+              Paso B: tests integration pos-migracion.                     │
                                                                 ─────────┤
                                                                           │
 FC1.3.F2.2  AfipService refactor: EnqueuePartialCreditNoteAsync           │ depende F2.1
@@ -92,14 +123,23 @@ FC1.3.F2.3  BC service: reemplazar fallback FC1.2 en OnApprovedAsync.     │ de
             Mantener fallback FC1.2 si flag F2 OFF (rollback granular).    │
                                                                 ─────────┤
                                                                           │
-FC1.3.F2.4  Caso TotalPlusNewInvoice (casos 4 y 7) — flow dual.           │ depende F2.3
+FC1.3.F2.4  [GATED — G-F2-A]                                              │ depende F2.3
+            Caso TotalPlusNewInvoice (casos 4 y 7) — flow dual.            │ (gated)
             (a) Anular factura original (NC total existente).              │
             (b) Emitir factura nueva por el remanente conceptual           │
                 (FinalNetInvoiced).                                        │
             Idempotencia critica: si (a) sale OK y (b) falla, BC queda    │
             en estado intermedio nuevo PartialFiscalAwaitingNewInvoice.   │
             Job de reconciliacion + endpoint admin force-continue.        │
-            Gated por EnableTotalPlusNewInvoiceAutoProcessing.              │
+            Gated por EnableTotalPlusNewInvoiceAutoProcessing (default OFF)│
+                                                                          │
+            CRITERIO DE ACTIVACION (G-F2-A):                               │
+              Post-prod de F2.3, correr query SQL §FC1.3.F2.4.0.           │
+              Si casos 4+7 / total cancelaciones >= 5% -> sesion separada │
+                hace F2.4.                                                 │
+              Si < 5% -> queda en backlog indefinidamente.                 │
+              Flag siempre default OFF — casos 4/7 siguen                  │
+                rechazandose con InvalidOperationException (GR-001).       │
                                                                 ─────────┤
                                                                           │
 FC1.3.F2.5  Multimoneda en NC parcial.                                    │ depende F2.2
@@ -110,10 +150,22 @@ FC1.3.F2.5  Multimoneda en NC parcial.                                    │ de
              dia de la NC).                                                │
                                                                 ─────────┤
                                                                           │
-FC1.3.F2.6  Observabilidad + reconciliacion bridge ARCA-NC parcial.      │ depende F2.2
+FC1.3.F2.6  Observabilidad + counters Serilog.                            │ depende F2.2
             Counters Serilog (mismo patron FC1.2.7b).                     │
-            Extension de ArcaAnnulmentReconciliationJob (existente FC1.2) │
-            para reconciliar NCs parciales en Pending con ARCA.            │
+                                                                ─────────┤
+                                                                          │
+FC1.3.F2.6a Job NUEVO PartialCreditNotePostingReconciliationJob.          │ depende F2.2
+            (NO extension del ArcaAnnulmentReconciliationJob — el job      │
+            existente reconcilia NC TOTAL via AnnulmentStatus,             │
+            no aplica al modelo NC parcial que persiste el resultado       │
+            ARCA en Invoice.Resultado de la NC nueva).                     │
+            Patron: replicar PartialCreditNoteBridgeReconciliationJob     │
+            (cron, contador anti-spam, max retries antes de notify).       │
+            Scope: Invoice con OriginalInvoiceId IS NOT NULL +             │
+              Resultado = 'PENDING' por mas de N min.                      │
+            Si pos prendido Fase 2 se detectan NCs FC1.2 huerfanas         │
+              (anteriores, sin reconciliacion automatica), sub-fase        │
+              EXPLICITA F2.6b (no se asume).                               │
                                                                 ─────────┤
                                                                           │
 FC1.3.F2.7  Doc explicativo trainee + actualizacion MEMORY.md.            │ depende todo
@@ -125,17 +177,19 @@ FC1.3.F2.7  Doc explicativo trainee + actualizacion MEMORY.md.            │ de
 ### T2.1 Dependencias entre sub-fases (resumen)
 
 - **F2.0** es prerequisito de todo.
-- **F2.1** (persistencia) habilita **F2.2** (AfipService) porque el job necesita leer los montos de BD, no de Metadata JSON.
+- **F2.1.0** (pre-step script validacion) corre ANTES de F2.1 contra dump staging/prod. Es un script SQL standalone, NO migracion.
+- **F2.1** (persistencia + backfill) habilita **F2.2** (InvoiceService) porque el job necesita leer los montos de BD, no de Metadata JSON.
 - **F2.2** habilita **F2.3** (BC service llama al nuevo metodo) y **F2.5** (multimoneda usa el mismo flow).
-- **F2.4** depende de **F2.3** porque reusa parte del flow de emision.
-- **F2.6** (observabilidad) depende de **F2.2** porque cuenta lo que emite.
+- **F2.4** depende de **F2.3** + criterio cuantitativo G-F2-A. Solo se hace si volumen >= 5%.
+- **F2.6** (counters Serilog) depende de **F2.2** porque cuenta lo que emite.
+- **F2.6a** (job NUEVO de reconciliacion) depende de **F2.2** porque persiste la NC nueva.
 - **F2.7** cierra cuando todo lo demas paso.
 
 ### T2.2 Orden recomendado de merge
 
-`F2.0` -> `F2.1` -> `F2.2` -> `F2.3` -> `F2.6` -> `F2.5` -> `F2.4` -> `F2.7`.
+`F2.0` -> `F2.1.0 (script standalone)` -> `F2.1` -> `F2.2` -> `F2.3` -> `F2.6` -> `F2.6a` -> `F2.5` -> `F2.7` -> [auditoria post-prod G-F2-A] -> `F2.4` opcional.
 
-Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener todo lo demas mergeado + observabilidad funcionando para depurar.
+Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de prender Fase 2 en prod, se mide el volumen de casos 4 y 7. Si justifica, sesion separada.
 
 ---
 
@@ -172,6 +226,94 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
 - Test integration `Startup_TotalPlusNewInvoiceOnWithoutEmissionOn_Rejects`.
 
 **Dependencias**: ninguna (puede mergear suelto, sin tocar codigo de runtime).
+
+### FC1.3.F2.0.G-F2-C — Nuevo flag bitwise + calculator update
+
+**Tareas atomicas** (cierra **G-F2-C**):
+
+1. Sumar al enum `ReviewRequiredReason` (`src/TravelApi.Domain/Entities/ReviewRequiredReason.cs`) un valor nuevo:
+   ```csharp
+   /// <summary>
+   /// G-F2-C (2026-05-22): la factura origen tiene Tributes.Any() == true (tributos
+   /// provinciales tipo IIBB, percepciones de Capital, percepciones de provincia, etc.).
+   /// El sistema FRENA la cancelacion auto y dispara manual review obligatorio porque
+   /// el prorrateo de tributos provinciales NO esta modelado en Fase 2 (ver §T8 OQ-3).
+   /// El admin debe revisar caso a caso y decidir si la NC parcial se emite manualmente
+   /// con tributos prorrateados (fuera del sistema) o se reformula la operacion.
+   /// </summary>
+   HasProvincialTributes = 1 << 11,
+   ```
+
+2. Modificar `FiscalLiquidationCalculator` (implementado en Fase 1) para sumar la deteccion:
+   - Al inicio del calculo (STEP 1, despues de cargar la factura origen), chequear `invoice.Tributes != null && invoice.Tributes.Any()`. Si true, agregar `ReviewRequiredReason.HasProvincialTributes` al flag acumulado.
+   - El resto del calculo prosigue normal — el flag dispara manual review, NO la auto-emision.
+
+3. **Cubre OQ-3 v1**: NC parcial con tributos provinciales SIEMPRE pasa por manual review. NO se emite automaticamente. El admin decide.
+
+**Criterio de aceptacion**:
+
+- Test unit `Calculator_InvoiceWithTributes_AddsHasProvincialTributesFlag`: factura con `Tributes = [IIBB Capital $100]` -> `ReviewRequiredReason.HasFlag(HasProvincialTributes) == true`.
+- Test unit `Calculator_InvoiceWithoutTributes_DoesNotAddFlag`.
+- Test integration `Confirm_InvoiceWithProvincialTributes_RoutesToManualReview`: BC con factura origen que tenia IIBB -> `bc.Status == ManualReviewPending` + `bc.ReviewRequiredReason` contiene `HasProvincialTributes`.
+- Tests Fase 1 existentes siguen verdes (el flag nuevo es aditivo, no rompe ningun comportamiento).
+
+**Dependencias**: ninguna (cambio aditivo en codigo, sin migracion).
+
+---
+
+### FC1.3.F2.1.0 — Pre-step validacion Metadata (cierra RH-001)
+
+**Tareas atomicas**:
+
+1. Crear script SQL standalone `tools/sql/fase2-m1-prevalidation-metadata.sql`. NO es migracion EF, NO se ejecuta como parte del deploy automatico. Output esperado: lista de filas `ApprovalRequest` tipo 11 que NO se pueden backfillear de forma segura.
+
+   ```sql
+   -- FC1.3.F2.1.0 — pre-validacion del backfill de FiscalLiquidation.
+   -- Correr contra dump staging Y dump prod ANTES de aplicar Fase2.M1.
+   -- Si el conteo de filas problematicas > 0, REVISAR CASO A CASO antes de avanzar.
+
+   WITH ar11 AS (
+       SELECT ar."Id", ar."Metadata"
+       FROM "ApprovalRequests" ar
+       WHERE ar."RequestType" = 11
+   ),
+   problematic AS (
+       SELECT
+           id,
+           CASE
+               WHEN "Metadata" IS NULL OR length(trim("Metadata")) = 0 THEN 'METADATA_VACIO'
+               WHEN jsonb_typeof("Metadata"::jsonb) IS DISTINCT FROM 'object' THEN 'METADATA_NO_OBJETO'
+               WHEN NOT ("Metadata"::jsonb ? 'originalInvoiceAmount') THEN 'FALTA_originalInvoiceAmount'
+               WHEN NOT ("Metadata"::jsonb ? 'fiscalAmountToCredit') THEN 'FALTA_fiscalAmountToCredit'
+               WHEN NOT ("Metadata"::jsonb ? 'currency') THEN 'FALTA_currency'
+               WHEN NOT ("Metadata"::jsonb ? 'computedAt') THEN 'FALTA_computedAt'
+               ELSE NULL
+           END AS razon
+       FROM ar11
+   )
+   SELECT id, razon
+   FROM problematic
+   WHERE razon IS NOT NULL
+   ORDER BY id;
+   ```
+
+2. **Cobertura**: el script chequea cinco cosas:
+   - Metadata vacio o null.
+   - Metadata no es objeto JSON valido (intento de cast a `::jsonb` falla mas tarde).
+   - Claves criticas faltantes (`originalInvoiceAmount`, `fiscalAmountToCredit`, `currency`, `computedAt`).
+   - Las otras claves (`cancellationAmount`, `operatorPenaltyAmount`, etc.) NO son criticas porque la migracion las puede dejar null sin romper el CHECK suma (numericas nullable).
+
+3. **Output esperado en dumps recientes** (Fase 1 acaba de mergear): cero filas problematicas, porque el serializer de Fase 1 escribe schemaVersion=1 con todas las claves. Si aparece algo, investigar caso a caso — puede ser un BC manualmente editado o un test que escapo a prod.
+
+4. **Criterio de cierre F2.1.0**: ejecutar contra dump staging Y prod, conteo == 0 documentado. Si > 0, abrir tareas por cada fila para limpiar manualmente ANTES de avanzar a F2.1.
+
+**Criterio de aceptacion FC1.3.F2.1.0**:
+
+- Script existe en `tools/sql/fase2-m1-prevalidation-metadata.sql`.
+- Documentado en `docs/operations/` el output de correrlo contra dump staging Y prod, con fecha + count + lista de IDs si los hay.
+- Signoff explicito de Gaston de "count = 0, podemos avanzar".
+
+**Dependencias**: FC1.3.F2.0 (porque ya hace falta el enum nuevo si encontramos algo y queremos retaggear).
 
 ---
 
@@ -213,52 +355,111 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
      ```
    - CHECK adicional `chk_BookingCancellations_fiscalliquidation_consistency`: si `FiscalLiquidation_ComputedAt` no es null, `LiquidationComputedAt` (columna summary Fase 1) tampoco puede ser null y deben coincidir (tolerancia 1 segundo). Evita estados degenerados pos-backfill.
 
-5. **Backfill SQL** (dentro de la misma migracion, en `Up`):
-   - Para cada BC en estados `ManualReviewPending (9)`, `ManualReviewApproved (10)` y los terminales que pasaron por ahi (`AwaitingFiscalConfirmation (1)` con `PartialCreditNoteApprovalRequestId IS NOT NULL`, `Closed (4)`, etc.), leer el `ApprovalRequest.Metadata` JSON y popular las columnas `FiscalLiquidation_*`.
-   - Usa `jsonb_extract_path_text` (Postgres native) en el UPDATE. NO requiere C# code-behind si todos los Metadata estan bien formateados (Fase 1 los serializa con schemaVersion=1).
-   - Pseudo SQL:
-     ```sql
-     UPDATE "BookingCancellations" bc
-     SET
-       "FiscalLiquidation_OriginalInvoiceAmount" = (m.meta->>'originalInvoiceAmount')::numeric,
-       "FiscalLiquidation_CancellationAmount"    = (m.meta->>'cancellationAmount')::numeric,
-       "FiscalLiquidation_OperatorPenaltyAmount" = (m.meta->>'operatorPenaltyAmount')::numeric,
-       "FiscalLiquidation_NonRefundableItemsAmount" = (m.meta->>'nonRefundableItemsAmount')::numeric,
-       "FiscalLiquidation_FiscalAmountToCredit"  = (m.meta->>'fiscalAmountToCredit')::numeric,
-       "FiscalLiquidation_AmountToRefundCustomer"= (m.meta->>'amountToRefundCustomer')::numeric,
-       "FiscalLiquidation_FinalNetInvoiced"      = (m.meta->>'finalNetInvoiced')::numeric,
-       "FiscalLiquidation_Currency"              = COALESCE(m.meta->>'currency', 'ARS'),
-       "FiscalLiquidation_ComputedAt"            = (m.meta->>'computedAt')::timestamptz,
-       "FiscalLiquidation_ComputedByUserId"      = m.meta->>'computedByUserId',
-       "FiscalLiquidation_ComputedByUserName"    = m.meta->>'computedByUserName'
-     FROM (
-       SELECT ar."Id" as id, ar."Metadata"::jsonb as meta
-       FROM "ApprovalRequests" ar
-       WHERE ar."RequestType" = 11  -- PartialCreditNoteApproval
-         AND ar."Metadata" IS NOT NULL
-     ) m
-     WHERE bc."PartialCreditNoteApprovalRequestId" = m.id
-       AND bc."FiscalLiquidation_FiscalAmountToCredit" IS NULL;  -- idempotente
-     ```
-   - **Edge case 1**: si `ApprovalRequest.Metadata` no es JSON valido o falta una llave, el cast `::numeric` o `::timestamptz` falla con `invalid input syntax`. La migracion debe **envolver en una sub-query con `WHERE ar."Metadata" ~ '^\s*\{.*\}\s*$'`** o usar `jsonb_typeof(...) = 'object'` para filtrar Metadata malformado y loguear cuantas filas se saltaron (via `RAISE NOTICE`).
+5. **Backfill SQL en dos pasos atomicos** (cierra **RH-001**). La migracion va dividida en bloques `DO $$ ... $$` para poder usar variables y `RAISE NOTICE`:
+
+   **Paso 5.A — pre-check defensivo dentro de la migracion**:
+   ```sql
+   DO $$
+   DECLARE
+     v_problematic_count int;
+   BEGIN
+     SELECT COUNT(*) INTO v_problematic_count
+     FROM "ApprovalRequests" ar
+     WHERE ar."RequestType" = 11
+       AND (
+         ar."Metadata" IS NULL
+         OR length(trim(ar."Metadata")) = 0
+         OR jsonb_typeof(ar."Metadata"::jsonb) IS DISTINCT FROM 'object'
+         OR NOT (ar."Metadata"::jsonb ? 'originalInvoiceAmount')
+         OR NOT (ar."Metadata"::jsonb ? 'fiscalAmountToCredit')
+         OR NOT (ar."Metadata"::jsonb ? 'currency')
+       );
+
+     IF v_problematic_count > 0 THEN
+       RAISE EXCEPTION 'FC1.3.F2.1 backfill ABORTED: % ApprovalRequests tipo 11 con Metadata invalido o claves criticas faltantes. Correr tools/sql/fase2-m1-prevalidation-metadata.sql para identificar filas y limpiarlas ANTES de re-aplicar la migracion.', v_problematic_count;
+     END IF;
+
+     RAISE NOTICE 'FC1.3.F2.1 paso 5.A OK: 0 filas problematicas en ApprovalRequests tipo 11.';
+   END $$;
+   ```
+   Si el script F2.1.0 paso bien antes, este pre-check no aborta. Si alguien salteo F2.1.0 o aparecio una fila nueva malformada despues del pre-check, la migracion **falla rapido** con mensaje claro en vez de dejar columnas NULL silenciosamente.
+
+   **Paso 5.B — UPDATE acotado a filas seguras**:
+   ```sql
+   UPDATE "BookingCancellations" bc
+   SET
+     "FiscalLiquidation_OriginalInvoiceAmount" = (m.meta->>'originalInvoiceAmount')::numeric,
+     "FiscalLiquidation_CancellationAmount"    = (m.meta->>'cancellationAmount')::numeric,
+     "FiscalLiquidation_OperatorPenaltyAmount" = (m.meta->>'operatorPenaltyAmount')::numeric,
+     "FiscalLiquidation_NonRefundableItemsAmount" = (m.meta->>'nonRefundableItemsAmount')::numeric,
+     "FiscalLiquidation_FiscalAmountToCredit"  = (m.meta->>'fiscalAmountToCredit')::numeric,
+     "FiscalLiquidation_AmountToRefundCustomer"= (m.meta->>'amountToRefundCustomer')::numeric,
+     "FiscalLiquidation_FinalNetInvoiced"      = (m.meta->>'finalNetInvoiced')::numeric,
+     "FiscalLiquidation_Currency"              = COALESCE(m.meta->>'currency', 'ARS'),
+     "FiscalLiquidation_ComputedAt"            = (m.meta->>'computedAt')::timestamptz,
+     "FiscalLiquidation_ComputedByUserId"      = m.meta->>'computedByUserId',
+     "FiscalLiquidation_ComputedByUserName"    = m.meta->>'computedByUserName'
+   FROM (
+     SELECT ar."Id" as id, ar."Metadata"::jsonb as meta
+     FROM "ApprovalRequests" ar
+     WHERE ar."RequestType" = 11
+       AND ar."Metadata" IS NOT NULL
+       AND jsonb_typeof(ar."Metadata"::jsonb) = 'object'
+       AND ar."Metadata"::jsonb ? 'originalInvoiceAmount'
+       AND ar."Metadata"::jsonb ? 'fiscalAmountToCredit'
+       AND ar."Metadata"::jsonb ? 'currency'
+   ) m
+   WHERE bc."PartialCreditNoteApprovalRequestId" = m.id
+     AND bc."FiscalLiquidation_FiscalAmountToCredit" IS NULL;  -- idempotente
+   ```
+
+   **Paso 5.C — count + RAISE NOTICE final**:
+   ```sql
+   DO $$
+   DECLARE
+     v_backfilled int;
+     v_orphan int;
+   BEGIN
+     SELECT COUNT(*) INTO v_backfilled
+     FROM "BookingCancellations"
+     WHERE "FiscalLiquidation_FiscalAmountToCredit" IS NOT NULL;
+
+     SELECT COUNT(*) INTO v_orphan
+     FROM "BookingCancellations" bc
+     WHERE bc."PartialCreditNoteApprovalRequestId" IS NOT NULL
+       AND bc."FiscalLiquidation_FiscalAmountToCredit" IS NULL;
+
+     RAISE NOTICE 'FC1.3.F2.1 backfill done. backfilled=% orphan_skipped=%', v_backfilled, v_orphan;
+   END $$;
+   ```
+
+   - **Edge case 1** (resuelto por paso 5.A): Metadata malformado aborta la migracion entera con mensaje claro.
    - **Edge case 2**: BCs en estados `ManualReviewRejected (11)` ya tienen `PartialCreditNoteApprovalRequestId = NULL` (Fase 1 los nulea en `OnRejectedAsync` linea 1564-1569). Esos BCs NO tienen approval asociado para leer, asi que sus columnas `FiscalLiquidation_*` quedan NULL — correcto (la liquidacion no aplica porque el caso fue rechazado).
    - **Edge case 3**: BCs Fase 1 que **NO pasaron por manual review** (caso ReasonNone -> auto -> FC1.2 path) tampoco tienen approval. Esos BCs tampoco se backfillean. Si Fase 2 los necesita para reporting, una sub-fase posterior podria popularlos re-corriendo el calculator en background. Por ahora **YAGNI** — esos casos no necesitan liquidacion explicita porque la NC TOTAL del FC1.2 path ya cubre el caso.
 
-6. Actualizar `FiscalLiquidationCalculator` (Fase 1) para que al producir el DTO, el caller (en `BookingCancellationService.ConfirmAsync` y `EditLiquidationAsync`) **persista tambien las columnas dedicadas** (no solo el JSON del approval). Cambio aditivo, sin romper Fase 1.
+6. **Doble-write OBLIGATORIO post-F2.1** (cierra **RH-002**):
+   - El caller en `BookingCancellationService.ConfirmAsync` y `EditLiquidationAsync` debe persistir **simultaneamente** las dos representaciones:
+     1. `ApprovalRequest.Metadata` JSON (lo que hoy hace Fase 1, no se toca).
+     2. Las 10 columnas dedicadas `BookingCancellation.FiscalLiquidation_*` (nuevas en F2.1).
+   - NO hay opcion de skip de Metadata. NO hay flag para escribir solo columnas. El doble-write es **invariante** de Fase 2.
+   - Justificacion: el reverse de la migracion M1 vuelve la fuente de verdad a Metadata. Si una version intermedia dejara de escribir Metadata, el reverse perderia data y no habria forma de recuperar.
+   - Documentado en §T6.4 (rollback) que reverse de M1 es seguro **solo mientras Metadata se siga escribiendo**.
 
 7. Actualizar `BookingCancellationDto` para exponer `FiscalLiquidation` (campos opcionales) cuando exista.
 
 **Criterio de aceptacion FC1.3.F2.1**:
 
 - `dotnet build` verde.
-- Migracion aplica contra BD vacia + dump de staging.
+- Migracion aplica contra BD vacia + dump de staging (asumiendo que F2.1.0 paso clean).
 - Test integration `Backfill_FromExistingApprovalMetadata_PopulatesAllColumns`: seed 3 BCs en ManualReviewPending con Metadata JSON correcto. Correr migracion. Verificar que las 10 columnas estan pobladas exactamente igual que el JSON.
 - Test integration `Backfill_SkipsRejectedBCs`: BC en ManualReviewRejected (FK approval nulled). Migracion no toca esa fila. Columnas FiscalLiquidation_* siguen null.
-- Test integration `Backfill_SkipsMalformedMetadata_LogsWarning`: BC con Metadata = `"not a json"`. Migracion skip + RAISE NOTICE.
-- Test integration `Confirm_PostFase2_PersistsBothApprovalMetadataAndDedicatedColumns`: nuevo BC post-Fase 2 -> ambas representaciones de la liquidacion coinciden (Metadata JSON == columnas).
+- **Test integration `Backfill_MissingKey_RaisesAndAborts`** (cierra **RH-001**): seed un `ApprovalRequest` tipo 11 con `Metadata = '{"originalInvoiceAmount": 100}'` (falta `fiscalAmountToCredit`, `currency`). Correr migracion. Verificar que falla con `RAISE EXCEPTION` y el mensaje contiene la cuenta de filas problematicas.
+- **Test integration `Backfill_MalformedMetadata_RaisesAndAborts`** (cierra **RH-001**): seed un `ApprovalRequest` tipo 11 con `Metadata = '"not a json object"'`. Correr migracion. Verificar abort.
+- **Test integration `Confirm_PostFase2_BothRepresentationsMatch`** (cierra **RH-002**): post-F2.1 crear un BC nuevo via `ConfirmAsync`. Leer `ApprovalRequest.Metadata` JSON Y las columnas `FiscalLiquidation_*`. Verificar que coinciden field by field. Si la divergencia es > 0.01 en algun monto, test rojo.
+- **Test integration `EditLiquidation_PostFase2_UpdatesBothRepresentations`** (cierra **RH-002**): admin edita la liquidacion via `EditLiquidationAsync`. Verificar que Metadata Y columnas reflejan el cambio.
 - Test integration `CheckConstraint_SumMismatch_RejectedByPostgres`: INSERT raw con `FiscalAmountToCredit=500 + NonRefundableItemsAmount=100 + OperatorPenaltyAmount=100 != OriginalInvoiceAmount=1000` -> Postgres rechaza con SqlState 23514 -> interceptor mapea a `BusinessInvariantViolationException`.
 
-**Dependencias**: FC1.3.F2.0.
+**Dependencias**: FC1.3.F2.0 + FC1.3.F2.1.0 (script standalone corrido + signoff).
 
 ---
 
@@ -314,16 +515,30 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
      - `ProportionalToNet` (default): para cada `AlicIva` grupo en `Lines` agrupados por `AlicuotaIvaId`, calcular `BaseImp = sum(Lines.Total)` + `Importe = BaseImp * GetVatMultiplier(alicuotaId)`. Es decir, prorratea **a nivel grupo de alicuota**, no item por item. La suma debe coincidir con `FiscalAmountToCredit` (tolerancia `PartialCreditNoteRoundingTolerance`).
      - `PerItem`: cada linea tiene su propio IVA calculado individualmente y la suma forma `<Iva>`. Para casos donde el contador exige discriminacion fina.
    - **Validacion defensiva pre-envio ARCA**: `ABS(ImpTotal - (ImpNeto + ImpIVA + ImpTrib)) <= PartialCreditNoteRoundingTolerance`. Si falla, throw + log error + marcar `AnnulmentStatus = Failed` (no enviar XML al ARCA inconsistente — rebota con error oscuro y deja el job huerfano).
-   - **Mapping tipo NC** (preserva el patron de `InvoiceService.cs:622-639`):
+   - **Mapping tipo NC** (cierra **RH-003**, reusa el helper canonico `InvoiceComprobanteHelpers.GetCreditNoteTypeForInvoice` ya en uso por Fase 1 + FC1.2):
      - Factura A (1) -> NC tipo 3.
      - Factura B (6) -> NC tipo 8.
      - Factura C (11) -> NC tipo 13.
-     - Factura A MiPyME (51) -> NC tipo 53.
-   - Construir `CreateInvoiceRequest` con `OriginalInvoiceId = original.PublicId.ToString()`, `IsCreditNote = true`, `Items = liquidation.Lines mapped`, `Tributes = []` (Fase 2 NO prorratea tributos provinciales; ver §T8 OQ-3).
+     - **Factura M (51): NO soportada por Fase 2**. El helper devuelve `null`. El job debe abort + log + marcar `AnnulmentStatus = Failed` con razon `"Factura M no soportada para NC parcial en Fase 2 (RH-003). Si hay demanda real, sub-tarea separada con mapeo 51 -> 53 + tests + verificacion contador."`. La precondicion `IsSupportedForAnnulment(originalTipo)` ya filtra esto a nivel `EnqueuePartialCreditNoteAsync` — el chequeo en el job es defensa adicional.
+     - NDs (2/7/12/52) y NCs (3/8/13/53) NUNCA pueden ser origen — `IsSupportedForAnnulment` los rechaza.
+   - Construir `CreateInvoiceRequest` con `OriginalInvoiceId = original.PublicId.ToString()`, `IsCreditNote = true`, `Items = liquidation.Lines mapped`, `Tributes = []` (Fase 2 NO prorratea tributos provinciales — ver §T8 OQ-3 y G-F2-C: si la factura origen tiene `Tributes.Any()`, NUNCA llegamos aca porque `HasProvincialTributes` rerouted a manual review en F2.0.G-F2-C).
    - Llamar `_afipService.CreatePendingInvoice(reservaId, request)` -> retorna `Invoice` con la NC nueva (que llega al SOAP de `AfipService:780+` con `<CbtesAsoc>` ya pluged correctamente por el path existente).
    - Llamar el flow normal `_afipService.ProcessInvoiceJob(newInvoiceId)` para encolar el envio al ARCA.
    - Si el ARCA aprueba: setear `original.AnnulmentStatus = Succeeded`, `AnnulledAt = UtcNow`. Persistir.
    - Si rechaza: `Failed` + notify.
+
+   **Idempotencia ARCA pos-reintento Hangfire (cierra RH-004)**:
+
+   El riesgo: Hangfire reintenta el job tras timeout/crash. Sin guard, podriamos POSTear dos veces al ARCA y emitir CAEs duplicados. El path FC1.2 `ProcessAnnulmentJob` ya tiene un guard parcial via `AnnulmentStatus`, pero el guard puede ser pasado por un reintento del job mismo entre el set a `Pending` y el POST efectivo. Para FC1.3 NC parcial reforzamos con dos capas:
+
+   - **Capa 1 — IdempotencyKey persistido pre-POST**:
+     - Cada job de NC parcial calcula al arrancar: `idemKey = SHA256($"{originalInvoiceId}|{approvalRequestId}|{liquidation.FiscalAmountToCredit:F2}|{liquidation.Currency}")`.
+     - Antes de llamar `_afipService.CreatePendingInvoice`, hacer `INSERT INTO "ArcaIdempotencyKeys"(Key, JobId, CreatedAt) VALUES (...)` con UNIQUE constraint sobre `Key`. Si el INSERT falla por unique violation, abort + log + marcar `AnnulmentStatus = Failed` con razon `"Idempotency duplicate"`. Otro job/reintento ya esta procesando el mismo trabajo.
+     - Tabla nueva `ArcaIdempotencyKeys` (Fase2.M1 incluye su creacion): `Id` PK, `Key` text UNIQUE, `JobId` text, `CreatedAt` timestamptz, `ResolvedAt` timestamptz NULL.
+     - Al finalizar (success o failure terminal), setear `ResolvedAt = now()`. Los registros viejos (>30d) pueden purgarse via job de housekeeping (no Fase 2).
+   - **Capa 2 — chequeo ARCA opcional `FECompUltimoAutorizado`** (mas pesado, solo cuando capa 1 detecta inconsistencia):
+     - Si la capa 1 detecta una row existente con `ResolvedAt IS NULL` mas antigua que el timeout del job (ej. 5 min), antes de fallar consultar a ARCA via `FECompUltimoAutorizado` con el numerador del PV + tipo de NC. Si el ultimo correlativo emitido tiene `CbteAsoc` apuntando a la factura origen Y se emitio en los ultimos N min, el job actual debe abort SIN POSTear (el reintento previo ya hizo el trabajo). Levantar a estado `Succeeded` derivando el CAE del comprobante ya emitido.
+     - Esta capa 2 es defensa adicional para el caso patologico donde el job se cuelga > timeout pero el POST ya viajo al ARCA y volvio. Mas costoso por la llamada SOAP — solo se activa si la capa 1 detecta inconsistencia.
 
 5. **Tests unitarios** (~12) del calculo de prorrateo IVA aislado en una clase helper `PartialCreditNoteIvaCalculator`. Cubrir:
    - `ProportionalToNet` con 1 sola alicuota -> IVA = total * multiplier.
@@ -334,6 +549,12 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
 
 6. **NO tocar `AfipService` directamente** salvo necesidad real. El path existente `CreatePendingInvoice` + `ProcessInvoiceJob` ya soporta NC con `<CbtesAsoc>`. El trabajo nuevo es en `InvoiceService.ProcessPartialCreditNoteJob` que arma el `CreateInvoiceRequest` correcto y lo entrega al pipeline existente.
 
+7. **Validacion defensiva pre-encolado** (cierra **M4** del reviewer):
+   - En `EnqueuePartialCreditNoteAsync` (PRE-encolado, NO solo en el job), validar `ABS(liquidation.OriginalNetAmount + liquidation.OriginalVatAmount - liquidation.OriginalTotalAmount) <= settings.PartialCreditNoteRoundingTolerance` y `ABS(SUM(Lines.Total) - liquidation.FiscalAmountToCredit) <= tolerance`.
+   - Si falla, throw `ArgumentException` ANTES de mutar `Invoice.AnnulmentStatus`, ANTES de encolar Hangfire. Cero side-effects.
+   - Incrementar counter `Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue` (counter separado del que cuenta validaciones fallidas en el job mismo, ver §F2.6).
+   - Esta validacion es redundante con la del job (mismo `ABS(...) <= tolerance` en el calculo de IVA) pero **detecta upstream**. La validacion del job se mantiene como defense-in-depth.
+
 **Criterio de aceptacion FC1.3.F2.2**:
 
 - `dotnet build` verde.
@@ -342,6 +563,10 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
 - Test integration `ProcessPartialCreditNoteJob_BuildsCorrectInvoiceRequest`: mockear AfipService, capturar el `CreateInvoiceRequest` que arma el job. Verificar Items, OriginalInvoiceId, IsCreditNote=true, totales correctos.
 - Test integration `ProcessPartialCreditNoteJob_SumMismatch_FailsBeforeArca`: liquidation con `FiscalAmountToCredit=100` pero suma de lineas `99.50` (gap > tolerancia). Job marca Failed sin llamar AFIP.
 - Test integration `EnqueuePartialCreditNoteAsync_AlreadyPending_Rejects`: factura con AnnulmentStatus=Pending, segunda llamada throw.
+- **Test integration `EnqueuePartialCreditNoteAsync_FacturaM_Rejects`** (cierra **RH-003**): factura origen tipo 51 (Factura M). `EnqueuePartialCreditNoteAsync` throw `InvalidOperationException` con mensaje "Factura M no soportada".
+- **Test integration `EnqueuePartialCreditNoteAsync_SumMismatchAtEnqueue_DoesNotMutateInvoiceState`** (cierra **M4**): liquidation invalida (sum mismatch). El throw ocurre ANTES de mutar `Invoice.AnnulmentStatus`. Verificar que post-throw `Invoice.AnnulmentStatus` sigue en `NotRequested` (o el valor previo) y que counter `Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue` incremento.
+- **Test integration `ProcessPartialCreditNoteJob_HangfireRetryAfterTimeout_DoesNotEmitDuplicate`** (cierra **RH-004**): simular escenario: job arranca, inserta IdempotencyKey, llama ARCA (mock que devuelve OK pero con delay > timeout Hangfire), Hangfire reintenta job. El reintento debe detectar `IdempotencyKey` ya existe con `ResolvedAt IS NULL`, consultar ARCA (mock `FECompUltimoAutorizado`) y derivar el CAE del comprobante ya emitido SIN re-POSTear. Verificar exactamente 1 invocacion a `CreatePendingInvoice` mock.
+- **Test integration `ProcessPartialCreditNoteJob_IdempotencyKey_UniqueViolation_AbortsCleanly`** (cierra **RH-004**): dos jobs concurrentes con misma idemKey. Solo uno inserta + procesa. El otro detecta unique violation + abort + audit `Fc13.PartialCreditNote.IdempotencyDuplicate`.
 - Test E2E (diferido a sesion QA): emitir NC parcial real contra ARCA homologacion + validar respuesta CAE.
 
 **Dependencias**: FC1.3.F2.1 (liquidacion persistida) + FC1.3.F2.0 (settings).
@@ -376,25 +601,103 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
 
 4. **Defensa contra divergencia BD-XML**: antes de llamar `EnqueuePartialCreditNoteAsync`, **re-validar INV-FC1.3-005 sobre `bc.FiscalLiquidation`** persistido. Si la suma se rompio (concurrent edit malicioso entre el approval y la emision), throw + log critical + abortar emision. El CHECK SQL (F2.1) lo cubre tambien, esto es defensa adicional para mejor mensaje de error.
 
-5. **Tests integration nuevos** (~6):
+5. **NC parcial NO hace cascade de receipts** (cierra **RH-005** + alineado con **G-F2-D**).
+
+   Contexto: hoy `AfipService.ApplyCreditNoteEconomicReversalAsync` (linea 1006-1114) busca un `Payment` cuyo `Amount == invoice.ImporteTotal` (matching exacto por monto, ver linea 1036) y si encuentra un `Receipt` atado, lo cascade-voida. Esta logica funciona correctamente para NC TOTAL (FC1.2) porque ahi `invoice.ImporteTotal` (de la NC) == `original.ImporteTotal`, y el `Receipt` original tiene ese monto exacto.
+
+   Para NC PARCIAL la logica se rompe en dos escenarios:
+   - **Monto no matchea**: `invoice.ImporteTotal` de la NC parcial es una fraccion. No hay un `Payment` con ese monto exacto. `matchedPayment == null`, no se cascade-voida ningun receipt. Pero ademas se crea un `Payment` reversal por la fraccion — el receipt queda colgado.
+   - **G-F2-D (multi-recibos)**: una factura $1.000 pagada en 3 cuotas ($300 + $300 + $400) tiene 3 receipts vivos. NC parcial $250 no tiene un receipt unico a cascade-voidear. Cualquier seleccion automatica (por monto, por antiguedad) es arbitraria y riesgosa.
+
+   **Politica Fase 2 (alineada G-F2-D)**:
+   - Modificar `ApplyCreditNoteEconomicReversalAsync` para distinguir NC total vs NC parcial. La discriminacion se hace mirando `invoice.OriginalInvoice.ImporteTotal == invoice.ImporteTotal` (NC total) versus `invoice.ImporteTotal < invoice.OriginalInvoice.ImporteTotal` (NC parcial). Otra opcion mas robusta: leer el `BookingCancellation` asociado y chequear `bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal`.
+   - **NC total**: comportamiento actual sin cambios (cascade receipt).
+   - **NC parcial**: crear el `Payment` reversal con `OriginalPaymentId = null` por diseno (no hay un payment unico asociado). NO buscar payment exacto, NO cascade-voider receipts. Dejar todos los receipts vivos. Emitir audit nuevo `PartialCreditNoteEconomicReversalNoCascade` con detalle del monto reversal + cantidad de receipts vivos + IDs receipts vivos para que el admin pueda revisar manualmente.
+   - UI Fase 3 (fuera de scope) permitira al admin marcar manualmente que receipt anular.
+
+   **Tests integration explicitos** (cierra **RH-005** + **G-F2-D**):
+   - `ApplyCreditNoteEconomicReversal_NcTotal_StillCascadesReceipt` (regression FC1.2): 1 factura + 1 payment + NC total -> cascade voider receipt funciona como hoy.
+   - `ApplyCreditNoteEconomicReversal_NcParcial_SinglePayment_NoCascade` (RH-005): 1 factura $1.000 + 1 payment $1.000 + NC parcial $250 -> `Payment` reversal $-250 creado con `OriginalPaymentId == null`. Receipt original sigue `Issued` (NO Voided). Audit `PartialCreditNoteEconomicReversalNoCascade` presente.
+   - `ApplyCreditNoteEconomicReversal_NcParcial_MultiPayments_NoCascade` (G-F2-D): **setup exacto**: 1 factura $1.000 + 3 payments ($300, $300, $400) cada uno con su Receipt vivo + NC parcial $250. Verificar: (a) 0 receipts cascade-voided (los 3 siguen `Issued`); (b) 1 `Payment` reversal $-250 con `OriginalPaymentId == null`; (c) audit `PartialCreditNoteEconomicReversalNoCascade` emitido con `ReceiptsAffected = [receiptId1, receiptId2, receiptId3]` para trazabilidad.
+
+6. **Tests integration nuevos del path Fase 2** (~7):
    - `OnApprovedAsync_Fase2On_EmitsRealPartialCreditNote`: setup BC con liquidation persistida + flag F2 ON. Verificar que `_invoiceService.EnqueuePartialCreditNoteAsync` fue llamado (mock) con los `Lines` correctos.
    - `OnApprovedAsync_Fase2Off_FallsBackToFc12FlowWithWarning`: mismo setup + flag F2 OFF. Verificar comportamiento actual + log warning presente.
    - `OnApprovedAsync_NonRefundableItems_ExcludedFromLines`: factura con 3 items (2 refundable + 1 no). Verificar que los Lines del request al InvoiceService NO contienen el item no refundable.
    - `OnApprovedAsync_MultipleAlicuotas_PreservesAll`: factura con items 10.5% + 21%. Verificar que el request mantiene ambas alicuotas con prorrateo proporcional.
    - `OnApprovedAsync_LiquidationSumMismatch_AbortsEmission`: simular concurrent edit que rompio INV-FC1.3-005 (UPDATE raw que bypassa CHECK por algun motivo). Service detecta + throw + audit log + emit no se llama.
    - `OnApprovedAsync_IdempotenceTwoCallsSecondNoop`: invocar `OnApprovedAsync` dos veces — segunda no-op.
+   - **`OnApprovedAsync_Fase2_PartialNc_MultiplePaymentsScenario_NoCascade_LeavesAuditTrail`** (cierra **RH-005** + **G-F2-D** end-to-end): setup BC + factura $1.000 + 3 payments ($300, $300, $400) con sus 3 receipts vivos + liquidation $250 + aprobar. Verificar al final: NC parcial pendiente o emitida (segun mock ARCA), `Payment` reversal $-250, 0 receipts cascade-voided, audit `PartialCreditNoteEconomicReversalNoCascade` con los 3 receipt IDs listados.
 
 **Criterio de aceptacion FC1.3.F2.3**:
 
-- Los 6 tests integration pasan.
+- Los 7 tests integration del path Fase 2 + los 3 tests de cascade (RH-005) pasan.
 - Los 5 tests existentes del bridge (FC1.3.4) siguen verdes (sin regresion del fallback FC1.2).
 - Re-correr los 66 unit tests Fase 1 — todos verdes.
+- Re-correr los tests de cascade FC1.2 existentes (`ApplyCreditNoteEconomicReversal*` regresion) — todos verdes (el cambio solo agrega rama NC parcial; la rama NC total queda igual).
 
 **Dependencias**: FC1.3.F2.2 (metodo nuevo en InvoiceService) + FC1.3.F2.1 (liquidacion en BD).
 
 ---
 
-### FC1.3.F2.4 — Caso `TotalPlusNewInvoice` (casos 4 y 7) — flow dual
+### FC1.3.F2.4 — Caso `TotalPlusNewInvoice` (casos 4 y 7) — flow dual [GATED por G-F2-A]
+
+**STATUS**: **GATED por criterio cuantitativo G-F2-A**.
+
+**Criterio de activacion (G-F2-A)**:
+
+1. F2.4 NO entra en el PR Fase 2 base. El flag `EnableTotalPlusNewInvoiceAutoProcessing` se crea en F2.0 con default `false` y NO se puede activar (validacion startup rechaza la combinacion `F2.4 ON + F2.4 codigo no merged`).
+2. Despues de prender Fase 2 en prod (F2.3) y dejarla correr al menos un ciclo de cancelaciones, correr la query SQL de medicion **§FC1.3.F2.4.0**.
+3. Si `casos_4_y_7 / total_cancelaciones >= 5%` -> F2.4 entra como **sesion separada** con su propio plan tactico + reviewer + tests.
+4. Si `casos_4_y_7 / total_cancelaciones < 5%` -> F2.4 queda en **backlog indefinidamente**. Los casos 4/7 siguen siendo rechazados con `InvalidOperationException` segun GR-001 vigente desde Fase 1.
+
+**Justificacion del gate**:
+
+- El flow dual TotalPlusNewInvoice tiene complejidad muy alta (estado intermedio nuevo, job de reconciliacion adicional, endpoint admin force, idempotencia entre dos eventos fiscales atomicos en ARCA).
+- Si los casos 4/7 son raros, el costo de mantenimiento + riesgo de bugs supera el beneficio.
+- El flag default OFF garantiza back-compat estricta con la regla GR-001 vigente desde Fase 1.
+
+#### FC1.3.F2.4.0 — Query SQL para medir volumen casos 4 y 7
+
+Correr en prod **al menos 30 dias despues** de prender `EnablePartialCreditNoteRealEmission` para tener muestra representativa:
+
+```sql
+-- FC1.3.F2.4.0 — Medicion de volumen de casos 4 y 7 post-Fase 2.
+-- Correr en prod, no antes de 30 dias desde el prendido de EnablePartialCreditNoteRealEmission.
+-- Si pct_casos_4_y_7 >= 5%, abrir sesion separada para implementar F2.4.
+
+WITH window_cancellations AS (
+    SELECT
+        bc."Id",
+        bc."ReviewRequiredReason",
+        bc."CreatedAt"
+    FROM "BookingCancellations" bc
+    WHERE bc."CreatedAt" >= NOW() - INTERVAL '30 days'
+),
+classified AS (
+    SELECT
+        "Id",
+        -- Caso 4: OriginalInvoiceUnclear flag (1 << 5 = 32).
+        -- Caso 7: RetentionChangesNature flag (1 << 4 = 16).
+        ("ReviewRequiredReason" & 32) <> 0 AS is_case_4,
+        ("ReviewRequiredReason" & 16) <> 0 AS is_case_7
+    FROM window_cancellations
+)
+SELECT
+    COUNT(*) FILTER (WHERE is_case_4 OR is_case_7) AS cnt_casos_4_y_7,
+    COUNT(*)                                       AS cnt_total,
+    ROUND(
+      100.0 * COUNT(*) FILTER (WHERE is_case_4 OR is_case_7) / NULLIF(COUNT(*), 0),
+      2
+    ) AS pct_casos_4_y_7
+FROM classified;
+```
+
+**Interpretacion**:
+- `pct_casos_4_y_7 < 5%` -> F2.4 queda en backlog indefinidamente. Documentar resultado en `docs/operations/`.
+- `pct_casos_4_y_7 >= 5%` -> abrir sesion separada `plan-tactico-fc1-3-fase2-4.md` con todo el contenido descrito abajo. Incluir output de la query como justificacion.
+
+#### Contenido de F2.4 (si el gate se abre — para referencia, NO se implementa ahora)
 
 **Tareas atomicas**:
 
@@ -441,13 +744,16 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
    - `ForceStep2Endpoint_RequiresInvariantOverride_HappyPath`.
    - `ForceStep2Endpoint_NoOverride_Rejects`.
 
-**Criterio de aceptacion FC1.3.F2.4**:
+**Criterio de aceptacion FC1.3.F2.4 (si el gate G-F2-A se abre)**:
 
 - Los 8 tests pasan.
-- Tests Fase 1 del rechazo `InvalidOperationException` (GR-001) **siguen verdes** (porque el flag F2.4 default OFF preserva comportamiento).
-- Endpoint force-step3 documentado en doc trainee Fase 2.
+- Tests Fase 1 del rechazo `InvalidOperationException` (GR-001) **siguen verdes** cuando el flag F2.4 esta OFF (preserva back-compat).
+- Endpoint force-step2 documentado en doc trainee Fase 2.4.
+- Output de la query F2.4.0 documentado como justificacion para abrir el gate.
 
-**Dependencias**: FC1.3.F2.3 (flow base de emision real). **Esta sub-fase es opcional**: si la auditoria post-Fase 1 muestra que los casos 4/7 son < 5% del volumen, podemos diferir F2.4 a un trabajo posterior y dejar el `throw` como esta. Si son frecuentes, F2.4 es obligatoria.
+**Dependencias**: FC1.3.F2.3 (flow base de emision real) + signoff de Gaston sobre el resultado de la query F2.4.0.
+
+**Decision actual round 2 (G-F2-A)**: F2.4 **NO entra al PR Fase 2 base**. La sub-fase queda documentada como spec pero NO se implementa ahora. El criterio de activacion es cuantitativo (5% del volumen) y se mide despues de tener Fase 2 corriendo en prod.
 
 ---
 
@@ -483,7 +789,7 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
 
 ---
 
-### FC1.3.F2.6 — Observabilidad + reconciliacion ARCA-NC parcial
+### FC1.3.F2.6 — Counters Serilog
 
 **Tareas atomicas**:
 
@@ -491,25 +797,72 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
    - `Fc13.PartialCreditNote.Emitted` por currency/case/InvoicingMode.
    - `Fc13.PartialCreditNote.ArcaApproved`.
    - `Fc13.PartialCreditNote.ArcaRejected` con tag `RejectReason`.
-   - `Fc13.PartialCreditNote.SumValidationFailed` (defensivo, no deberia incrementar).
-   - `Fc13.PartialCreditNote.DualFlowStep1Succeeded`, `Fc13.PartialCreditNote.DualFlowStep2Succeeded`, `Fc13.PartialCreditNote.DualFlowStuck` (BC en `PartialFiscalAwaitingNewInvoice` > N min).
-
-2. **Extender `ArcaAnnulmentReconciliationJob` existente** (FC1.2):
-   - Hoy reconcilia anulaciones tipo NC TOTAL en `Pending` consultando AFIP. Mismo patron sirve para NC parcial: el `Invoice.AnnulmentStatus` y el `Resultado` (`PENDING` -> `A`) son las mismas columnas.
-   - El job no necesita saber que la NC es parcial — solo trabaja sobre la `Invoice` que representa la NC. Verificar que el flow actual de `ArcaAnnulmentReconciliationJob.cs` (chequear `src/TravelApi.Infrastructure/Jobs/`) sigue valido para Invoice que tiene `OriginalInvoiceId != null` y `Resultado=PENDING`.
-   - Si falta cobertura: extender el WHERE del job para incluir tambien NCs parciales.
-
-3. **Tests integration** (~3):
-   - `ReconciliationJob_PartialNcStuckInPending_QueriesArcaAndUpdatesStatus`.
-   - `ReconciliationJob_PartialNcSucceededInArca_TransitionsBCToAwaitingFiscal`.
-   - `CountersIncremented_OnEmissionAndOutcome`.
+   - `Fc13.PartialCreditNote.SumValidationFailedAtJob` (defensivo, no deberia incrementar).
+   - **`Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue`** (minor del reviewer): incrementa cuando la validacion defensiva en `EnqueuePartialCreditNoteAsync` rechaza el llamado pre-encolado.
+   - **`Fc13.PartialCreditNote.IdempotencyDuplicate`** (RH-004): incrementa cuando se detecta IdempotencyKey duplicada.
+   - `Fc13.PartialCreditNote.NoCascadeReceiptsPreserved` (G-F2-D): incrementa cuando ApplyCreditNoteEconomicReversal preserva receipts (rama parcial).
+   - (Si gate G-F2-A se abre en el futuro) `Fc13.PartialCreditNote.DualFlowStep1Succeeded`, `DualFlowStep2Succeeded`, `DualFlowStuck`.
 
 **Criterio de aceptacion FC1.3.F2.6**:
 
-- 3 tests pasan.
+- Test integration `CountersIncremented_OnEmissionAndOutcome`: simular ciclo completo (encolado OK -> ARCA Approved) y verificar counters esperados.
 - Counters visibles en Serilog logs durante un test E2E manual contra ARCA homologacion (diferido a sesion QA).
 
 **Dependencias**: FC1.3.F2.2.
+
+---
+
+### FC1.3.F2.6a — Job NUEVO `PartialCreditNotePostingReconciliationJob` (cierra RH-006)
+
+**Justificacion del job NUEVO (no extension)**:
+
+El reviewer detecto que el plan v1 mencionaba "extender `ArcaAnnulmentReconciliationJob` existente FC1.2". Tras verificar la asuncion:
+
+- El job `ArcaAnnulmentReconciliationJob` (si existe en `src/TravelApi.Infrastructure/Jobs/`) opera sobre `Invoice.AnnulmentStatus = Pending` y reconcilia el path FC1.2 anulacion. Su modelo de datos es "una factura origen + su AnnulmentStatus".
+- Para Fase 2 NC parcial, la NC nueva es una `Invoice` separada con `OriginalInvoiceId IS NOT NULL` y su propio `Resultado` (`PENDING` -> `A` o `R`). Este es un modelo de datos diferente: lo que hay que reconciliar es el `Resultado` de la NC nueva, NO el `AnnulmentStatus` de la factura origen.
+- Para evitar acoplar dos casos de uso con dependencias y reglas diferentes en el mismo job (riesgo de regresion FC1.2 al modificar el WHERE), Fase 2 crea un job NUEVO.
+
+**Tareas atomicas**:
+
+1. Crear `src/TravelApi.Infrastructure/Jobs/PartialCreditNotePostingReconciliationJob.cs`. Patron: replicar la estructura de `PartialCreditNoteBridgeReconciliationJob` (que existe y se valido en Fase 1):
+   - Cron (mismo intervalo que el job bridge, ej. cada 5 min).
+   - Contador anti-spam (no notificar la misma `Invoice` cada vez).
+   - Max retries antes de notify a operador.
+
+2. Scope (query SQL del job):
+   ```sql
+   SELECT i."Id", i."ReservaId", i."PublicId"
+   FROM "Invoices" i
+   WHERE i."OriginalInvoiceId" IS NOT NULL                  -- Es NC
+     AND i."Resultado" = 'PENDING'                           -- Esta colgada
+     AND i."CreatedAt" < NOW() - INTERVAL '15 minutes'       -- Mas de N min
+     AND i."Id" IN (
+       -- Solo NCs parciales (no NC total FC1.2). Discriminador: importe.
+       SELECT i2."Id" FROM "Invoices" i2
+       INNER JOIN "Invoices" iorig ON iorig."Id" = i2."OriginalInvoiceId"
+       WHERE i2."ImporteTotal" < iorig."ImporteTotal"
+     )
+   ```
+   La discriminacion "monto NC < monto factura origen" identifica NC parcial vs NC total sin necesidad de columna extra.
+
+3. Para cada `Invoice` colgada, consultar ARCA via `FECompConsultar` con el numerador del PV + tipo de NC + correlativo. Si ARCA dice:
+   - `A` (Aprobado): actualizar `Invoice.Resultado = 'A'` + `CAE`, disparar el callback de InvoiceAnnulmentBcBridge (FC1.2 path que cascade actualiza BC).
+   - `R` (Rechazado): actualizar a `R` + log + notify.
+   - Sin respuesta o `PENDING`: contador de retries + dejar para el proximo ciclo.
+
+4. **NO modificar `ArcaAnnulmentReconciliationJob`** (si existe). Mantener su scope estrictamente sobre `AnnulmentStatus` flow FC1.2.
+
+5. **Sub-fase opt-in F2.6b (NO se asume)**: si despues de prender Fase 2 se descubre que existian NCs FC1.2 huerfanas (sin reconciliacion automatica desde antes de FC1.2.7), eso es un trabajo SEPARADO. NO se mete en F2.6a porque mezcla scopes y aumenta riesgo.
+
+**Criterio de aceptacion FC1.3.F2.6a**:
+
+- Verificar si `ArcaAnnulmentReconciliationJob` existe en `src/TravelApi.Infrastructure/Jobs/`. Si NO existe, ajustar el §FC1.3.F2.6a justificacion (entonces NO hay riesgo de coupling, pero el job nuevo sigue siendo lo correcto por separation of concerns).
+- Test integration `ReconciliationJob_PartialNcStuckInPending_QueriesArcaAndUpdatesStatus`.
+- Test integration `ReconciliationJob_PartialNcSucceededInArca_TransitionsBCToAwaitingFiscal`.
+- Test integration `ReconciliationJob_DoesNotTouchFc12NcTotal`: seed factura + NC total FC1.2 en Pending. Job F2.6a NO la toca (responsibility de `ArcaAnnulmentReconciliationJob` si existe, o de otro job).
+- Test integration `ReconciliationJob_RetryCounter_NotifiesAfterNAttempts`.
+
+**Dependencias**: FC1.3.F2.2 (emite las NCs parciales que este job va a reconciliar).
 
 ---
 
@@ -548,14 +901,17 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
 | `src/TravelApi.Application/DTOs/Cancellation/FiscalLiquidationInput.cs` | F2.2 | Record con items + montos + currency + TC. Lo que `EnqueuePartialCreditNoteAsync` recibe. |
 | `src/TravelApi.Application/DTOs/Cancellation/PartialCreditNoteLineDto.cs` | F2.2 | Una linea individual de la NC parcial (Description, Quantity, Total, AlicuotaIvaId). |
 | `src/TravelApi.Infrastructure/Services/PartialCreditNoteIvaCalculator.cs` | F2.2 | Helper puro para prorratear IVA segun mode. Testeable sin DB. |
-| `src/TravelApi.Infrastructure/Jobs/FC13Phase2DualFlowJob.cs` | F2.4 | Job step 2 para casos TotalPlusNewInvoice. |
-| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M0_AddFc13Phase2Settings.cs` | F2.0 | 4 cols settings + validacion. |
-| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M1_AddFiscalLiquidationOwnedVoAndBackfill.cs` | F2.1 | 10 cols owned VO + CHECK suma + backfill desde Metadata JSON. |
-| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M2_AddDualFlowSupport.cs` | F2.4 | `PostCancellationInvoiceId` + enum status 12. |
+| `src/TravelApi.Infrastructure/Jobs/PartialCreditNotePostingReconciliationJob.cs` | F2.6a | Job NUEVO de reconciliacion ARCA para NCs parciales en Pending (cierra RH-006). |
+| `src/TravelApi.Infrastructure/Jobs/FC13Phase2DualFlowJob.cs` | F2.4 [GATED] | Solo si gate G-F2-A se abre. Job step 2 para casos TotalPlusNewInvoice. |
+| `tools/sql/fase2-m1-prevalidation-metadata.sql` | F2.1.0 | Script standalone de validacion pre-backfill (cierra RH-001). NO migracion. |
+| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M0_AddFc13Phase2Settings.cs` | F2.0 | 4 cols settings + validacion + `ReviewRequiredReason.HasProvincialTributes` (no requiere col DB, es bitflag int). |
+| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M1_AddFiscalLiquidationOwnedVoAndBackfill.cs` | F2.1 | 10 cols owned VO + CHECK suma + backfill SQL en DOS PASOS atomicos (RH-001) + tabla `ArcaIdempotencyKeys` para idempotencia ARCA (RH-004). M1 NO se aplica hasta que F2.1.0 paso con count = 0. **Decision M1 (cierra M1 reviewer)**: 1 migracion fisica con todo (mismo patron Fase 1) — el snapshot EF queda monolitico, se acepta a cambio de tener atomicidad para el rollback. Justificacion en §T6.4. |
+| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M2_AddDualFlowSupport.cs` | F2.4 [GATED] | Solo si gate G-F2-A se abre. `PostCancellationInvoiceId` + enum status 12. |
 | `src/TravelApi.Tests/Unit/PartialCreditNoteIvaCalculatorTests.cs` | F2.2 | 12 unit tests. |
 | `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteRealEmissionTests.cs` | F2.2 + F2.3 | 12 integration tests del flow real. |
 | `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteBackfillTests.cs` | F2.1 | Tests del backfill. |
-| `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteDualFlowTests.cs` | F2.4 | 8 tests del flow dual. |
+| `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteDualFlowTests.cs` | F2.4 [GATED] | 8 tests del flow dual — solo si gate G-F2-A se abre. |
+| `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteReceiptCascadeTests.cs` | F2.3 | 3 tests del cascade NC parcial (RH-005 + G-F2-D multi-recibos). |
 | `docs/explicaciones/YYYY-MM-DD-fc1-3-fase-2-implementacion.md` | F2.7 | Doc trainee cierre Fase 2. |
 
 ### T4.2 Archivos MODIFICADOS
@@ -563,17 +919,18 @@ Razon: F2.4 (TotalPlusNewInvoice) es el mas complejo y se beneficia de tener tod
 | Archivo | Sub-fase | Que cambia |
 |---|---|---|
 | `src/TravelApi.Domain/Entities/OperationalFinanceSettings.cs` | F2.0 | + 4 settings nuevos. |
-| `src/TravelApi.Domain/Entities/BookingCancellation.cs` | F2.1 + F2.4 | + `FiscalLiquidation` owned VO + `PostCancellationInvoiceId`. |
-| `src/TravelApi.Domain/Entities/BookingCancellationStatus.cs` | F2.4 | + `PartialFiscalAwaitingNewInvoice = 12`. |
-| `src/TravelApi.Infrastructure/Persistence/AppDbContext.cs` | F2.1 | + config owned VO `FiscalLiquidation` con prefix. |
+| `src/TravelApi.Domain/Entities/ReviewRequiredReason.cs` | F2.0.G-F2-C | + `HasProvincialTributes = 1 << 11` (cierra G-F2-C). |
+| `src/TravelApi.Domain/Entities/BookingCancellation.cs` | F2.1 + F2.4 [gated] | + `FiscalLiquidation` owned VO + (gated) `PostCancellationInvoiceId`. |
+| `src/TravelApi.Domain/Entities/BookingCancellationStatus.cs` | F2.4 [GATED] | + `PartialFiscalAwaitingNewInvoice = 12` SOLO si gate G-F2-A abierto. |
+| `src/TravelApi.Infrastructure/Persistence/AppDbContext.cs` | F2.1 | + config owned VO `FiscalLiquidation` con prefix + tabla `ArcaIdempotencyKeys` (RH-004). |
 | `src/TravelApi.Application/Interfaces/IInvoiceService.cs` | F2.2 | + `EnqueuePartialCreditNoteAsync`. |
-| `src/TravelApi.Infrastructure/Services/InvoiceService.cs` | F2.2 + F2.4 | + `EnqueuePartialCreditNoteAsync` + `ProcessPartialCreditNoteJob` + `EnqueueNewInvoiceForRemainder`. |
-| `src/TravelApi.Infrastructure/Services/BookingCancellationService.cs` | F2.3 + F2.4 | Reemplazar lineas 1431-1468 con flow nuevo (gated por flag F2). + handler dual flow casos 4/7. |
-| `src/TravelApi.Infrastructure/Services/FiscalLiquidationCalculator.cs` | F2.5 | Quitar disparador `MultiCurrency` cuando F2 ON. |
-| `src/TravelApi/Program.cs` | F2.0 + F2.6 | + registro `FC13Phase2DualFlowJob` + validacion startup pre-condicion F2 requiere F1. |
+| `src/TravelApi.Infrastructure/Services/InvoiceService.cs` | F2.2 + F2.4 [gated] | + `EnqueuePartialCreditNoteAsync` + `ProcessPartialCreditNoteJob` + (gated) `EnqueueNewInvoiceForRemainder`. |
+| `src/TravelApi.Infrastructure/Services/BookingCancellationService.cs` | F2.3 + F2.4 [gated] | Reemplazar lineas 1431-1468 con flow nuevo (gated por flag F2) + persistir doble representacion FiscalLiquidation (RH-002) + (gated) handler dual flow casos 4/7. |
+| `src/TravelApi.Infrastructure/Services/FiscalLiquidationCalculator.cs` | F2.0.G-F2-C + F2.5 | + deteccion `HasProvincialTributes` (G-F2-C). + quitar disparador `MultiCurrency` cuando F2 ON. |
+| `src/TravelApi/Program.cs` | F2.0 + F2.6a | + registro `PartialCreditNotePostingReconciliationJob` + validacion startup pre-condicion F2 requiere F1. |
 | `src/TravelApi.Application/DTOs/Cancellation/BookingCancellationDto.cs` | F2.1 | + exposicion del FiscalLiquidation. |
-| `src/TravelApi.Application/Constants/AuditActions.cs` | F2.3 + F2.4 | + `BookingCancellationPartialCreditNoteEmitted`, `BookingCancellationFiscalDualStep1Submitted`, `BookingCancellationFiscalDualStep2Submitted`, `BookingCancellationDualFlowForceStep2`. |
-| `src/TravelApi.Infrastructure/Services/AfipService.cs` | F2.5 | + soporte `MonId` + `MonCotiz` parametrizables (con defaults PES/1 para no romper resto). Solo si F2.5 lo necesita; si AfipService ya los acepta via `CreateInvoiceRequest`, NO se toca. |
+| `src/TravelApi.Application/Constants/AuditActions.cs` | F2.3 + F2.4 [gated] | + `BookingCancellationPartialCreditNoteEmitted`, **`PartialCreditNoteEconomicReversalNoCascade`** (G-F2-D + RH-005), + (gated) `BookingCancellationFiscalDualStep1Submitted`, `BookingCancellationFiscalDualStep2Submitted`, `BookingCancellationDualFlowForceStep2`. |
+| `src/TravelApi.Infrastructure/Services/AfipService.cs` | F2.3 + F2.5 | **F2.3 (RH-005)**: modificar `ApplyCreditNoteEconomicReversalAsync` para distinguir NC total vs parcial (NC parcial NO cascade-voider receipts + audit `PartialCreditNoteEconomicReversalNoCascade`). **F2.5 (M3 reviewer)**: + soporte `MonId` + `MonCotiz` parametrizables (con defaults PES/1 para no romper resto). Cambia firma `CreateInvoiceRequest` con parametros opcionales. **Callers a auditar para M3**: (a) `InvoiceService.EnqueueAnnulmentAsync` -> usa defaults, no requiere cambio. (b) Frontend al crear factura nueva manual -> usa defaults. (c) Tests integration de FC1.2 -> usan defaults. Criterio aceptacion M3: tests integration de los callers existentes siguen verdes con defaults `MonId="PES"`, `MonCotiz=1`. |
 
 ### T4.3 Archivos NO tocados
 
@@ -722,28 +1079,39 @@ OnApprovedAsync (rama TotalPlusNewInvoice)
 | FC1.2 | FC1.3 F1 | FC1.3 F2 emision | FC1.3 F2 dual flow | Resultado |
 |---|---|---|---|---|
 | ON | ON | OFF | OFF | **Estado actual post-Fase 1**. Calculator + manual review + fallback NC total. |
-| ON | ON | ON | OFF | NC parcial real al ARCA para casos 1/2/3/5/6/8. Casos 4/7 throw. |
-| ON | ON | ON | ON | Flow completo Fase 2. Casos 4/7 flow dual. |
+| ON | ON | ON | OFF | **Estado objetivo Fase 2 base (sin F2.4)**: NC parcial real al ARCA para casos 1/2/3/5/6/8. Casos 4/7 throw segun GR-001. |
+| ON | ON | ON | ON | Solo si gate G-F2-A se abre y F2.4 se implementa en sesion separada. Flow completo. |
 | ON | ON | OFF | ON | **RECHAZO startup** (F2.4 requiere F2 emision). |
 | cualquiera | OFF | ON | cualquiera | **RECHAZO startup** (F2 requiere F1). |
 
 ### T6.3 Secuencia de prendido recomendada
 
 1. **Pre-condicion**: Fase 1 ya esta ON en staging y prod (post merge de Fase 1, sin incidentes durante N dias).
-2. **Mergeamos PR Fase 2** con TODOS los flags F2 en `false`. App arranca normal. Sin cambio de comportamiento.
-3. **Staging**: admin prende `EnablePartialCreditNoteRealEmission=true`. Probar contra ARCA homologacion con casos 1, 2, 3, 5, 6, 8. Casos 4/7 siguen tirando — OK (esperado).
-4. **Staging duracion**: 1-2 ciclos de cancelaciones reales (segun decida Gaston).
-5. **Prod**: admin prende `EnablePartialCreditNoteRealEmission=true`. Validar primeras 5 NCs parciales reales manualmente con contador.
-6. **Mes despues**: si volumen de casos 4/7 lo justifica, prender `EnableTotalPlusNewInvoiceAutoProcessing=true` en staging primero.
+2. **Pre-step**: correr el script F2.1.0 contra dump staging Y prod. Documentar count = 0. Si > 0, limpiar antes.
+3. **Mergeamos PR Fase 2** con TODOS los flags F2 en `false`. App arranca normal. Sin cambio de comportamiento.
+4. **Staging**: admin prende `EnablePartialCreditNoteRealEmission=true`. Probar contra ARCA homologacion con casos 1, 2, 3, 5, 6, 8. Casos 4/7 siguen tirando — OK (esperado).
+5. **Staging duracion**: 1-2 ciclos de cancelaciones reales (segun decida Gaston).
+6. **Prod**: admin prende `EnablePartialCreditNoteRealEmission=true`. Validar primeras 5 NCs parciales reales manualmente con contador.
+7. **30 dias despues**: correr query F2.4.0 (medicion volumen casos 4 y 7). Si >= 5%, abrir sesion separada para F2.4. Si < 5%, F2.4 queda en backlog.
 
 ### T6.4 Rollback granular
 
 | Escenario | Accion | Impacto |
 |---|---|---|
 | NC parcial real explota (ARCA rechaza por XML invalido, prorrateo IVA mal, etc.) | Apagar `EnablePartialCreditNoteRealEmission`. | Vuelve al fallback FC1.2 con log warning. NCs ya emitidas en ARCA quedan validas (no revertibles desde nuestro lado). Los BC nuevos siguen pasando por manual review pero al aprobar emiten NC total. |
-| Flow dual explota | Apagar `EnableTotalPlusNewInvoiceAutoProcessing`. | Casos 4/7 vuelven a tirar throw. BCs que ya estaban en `PartialFiscalAwaitingNewInvoice (12)` quedan en limbo — admin los maneja manualmente fuera del sistema o con endpoint force-step2 una vez que el bug este fixeado. |
+| Flow dual explota (solo si gate G-F2-A se abrio en el futuro) | Apagar `EnableTotalPlusNewInvoiceAutoProcessing`. | Casos 4/7 vuelven a tirar throw. BCs que ya estaban en `PartialFiscalAwaitingNewInvoice (12)` quedan en limbo — admin los maneja manualmente fuera del sistema o con endpoint force-step2 una vez que el bug este fixeado. |
 | Settings F2 entran con valores invalidos por restore de backup | Validacion startup detecta + app no arranca. Operador debe ajustar manualmente la BD antes de re-arrancar. | Defense-in-depth, mismo patron GR-002. |
-| Reverse migraciones Fase 2 | Fase2.M2 -> M1 -> M0. Cada reverse es aditivo -> nullable, no pierde data. **Antes de reverse M1**: script que valida que no hay BCs en estados 9/10 con `FiscalLiquidation_FiscalAmountToCredit IS NOT NULL` y campos faltantes en `ApprovalRequest.Metadata` (porque despues del reverse, la unica fuente de verdad vuelve a ser Metadata). | Bajo riesgo si Metadata sigue intacto. |
+| Reverse migracion M1 (RH-002 critico) | **PRECONDICION OBLIGATORIA**: verificar que el doble-write Metadata + columnas sigue activo en el codigo desde F2.1. Si una version intermedia dejo de escribir Metadata, NO reversear M1 — los datos solo viven en columnas y el reverse los destruye. **Script previo**: contar BCs con `FiscalLiquidation_FiscalAmountToCredit IS NOT NULL` y validar que en `ApprovalRequest.Metadata` JSON existen las claves criticas (`fiscalAmountToCredit`, `originalInvoiceAmount`, `currency`). Si la validacion falla, **abortar reverse**. | Sin la precondicion, riesgo alto de perdida de datos fiscales. Con la precondicion, bajo riesgo. |
+| Reverse migracion M0 | Aditivo (columnas nullable + nuevo flag bitwise sin DB col). Reverse seguro. | Bajo riesgo. |
+
+**Decision M1 monolitica vs separada (cierra M1 reviewer)**:
+
+El reviewer planteo si separar las migraciones de Fase 2 para que el snapshot EF no colapse. La decision es **mantener M1 monolitica** (10 cols owned VO + CHECK + tabla `ArcaIdempotencyKeys` + backfill en una migracion fisica), siguiendo el patron Fase 1 ya validado. Justificacion:
+
+- La atomicidad del backfill + CHECK + tabla auxiliar es load-bearing: si M1 se aplica a medias, queda data inconsistente.
+- Separar las migraciones implica regenerar snapshot EF varias veces y aumenta el riesgo de divergencias entre el snapshot y la realidad.
+- El costo de tener una migracion EF monolitica grande es asumible — ya pasamos por eso en Fase 1.
+- Si la herramienta EF colapsa al generar la migracion (problema reportado en el pasado), el remediation es generar las clases manualmente o splittear el archivo `.cs` resultante por bloques sin separar la migracion logica.
 
 ---
 
@@ -772,14 +1140,15 @@ OnApprovedAsync (rama TotalPlusNewInvoice)
 
 **Contenido sugerido de `§12 Fase 2 Amendments` para ADR-009**:
 
-1. `§12.1` — Owned VO `FiscalLiquidation` (promueve §2.4): 10 columnas + CHECK suma + backfill.
-2. `§12.2` — `EnqueuePartialCreditNoteAsync` + `ProcessPartialCreditNoteJob` (aditivo a `IInvoiceService`).
+1. `§12.1` — Owned VO `FiscalLiquidation` (promueve §2.4): 10 columnas + CHECK suma + backfill. **Sub-seccion §12.1.a (minor reviewer round 1)**: documentar que la dualidad Metadata JSON + columnas dedicadas es decision deliberada (NO agujero a cerrar). Justificacion: doble-write soporta reverse seguro de M1 + permite queries SQL directas + preserva trazabilidad historica de FC1.2.
+2. `§12.2` — `EnqueuePartialCreditNoteAsync` + `ProcessPartialCreditNoteJob` (aditivo a `IInvoiceService`) + idempotencia ARCA de dos capas (`ArcaIdempotencyKeys` + `FECompUltimoAutorizado` opcional).
 3. `§12.3` — `IvaProrrateoMode` enum + default + comportamiento.
-4. `§12.4` — Estado `PartialFiscalAwaitingNewInvoice (12)` + flow dual gated por `EnableTotalPlusNewInvoiceAutoProcessing`.
+4. `§12.4` — Estado `PartialFiscalAwaitingNewInvoice (12)` + flow dual **GATED por criterio cuantitativo < 5%** (G-F2-A).
 5. `§12.5` — Multimoneda: el flag `MultiCurrency` cambia comportamiento (review manual -> auto) cuando F2 ON.
 6. `§12.6` — 4 settings nuevos + validacion startup.
-7. `§12.7` — Decisiones cerradas Fase 2 (mismo formato que GR-001..GR-006).
-8. `§12.8` — Open questions de Fase 2 (no las del contador, las arquitectonicas).
+7. `§12.7` — Decisiones cerradas Fase 2 (mismo formato que GR-001..GR-006). Incluye **G-F2-A** (F2.4 gated), **G-F2-C** (tributos provinciales -> manual review obligatorio + nuevo flag `HasProvincialTributes`), **G-F2-D** (multi-recibos -> NC parcial NO cascade).
+8. `§12.8` — Open questions de Fase 2 (no las del contador, las arquitectonicas). OQ-3 y OQ-4 cerradas round 2. OQ-1, OQ-2, OQ-5 abiertas. OQ-E (TC multimoneda) sumada al mensaje contador round 3.
+9. `§12.9` — Politica cascade receipts NC parcial vs NC total: distincion en `ApplyCreditNoteEconomicReversalAsync`. NC parcial preserva receipts vivos + audit `PartialCreditNoteEconomicReversalNoCascade`. UI Fase 3 (fuera de scope) habilita revocacion manual.
 
 ### T7.2 Alternativas rechazadas dentro de Fase 2
 
@@ -795,7 +1164,10 @@ OnApprovedAsync (rama TotalPlusNewInvoice)
 | **Eliminar GR-001 (rechazar `TotalPlusNewInvoice`) completamente sin gated flag** | Casos 4/7 son sensibles. Sin flag, un bug del flow dual rompe operativa criticamente. | Gated por `EnableTotalPlusNewInvoiceAutoProcessing` default OFF. Permite rollback granular. |
 | **Job F2.4 step 2 que reintenta indefinidamente** | Spam de notificaciones (mismo problema N-003 round 3 Fase 1). | Reusar el patron `BridgeReconciliationMaxRetries` Fase 1: contador + notify una vez + endpoint force con `InvariantOverride`. |
 | **Modificar `EnqueueAnnulmentAsync` existente para parametrizar items** | Riesgo de regresion en FC1.2 (todo el path actual depende de "reconstruccion 1:1 desde items origen"). | Nuevo metodo `EnqueuePartialCreditNoteAsync` separado. Convivencia. |
-| **Compartir `Tributes` de la factura origen 1:1 en la NC parcial** | Tributos provinciales (IIBB, etc.) tienen reglas de proration complejas que dependen de la jurisdiccion. Fase 2 NO maneja. | NC parcial Fase 2 emite SIN tributos. Si la factura origen los tenia, queda un gap (la NC fiscal no acredita IIBB). OQ-3 abajo. |
+| **Compartir `Tributes` de la factura origen 1:1 en la NC parcial** | Tributos provinciales (IIBB, etc.) tienen reglas de proration complejas que dependen de la jurisdiccion. Fase 2 NO maneja. **Round 2 (G-F2-C)**: ademas, si la factura origen tiene `Tributes.Any()`, NUNCA se llega a emitir NC automatica — el calculator dispara manual review obligatorio. | NC parcial Fase 2 emite SIN tributos + manual review obligatorio cuando la factura origen tenia tributos. OQ-3 cerrada. |
+| **Cascade-voider receipts automatico en NC parcial** | RH-005 + G-F2-D: el matching por `Amount == invoice.ImporteTotal` falla naturalmente para NC parcial (monto distinto) y multi-recibos (comun en MagnaTravel) hace que la seleccion automatica de "que receipt voider" sea arbitraria. | NC parcial NO hace cascade. Crea reversal con `OriginalPaymentId = null` + audit explicito. UI Fase 3 permitira marcar manualmente. |
+| **Implementar F2.4 (flow dual TotalPlusNewInvoice) en el PR Fase 2 base** | G-F2-A: complejidad muy alta (estado intermedio, job de reconciliacion, endpoint admin force, idempotencia entre dos eventos atomicos). Si los casos 4/7 son raros, costo de mantenimiento > beneficio. | F2.4 GATED por criterio cuantitativo < 5%. Default OFF estricto. Casos 4/7 siguen rechazandose con `InvalidOperationException` (GR-001). |
+| **Extender `ArcaAnnulmentReconciliationJob` (FC1.2) para incluir NCs parciales** | RH-006: el job FC1.2 reconcilia `AnnulmentStatus` (modelo de datos de NC total). NC parcial reconcilia `Resultado` de la NC nueva (modelo distinto). Acoplar dos casos de uso en un mismo job introduce riesgo de regresion FC1.2. | Job NUEVO `PartialCreditNotePostingReconciliationJob` con scope independiente. |
 
 ---
 
@@ -821,28 +1193,23 @@ OnApprovedAsync (rama TotalPlusNewInvoice)
 
 **Plan**: implementar (b) como default. Documentar en doc trainee. Si contador pide (a), agregar tercer valor al enum `IvaProrrateoMode.ProportionalToNetDominantAlicuota`.
 
-### OQ-3: Tributos provinciales (IIBB) en NC parcial
+### OQ-3 [RESUELTA round 2 por G-F2-C]: Tributos provinciales (IIBB) en NC parcial
 
-**Pregunta**: la factura origen tenia $X de IIBB Capital. La NC parcial fiscal debe acreditar proporcional ($X * fraccion)?
+**Status round 1**: pendiente. **Status round 2**: **CERRADA por G-F2-C**.
 
-**Mi posicion**: **NO en Fase 2**. Las reglas de prorrateo de tributos provinciales requieren saber:
-- Si la jurisdiccion permite NC sobre IIBB ya percibido.
-- Si requiere reporte separado al fisco provincial.
-- Si la NC al cliente refleja IIBB o solo IVA federal.
+**Decision Gaston (G-F2-C)**: tributos provinciales -> manual review obligatorio. El sistema NO prorratea tributos provinciales automaticamente. Si la factura origen tiene `Tributes.Any() == true`, el calculator (Fase 1 modificado por F2.0.G-F2-C) suma `ReviewRequiredReason.HasProvincialTributes` al flag acumulado. El admin revisa manualmente y, si decide emitir NC, lo hace fuera del sistema o con override scoped (Fase 3).
 
-Esto es **fuera de scope de FC1.3** completo (Fase 1, 2, 3). Si el contador insiste, agregar como `OQ-tributos` para Fase 4 separada.
+**Verificacion en codigo**: ver `FiscalLiquidationCalculator` (Fase 1) — debe sumar el flag en STEP 1 cuando `invoice.Tributes != null && invoice.Tributes.Any()`. Tests cubrieron en F2.0.G-F2-C.
 
-**Mitigacion**: log warning explicito en `ProcessPartialCreditNoteJob` cuando `original.Tributes.Any()` indicando "NC parcial no prorratea tributos provinciales". Admin maneja fuera del sistema.
+### OQ-4 [RESUELTA round 2 por G-F2-D]: Que pasa con `Receipt` cuando emitimos NC parcial?
 
-### OQ-4: Que pasa con `Receipt` (recibos de pago) asociados a la factura origen cuando emitimos NC parcial?
+**Status round 1**: parcialmente planteada. **Status round 2**: **CERRADA por G-F2-D + RH-005**.
 
-**Hoy** (FC1.2 path): `ApplyCreditNoteEconomicReversalAsync` (`AfipService:1006`) crea un `Payment` reversal y cascade-voida los receipts. Esto asume NC total.
+**Contexto verificado en codigo**: `AfipService.ApplyCreditNoteEconomicReversalAsync` (linea 1006-1114) hace matching por `Amount == invoice.ImporteTotal` (linea 1036). Para NC parcial este matching nunca encuentra payment exacto. Ademas Gaston confirmo (G-F2-D) que **multi-recibos es comun** en MagnaTravel (1 factura pagada con 3+ payments).
 
-**Para NC parcial**: solo se reversa una fraccion del pago. Los receipts pueden quedar parcialmente activos.
+**Decision G-F2-D**: NC parcial NO hace cascade automatico de receipts. El reversal se crea con `OriginalPaymentId = null` por diseno. Los receipts quedan vivos. Audit `PartialCreditNoteEconomicReversalNoCascade` con la lista de receipt IDs para trazabilidad. UI Fase 3 (fuera de scope) permitira al admin marcar manualmente que receipt anular.
 
-**Mi propuesta**: Fase 2 NO modifica esa logica. El reversal sigue siendo "por total de la NC nueva" (que es parcial). Verificar que `ApplyCreditNoteEconomicReversalAsync` ya usa `invoice.ImporteTotal` (la NC nueva, no la origen) para el monto — si si, el reversal sera parcial naturalmente. Si no, ajustar.
-
-**Plan**: leer `ApplyCreditNoteEconomicReversalAsync` durante implementacion F2.3 y agregar test integration `OnApprovedAsync_Fase2_RealEmission_ReversesOnlyFiscalAmount`.
+**Implementacion**: ver §FC1.3.F2.3 punto 5 — modifica `ApplyCreditNoteEconomicReversalAsync` para distinguir NC total vs parcial.
 
 ### OQ-5: Comision vendedor sobre `FinalNetInvoiced` (G6 cerrada Fase 1)
 
@@ -852,30 +1219,80 @@ Esto es **fuera de scope de FC1.3** completo (Fase 1, 2, 3). Si el contador insi
 
 **Plan**: agregar nota en doc trainee.
 
+### OQ-E [NUEVA round 2]: TC en NC parcial multimoneda
+
+**Pregunta para el contador** (sumada al mensaje round 3, ver §T9 trazabilidad):
+
+> Cuando emitimos NC parcial sobre una factura USD, el `<MonCotiz>` del XML va con el TC del comprobante original (TC del dia en que se emitio la factura) o con el TC del dia de la NC?
+> Nuestra propuesta default: TC del comprobante original (regla fiscal estandar de coherencia).
+
+**Bloqueante de**: F2.5 (multimoneda). Hoy `FiscalSnapshot.ExchangeRateAtOriginalInvoice` se carga al confirmar (verificado FC1.2). Nuestra implementacion default usa este snapshot. Si el contador rechaza, ajustar `ProcessPartialCreditNoteJob` para leer TC del dia de la NC en su lugar.
+
 ---
 
 ## T9. Trazabilidad
 
-- **ADR base**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\adr\ADR-009-partial-credit-note.md` (Fase 2 sera extension `§12`).
+- **ADR base**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\adr\ADR-009-partial-credit-note.md` (Fase 2 sera extension `§12 Fase 2 Amendments`, decision validada por reviewer round 1).
 - **Plan tactico Fase 1**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\architecture\plan-tactico-fc1-3.md`.
 - **Doc cierre Fase 1**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\explicaciones\2026-05-22-fc1-3-fase-1-implementacion-completa.md`.
-- **Mensaje contador round 3**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\operations\2026-05-21-mensaje-contador-fc1-3-round-3.md` (F1..F4 son las preguntas que ajustan Fase 2).
+- **Mensaje contador round 3 (incluye OQ-E TC multimoneda agregada round 2)**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\operations\2026-05-21-mensaje-contador-fc1-3-round-3.md` (F1..F5 son las preguntas que ajustan Fase 2).
 - **Criterio contador NC parcial**: `D:\Documentos\MagnaTravel\MagnaTravel-Cloud\docs\explicaciones\2026-05-21-criterio-contador-nc-parcial-y-nuevo-agente.md` (matriz 8 casos).
 - **Patron `EnqueueAnnulmentAsync`** (FC1.2 vigente, base de la replica F2.2): `src\TravelApi.Infrastructure\Services\InvoiceService.cs:469-583`.
 - **Patron `ProcessAnnulmentJob`** (FC1.2 vigente, base de `ProcessPartialCreditNoteJob`): `src\TravelApi.Infrastructure\Services\InvoiceService.cs:585+`.
-- **Patron `CreatePendingInvoice` con `<CbtesAsoc>`**: `src\TravelApi.Infrastructure\Services\AfipService.cs:564-713` (NC) y `AfipService.cs:827-838` (XML).
+- **Helper canonico mapeo NC**: `src\TravelApi.Domain\Entities\InvoiceComprobanteHelpers.cs:77-84` (`GetCreditNoteTypeForInvoice`). Verificado round 2: solo Factura A/B/C, Factura M (51) NO soportada.
+- **Patron `CreatePendingInvoice` con `<CbtesAsoc>`**: `src\TravelApi.Infrastructure\Services\AfipService.cs:827-838` (XML del bloque CbtesAsoc).
+- **`<MonId>/<MonCotiz>` actuales hardcoded**: `src\TravelApi.Infrastructure\Services\AfipService.cs:879-880`. F2.5 los parametriza.
+- **`ApplyCreditNoteEconomicReversalAsync` (target de RH-005 + G-F2-D)**: `src\TravelApi.Infrastructure\Services\AfipService.cs:1006-1114`. Matching exacto por Amount linea 1036, cascade receipts linea 1067-1084.
 - **Patron Owned VO con prefijo**: `src\TravelApi.Infrastructure\Persistence\AppDbContext.cs` (`FiscalSnapshot` config, leido durante Fase 1).
-- **Patron job de reconciliacion**: `ArcaAnnulmentReconciliationJob` (FC1.2) y `PartialCreditNoteBridgeReconciliationJob` (FC1.3 Fase 1).
+- **Patron job de reconciliacion**: `PartialCreditNoteBridgeReconciliationJob` (FC1.3 Fase 1) — base para el job NUEVO `PartialCreditNotePostingReconciliationJob` de F2.6a. **NO es extension** del job FC1.2.
 - **Patron endpoint force con `InvariantOverride`**: ADR-009 §2.12 + `BookingCancellationService.cs:261-281`.
 - **Patron counters Serilog**: FC1.2.7b en HEAD `5c60ce8`.
 - **Patron validacion startup pre-condicion**: ADR-009 §2.10 GR-002 (validacion FC1.3 requiere FC1.2).
+- **Enum `ReviewRequiredReason` (target G-F2-C)**: `src\TravelApi.Domain\Entities\ReviewRequiredReason.cs`. Ultimo valor actual: `Other = 1 << 10`. G-F2-C suma `HasProvincialTributes = 1 << 11`.
 
 ---
 
-**Fin del plan tactico Fase 2.** Pendiente review de `software-architect-reviewer` para validar:
+## T10. Tabla de cierre round 2 — bloqueantes + decisiones nuevas
 
-1. Decision T7.1 (extension ADR-009 vs ADR-010 nuevo).
-2. Estrategia "defaults conservadores Fase 2 sin esperar contador" (T1.3).
-3. Asunciones T1.4 (especialmente la 2 sobre multiples NCs con mismo `<CbtesAsoc>`).
-4. Idempotencia de flow dual F2.4 (estado intermedio nuevo + job + endpoint force).
-5. Backfill SQL desde `ApprovalRequest.Metadata` (F2.1) — especificamente el manejo de Metadata malformado.
+### T10.1 Cierre de bloqueantes RH-001..RH-006
+
+| ID | Titulo del bloqueante | Donde se cierra en el plan v2 | Test de evidencia |
+|---|---|---|---|
+| **RH-001** | Backfill SQL F2.1 sin validar schema Metadata | §FC1.3.F2.1.0 (script standalone) + §FC1.3.F2.1 punto 5.A (pre-check intra-migracion con `RAISE EXCEPTION` si count > 0). | `Backfill_MissingKey_RaisesAndAborts`, `Backfill_MalformedMetadata_RaisesAndAborts`. |
+| **RH-002** | Rollback F2.1 inseguro si calculator solo escribe columnas | §FC1.3.F2.1 punto 6 (doble-write obligatorio Metadata + columnas) + §T6.4 (precondicion previa al reverse M1). | `Confirm_PostFase2_BothRepresentationsMatch`, `EditLiquidation_PostFase2_UpdatesBothRepresentations`. |
+| **RH-003** | Error factual Factura M (tipo 51) | §FC1.3.F2.2 punto 4 mapeo NC (reusa `InvoiceComprobanteHelpers.GetCreditNoteTypeForInvoice` que ya rechaza 51) + nota explicita "Factura M fuera de scope Fase 2". | `EnqueuePartialCreditNoteAsync_FacturaM_Rejects`. |
+| **RH-004** | Idempotencia ARCA pos-reintento Hangfire | §FC1.3.F2.2 punto 4 (capa 1: tabla `ArcaIdempotencyKeys` con UNIQUE constraint; capa 2: `FECompUltimoAutorizado` opcional). | `ProcessPartialCreditNoteJob_HangfireRetryAfterTimeout_DoesNotEmitDuplicate`, `ProcessPartialCreditNoteJob_IdempotencyKey_UniqueViolation_AbortsCleanly`. |
+| **RH-005** | Cascade receipts roto en NC parcial | §FC1.3.F2.3 punto 5 (modificacion `ApplyCreditNoteEconomicReversalAsync` para distinguir NC total vs parcial; NC parcial NO cascade-voider). Alineado con G-F2-D. | `ApplyCreditNoteEconomicReversal_NcTotal_StillCascadesReceipt` (regression), `ApplyCreditNoteEconomicReversal_NcParcial_SinglePayment_NoCascade`, `ApplyCreditNoteEconomicReversal_NcParcial_MultiPayments_NoCascade`, `OnApprovedAsync_Fase2_PartialNc_MultiplePaymentsScenario_NoCascade_LeavesAuditTrail`. |
+| **RH-006** | Job ARCA reconciliation NO existe | §FC1.3.F2.6a (job NUEVO `PartialCreditNotePostingReconciliationJob`, replica patron `PartialCreditNoteBridgeReconciliationJob`). NO extension. Removida la referencia incorrecta a `ArcaAnnulmentReconciliationJob` en §T9. | `ReconciliationJob_PartialNcStuckInPending_QueriesArcaAndUpdatesStatus`, `ReconciliationJob_DoesNotTouchFc12NcTotal`, `ReconciliationJob_RetryCounter_NotifiesAfterNAttempts`. |
+
+### T10.2 Decisiones nuevas G-F2-A/C/D
+
+| ID | Decision Gaston | Donde se aplica en el plan v2 |
+|---|---|---|
+| **G-F2-A** | F2.4 GATED por criterio < 5% post-prod | §FC1.3.F2.4 reescrita (status GATED, criterio cuantitativo, query SQL F2.4.0). §T2 (orden recomendado mueve F2.4 fuera del PR Fase 2 base). §T6.2 (combinaciones validas reformuladas). §T6.3 (secuencia de prendido sin F2.4 obligatoria). |
+| **G-F2-C** | Tributos provinciales -> manual review obligatorio | §FC1.3.F2.0.G-F2-C nueva sub-fase. Nuevo flag `ReviewRequiredReason.HasProvincialTributes = 1 << 11`. Calculator modificado. OQ-3 cerrada. §T4.2 actualizado para incluir el modify de `ReviewRequiredReason.cs` y `FiscalLiquidationCalculator.cs`. |
+| **G-F2-D** | Multi-recibos es comun, NC parcial NO cascade receipts | §FC1.3.F2.3 punto 5 (modificacion `ApplyCreditNoteEconomicReversalAsync`). Audit `PartialCreditNoteEconomicReversalNoCascade`. Test integration explicito con 1 factura $1.000 + 3 payments + NC $250 -> 0 receipts cascade. OQ-4 cerrada. |
+
+### T10.3 Cierre de majors M1..M4 + minors
+
+| ID | Descripcion | Cierre |
+|---|---|---|
+| **M1** | EF tooling puede colapsar al generar M1 monolitica | §T4.1 nota explicita: "1 migracion fisica con todo (mismo patron Fase 1)". §T6.4 decision documentada con justificacion. Remediation: si EF colapsa, generar clase manualmente o splittear `.cs` resultante por bloques sin separar la migracion logica. |
+| **M2** | F2.4 "opcional" sin criterio | **RESUELTO por G-F2-A** (criterio cuantitativo < 5%). |
+| **M3** | F2.5 cambia firma `CreateInvoiceRequest` | §T4.2 modificacion de `AfipService.cs` lista callers a auditar (`InvoiceService.EnqueueAnnulmentAsync`, frontend, tests FC1.2). Criterio aceptacion explicito: tests integration de callers existentes verdes con defaults `("PES", 1)`. |
+| **M4** | Validacion defensiva pre-ARCA tambien pre-encolado | §FC1.3.F2.2 punto 7 (validacion en `EnqueuePartialCreditNoteAsync` antes de mutar `Invoice.AnnulmentStatus`). Counter separado `Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue`. Test `EnqueuePartialCreditNoteAsync_SumMismatchAtEnqueue_DoesNotMutateInvoiceState`. |
+| **Minor doc F2.7** | Tabla "que setting cambiar segun respuesta del contador" | A incluir en §FC1.3.F2.7 doc trainee. |
+| **Minor F2.0 nombre tolerance** | `PartialCreditNoteRoundingTolerance` clarificar moneda original | Documentar en §FC1.3.F2.0 doc inline: "expresado en la moneda original del comprobante (no necesariamente ARS)". |
+| **Minor enum status 12** | Verificar CHECK enum BD existente | Solo aplica si gate G-F2-A se abre. Si no, no entra en M2. |
+| **Minor counter Serilog adicional** | `Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue` separado | §FC1.3.F2.6 lista de counters actualizada. |
+| **Minor ADR-009 §12** | Documentar dualidad Metadata + columnas como deliberada | A incluir en `§12.1` de ADR-009 amendment (sub-task de F2.7). |
+
+---
+
+**Fin del plan tactico Fase 2 v2 round 2.** Pendiente review de `software-architect-reviewer` round 2 para validar:
+
+1. Cierre efectivo de RH-001..RH-006 (en particular el dos-pasos del backfill y la idempotencia ARCA de dos capas).
+2. Aplicacion correcta de G-F2-A (F2.4 fuera del PR base).
+3. Aplicacion correcta de G-F2-C (flag bitwise + calculator).
+4. Aplicacion correcta de G-F2-D (cascade receipts politica + tests con 3 payments).
+5. Decision M1 monolitica documentada con justificacion.
