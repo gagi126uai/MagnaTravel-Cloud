@@ -115,6 +115,39 @@ public class FiscalLiquidationCalculator : IFiscalLiquidationCalculator
             reason |= ReviewRequiredReason.Other;
         }
 
+        // G-F2-C (FC1.3 Fase 2, 2026-05-22): factura con tributos provinciales
+        // (IIBB, percepciones de Capital, percepciones de provincia). El prorrateo
+        // de estos tributos NO esta modelado en Fase 2 — el contador definira el
+        // criterio en una sub-fase posterior. Mientras tanto, FRENAMOS la
+        // auto-emision y derivamos a revision manual obligatoria (admin decide
+        // si emite manualmente con tributos prorrateados o reformula la operacion).
+        //
+        // Detalle de implementacion: Invoice.Tributes es una coleccion EF (default
+        // List<InvoiceTribute>() en el constructor de Invoice, nunca null en la
+        // practica). El null-check defensivo cubre el caso de tests u objetos
+        // construidos por reflexion.
+        //
+        // IMPORTANTE para el caller: la coleccion Tributes debe venir cargada
+        // (Include + ThenInclude en EF). Si NO se carga y no hay lazy proxies
+        // —el caso de este proyecto—, .Any() devuelve false aunque la BD tenga
+        // tributos. Los 2 callers FC1.3 (ConfirmAsync y EditLiquidationAsync de
+        // BookingCancellationService) cargan Tributes via .ThenInclude(i => i.Tributes).
+        // Cualquier nuevo caller debe hacer lo mismo.
+        if (input.OriginatingInvoice.Tributes != null && input.OriginatingInvoice.Tributes.Any())
+        {
+            reason |= ReviewRequiredReason.HasProvincialTributes;
+
+            // B-003 fix (2026-05-26): log structured para auditar disparos de
+            // G-F2-C en prod. Si un admin reporta "no salio a manual review pero
+            // la factura tenia IIBB", buscamos en Serilog este evento para
+            // confirmar si el flag se disparo o no. InvoiceId + count son los
+            // datos minimos para reproducir/debuggear.
+            _logger.LogInformation(
+                "FiscalLiquidationCalculator: tributos provinciales detectados, disparando HasProvincialTributes. " +
+                "InvoiceId={InvoiceId} TributesCount={TributesCount}",
+                input.OriginatingInvoice.Id, input.OriginatingInvoice.Tributes.Count);
+        }
+
         // Moneda distinta de ARS — Fase 2 implementa prorrateo multimoneda.
         // string.Equals con InvariantCulture evita falsos negativos por casing.
         if (!string.Equals(input.Currency, "ARS", StringComparison.OrdinalIgnoreCase))

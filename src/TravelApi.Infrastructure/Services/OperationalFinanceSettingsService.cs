@@ -37,6 +37,34 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
         entity.EnableUpcomingUnpaidReservationNotifications = request.EnableUpcomingUnpaidReservationNotifications;
         entity.UpcomingUnpaidReservationAlertDays = Math.Clamp(request.UpcomingUnpaidReservationAlertDays, 1, 60);
         entity.MaxDiscountPercentWithoutOverride = request.MaxDiscountPercentWithoutOverride;
+
+        // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.0, 2026-05-22): persistimos
+        // los 3 settings configurables. Los 2 flags maestros Fase 2
+        // (EnablePartialCreditNoteRealEmission, EnableTotalPlusNewInvoiceAutoProcessing)
+        // intencionalmente NO se exponen en el DTO ni se actualizan aca — mismo
+        // criterio que con los flags FC1.2/FC1.3, que se manejan via SQL/seed.
+        // El [Range] de DataAnnotations del DTO valida tolerancia y umbral antes
+        // de llegar a este metodo (HTTP 400 si esta fuera de rango).
+        //
+        // B-002 fix (2026-05-26): update CONDICIONAL (no full-replace). Los 3
+        // campos del DTO son nullable; solo se persiste si vinieron con valor.
+        // Si el cliente manda null o omite el campo, dejamos el valor actual
+        // de la entidad intacto. Esto evita regresion silenciosa cuando un PUT
+        // legacy o un frontend que olvido un campo pisaria la config del admin
+        // con el default del DTO. Patron: "patch-like via PUT" (no full PUT).
+        if (request.IvaProrrateoMode.HasValue)
+        {
+            entity.IvaProrrateoMode = request.IvaProrrateoMode.Value;
+        }
+        if (request.PartialCreditNoteRoundingTolerance.HasValue)
+        {
+            entity.PartialCreditNoteRoundingTolerance = request.PartialCreditNoteRoundingTolerance.Value;
+        }
+        if (request.IdempotencyKeyStaleThresholdMinutes.HasValue)
+        {
+            entity.IdempotencyKeyStaleThresholdMinutes = request.IdempotencyKeyStaleThresholdMinutes.Value;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -58,6 +86,40 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
                 "Combinacion de flags invalida (GR-002): para tener EnablePartialCreditNotes=true se requiere " +
                 "EnableNewCancellationFlow=true. Si quiere apagar FC1.2, primero apague FC1.3 " +
                 "(EnablePartialCreditNotes=false) en el mismo UPDATE o en uno anterior.");
+        }
+
+        // ============================================================
+        // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.0, 2026-05-22):
+        // mismas pre-condiciones encadenadas que GR-002 pero para los flags Fase 2.
+        // Misma logica defensiva: validamos sobre 'entity' (no sobre 'request')
+        // porque hoy el DTO no expone los flags Fase 2; el check actua aunque la
+        // combinacion invalida llegue por SQL/seed/migration y el admin trate de
+        // reguardar la entidad.
+        // ============================================================
+
+        // F2 (real emission) depende de F1 (clasificador). Sin Fase 1 no hay
+        // liquidacion clasificada para emitir.
+        if (entity.EnablePartialCreditNoteRealEmission && !entity.EnablePartialCreditNotes)
+        {
+            throw new ValidationException(
+                "Combinacion de flags invalida (FC1.3 Fase 2): para tener " +
+                "EnablePartialCreditNoteRealEmission=true se requiere " +
+                "EnablePartialCreditNotes=true. Sin Fase 1 (clasificador) no hay liquidacion " +
+                "para emitir. Si quiere apagar Fase 1, primero apague Fase 2 " +
+                "(EnablePartialCreditNoteRealEmission=false) en el mismo UPDATE o en uno anterior.");
+        }
+
+        // Flow dual (caso 4 y 7) depende del plumbing de emision real Fase 2.
+        // No tiene sentido habilitar el dual sin tener antes la emision real Fase 2.
+        if (entity.EnableTotalPlusNewInvoiceAutoProcessing && !entity.EnablePartialCreditNoteRealEmission)
+        {
+            throw new ValidationException(
+                "Combinacion de flags invalida (FC1.3 Fase 2 dual): para tener " +
+                "EnableTotalPlusNewInvoiceAutoProcessing=true se requiere " +
+                "EnablePartialCreditNoteRealEmission=true. El flow dual NC total + " +
+                "factura nueva necesita el plumbing de emision real para correr. Si quiere apagar " +
+                "Fase 2, primero apague el dual (EnableTotalPlusNewInvoiceAutoProcessing=false) " +
+                "en el mismo UPDATE o en uno anterior.");
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -101,7 +163,11 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             AfipInvoiceControlMode = entity.AfipInvoiceControlMode,
             EnableUpcomingUnpaidReservationNotifications = entity.EnableUpcomingUnpaidReservationNotifications,
             UpcomingUnpaidReservationAlertDays = entity.UpcomingUnpaidReservationAlertDays,
-            MaxDiscountPercentWithoutOverride = entity.MaxDiscountPercentWithoutOverride
+            MaxDiscountPercentWithoutOverride = entity.MaxDiscountPercentWithoutOverride,
+            // FC1.3 Fase 2: tres settings configurables visibles en el panel admin.
+            IvaProrrateoMode = entity.IvaProrrateoMode,
+            PartialCreditNoteRoundingTolerance = entity.PartialCreditNoteRoundingTolerance,
+            IdempotencyKeyStaleThresholdMinutes = entity.IdempotencyKeyStaleThresholdMinutes,
         };
     }
 }

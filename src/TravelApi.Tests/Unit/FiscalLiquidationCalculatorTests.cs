@@ -1048,4 +1048,86 @@ public class FiscalLiquidationCalculatorTests
         Assert.True(result.ReviewRequiredReason.HasFlag(ReviewRequiredReason.InvoicingModeCommissionOnly));
         Assert.Equal(PartialCreditNoteCase.Case6_CommissionOnlyFull, result.Case);
     }
+
+    // ============================================================
+    // FC1.3 Fase 2 (G-F2-C, 2026-05-22): factura con tributos provinciales
+    // ------------------------------------------------------------
+    // El calculator detecta Invoice.Tributes.Any() == true y agrega el flag
+    // HasProvincialTributes para que el caller derive a manual review. No se
+    // toca el calculo de montos — el flag es aditivo. Cualquier factura B/C
+    // estandar (sin tributos) NO debe llevar este flag (regresion del flujo
+    // feliz de Fase 1).
+    // ============================================================
+
+    [Fact]
+    public void Calculator_InvoiceWithTributes_AddsHasProvincialTributesFlag()
+    {
+        // Setup: factura B estandar pero con un IIBB Capital de $100 agregado.
+        // Resultado esperado: el flag HasProvincialTributes esta activo, el caso
+        // sigue clasificandose normal (1 — parcial sin penalty) y los montos no
+        // cambian. La derivacion a manual review la hace el caller mirando el flag.
+        var (invoice, items) = FacturaBC(total: 100_000m);
+        invoice.Tributes = new List<InvoiceTribute>
+        {
+            new()
+            {
+                Id = 500,
+                InvoiceId = invoice.Id,
+                TributeId = 99, // 99 = IIBB en la tabla AFIP
+                Description = "IIBB Capital",
+                BaseImponible = 100_000m,
+                Alicuota = 0.10m,
+                Importe = 100m,
+            },
+        };
+
+        var input = new FiscalLiquidationInput(
+            OriginatingInvoice: invoice,
+            Items: items,
+            Supplier: DefaultSupplier(),
+            InvoicingModeAtEvent: SupplierInvoicingMode.TotalToCustomer,
+            OriginalInvoiceAmount: 100_000m,
+            CancellationAmount: 30_000m,
+            OperatorPenaltyAmount: 0m,
+            RetentionNatureChangedByUser: false,
+            OriginalInvoiceUnclearByUser: false);
+
+        var result = new FiscalLiquidationCalculator(SilentLogger)
+            .Calculate(input, DefaultSettings());
+
+        // El flag nuevo debe estar prendido.
+        Assert.True(result.ReviewRequiredReason.HasFlag(ReviewRequiredReason.HasProvincialTributes));
+
+        // El calculo de montos NO cambia (el flag es aditivo, no afecta la formula).
+        Assert.Equal(100_000m, result.FiscalAmountToCredit);
+    }
+
+    [Fact]
+    public void Calculator_InvoiceWithoutTributes_DoesNotAddHasProvincialTributesFlag()
+    {
+        // Regresion del flujo feliz Fase 1: factura B estandar sin tributos NO
+        // debe llevar el flag nuevo. Sin esto, todas las cancelaciones Hotel
+        // empezarian a caer a manual review post-deploy de F2.0 (catastrofe).
+        var (invoice, items) = FacturaBC(total: 100_000m);
+        // Default constructor de Invoice ya pone Tributes = new List<>() (vacio).
+        // Lo dejamos explicito para que el test sea legible sin tener que mirar
+        // el helper.
+        invoice.Tributes = new List<InvoiceTribute>();
+
+        var input = new FiscalLiquidationInput(
+            OriginatingInvoice: invoice,
+            Items: items,
+            Supplier: DefaultSupplier(),
+            InvoicingModeAtEvent: SupplierInvoicingMode.TotalToCustomer,
+            OriginalInvoiceAmount: 100_000m,
+            CancellationAmount: 30_000m,
+            OperatorPenaltyAmount: 0m,
+            RetentionNatureChangedByUser: false,
+            OriginalInvoiceUnclearByUser: false);
+
+        var result = new FiscalLiquidationCalculator(SilentLogger)
+            .Calculate(input, DefaultSettings());
+
+        Assert.False(result.ReviewRequiredReason.HasFlag(ReviewRequiredReason.HasProvincialTributes));
+    }
 }

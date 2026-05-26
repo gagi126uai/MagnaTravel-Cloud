@@ -247,9 +247,18 @@ public class BookingCancellationService
         await EnsureFeatureFlagOnAsync(ct);
 
         // 1) Cargar BC con todos los includes necesarios.
+        // FC1.3 Fase 2 (B-001 fix, 2026-05-26): incluimos Invoice.Tributes
+        // (ThenInclude) porque el calculator chequea .Any() sobre esa coleccion
+        // para disparar G-F2-C (tributos provinciales => revision manual). El
+        // proyecto NO tiene lazy proxies activos (ver Program.cs §AddDbContext),
+        // entonces sin Include la coleccion queda con el default vacio del
+        // constructor de Invoice y el flag NUNCA dispara aunque la BD tenga
+        // tributos. Bug fantasma: build verde + tests pasaban porque los unit
+        // tests inyectan Invoices ya construidas con .Tributes seteado a mano.
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
             .Include(b => b.OriginatingInvoice)
+                .ThenInclude(i => i.Tributes)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
 
@@ -1031,9 +1040,14 @@ public class BookingCancellationService
 
         // 1) Cargar BC + approval + reserva + factura origen. Necesitamos todo
         //    para correr el calculator de nuevo y validar el flow.
+        // FC1.3 Fase 2 (B-001 fix, 2026-05-26): incluimos Invoice.Tributes
+        // (ThenInclude) por la misma razon que ConfirmAsync. EditLiquidation
+        // re-corre el calculator y G-F2-C necesita la coleccion cargada para
+        // disparar bien (sin lazy proxies, Tributes queda vacia por default).
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva).ThenInclude(r => r.Servicios)
             .Include(b => b.OriginatingInvoice)
+                .ThenInclude(i => i.Tributes)
             .Include(b => b.PartialCreditNoteApprovalRequest)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");

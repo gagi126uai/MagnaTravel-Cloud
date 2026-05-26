@@ -51,4 +51,23 @@ public enum ReviewRequiredReason
 
     /// <summary>Catch-all para casos raros (NC en cadena, etc.).</summary>
     Other = 1 << 10,
+
+    /// <summary>
+    /// FC1.3 Fase 2 (G-F2-C, 2026-05-22): la factura origen tiene tributos
+    /// provinciales (IIBB, percepciones de Capital, percepciones de provincia,
+    /// otros). Detectado por <c>Invoice.Tributes.Any() == true</c>.
+    ///
+    /// <para>El sistema FRENA la cancelacion auto y dispara manual review
+    /// obligatorio porque el prorrateo de tributos provinciales NO esta modelado
+    /// en Fase 2 (ver plan tactico Fase 2 §T8 OQ-3). El admin debe revisar caso
+    /// a caso y decidir si la NC parcial se emite manualmente con tributos
+    /// prorrateados (fuera del sistema) o se reformula la operacion.</para>
+    ///
+    /// <para>Por que es aditivo y no rompe lo de Fase 1: las facturas Hotel B/C
+    /// estandar que cubre FC1.3 Fase 1 no llevan tributos provinciales (los
+    /// tributos aparecen tipicamente en Factura A o operaciones con retenciones).
+    /// Asi que en el flujo feliz vigente, este flag no se activa nunca y todos
+    /// los tests previos siguen pasando.</para>
+    /// </summary>
+    HasProvincialTributes = 1 << 11,
 }

@@ -243,6 +243,90 @@ public class OperationalFinanceSettings
     /// </summary>
     public int BridgeReconciliationMaxRetries { get; set; } = 5;
 
+    // ============================================================
+    // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.0, 2026-05-22): 5 settings nuevos
+    // del modulo NC parcial REAL (emision contra ARCA). Defaults conservadores:
+    // el modulo arranca apagado y se prende manual una vez que QA + contador
+    // firman. La validacion de pre-condiciones (Fase 2 depende de Fase 1, dual
+    // depende de Fase 2) la hace el startup en Program.cs y el service
+    // OperationalFinanceSettingsService.UpdateAsync en runtime.
+    // ============================================================
+
+    /// <summary>
+    /// FC1.3 Fase 2: feature flag MAESTRO de Fase 2. Si <c>false</c>, el flujo se
+    /// comporta como Fase 1 (log warning + emite NC total via path FC1.2). Si
+    /// <c>true</c>, FC1.3.3 (BC service) corta el path FC1.2 y empieza a emitir
+    /// NC parcial real contra ARCA.
+    ///
+    /// <para>PRE-CONDICION (validada en startup + service): si este flag es
+    /// <c>true</c>, <see cref="EnablePartialCreditNotes"/> tambien tiene que ser
+    /// <c>true</c>. Sin Fase 1 (clasificador) no hay liquidacion para emitir.
+    /// La validacion rechaza el arranque y rechaza el UPDATE con
+    /// ValidationException si esta combinacion no se cumple.</para>
+    ///
+    /// <para>Default <c>false</c>. El operador prende este flag en staging
+    /// despues de pasar QA y en prod despues de signoff del contador.</para>
+    /// </summary>
+    public bool EnablePartialCreditNoteRealEmission { get; set; } = false;
+
+    /// <summary>
+    /// FC1.3 Fase 2: habilita el flow dual "NC total + factura nueva" para los
+    /// casos 4 (factura confusa) y 7 (retencion cambia naturaleza). GATED por el
+    /// criterio cuantitativo G-F2-A: solo se prende post-prod, una vez medido el
+    /// volumen real de estos casos. Hasta tanto, los casos 4 y 7 siguen
+    /// rechazando Confirm con <c>InvalidOperationException</c> (GR-001 vigente).
+    ///
+    /// <para>PRE-CONDICION (validada en startup + service): si este flag es
+    /// <c>true</c>, <see cref="EnablePartialCreditNoteRealEmission"/> tambien
+    /// tiene que ser <c>true</c>. El flow dual necesita el plumbing de emision
+    /// real (no podemos hacer dual sobre un path FC1.2 que solo hace NC total).</para>
+    ///
+    /// <para>Default <c>false</c>. Se prende solo despues de la auditoria
+    /// post-prod G-F2-A si el volumen justifica.</para>
+    /// </summary>
+    public bool EnableTotalPlusNewInvoiceAutoProcessing { get; set; } = false;
+
+    /// <summary>
+    /// FC1.3 Fase 2 (RH-005 / pregunta F1 contador): modo de prorrateo de IVA en
+    /// la NC parcial. Default <see cref="IvaProrrateoMode.ProportionalToNet"/>
+    /// (criterio conservador del contador pre-respuesta F1). Si el contador
+    /// confirma <see cref="IvaProrrateoMode.PerItem"/>, se cambia desde panel
+    /// admin sin redeploy.
+    /// </summary>
+    public IvaProrrateoMode IvaProrrateoMode { get; set; } = IvaProrrateoMode.ProportionalToNet;
+
+    /// <summary>
+    /// FC1.3 Fase 2: tolerancia maxima en la validacion defensiva pre-envio al
+    /// ARCA: la suma <c>ImpNeto + ImpIVA + ImpTrib</c> debe coincidir con
+    /// <c>ImpTotal</c> con error menor o igual a este valor. Si la diferencia es
+    /// mayor, throw + log error (NO mandamos XML inconsistente al ARCA).
+    ///
+    /// <para>Default <c>0.01</c> (un centavo). Expresado en la moneda original
+    /// del comprobante — NO necesariamente ARS. Si la factura origen es USD,
+    /// la tolerancia se interpreta en USD (1 centavo de dolar).</para>
+    ///
+    /// <para>Rango razonable: 0.00..1.00. La FluentValidation del DTO valida
+    /// este rango (defense-in-depth). Subir mas alla de 1.00 indicaria un bug
+    /// de prorrateo, no una tolerancia de redondeo.</para>
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
+    public decimal PartialCreditNoteRoundingTolerance { get; set; } = 0.01m;
+
+    /// <summary>
+    /// FC1.3 Fase 2 (RH2-004 + RH4-001 round 4): umbral en MINUTOS para
+    /// considerar huerfana una key en la tabla <c>ArcaIdempotencyKeys</c>. Si
+    /// una key esta sin resolver mas tiempo que este umbral, probablemente
+    /// hubo crash entre el INSERT de la key y el POST al ARCA. El recovery
+    /// dispara <c>FECompUltimoAutorizado</c> para verificar si el comprobante
+    /// quedo emitido del lado de AFIP a pesar del crash.
+    ///
+    /// <para>Default <c>10</c> minutos. Rango razonable: 1..60. La
+    /// FluentValidation del DTO valida este rango. Mas de 60 atrasaria mucho
+    /// el recovery; menos de 1 corre riesgo de declarar "huerfanas" keys que
+    /// estan legitimamente en vuelo en ese mismo segundo.</para>
+    /// </summary>
+    public int IdempotencyKeyStaleThresholdMinutes { get; set; } = 10;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -894,10 +894,12 @@ using (var scope = app.Services.CreateScope())
 // EnableNewCancellationFlow=false puede ser invalida:
 //   1) Runtime: OperationalFinanceSettingsService.UpdateAsync ya rechaza el
 //      guardado con ValidationException (canonico).
-//   2) FluentValidation request DTO: PENDIENTE — el proyecto no tiene
-//      FluentValidation registrado. Reportado al reviewer para decidir si se
-//      agrega como dependency o se mantiene el check en el service (que ya
-//      cubre el caso).
+//   2) DTO request: estos flags FC1.2/FC1.3 NO se exponen en
+//      OperationalFinanceSettingsDto (se manejan via SQL/seed/migration). El
+//      proyecto NO usa FluentValidation registrado — para los settings que SI
+//      se exponen (rangos numericos, % de descuento, etc.) usamos
+//      DataAnnotations [Range] consistente con el resto del DTO. La cross-field
+//      rule de los flags vive en el service (canonico).
 //   3) Startup (este bloque): ultima red de seguridad. Si la BD llego a la
 //      combinacion invalida por restore de backup, UPDATE manual, escritura
 //      legacy o cualquier camino que se saltee el service, la app no arranca.
@@ -927,6 +929,36 @@ using (var startupValidationScope = app.Services.CreateScope())
             "El runtime UpdateAsync ya rechaza esta combinacion: si llegaste aca, " +
             "hubo UPDATE manual a BD, restore de backup o escritura por fuera del service. " +
             "Loguea el escenario para revisar como llegaron los settings a este estado.");
+    }
+
+    // ============================================================
+    // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.0, 2026-05-22): mismo patron
+    // GR-002 pero encadenado para los dos flags nuevos de Fase 2. Ultima red de
+    // seguridad: si la BD llego a la combinacion invalida por restore de backup,
+    // UPDATE manual o cualquier camino que se saltee el service, la app NO arranca.
+    // ============================================================
+
+    // Fase 2 (emision real ARCA) depende de Fase 1 (clasificador).
+    if (settings.EnablePartialCreditNoteRealEmission && !settings.EnablePartialCreditNotes)
+    {
+        throw new InvalidOperationException(
+            "Configuracion invalida: EnablePartialCreditNoteRealEmission=true requiere " +
+            "EnablePartialCreditNotes=true (FC1.3 Fase 2 depende de Fase 1). " +
+            "Apague Fase 2 o prenda Fase 1 antes de arrancar. " +
+            "El runtime UpdateAsync ya rechaza esta combinacion: si llegaste aca, " +
+            "hubo UPDATE manual a BD, restore de backup o escritura por fuera del service.");
+    }
+
+    // Flow dual (caso 4 + 7 auto-procesado) depende del plumbing de emision real Fase 2.
+    if (settings.EnableTotalPlusNewInvoiceAutoProcessing && !settings.EnablePartialCreditNoteRealEmission)
+    {
+        throw new InvalidOperationException(
+            "Configuracion invalida: EnableTotalPlusNewInvoiceAutoProcessing=true requiere " +
+            "EnablePartialCreditNoteRealEmission=true (el flow dual NC total + factura nueva " +
+            "necesita el plumbing de emision real). " +
+            "Apague el dual o prenda Fase 2 antes de arrancar. " +
+            "El runtime UpdateAsync ya rechaza esta combinacion: si llegaste aca, " +
+            "hubo UPDATE manual a BD, restore de backup o escritura por fuera del service.");
     }
 
     // RH-013: si FC1.3 esta prendido pero falta Fc13DeployDate, lo seteamos

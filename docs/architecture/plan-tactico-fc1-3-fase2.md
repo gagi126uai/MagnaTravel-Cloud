@@ -1,14 +1,70 @@
 # Plan tactico tecnico FC1.3 Fase 2 (NC parcial real al ARCA)
 
-- **Version**: v2 round 2 (post review `software-architect-reviewer` round 1).
-- **Fecha original**: 2026-05-22. **Editado**: 2026-05-22 (round 2).
-- **Autor**: `software-architect` agent.
-- **Status**: Propuesta v2 para `software-architect-reviewer` round 2.
+- **Version**: v5 firmada (post review `software-architect-reviewer` round 4 — Approved with Minors).
+- **Fecha original**: 2026-05-22. **Editado**: 2026-05-22 (round 2), 2026-05-25 (round 3), 2026-05-26 (round 4), 2026-05-26 (v5 fixes post-round-4).
+- **Autor**: `software-architect` agent + edits directos post-round-4.
+- **Status**: **FIRMADO** (Approved with Minors round 4). Implementacion habilitada: F2.0 + F2.1.0 + F2.1 pueden mergear directo; los 3 fixes v5 (RH4-001, RH4-002, RH3-004) ya estan aplicados a este doc antes de iniciar F2.2.
 - **Base**: Fase 1 mergeada (HEAD `06585e6`, 9 sub-fases, 66 unit tests verdes). Doc cierre Fase 1: `docs/explicaciones/2026-05-22-fc1-3-fase-1-implementacion-completa.md`.
 - **ADR asociado**: extension del [ADR-009](adr/ADR-009-partial-credit-note.md) con `§12 Fase 2 Amendments` (NO ADR nuevo — decision validada por reviewer round 1).
 - **Stack confirmado**: .NET 8 + EF Core 8.x + PostgreSQL via Npgsql 8.0.11 + xmin shadow concurrency token + `BusinessInvariantInterceptor` mapea `SqlState=23514` a `BusinessInvariantViolationException`. Verificado durante Fase 1.
 
 > **Regla operativa Gaston aplicada**: este documento NO contiene estimaciones de horas. Las sub-fases estan listadas con dependencias + criterios de aceptacion verificables. La cadencia real depende del orden en que el subagente backend las tome.
+
+## Changelog v4 -> v5 (post round 4, 2026-05-26)
+
+Esta version cierra los 3 hallazgos minor pendientes del review round 4 (Approved with Minors): RH4-001 (MAJOR scoped a F2.2), RH4-002 (MINOR), RH3-004 (NIT). Aplicados con edits directos.
+
+1. **RH4-001 [MAJOR scoped F2.2]**: el snapshot del numerador ARCA (`LastSeenNumeroBeforePost`) ahora se captura DENTRO de `ProcessPartialCreditNoteJob` como primera operacion, ANTES del INSERT en `ArcaIdempotencyKeys`. La v4 lo capturaba en `EnqueuePartialCreditNoteAsync` (encolado), lo cual permitia que el numerador ARCA avanzara por otros emisores entre encolado y ejecucion del job. Sub-tarea A.7 reescrita + nuevo test `ProcessPartialCreditNoteJob_SnapshotCapturedAtJobStartNotAtEnqueueTime`.
+2. **RH4-002 [MINOR]**: sub-tarea A.3.1 ahora documenta el contrato defensivo del array `CbtesAsoc` del response `FECompConsultar`: 1 item -> mapear, 0 items -> null, >1 items -> log warning + null (no elegir uno, ARCA podria devolver toda la cadena de asociaciones en versiones futuras). Nuevo test `GetVoucherDetails_MultipleCbtesAsoc_LogsWarningAndReturnsNullCbteAsoc`.
+3. **RH3-004 [NIT]**: nueva sub-tarea A.7.0 que crea helper publico `GetLastAuthorizedNumeroAsync(int puntoVenta, int cbteTipo, CancellationToken ct)` en `IAfipService`. Encapsula la carga de `AfipSettings` adentro del servicio para evitar exponer `GetNextVoucherNumber` privado (que requiere `AfipSettings` como param). Usado por la sub-tarea A.7 y por `QueryLastAuthorizedWithDetailsAsync` internamente.
+
+---
+
+## Changelog v3 -> v4 (round 4, 2026-05-26)
+
+Esta version cierra 1 bloqueante (RH3-001) + 2 minors (RH3-002, RH3-003) + 1 info (RH2-008) del reviewer round 3. Ver §T10.5 al final para la tabla detallada de cierre.
+
+Cambios principales:
+
+1. **RH3-001 [BLOQUEANTE]**: capa 1.5 stale key recovery del plan v3 invocaba un metodo `_afipService.QueryLastAuthorizedAsync(...)` y un shape `arcaResult.{Found, CbteAsoc, IssuedAt, Cae}` que **no existian** en el codigo. Verificacion: `IAfipService.cs` no expone `QueryLastAuthorizedAsync`; `AfipService.GetNextVoucherNumber:1152` es private y devuelve `int`; `AfipService.GetVoucherDetails:1195` retorna `AfipVoucherDetails` que solo tiene `ImporteTotal/Neto/Iva/Trib + VatDetails + TributeDetails` (sin `Cae`, `CbteAsoc`, `IssuedAt`). Gaston eligio **Camino A (robusto)**: crear DTO + metodo + columna nuevos. Ver §FC1.3.F2.2 capa 1.5 reescrita + §T4.1 (DTO nuevo) + §T4.2 (extension `IAfipService` + `AfipService` + `Invoice` con `LastSeenNumeroBeforePost` en `ArcaIdempotencyKeys`).
+2. **RH3-002 [MINOR]**: pre-refactor F2.5 ahora arranca con una tarea atomica 0 de auditoria `grep -n "MonId\|MonCotiz"` sobre `AfipService.cs`. Verificado: hoy las ocurrencias estan en las lineas 879-880 (envelope FECAESolicitar de `ProcessInvoiceJob`). Si el grep aparece en otro lado, integrarlo al refactor. Criterio de cierre: grep post-refactor con cero ocurrencias hardcoded.
+3. **RH3-003 [MINOR]**: backfill paso 5.B ahora lee `bc."LiquidationComputedAt"` directamente en lugar de `(m.meta->>'computedAt')::timestamptz`. Elimina el riesgo de divergencia por serializacion JSON. El CHECK `chk_BookingCancellations_fiscalliquidation_consistency` queda como igualdad exacta sin tolerancia.
+4. **RH2-008 [INFO]**: justificacion §FC1.3.F2.6a reescrita. `ArcaAnnulmentReconciliationJob` **NO existe como clase implementada** (verificado con `Grep "class ArcaAnnulmentReconciliationJob"` -> 0 matches; solo aparece como comentario aspiracional en `Invoice.cs:62` y en migracion legacy). El job que SI existe y SI funciona es `PartialCreditNoteBridgeReconciliationJob` (replicado por Fase 2). Deuda historica documentada como fuera de scope Fase 2.
+
+Nuevos elementos en v4 derivados de los fixes:
+
+- DTO nuevo `ArcaCompoundQueryResult` en `src/TravelApi.Application/DTOs/AfipDtos.cs` (§T4.1).
+- Metodo nuevo `QueryLastAuthorizedWithDetailsAsync` en `IAfipService` + implementacion en `AfipService` (§T4.2).
+- Extension del SOAP parsing de `GetVoucherDetails` para sumar `Cae`, `CbteAsoc`, `CbteFch -> IssuedAt`, `MonId`, `MonCotiz` al DTO `AfipVoucherDetails` como campos OPCIONALES nullable (§T4.2 + sub-tarea F2.2).
+- Columna nueva `ArcaIdempotencyKeys.LastSeenNumeroBeforePost int NULL` (sumada a migracion M1, §T4.1).
+- Counter nuevo Serilog `Fc13.PartialCreditNote.RecoveredFromStaleKey` (§FC1.3.F2.6).
+- 3 tests integration nuevos: `ProcessPartialCreditNoteJob_KeyOrphanedPostNeverArrived_DeletesKeyAndRetries`, `ProcessPartialCreditNoteJob_KeyOrphanedPostArrived_RecoversFromArca`, `ProcessPartialCreditNoteJob_KeyOrphanedMismatchAmount_TreatsAsPostNeverArrived`.
+
+---
+
+## Changelog v2 -> v3 (round 3)
+
+Esta version cierra 2 bloqueantes (RH2-001, RH2-002) + 2 majors (RH2-003, RH2-004) + 3 minors (RH2-005, RH2-006, RH2-007) del reviewer round 2. Ver §T10.4 al final para la tabla detallada de cierre.
+
+Cambios principales:
+
+1. **RH2-001 [BLOQUEANTE]**: query SQL §FC1.3.F2.4.0 reescrita usando `bc.CreditNoteKind` directamente. La version v2 usaba bitflags `("ReviewRequiredReason" & 32) <> 0 AS is_case_4` que sobrecuenta porque el calculator (`FiscalLiquidationCalculator.cs:417-440`) clasifica con prioridad estricta — `CustomerIsRiOrFacturaA` gana sobre `OriginalInvoiceUnclear` y `RetentionChangesNature`. Una BC con Factura A + RetentionChangesNature se clasifica como Case 8 pero la query la contaba como caso 7. La discriminacion correcta es por kind persistido.
+2. **RH2-002 [BLOQUEANTE]**: §FC1.3.F2.5 multimoneda expandida con plan de refactor concreto del XML SOAP. Se suman columnas `Invoice.MonId nvarchar(3) DEFAULT 'PES'` + `Invoice.MonCotiz numeric(18,6) DEFAULT 1` a la migracion M1, `CreatePendingInvoice` las puebla, `CreateInvoiceRequest` gana 2 props opcionales, y `ProcessInvoiceJob` lee de la `Invoice` para interpolar. La v2 decia "extraer a `request.MonId` + `request.MonCotiz`" sin tocar el XML hardcoded en `AfipService.cs:879-880` — ahora hay plan completo.
+3. **RH2-003 [MAJOR]**: §FC1.3.F2.3 punto 5 discrimina NC total vs parcial usando `bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal` como criterio **primario**, con fallback historico por monto solo cuando el BC no esta asociado (NCs pre-FC1.3). La v2 dejaba el kind como "opcion mas robusta" alternativa.
+4. **RH2-004 [MAJOR]**: §FC1.3.F2.2 punto 4 completa la idempotencia con "stale key recovery" — si `ArcaIdempotencyKeys` tiene un INSERT con `ResolvedAt IS NULL` mas viejo que `IdempotencyKeyStaleThresholdMinutes` (default 10 min), el reintento consulta `FECompUltimoAutorizado` para decidir si recuperar (POST viajo) o limpiar key + reintentar (POST nunca viajo). La v2 dejaba un limbo permanente con `AnnulmentStatus = Failed` en ese escenario.
+5. **RH2-005 [MINOR]**: ruta del job nuevo migrada de `Infrastructure/Jobs/` a `Infrastructure/Services/` para alinear con la convencion existente (`PartialCreditNoteBridgeReconciliationJob` esta en `Services/`).
+6. **RH2-006 [MINOR]**: §FC1.3.F2.3 punto 5 + audit `PartialCreditNoteEconomicReversalNoCascade` ahora incluyen la query de receipts vivos especificada (filtrando por `r.Payment.RelatedInvoiceId == invoice.OriginalInvoiceId && r.Status == PaymentReceiptStatuses.Issued`). La v2 prometia `ReceiptsAffected = [...]` sin decir como cargarlos.
+7. **RH2-007 [INFO]**: §T8 corrige "12 puntos round 3" a "5 preguntas fiscales (F1..F5) + 8 confirmaciones profesionales + 1 confirmacion G4 = 14 puntos" alineado con `docs/operations/2026-05-21-mensaje-contador-fc1-3-round-3.md` (F5 sumada round 2).
+
+Nuevos elementos en v3 derivados de los fixes:
+
+- Setting `IdempotencyKeyStaleThresholdMinutes` (default 10) en `OperationalFinanceSettings` (§FC1.3.F2.0).
+- Columnas `Invoice.MonId` + `Invoice.MonCotiz` en migracion Fase2.M1 (§FC1.3.F2.1 + §FC1.3.F2.5).
+- DTO `CreateInvoiceRequest` gana props opcionales `MonId` (default `"PES"`) y `MonCotiz` (default `1`) (§FC1.3.F2.5).
+- 2 tests integration de regresion FC1.2: `Fc12NormalInvoice_StillEmitsWithPesos`, `Fc12Annulment_StillEmitsWithPesos`.
+- 1 test integration nuevo: `ProcessPartialCreditNoteJob_KeyOrphanedAfterCrash_AllowsRetryAfterStaleThreshold`.
+
+---
 
 ## Changelog v1 -> v2 (round 2)
 
@@ -66,7 +122,7 @@ Lo que NO esta verificado y se asume razonable hasta que el contador o un provee
 
 1. **El ARCA acepta `<ImpIVA>` con dos decimales redondeado bancariamente** (round-half-to-even) cuando el prorrateo no da entero. Hoy `AfipService.cs:870-875` usa `ToString("0.00", InvariantCulture)`. Verificado el formato — NO verificado el comportamiento del ARCA con sumas que no cuadran por 0.01.
 2. **El `<CbtesAsoc>` con factura origen sigue valido para NC parcial**. Hoy `AfipService.cs:827-838` emite `<CbtesAsoc>` SOLO cuando `invoice.OriginalInvoiceId.HasValue`. Asumo que ARCA acepta multiples NCs (parcial 1 + parcial 2 + ...) asociadas a la misma factura origen sin rechazar por correlativo duplicado. **A verificar en QA staging con ARCA homologacion antes de prod**.
-3. **Multimoneda factura USD pagada en ARS**: hoy `FiscalSnapshot.ExchangeRateAtOriginalInvoice` se carga al confirmar (verificado FC1.2). Asumo que ARCA acepta NC en USD con `MonId=DOL` + `MonCotiz` igual al TC del momento del **comprobante original**, no al TC del dia de la NC. Esto es regla fiscal estandar pero a confirmar con contador (sub-pregunta nueva para round 4).
+3. **Multimoneda factura USD pagada en ARS**: hoy `FiscalSnapshot.ExchangeRateAtOriginalInvoice` se carga al confirmar (verificado FC1.2). Asumo que ARCA acepta NC en USD con `MonId=DOL` + `MonCotiz` igual al TC del momento del **comprobante original**, no al TC del dia de la NC. Esto es regla fiscal estandar pero a confirmar con contador (pregunta F5 ya sumada al mensaje round 3, ver `docs/operations/2026-05-21-mensaje-contador-fc1-3-round-3.md`).
 4. **Casos `TotalPlusNewInvoice` (4 y 7)**: **G-F2-A round 2 formaliza esta asuncion como GATE cuantitativo**. La query SQL §FC1.3.F2.4.0 se corre post-prod (al menos 30 dias despues de prender Fase 2). Si `casos_4_y_7 / total >= 5%`, sesion separada para F2.4. Si `< 5%`, queda en backlog indefinidamente. F2.4 NO entra al PR Fase 2 base — solo el flag `EnableTotalPlusNewInvoiceAutoProcessing` se crea (default OFF, validacion startup garantiza que no se puede activar sin codigo merged).
 
 ---
@@ -191,6 +247,8 @@ FC1.3.F2.7  Doc explicativo trainee + actualizacion MEMORY.md.            │ de
 
 Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de prender Fase 2 en prod, se mide el volumen de casos 4 y 7. Si justifica, sesion separada.
 
+**Nota round 3 (RH2-002)**: en v2 F2.5 figuraba como "ajuste de logica" de bajo riesgo. La expansion round 3 de F2.5 ahora toca el SOAP envelope (XML hardcoded en `AfipService.cs:879-880`) + suma columnas `Invoice.MonId/MonCotiz` + extiende el DTO `CreateInvoiceRequest`. Esto cambia el perfil de riesgo: F2.5 puede regresionar FC1.2 si los defaults no se aplican correctamente. Recomendacion: mergear F2.5 como sub-PR aparte (no en el mismo PR que F2.6/F2.6a) con los 2 tests de regresion FC1.2 (`Fc12NormalInvoice_StillEmitsWithPesos` + `Fc12Annulment_StillEmitsWithPesos`) corriendo en verde antes del merge.
+
 ---
 
 ## T3. Sub-fases atomicas con criterios de aceptacion
@@ -199,11 +257,12 @@ Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de pre
 
 **Tareas atomicas**:
 
-1. Extender `OperationalFinanceSettings` con 4 columnas nuevas:
+1. Extender `OperationalFinanceSettings` con 5 columnas nuevas (round 3 suma `IdempotencyKeyStaleThresholdMinutes`):
    - `EnablePartialCreditNoteRealEmission` (bool, default `false`). Master flag Fase 2. Si OFF, el flujo se comporta como Fase 1 (log warning + emite NC total via FC1.2 path).
    - `EnableTotalPlusNewInvoiceAutoProcessing` (bool, default `false`). Si OFF, los casos 4 y 7 siguen tirando `InvalidOperationException` (GR-001 vigente). Si ON, flow dual de F2.4.
    - `IvaProrrateoMode` (enum: `ProportionalToNet = 0` default, `PerItem = 1`). Configurable post-respuesta F1 contador.
-   - `PartialCreditNoteRoundingTolerance` (`numeric(18,2)`, default `0.01`). Tolerancia para validacion `ImpTotal = ImpNeto + ImpIVA + ImpTrib` antes de mandar al ARCA. Si la suma se va por mas que este valor, throw + log error (defensivo, no enviar XML inconsistente).
+   - `PartialCreditNoteRoundingTolerance` (`numeric(18,2)`, default `0.01`). Tolerancia para validacion `ImpTotal = ImpNeto + ImpIVA + ImpTrib` antes de mandar al ARCA. Si la suma se va por mas que este valor, throw + log error (defensivo, no enviar XML inconsistente). Expresado en la moneda original del comprobante (no necesariamente ARS).
+   - **`IdempotencyKeyStaleThresholdMinutes`** (`int`, default `10`). **RH2-004 (round 3)**. Umbral en minutos a partir del cual una key sin resolver en `ArcaIdempotencyKeys` se considera huerfana (probable crash entre INSERT y POST) y dispara recovery via `FECompUltimoAutorizado`. Ver §FC1.3.F2.2 capa 1.5.
 
 2. Crear nuevo enum `src/TravelApi.Domain/Entities/IvaProrrateoMode.cs` con dos valores (`ProportionalToNet`, `PerItem`).
 
@@ -353,7 +412,15 @@ Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de pre
             ) <= 0.01
        );
      ```
-   - CHECK adicional `chk_BookingCancellations_fiscalliquidation_consistency`: si `FiscalLiquidation_ComputedAt` no es null, `LiquidationComputedAt` (columna summary Fase 1) tampoco puede ser null y deben coincidir (tolerancia 1 segundo). Evita estados degenerados pos-backfill.
+   - CHECK adicional `chk_BookingCancellations_fiscalliquidation_consistency`: si `FiscalLiquidation_ComputedAt` no es null, debe coincidir **exactamente** con `LiquidationComputedAt` (columna summary Fase 1). Sin tolerancia. **RH3-003 (round 4)**: el backfill paso 5.B ahora lee `bc.LiquidationComputedAt` directamente (no del JSON Metadata), eliminando el riesgo de divergencia por serializacion de fechas. SQL exacto del CHECK:
+     ```sql
+     ALTER TABLE "BookingCancellations"
+       ADD CONSTRAINT chk_BookingCancellations_fiscalliquidation_consistency
+       CHECK (
+         "FiscalLiquidation_ComputedAt" IS NULL
+         OR "LiquidationComputedAt" = "FiscalLiquidation_ComputedAt"
+       );
+     ```
 
 5. **Backfill SQL en dos pasos atomicos** (cierra **RH-001**). La migracion va dividida en bloques `DO $$ ... $$` para poder usar variables y `RAISE NOTICE`:
 
@@ -396,7 +463,7 @@ Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de pre
      "FiscalLiquidation_AmountToRefundCustomer"= (m.meta->>'amountToRefundCustomer')::numeric,
      "FiscalLiquidation_FinalNetInvoiced"      = (m.meta->>'finalNetInvoiced')::numeric,
      "FiscalLiquidation_Currency"              = COALESCE(m.meta->>'currency', 'ARS'),
-     "FiscalLiquidation_ComputedAt"            = (m.meta->>'computedAt')::timestamptz,
+     "FiscalLiquidation_ComputedAt"            = bc."LiquidationComputedAt",  -- RH3-003 (round 4): leer de columna summary, no del JSON, para evitar divergencia por serializacion. El CHECK chk_BookingCancellations_fiscalliquidation_consistency exige igualdad exacta.
      "FiscalLiquidation_ComputedByUserId"      = m.meta->>'computedByUserId',
      "FiscalLiquidation_ComputedByUserName"    = m.meta->>'computedByUserName'
    FROM (
@@ -527,18 +594,190 @@ Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de pre
    - Si el ARCA aprueba: setear `original.AnnulmentStatus = Succeeded`, `AnnulledAt = UtcNow`. Persistir.
    - Si rechaza: `Failed` + notify.
 
-   **Idempotencia ARCA pos-reintento Hangfire (cierra RH-004)**:
+   **Idempotencia ARCA pos-reintento Hangfire (cierra RH-004 round 2 + RH2-004 round 3)**:
 
-   El riesgo: Hangfire reintenta el job tras timeout/crash. Sin guard, podriamos POSTear dos veces al ARCA y emitir CAEs duplicados. El path FC1.2 `ProcessAnnulmentJob` ya tiene un guard parcial via `AnnulmentStatus`, pero el guard puede ser pasado por un reintento del job mismo entre el set a `Pending` y el POST efectivo. Para FC1.3 NC parcial reforzamos con dos capas:
+   El riesgo: Hangfire reintenta el job tras timeout/crash. Sin guard, podriamos POSTear dos veces al ARCA y emitir CAEs duplicados. El path FC1.2 `ProcessAnnulmentJob` ya tiene un guard parcial via `AnnulmentStatus`, pero el guard puede ser pasado por un reintento del job mismo entre el set a `Pending` y el POST efectivo. Para FC1.3 NC parcial reforzamos con dos capas + recovery de keys huerfanas:
 
    - **Capa 1 — IdempotencyKey persistido pre-POST**:
      - Cada job de NC parcial calcula al arrancar: `idemKey = SHA256($"{originalInvoiceId}|{approvalRequestId}|{liquidation.FiscalAmountToCredit:F2}|{liquidation.Currency}")`.
-     - Antes de llamar `_afipService.CreatePendingInvoice`, hacer `INSERT INTO "ArcaIdempotencyKeys"(Key, JobId, CreatedAt) VALUES (...)` con UNIQUE constraint sobre `Key`. Si el INSERT falla por unique violation, abort + log + marcar `AnnulmentStatus = Failed` con razon `"Idempotency duplicate"`. Otro job/reintento ya esta procesando el mismo trabajo.
+     - Antes de llamar `_afipService.CreatePendingInvoice`, hacer `INSERT INTO "ArcaIdempotencyKeys"(Key, JobId, CreatedAt) VALUES (...)` con UNIQUE constraint sobre `Key`. Si el INSERT falla por unique violation, **NO** se marca inmediatamente `Failed` — primero se aplica la logica de "stale key recovery" (ver capa 1.5 abajo) porque la key podria ser huerfana de un crash previo.
      - Tabla nueva `ArcaIdempotencyKeys` (Fase2.M1 incluye su creacion): `Id` PK, `Key` text UNIQUE, `JobId` text, `CreatedAt` timestamptz, `ResolvedAt` timestamptz NULL.
      - Al finalizar (success o failure terminal), setear `ResolvedAt = now()`. Los registros viejos (>30d) pueden purgarse via job de housekeeping (no Fase 2).
-   - **Capa 2 — chequeo ARCA opcional `FECompUltimoAutorizado`** (mas pesado, solo cuando capa 1 detecta inconsistencia):
-     - Si la capa 1 detecta una row existente con `ResolvedAt IS NULL` mas antigua que el timeout del job (ej. 5 min), antes de fallar consultar a ARCA via `FECompUltimoAutorizado` con el numerador del PV + tipo de NC. Si el ultimo correlativo emitido tiene `CbteAsoc` apuntando a la factura origen Y se emitio en los ultimos N min, el job actual debe abort SIN POSTear (el reintento previo ya hizo el trabajo). Levantar a estado `Succeeded` derivando el CAE del comprobante ya emitido.
-     - Esta capa 2 es defensa adicional para el caso patologico donde el job se cuelga > timeout pero el POST ya viajo al ARCA y volvio. Mas costoso por la llamada SOAP — solo se activa si la capa 1 detecta inconsistencia.
+
+   - **Capa 1.5 — Stale key recovery (RH2-004 round 3 + RH3-001 round 4 Camino A robusto)**:
+
+     **Problema que cierra**: la capa 1 v2 cubria "POST viajo pero respuesta no llego" — el reintento detectaba key + consultaba ARCA + recuperaba. Pero NO cubria "INSERT key OK + proceso muere ANTES del POST". En ese escenario el reintento detectaba key existente, consultaba ARCA via `FECompUltimoAutorizado`, venia vacio (porque el POST nunca viajo), y el plan v2 marcaba `AnnulmentStatus = Failed` con razon "Idempotency duplicate" — dejando la NC en limbo permanente sin posibilidad de retry limpio.
+
+     **RH3-001 (round 4) — alineacion con codigo real**: la version v3 del pseudocodigo invocaba `_afipService.QueryLastAuthorizedAsync(...)` y un shape `arcaResult.{Found, CbteAsoc, IssuedAt, Cae}` que **NO existen** en el codigo. Verificado:
+     - `IAfipService` (`src/TravelApi.Application/Interfaces/IAfipService.cs`) NO expone `QueryLastAuthorizedAsync`.
+     - `AfipService.GetNextVoucherNumber` (`AfipService.cs:1152`) es private y devuelve solo `int`.
+     - `AfipService.GetVoucherDetails` (`AfipService.cs:1195`) retorna `AfipVoucherDetails` (`AfipDtos.cs:3-11`) que solo tiene `ImporteTotal/Neto/Iva/Trib + VatDetails + TributeDetails`. NO tiene `Cae`, `CbteAsoc`, ni `IssuedAt`.
+
+     Gaston eligio **Camino A (robusto)**: agregar metodo + DTO + columna nuevos para sostener el recovery de manera testeable. NO degradar a "borrar key + retry siempre" (perdida de informacion de CAE si POST viajo).
+
+     **Sub-tareas atomicas Camino A** (parte de F2.2):
+
+     **Sub-tarea A.1** — Crear DTO `ArcaCompoundQueryResult` en `src/TravelApi.Application/DTOs/AfipDtos.cs`:
+     ```csharp
+     public record ArcaCompoundQueryResult(
+         bool Found,
+         int? LastNumero,
+         string? Cae,
+         int? CbteAsoc,         // OriginalInvoice id derivable del campo ARCA correspondiente
+         DateTime? IssuedAt,
+         decimal? ImporteTotal,
+         string? MonId,
+         decimal? MonCotiz);
+     ```
+
+     **Sub-tarea A.2** — Agregar metodo nuevo a `IAfipService`:
+     ```csharp
+     /// <summary>
+     /// RH3-001 (round 4): consulta compuesta a ARCA para stale key recovery.
+     /// Llama FECompUltimoAutorizado + FECompConsultar si el numerador avanzo
+     /// desde lastSeenNumeroBeforePost. Usado por ProcessPartialCreditNoteJob
+     /// cuando detecta una IdempotencyKey huerfana mas antigua que
+     /// IdempotencyKeyStaleThresholdMinutes.
+     /// </summary>
+     Task<ArcaCompoundQueryResult> QueryLastAuthorizedWithDetailsAsync(
+         int puntoVenta,
+         int cbteTipo,
+         int? lastSeenNumeroBeforePost,
+         CancellationToken ct);
+     ```
+
+     **Sub-tarea A.3** — Implementacion en `AfipService.QueryLastAuthorizedWithDetailsAsync`. Pseudocodigo:
+     ```
+     1. var ultimo = await GetNextVoucherNumber(settings, cbteTipo) - 1;  // ultimo autorizado
+     2. if (lastSeenNumeroBeforePost == null || ultimo <= lastSeenNumeroBeforePost):
+          return new ArcaCompoundQueryResult(
+              Found: false, LastNumero: ultimo,
+              Cae: null, CbteAsoc: null, IssuedAt: null,
+              ImporteTotal: null, MonId: null, MonCotiz: null);
+          // El numerador no avanzo, POST nunca viajo.
+     3. var detail = await GetVoucherDetails(cbteTipo, puntoVenta, ultimo);
+     4. return new ArcaCompoundQueryResult(Found: true, LastNumero: ultimo, ...detail...);
+     ```
+     El metodo `GetVoucherDetails` actual solo expone `ImporteTotal/Neto/Iva/Trib`. **Sub-tarea A.3.1**: extender el parseo del SOAP de `FECompConsultar` para incluir tambien `Cae`, `CbteAsoc`, `CbteFch` (mapear a `IssuedAt` con formato `yyyyMMdd`), `MonId`, `MonCotiz`. **Decision de compatibilidad**: extender `AfipVoucherDetails` con esos campos como **OPCIONALES nullable** para no romper otros callers existentes. El parseo agrega los nodos cuando estan presentes en el response y deja `null` cuando no.
+
+     **Contrato del array `CbtesAsoc` [RH4-002 round 4]**: por construccion, la NC parcial Fase 2 emite exactamente 1 `<CbteAsoc>` apuntando a la factura origen (`AfipService.cs:830-838`). El response del `FECompConsultar` para esa NC debe traer exactamente 1 item bajo `CbtesAsoc`. Comportamiento defensivo del parseo:
+     - **Array con 1 item** (caso normal): `CbteAsoc = ese item.Cbte`.
+     - **Array vacio (0 items)**: `CbteAsoc = null` -> la capa 1.5 lo trata como mismatch -> borra key + retry limpio (seguro).
+     - **Array con N>1 items** (defensa proactiva por si ARCA cambia comportamiento futuro): log warning `"FECompConsultar devolvio multiples CbtesAsoc inesperado"` + `CbteAsoc = null` -> mismatch -> borra key + retry limpio. **NO** intentar elegir uno: el riesgo de elegir mal y derivar CAE incorrecto es peor que un retry extra.
+
+     **Sub-tarea A.4** — Extender tabla `ArcaIdempotencyKeys` (M1) con columna nueva:
+     - `LastSeenNumeroBeforePost int NULL` — guardada al crear la key, ANTES del POST a ARCA. El reintento la usa para saber contra que numerador comparar. NULL para keys pre-existentes (sin info historica del numerador, el recovery se degrada con `Found = false` y borra la key + reintenta).
+
+     **Sub-tarea A.5** — Reescribir el pseudocodigo de la capa 1.5 con la firma real:
+     ```csharp
+     // Pseudocodigo del flow del reintento dentro de ProcessPartialCreditNoteJob:
+     var existingKey = await _context.ArcaIdempotencyKeys
+         .FirstOrDefaultAsync(k => k.Key == idemKey, ct);
+
+     if (existingKey != null && existingKey.ResolvedAt == null)
+     {
+         var ageMinutes = (DateTime.UtcNow - existingKey.CreatedAt).TotalMinutes;
+
+         if (ageMinutes > settings.IdempotencyKeyStaleThresholdMinutes)
+         {
+             // Posible escenario: proceso muerto entre INSERT y POST,
+             // O entre POST y persistencia de la respuesta ARCA.
+             var arcaResult = await _afipService.QueryLastAuthorizedWithDetailsAsync(
+                 puntoVenta: originalInvoice.PuntoDeVenta,
+                 cbteTipo: creditNoteCbteTipo,
+                 lastSeenNumeroBeforePost: existingKey.LastSeenNumeroBeforePost,
+                 ct);
+
+             if (arcaResult.Found
+                 && arcaResult.CbteAsoc == originalInvoice.Id
+                 && Math.Abs((arcaResult.ImporteTotal ?? 0) - liquidation.FiscalAmountToCredit)
+                    <= settings.PartialCreditNoteRoundingTolerance)
+             {
+                 // Caso A: POST viajo + comprobante ARCA matchea factura origen + monto.
+                 // Derivar CAE + resolver la key. NO re-POSTear.
+                 existingKey.ResolvedAt = DateTime.UtcNow;
+                 newCreditNoteInvoice.Cae = arcaResult.Cae;
+                 newCreditNoteInvoice.Resultado = "A";
+                 // ... otros campos derivados del response (CbteFch, MonId/MonCotiz) ...
+                 await _context.SaveChangesAsync(ct);
+                 // Counter Serilog (ver §FC1.3.F2.6):
+                 //   Fc13.PartialCreditNote.RecoveredFromStaleKey++
+                 _logger.LogWarning(
+                     "Idempotency recovery: derivado CAE de comprobante ya emitido. " +
+                     "InvoiceId={InvoiceId} CAE={Cae} KeyAgeMin={Age}",
+                     newCreditNoteInvoice.Id, arcaResult.Cae, ageMinutes);
+                 // Audit: Fc13.PartialCreditNote.RecoveredFromStaleKey
+                 return; // job termina sin volver a POSTear.
+             }
+             else
+             {
+                 // Caso B: POST nunca viajo (Found = false) o el comprobante
+                 // ARCA encontrado NO matchea con nuestra factura origen / monto
+                 // esperado (otro proceso ocupo el numerador). Borrar key
+                 // huerfana + permitir reintento limpio en este mismo job.
+                 _context.ArcaIdempotencyKeys.Remove(existingKey);
+                 await _context.SaveChangesAsync(ct);
+                 _logger.LogWarning(
+                     "Idempotency stale key removed (orphan from previous crash or " +
+                     "numerator mismatch). Key={Key} KeyAgeMin={Age} ArcaFound={Found} " +
+                     "ArcaCbteAsoc={CbteAsoc} ArcaImporte={Importe}. Allowing fresh retry.",
+                     idemKey, ageMinutes, arcaResult.Found,
+                     arcaResult.CbteAsoc, arcaResult.ImporteTotal);
+                 // continuar flow normal: ahora el INSERT de la capa 1
+                 // tendra exito porque la key fue borrada.
+             }
+         }
+         else
+         {
+             // Key reciente (< staleThreshold). Otro job/reintento esta procesando.
+             // No abortar al toque con Failed: el job de reconciliacion lo recoge
+             // mas tarde si nadie lo resuelve.
+             throw new IdempotencyDuplicateException(
+                 $"IdempotencyKey activa, otro job procesando (age={ageMinutes}min). " +
+                 $"Reintento en el proximo ciclo.");
+         }
+     }
+     ```
+
+     **Sub-tarea A.6** — Sumar tests integration al criterio de aceptacion F2.2:
+     - `ProcessPartialCreditNoteJob_KeyOrphanedPostNeverArrived_DeletesKeyAndRetries`: seed key con `ResolvedAt = NULL` + `LastSeenNumeroBeforePost = 1234` + ARCA mock que devuelve `LastNumero = 1234` (no avanzo). Verificar: (a) `arcaResult.Found == false`; (b) key borrada; (c) retry limpio + INSERT exitoso; (d) `CreatePendingInvoice` invocado exactamente 1 vez.
+     - `ProcessPartialCreditNoteJob_KeyOrphanedPostArrived_RecoversFromArca`: seed key con `LastSeenNumeroBeforePost = 1234` + ARCA mock que devuelve `LastNumero = 1235 + CbteAsoc = originalInvoice.Id + ImporteTotal = liquidation.FiscalAmountToCredit + Cae = "12345678901234"`. Verificar: (a) `arcaResult.Found == true`; (b) `Cae` derivado y persistido; (c) `key.ResolvedAt` seteado; (d) counter `Fc13.PartialCreditNote.RecoveredFromStaleKey` incrementado; (e) `CreatePendingInvoice` NO invocado (no re-POST).
+     - `ProcessPartialCreditNoteJob_KeyOrphanedMismatchAmount_TreatsAsPostNeverArrived`: seed key + ARCA mock devuelve `Found = true + CbteAsoc = originalInvoice.Id + ImporteTotal distinto` (otro proceso ocupo el numerador). Verificar: tratado como caso B -> key borrada + retry limpio + log warning con `ArcaImporte` distinto.
+
+     **Sub-tarea A.7.0 [RH3-004 round 4]** — Agregar helper publico `GetLastAuthorizedNumeroAsync(int puntoVenta, int cbteTipo, CancellationToken ct)` a `IAfipService`. Devuelve `Task<int>` con el ultimo numerador autorizado por ARCA (= `GetNextVoucherNumber - 1` internamente).
+
+     **Razon**: usar el `private GetNextVoucherNumber` desde otros servicios forzaria a (a) cambiar visibilidad a `internal`/`public`, lo cual rompe la encapsulacion porque su firma actual requiere `AfipSettings settings` como parametro (`AfipService.cs:1152`), exponiendo dependencia interna al caller; o (b) cargar y pasar `AfipSettings` desde el caller, multiplicando acoplamiento. El helper publico encapsula la carga de settings adentro del servicio.
+
+     ```csharp
+     public async Task<int> GetLastAuthorizedNumeroAsync(
+         int puntoVenta, int cbteTipo, CancellationToken ct)
+     {
+         var settings = await GetSettingsAsync(ct);  // ya existe en IAfipService
+         var proximo = await GetNextVoucherNumber(settings, cbteTipo);
+         return proximo - 1;
+     }
+     ```
+
+     Tambien usado internamente por `QueryLastAuthorizedWithDetailsAsync` (sub-tarea A.3 paso 1, en lugar de invocar el private directamente).
+
+     **Sub-tarea A.7 [REVISADA ROUND 4 — RH4-001]** — El snapshot del numerador se captura DENTRO de `ProcessPartialCreditNoteJob` como **primera operacion antes del INSERT en `ArcaIdempotencyKeys`**. `EnqueuePartialCreditNoteAsync` **NO toca ARCA ni `ArcaIdempotencyKeys`**: solo valida + encola el job Hangfire + termina.
+
+     **Razon**: el encolado y la ejecucion del job pueden separarse 5+ minutos bajo carga Hangfire (otros jobs en cola, reintentos, worker saturado). Si el snapshot se hiciera en el encolado, el numerador ARCA podria avanzar decenas de comprobantes en el medio por otros emisores del mismo PV (NCs totales FC1.2 simultaneas, etc.). El recovery posterior compararia contra un snapshot desactualizado y podria falsamente concluir "POST viajo + alguien ocupo el numerador" cuando en realidad el POST nunca se hizo.
+
+     **Flow correcto**:
+     1. `EnqueuePartialCreditNoteAsync`: valida liquidacion + `Invoice.AnnulmentStatus = Pending` + encola job + termina.
+     2. `ProcessPartialCreditNoteJob` arranca:
+        - (a) Invoca `await _afipService.GetLastAuthorizedNumeroAsync(puntoVenta, cbteTipo, ct)` -> guarda en variable local `lastSeenNumeroBeforePost`.
+        - (b) Calcula `idemKey = SHA256(originalInvoiceId|approvalRequestId|FiscalAmountToCredit|Currency)`.
+        - (c) Intenta `INSERT INTO ArcaIdempotencyKeys (Key, JobId, CreatedAt, LastSeenNumeroBeforePost)` con el valor del paso (a).
+        - (d) Si el INSERT falla por unique violation -> dispara capa 1.5 (que lee `existingKey.LastSeenNumeroBeforePost` ya persistido por la corrida anterior y consulta ARCA via `QueryLastAuthorizedWithDetailsAsync`).
+        - (e) Si el INSERT tiene exito -> POST a ARCA.
+
+     **Invariante**: el snapshot vive en la misma ejecucion del job que el POST efectivo. Si Hangfire reintenta el job entero, la capa 1.5 detecta la key huerfana del intento anterior y arbitra correctamente.
+
+   - **Capa 2 — chequeo ARCA `QueryLastAuthorizedWithDetailsAsync` invocado por capa 1.5**: el path A de la capa 1.5 ya consulta ARCA via el metodo nuevo. La capa 2 v2 quedaba como "defense-in-depth" pero desde v3 esta consolidada dentro de la capa 1.5. NO se necesita una invocacion adicional separada.
+
+   - **Nuevo setting** (sumar a §FC1.3.F2.0): `IdempotencyKeyStaleThresholdMinutes` (`int`, default `10`). Define el umbral en minutos a partir del cual una key sin resolver se considera "potencialmente huerfana" y dispara el recovery. Valores recomendados: 5-15 min (mayor que el timeout tipico de Hangfire pero menor que el time-to-live de la respuesta ARCA).
 
 5. **Tests unitarios** (~12) del calculo de prorrateo IVA aislado en una clase helper `PartialCreditNoteIvaCalculator`. Cubrir:
    - `ProportionalToNet` con 1 sola alicuota -> IVA = total * multiplier.
@@ -567,6 +806,12 @@ Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de pre
 - **Test integration `EnqueuePartialCreditNoteAsync_SumMismatchAtEnqueue_DoesNotMutateInvoiceState`** (cierra **M4**): liquidation invalida (sum mismatch). El throw ocurre ANTES de mutar `Invoice.AnnulmentStatus`. Verificar que post-throw `Invoice.AnnulmentStatus` sigue en `NotRequested` (o el valor previo) y que counter `Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue` incremento.
 - **Test integration `ProcessPartialCreditNoteJob_HangfireRetryAfterTimeout_DoesNotEmitDuplicate`** (cierra **RH-004**): simular escenario: job arranca, inserta IdempotencyKey, llama ARCA (mock que devuelve OK pero con delay > timeout Hangfire), Hangfire reintenta job. El reintento debe detectar `IdempotencyKey` ya existe con `ResolvedAt IS NULL`, consultar ARCA (mock `FECompUltimoAutorizado`) y derivar el CAE del comprobante ya emitido SIN re-POSTear. Verificar exactamente 1 invocacion a `CreatePendingInvoice` mock.
 - **Test integration `ProcessPartialCreditNoteJob_IdempotencyKey_UniqueViolation_AbortsCleanly`** (cierra **RH-004**): dos jobs concurrentes con misma idemKey. Solo uno inserta + procesa. El otro detecta unique violation + abort + audit `Fc13.PartialCreditNote.IdempotencyDuplicate`.
+- **Test integration `ProcessPartialCreditNoteJob_KeyOrphanedAfterCrash_AllowsRetryAfterStaleThreshold`** (cierra **RH2-004 round 3**): seed `ArcaIdempotencyKeys` con una row `CreatedAt = NOW() - 15 min` + `ResolvedAt = NULL` (simulando crash entre INSERT y POST de un job previo). Configurar `IdempotencyKeyStaleThresholdMinutes = 10`. Mock `QueryLastAuthorizedWithDetailsAsync` para devolver `Found = false` (POST nunca viajo). Correr `ProcessPartialCreditNoteJob` para la misma idemKey. Verificar: (a) la key huerfana fue borrada; (b) un INSERT fresh tuvo exito; (c) `CreatePendingInvoice` se llamo exactamente 1 vez; (d) log warning `Idempotency stale key removed` presente.
+- **Test integration `ProcessPartialCreditNoteJob_KeyOrphanedPostNeverArrived_DeletesKeyAndRetries`** (cierra **RH3-001 round 4, sub-tarea A.6**): seed key huerfana + `LastSeenNumeroBeforePost = 1234`. Mock `QueryLastAuthorizedWithDetailsAsync` devuelve `Found = false, LastNumero = 1234` (numerador no avanzo). Verificar: key borrada + retry limpio + 1 sola invocacion a `CreatePendingInvoice`.
+- **Test integration `ProcessPartialCreditNoteJob_KeyOrphanedPostArrived_RecoversFromArca`** (cierra **RH3-001 round 4, sub-tarea A.6**): seed key huerfana + `LastSeenNumeroBeforePost = 1234`. Mock devuelve `Found = true, LastNumero = 1235, CbteAsoc = originalInvoice.Id, ImporteTotal = liquidation.FiscalAmountToCredit, Cae = "12345678901234"`. Verificar: (a) `CAE` derivado y persistido en la NC; (b) `key.ResolvedAt` seteado; (c) counter `Fc13.PartialCreditNote.RecoveredFromStaleKey` incrementado; (d) `CreatePendingInvoice` NO invocado.
+- **Test integration `ProcessPartialCreditNoteJob_KeyOrphanedMismatchAmount_TreatsAsPostNeverArrived`** (cierra **RH3-001 round 4, sub-tarea A.6**): seed key huerfana. Mock devuelve `Found = true, CbteAsoc = originalInvoice.Id, ImporteTotal != liquidation.FiscalAmountToCredit` (otro proceso ocupo el numerador). Verificar: tratado como caso B -> key borrada + retry limpio + log warning con `ArcaImporte` distinto del esperado.
+- **Test integration `ProcessPartialCreditNoteJob_SnapshotCapturedAtJobStartNotAtEnqueueTime`** (cierra **RH4-001 round 4**): encolar `EnqueuePartialCreditNoteAsync` -> verificar que NO se invoco `GetLastAuthorizedNumeroAsync` ni se INSERTo en `ArcaIdempotencyKeys` (las dos cosas ocurren dentro del job). Avanzar el scheduler Hangfire mock para correr el job -> verificar que ahi si se invoco `GetLastAuthorizedNumeroAsync` exactamente una vez ANTES del INSERT de la key, y que el `LastSeenNumeroBeforePost` persistido es el que devolvio esa invocacion (no el snapshot que hubiera existido al momento del encolado).
+- **Test integration `GetVoucherDetails_MultipleCbtesAsoc_LogsWarningAndReturnsNullCbteAsoc`** (cierra **RH4-002 round 4**): mock SOAP response de `FECompConsultar` con 2 nodos `<CbteAsoc>` en el array. Invocar `GetVoucherDetails` -> verificar: (a) `AfipVoucherDetails.CbteAsoc == null`; (b) log warning `"FECompConsultar devolvio multiples CbtesAsoc inesperado"` presente; (c) los demas campos (`ImporteTotal`, `Cae`, etc.) se parsean OK.
 - Test E2E (diferido a sesion QA): emitir NC parcial real contra ARCA homologacion + validar respuesta CAE.
 
 **Dependencias**: FC1.3.F2.1 (liquidacion persistida) + FC1.3.F2.0 (settings).
@@ -610,9 +855,52 @@ Razon: F2.4 (TotalPlusNewInvoice) queda fuera del PR Fase 2 base. Despues de pre
    - **G-F2-D (multi-recibos)**: una factura $1.000 pagada en 3 cuotas ($300 + $300 + $400) tiene 3 receipts vivos. NC parcial $250 no tiene un receipt unico a cascade-voidear. Cualquier seleccion automatica (por monto, por antiguedad) es arbitraria y riesgosa.
 
    **Politica Fase 2 (alineada G-F2-D)**:
-   - Modificar `ApplyCreditNoteEconomicReversalAsync` para distinguir NC total vs NC parcial. La discriminacion se hace mirando `invoice.OriginalInvoice.ImporteTotal == invoice.ImporteTotal` (NC total) versus `invoice.ImporteTotal < invoice.OriginalInvoice.ImporteTotal` (NC parcial). Otra opcion mas robusta: leer el `BookingCancellation` asociado y chequear `bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal`.
+   - Modificar `ApplyCreditNoteEconomicReversalAsync` para distinguir NC total vs NC parcial. **RH2-003 (round 3)**: la discriminacion **primaria** se hace leyendo el `BookingCancellation` asociado a la NC via `bc.CreditNoteInvoiceId == invoice.Id` y chequeando `bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal`. La comparacion por monto (`invoice.ImporteTotal < invoice.OriginalInvoice.ImporteTotal`) queda como **fallback historico** solo cuando el BC no existe (NCs pre-FC1.3 que no tienen BC asociado, o casos degradados).
+
+     Justificacion del fallback: el campo `BookingCancellation.CreditNoteInvoiceId` (`BookingCancellation.cs:50`) existe pero NO esta poblado para todas las NCs historicas. NCs emitidas via FC1.2 antes del wiring de Fase 1 podrian no tener BC asociado. En esos casos la comparacion por monto sigue siendo correcta porque NC total real == ImporteTotal original.
+
+     Pseudocodigo explicito de la discriminacion:
+     ```csharp
+     // ApplyCreditNoteEconomicReversalAsync (AfipService.cs:1006-1114, refactor F2.3)
+     var bc = await _context.BookingCancellations
+         .FirstOrDefaultAsync(b => b.CreditNoteInvoiceId == invoice.Id);
+
+     bool isPartialNc;
+     if (bc != null)
+     {
+         // Path canonico FC1.3+: el kind persistido es la fuente de verdad.
+         isPartialNc = bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal;
+     }
+     else
+     {
+         // Fallback historico: NCs pre-FC1.3 sin BC asociado.
+         // La comparacion por monto sigue siendo correcta porque las NCs
+         // emitidas via FC1.2 son siempre totales y matchean el ImporteTotal original.
+         isPartialNc = invoice.OriginalInvoice != null
+                       && invoice.ImporteTotal < invoice.OriginalInvoice.ImporteTotal;
+     }
+     ```
    - **NC total**: comportamiento actual sin cambios (cascade receipt).
    - **NC parcial**: crear el `Payment` reversal con `OriginalPaymentId = null` por diseno (no hay un payment unico asociado). NO buscar payment exacto, NO cascade-voider receipts. Dejar todos los receipts vivos. Emitir audit nuevo `PartialCreditNoteEconomicReversalNoCascade` con detalle del monto reversal + cantidad de receipts vivos + IDs receipts vivos para que el admin pueda revisar manualmente.
+
+     **RH2-006 (round 3) — query explicita de receipts vivos para el audit**:
+     ```csharp
+     // Verificado en codigo: PaymentReceipt entity en src/TravelApi.Domain/Entities/PaymentReceipt.cs.
+     //  - Tabla: "PaymentReceipts".
+     //  - Status: string con constantes PaymentReceiptStatuses.Issued / Voided (no enum).
+     //  - FK a Payment via PaymentReceipt.PaymentId.
+     //  - Payment.RelatedInvoiceId apunta a la Invoice (Payment.cs:50).
+     // Estrategia: receipts vivos son los Issued cuyos Payments tienen
+     // RelatedInvoiceId == invoice.OriginalInvoiceId.
+     var liveReceipts = await _context.PaymentReceipts
+         .Include(r => r.Payment)
+         .Where(r => r.Payment.RelatedInvoiceId == invoice.OriginalInvoiceId
+                     && r.Status == PaymentReceiptStatuses.Issued)
+         .Select(r => r.Id)
+         .ToListAsync();
+     // liveReceipts -> details del audit `PartialCreditNoteEconomicReversalNoCascade`,
+     // serializado como JSON: { "reversalAmount": -250, "liveReceiptIds": [12, 14, 19] }.
+     ```
    - UI Fase 3 (fuera de scope) permitira al admin marcar manualmente que receipt anular.
 
    **Tests integration explicitos** (cierra **RH-005** + **G-F2-D**):
@@ -665,32 +953,35 @@ Correr en prod **al menos 30 dias despues** de prender `EnablePartialCreditNoteR
 -- FC1.3.F2.4.0 — Medicion de volumen de casos 4 y 7 post-Fase 2.
 -- Correr en prod, no antes de 30 dias desde el prendido de EnablePartialCreditNoteRealEmission.
 -- Si pct_casos_4_y_7 >= 5%, abrir sesion separada para implementar F2.4.
+--
+-- RH2-001 (round 3): la version v2 usaba bitflags sobre ReviewRequiredReason
+-- (`(reason & 32) <> 0` para caso 4, `(reason & 16) <> 0` para caso 7).
+-- Eso SOBRECUENTA porque el calculator clasifica con prioridad estricta
+-- (FiscalLiquidationCalculator.cs:417-440): si CustomerIsRiOrFacturaA esta
+-- prendido (1 << 0), gana sobre OriginalInvoiceUnclear (1 << 5) y
+-- RetentionChangesNature (1 << 4). Una BC con Factura A + RetentionChangesNature
+-- se clasifica como Case 8 pero la query bitflag la contaba como caso 7.
+--
+-- Solucion: discriminar por el kind persistido (BookingCancellation.CreditNoteKind),
+-- que refleja la decision final del calculator. Casos 4 y 7 son exactamente los
+-- que tienen kind = TotalPlusNewInvoice (= 2 en el enum, ver CreditNoteKind.cs:24).
 
 WITH window_cancellations AS (
     SELECT
         bc."Id",
-        bc."ReviewRequiredReason",
+        bc."CreditNoteKind",
         bc."CreatedAt"
     FROM "BookingCancellations" bc
     WHERE bc."CreatedAt" >= NOW() - INTERVAL '30 days'
-),
-classified AS (
-    SELECT
-        "Id",
-        -- Caso 4: OriginalInvoiceUnclear flag (1 << 5 = 32).
-        -- Caso 7: RetentionChangesNature flag (1 << 4 = 16).
-        ("ReviewRequiredReason" & 32) <> 0 AS is_case_4,
-        ("ReviewRequiredReason" & 16) <> 0 AS is_case_7
-    FROM window_cancellations
 )
 SELECT
-    COUNT(*) FILTER (WHERE is_case_4 OR is_case_7) AS cnt_casos_4_y_7,
-    COUNT(*)                                       AS cnt_total,
+    COUNT(*) FILTER (WHERE "CreditNoteKind" = 2) AS cnt_casos_4_y_7,
+    COUNT(*)                                     AS cnt_total,
     ROUND(
-      100.0 * COUNT(*) FILTER (WHERE is_case_4 OR is_case_7) / NULLIF(COUNT(*), 0),
+      100.0 * COUNT(*) FILTER (WHERE "CreditNoteKind" = 2) / NULLIF(COUNT(*), 0),
       2
     ) AS pct_casos_4_y_7
-FROM classified;
+FROM window_cancellations;
 ```
 
 **Interpretacion**:
@@ -757,35 +1048,100 @@ FROM classified;
 
 ---
 
-### FC1.3.F2.5 — Multimoneda en NC parcial
+### FC1.3.F2.5 — Multimoneda en NC parcial (RH2-002 refactor completo)
 
-**Tareas atomicas**:
+**Contexto del problema RH2-002**: hoy `AfipService.cs:879-880` hardcodea `<MonId>PES</MonId><MonCotiz>1</MonCotiz>` literal en el XML SOAP del envelope FECAESolicitar. El metodo `ProcessInvoiceJob` (linea 729+) recibe solo `int invoiceId` y carga la `Invoice` desde BD — no tiene forma de saber moneda/cotizacion porque esos datos NO existen en la entidad `Invoice` hoy. La v2 del plan decia "extraer a `request.MonId` + `request.MonCotiz` y leer de la NC parcial" pero esa frase asume que el dato ya viaja por algun lado, lo cual NO es cierto. Hace falta un refactor explicito.
 
-1. **Modificar `FiscalLiquidationCalculator`** (Fase 1): hoy `STEP 1` flagea `MultiCurrency` siempre que `Currency != "ARS"`. Fase 2 cambia el criterio:
+**Tareas atomicas (cierra RH2-002 + RH3-002)**:
+
+0. **[RH3-002 round 4] Auditoria pre-refactor de `<MonId>/<MonCotiz>` en `AfipService.cs`**. Antes de tocar el XML SOAP, correr:
+   ```bash
+   grep -n "MonId\|MonCotiz" src/TravelApi.Infrastructure/Services/AfipService.cs
+   ```
+   Hoy se conoce que las ocurrencias aparecen en `AfipService.cs:879-880` (envelope FECAESolicitar dentro de `ProcessInvoiceJob`). Si el grep devuelve otras lineas, integrarlas explicitamente al refactor (no asumir que solo son esas dos). Si confirma solo las dos conocidas, documentar el resultado del grep como "cero divergencias adicionales" en el doc trainee F2.7.
+
+   **Criterio aceptacion tarea 0**: post-refactor, correr:
+   ```bash
+   grep -c "PES\b\|MonCotiz>1" src/TravelApi.Infrastructure/Services/AfipService.cs
+   ```
+   Debe mostrar **valor cero** o solo en comentarios (no en strings ejecutables del SOAP). Si aparece alguna ocurrencia hardcoded fuera de comentarios, el refactor no esta completo.
+
+1. **Agregar columnas a `Invoice` entity** (parte de la migracion `Fase2.M1`, NO migracion separada — un solo deploy):
+   - `Invoice.MonId` (`nvarchar(3)`, NOT NULL, DEFAULT `'PES'`). Codigo de moneda ARCA: `"PES"` para pesos, `"DOL"` para dolar, etc.
+   - `Invoice.MonCotiz` (`numeric(18,6)`, NOT NULL, DEFAULT `1`). Cotizacion al peso. Para PES siempre `1`. Para DOL = TC del comprobante origen (RH2-007 referencia).
+   - Para back-compat: la migracion popula las filas existentes con `'PES'`/`1` (DEFAULT inline cubre INSERTs viejos sin reescribir).
+
+2. **Extender `CreateInvoiceRequest` DTO** (`src/TravelApi.Application/DTOs/CreateInvoiceRequest.cs`):
+   ```csharp
+   public class CreateInvoiceRequest
+   {
+       // ... props existentes ...
+       
+       /// <summary>RH2-002 (round 3): codigo ARCA de moneda. Default "PES" para no romper callers FC1.2.</summary>
+       public string MonId { get; set; } = "PES";
+       
+       /// <summary>RH2-002 (round 3): cotizacion al peso. Default 1 para no romper callers FC1.2.</summary>
+       public decimal MonCotiz { get; set; } = 1m;
+   }
+   ```
+
+3. **Modificar `AfipService.CreatePendingInvoice`** (`AfipService.cs:564+`):
+   - Al construir la entidad `Invoice` desde el `request`, poblar `invoice.MonId = request.MonId` + `invoice.MonCotiz = request.MonCotiz`.
+   - Los callers FC1.2 que NO setean estas props mandan los defaults `("PES", 1)`. Sin cambios de comportamiento para FC1.2.
+
+4. **Modificar `AfipService.ProcessInvoiceJob`** (`AfipService.cs:729+`):
+   - El metodo ya recarga `Invoice` desde BD. Sumar `invoice.MonId` + `invoice.MonCotiz` al cargar (estan en la misma fila, no requiere Include nuevo).
+   - Reemplazar el XML hardcoded en linea 879-880 con interpolacion:
+     ```xml
+     <MonId>{invoice.MonId}</MonId>
+     <MonCotiz>{invoice.MonCotiz.ToString("0.000000", CultureInfo.InvariantCulture)}</MonCotiz>
+     ```
+   - **No tocar otros campos del XML**. Solo dos lineas.
+
+5. **Modificar `FiscalLiquidationCalculator`** (Fase 1): hoy `STEP 1` flagea `MultiCurrency` siempre que `Currency != "ARS"`. Fase 2 cambia el criterio:
    - Si `settings.EnablePartialCreditNoteRealEmission == true` -> `MultiCurrency` deja de ser disparador automatico de review manual. La NC se emite en la moneda del comprobante origen con `FiscalSnapshot.ExchangeRateAtOriginalInvoice` como `<MonCotiz>`.
    - Si `false` (Fase 1) -> sigue siendo disparador (comportamiento actual).
 
-2. **Validar en `ProcessPartialCreditNoteJob`**:
-   - Si `liquidation.Currency != "ARS"`: setear `MonId = "DOL"` (o el codigo ARCA correspondiente) + `MonCotiz = liquidation.ExchangeRateAtOriginalInvoice`.
-   - Hoy `AfipService.cs:879-880` hardcodea `MonId=PES + MonCotiz=1`. Cambio: extraer a `request.MonId` + `request.MonCotiz` y leer de la NC parcial.
-   - **Cuidado**: el cambio en `AfipService` afecta TODAS las emisiones, no solo NC parcial. Para no romper FC1.2 ni facturas normales, **agregar parametros opcionales con default `("PES", 1)` en `CreateInvoiceRequest`**. Solo el path nuevo de NC parcial los setea distinto.
+6. **Modificar `ProcessPartialCreditNoteJob`** (creado en F2.2):
+   - Cuando arma el `CreateInvoiceRequest`, setear `MonId` y `MonCotiz` desde `liquidation`:
+     ```csharp
+     var request = new CreateInvoiceRequest
+     {
+         // ... otros campos ...
+         MonId = liquidation.Currency == "ARS" ? "PES" : MapToArcaCurrencyCode(liquidation.Currency),
+         MonCotiz = liquidation.Currency == "ARS" ? 1m : liquidation.ExchangeRateAtOriginalInvoice
+     };
+     ```
+   - Helper `MapToArcaCurrencyCode("USD") => "DOL"` (mapeo conocido). Si llega otra moneda no soportada, throw + log + marcar `AnnulmentStatus = Failed`.
 
-3. **Tests unit** (~4):
+7. **Identificar callers a auditar** (que NO deben romperse con defaults):
+   - `InvoiceService.EnqueueAnnulmentAsync` -> arma `CreateInvoiceRequest` para NC TOTAL FC1.2. No setea `MonId/MonCotiz` -> defaults `("PES", 1)`. **Sin cambios**.
+   - Frontend (crear factura manual via endpoint REST) -> el DTO viaja desde JSON. Los clientes existentes no incluyen estos campos -> defaults aplican.
+   - Tests integration FC1.2 -> arman el DTO sin esos campos -> defaults aplican.
+   - Tests unit que mockean `CreatePendingInvoice` -> el mock no chequea props nuevas -> sin impacto.
+
+8. **Tests unit** (~4):
    - `Calculator_MultiCurrencyWithFase2On_DoesNotFlagReason`.
    - `Calculator_MultiCurrencyWithFase2Off_StillFlagsReason` (back-compat Fase 1).
-   - `PartialCreditNoteJob_UsdInvoice_UsesSnapshotExchangeRate`.
-   - `PartialCreditNoteJob_ArsInvoice_KeepsDefaultPesoMapping`.
+   - `PartialCreditNoteJob_UsdInvoice_UsesSnapshotExchangeRate`: verificar que el `CreateInvoiceRequest` armado tiene `MonId == "DOL"` + `MonCotiz == snapshot.TC`.
+   - `PartialCreditNoteJob_ArsInvoice_KeepsDefaultPesoMapping`: factura ARS -> request con `("PES", 1)`.
 
-4. **Test integration** (1):
-   - `Confirm_UsdInvoice_Fase2On_EmitsNcInUsdWithT0Rate`: setup factura USD, Fase 2 ON, BC auto-aprueba caso 1. Verificar `<MonId>DOL</MonId>` + `<MonCotiz>` igual al TC del snapshot.
+9. **Tests integration** (4):
+   - **`Fc12NormalInvoice_StillEmitsWithPesos`** (regresion FC1.2): emitir factura B normal via flow FC1.2 sin tocar `MonId/MonCotiz` en el caller. Verificar que la `Invoice` persistida tiene `MonId = "PES"` + `MonCotiz = 1`. Verificar que el SOAP enviado a ARCA (mock) tiene `<MonId>PES</MonId><MonCotiz>1.000000</MonCotiz>`.
+   - **`Fc12Annulment_StillEmitsWithPesos`** (regresion FC1.2): anular factura via `EnqueueAnnulmentAsync` (NC TOTAL). Verificar que la NC resultante tiene `MonId = "PES"` + el SOAP mantiene `PES/1`.
+   - **`PartialCreditNoteUsd_EmitsWithDolarAndSnapshotRate`** (nuevo): setup factura USD con `FiscalSnapshot.ExchangeRateAtOriginalInvoice = 1234.56`, Fase 2 ON, emitir NC parcial. Verificar que la NC parcial tiene `MonId = "DOL"` + `MonCotiz = 1234.56`. El SOAP mock recibe esos valores en el XML.
+   - **`PartialCreditNoteArs_EmitsWithPesoAndOne`** (nuevo): factura ARS, NC parcial. `MonId = "PES"` + `MonCotiz = 1`.
 
 **Criterio de aceptacion FC1.3.F2.5**:
 
-- 4 unit + 1 integration test pasan.
+- 4 unit + 4 integration tests pasan.
 - Tests Fase 1 con factura ARS siguen verdes.
-- Asuncion §T1.4 punto 3 validada con contador (envia sub-pregunta nueva al contador para round 4) — si rechaza, ajustar logica.
+- Tests integration FC1.2 existentes siguen verdes (defaults activos).
+- Asuncion §T1.4 punto 3 validada con contador (F5 del mensaje round 3) — si rechaza, ajustar logica.
 
-**Dependencias**: FC1.3.F2.2.
+**Dependencias**: FC1.3.F2.2 + FC1.3.F2.1 (la migracion M1 incluye `MonId/MonCotiz` ademas del owned VO `FiscalLiquidation`).
+
+**Riesgo de regresion (RH2-002 implicacion §T2.2)**: F2.5 ya NO es solo "ajuste de logica" — toca el SOAP envelope (lineas hardcoded en `AfipService.cs:879-880`) + cambia firma del DTO + agrega columnas. El orden de merge sugerido en §T2.2 mueve F2.5 antes de F2.7 pero **se recomienda** que el subagente backend mergee F2.5 **despues** de F2.6/F2.6a en una sub-PR aparte para aislar regresiones FC1.2. Ver §T2.2 actualizada.
 
 ---
 
@@ -800,6 +1156,7 @@ FROM classified;
    - `Fc13.PartialCreditNote.SumValidationFailedAtJob` (defensivo, no deberia incrementar).
    - **`Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue`** (minor del reviewer): incrementa cuando la validacion defensiva en `EnqueuePartialCreditNoteAsync` rechaza el llamado pre-encolado.
    - **`Fc13.PartialCreditNote.IdempotencyDuplicate`** (RH-004): incrementa cuando se detecta IdempotencyKey duplicada.
+   - **`Fc13.PartialCreditNote.RecoveredFromStaleKey`** (RH3-001 round 4): incrementa cuando la capa 1.5 stale key recovery deriva el CAE de un comprobante ya emitido en ARCA (path A del recovery). Util para alertar al admin si crece (indicaria crashes recurrentes entre POST y persistencia de respuesta).
    - `Fc13.PartialCreditNote.NoCascadeReceiptsPreserved` (G-F2-D): incrementa cuando ApplyCreditNoteEconomicReversal preserva receipts (rama parcial).
    - (Si gate G-F2-A se abre en el futuro) `Fc13.PartialCreditNote.DualFlowStep1Succeeded`, `DualFlowStep2Succeeded`, `DualFlowStuck`.
 
@@ -814,17 +1171,26 @@ FROM classified;
 
 ### FC1.3.F2.6a — Job NUEVO `PartialCreditNotePostingReconciliationJob` (cierra RH-006)
 
-**Justificacion del job NUEVO (no extension)**:
+**Justificacion del job NUEVO (no extension) — actualizada RH2-008 round 4**:
 
-El reviewer detecto que el plan v1 mencionaba "extender `ArcaAnnulmentReconciliationJob` existente FC1.2". Tras verificar la asuncion:
+El plan v1 mencionaba "extender `ArcaAnnulmentReconciliationJob` existente FC1.2" basado en suposicion. Round 3 + round 4 verificaron el repo:
 
-- El job `ArcaAnnulmentReconciliationJob` (si existe en `src/TravelApi.Infrastructure/Jobs/`) opera sobre `Invoice.AnnulmentStatus = Pending` y reconcilia el path FC1.2 anulacion. Su modelo de datos es "una factura origen + su AnnulmentStatus".
-- Para Fase 2 NC parcial, la NC nueva es una `Invoice` separada con `OriginalInvoiceId IS NOT NULL` y su propio `Resultado` (`PENDING` -> `A` o `R`). Este es un modelo de datos diferente: lo que hay que reconciliar es el `Resultado` de la NC nueva, NO el `AnnulmentStatus` de la factura origen.
-- Para evitar acoplar dos casos de uso con dependencias y reglas diferentes en el mismo job (riesgo de regresion FC1.2 al modificar el WHERE), Fase 2 crea un job NUEVO.
+- `ArcaAnnulmentReconciliationJob` **NO existe como clase implementada**. Verificado con `Grep "class ArcaAnnulmentReconciliationJob"` -> 0 matches en `src/`. Aparece SOLO como:
+  - Comentario aspiracional en `src/TravelApi.Domain/Entities/Invoice.cs:62` (TODO de deuda historica FC1.2: "Lo usa el job recurrente `ArcaAnnulmentReconciliationJob` para detectar facturas en `AnnulmentStatus.Pending`...").
+  - Mencion en la migracion legacy `src/TravelApi.Infrastructure/Persistence/Migrations/App/20260514030142_FC1_AddCancellationModule.cs` que define el campo `Resultado` pero no implementa el job.
+
+- El job que **SI existe y SI funciona** como patron de referencia es `PartialCreditNoteBridgeReconciliationJob` en `src/TravelApi.Infrastructure/Services/`. Es el que Fase 2 replica.
+
+Por separation of concerns + ausencia del job hipotetico, Fase 2 crea un job nuevo `PartialCreditNotePostingReconciliationJob` **sin riesgo de acoplamiento con codigo inexistente**. Si en el futuro se implementara `ArcaAnnulmentReconciliationJob`, las responsabilidades quedan claramente separadas:
+
+- `ArcaAnnulmentReconciliationJob` (hipotetico, deuda historica FC1.2) -> reconcilia `Invoice.AnnulmentStatus = Pending` (modelo de datos "factura origen + su AnnulmentStatus").
+- `PartialCreditNotePostingReconciliationJob` (Fase 2) -> reconcilia `Invoice.Resultado = 'PENDING'` con `OriginalInvoiceId IS NOT NULL` (modelo de datos "NC nueva + su Resultado ARCA").
+
+La deuda historica del comentario en `Invoice.cs:62` se documenta como **fuera de scope Fase 2** — si el contador o la operacion la requieren mas adelante, sub-fase opt-in F2.6b separada (no se asume).
 
 **Tareas atomicas**:
 
-1. Crear `src/TravelApi.Infrastructure/Jobs/PartialCreditNotePostingReconciliationJob.cs`. Patron: replicar la estructura de `PartialCreditNoteBridgeReconciliationJob` (que existe y se valido en Fase 1):
+1. Crear `src/TravelApi.Infrastructure/Services/PartialCreditNotePostingReconciliationJob.cs`. **RH2-005 (round 3)**: la convencion del repo es `Infrastructure/Services/` para jobs (verificado: `PartialCreditNoteBridgeReconciliationJob` esta en `Services/`, no en `Jobs/`). Patron: replicar la estructura de `PartialCreditNoteBridgeReconciliationJob` (que existe y se valido en Fase 1):
    - Cron (mismo intervalo que el job bridge, ej. cada 5 min).
    - Contador anti-spam (no notificar la misma `Invoice` cada vez).
    - Max retries antes de notify a operador.
@@ -856,10 +1222,10 @@ El reviewer detecto que el plan v1 mencionaba "extender `ArcaAnnulmentReconcilia
 
 **Criterio de aceptacion FC1.3.F2.6a**:
 
-- Verificar si `ArcaAnnulmentReconciliationJob` existe en `src/TravelApi.Infrastructure/Jobs/`. Si NO existe, ajustar el §FC1.3.F2.6a justificacion (entonces NO hay riesgo de coupling, pero el job nuevo sigue siendo lo correcto por separation of concerns).
+- **RH2-008 cerrado round 4**: `ArcaAnnulmentReconciliationJob` confirmado NO existe en `src/` (solo comentario aspiracional en `Invoice.cs:62`). El job nuevo es la unica implementacion presente para reconciliar NCs FC1.3 — sin riesgo de coupling.
 - Test integration `ReconciliationJob_PartialNcStuckInPending_QueriesArcaAndUpdatesStatus`.
 - Test integration `ReconciliationJob_PartialNcSucceededInArca_TransitionsBCToAwaitingFiscal`.
-- Test integration `ReconciliationJob_DoesNotTouchFc12NcTotal`: seed factura + NC total FC1.2 en Pending. Job F2.6a NO la toca (responsibility de `ArcaAnnulmentReconciliationJob` si existe, o de otro job).
+- Test integration `ReconciliationJob_DoesNotTouchFc12NcTotal`: seed factura + NC total FC1.2 en Pending. Job F2.6a NO la toca (responsibility seria de un job FC1.2 separado si llegara a implementarse — fuera de scope Fase 2).
 - Test integration `ReconciliationJob_RetryCounter_NotifiesAfterNAttempts`.
 
 **Dependencias**: FC1.3.F2.2 (emite las NCs parciales que este job va a reconciliar).
@@ -899,13 +1265,14 @@ El reviewer detecto que el plan v1 mencionaba "extender `ArcaAnnulmentReconcilia
 | `src/TravelApi.Domain/Entities/FiscalLiquidation.cs` | F2.1 | Owned VO con 10 props. Mismo patron que `FiscalSnapshot`. |
 | `src/TravelApi.Domain/Entities/IvaProrrateoMode.cs` | F2.0 | Enum 2 valores (ProportionalToNet, PerItem). |
 | `src/TravelApi.Application/DTOs/Cancellation/FiscalLiquidationInput.cs` | F2.2 | Record con items + montos + currency + TC. Lo que `EnqueuePartialCreditNoteAsync` recibe. |
+| `src/TravelApi.Application/DTOs/AfipDtos.cs` (MODIFICA, sumar record `ArcaCompoundQueryResult`) | F2.2 | **RH3-001 (round 4) Camino A**: DTO nuevo para el resultado de `QueryLastAuthorizedWithDetailsAsync`. Record con `Found, LastNumero, Cae, CbteAsoc, IssuedAt, ImporteTotal, MonId, MonCotiz`. Usado por la capa 1.5 stale key recovery. |
 | `src/TravelApi.Application/DTOs/Cancellation/PartialCreditNoteLineDto.cs` | F2.2 | Una linea individual de la NC parcial (Description, Quantity, Total, AlicuotaIvaId). |
 | `src/TravelApi.Infrastructure/Services/PartialCreditNoteIvaCalculator.cs` | F2.2 | Helper puro para prorratear IVA segun mode. Testeable sin DB. |
-| `src/TravelApi.Infrastructure/Jobs/PartialCreditNotePostingReconciliationJob.cs` | F2.6a | Job NUEVO de reconciliacion ARCA para NCs parciales en Pending (cierra RH-006). |
-| `src/TravelApi.Infrastructure/Jobs/FC13Phase2DualFlowJob.cs` | F2.4 [GATED] | Solo si gate G-F2-A se abre. Job step 2 para casos TotalPlusNewInvoice. |
+| `src/TravelApi.Infrastructure/Services/PartialCreditNotePostingReconciliationJob.cs` | F2.6a | Job NUEVO de reconciliacion ARCA para NCs parciales en Pending (cierra RH-006). **RH2-005 (round 3)**: path corregido de `Jobs/` a `Services/` para alinear con la convencion existente (`PartialCreditNoteBridgeReconciliationJob` esta en `Services/`). |
+| `src/TravelApi.Infrastructure/Services/FC13Phase2DualFlowJob.cs` | F2.4 [GATED] | Solo si gate G-F2-A se abre. Job step 2 para casos TotalPlusNewInvoice. **RH2-005 (round 3)**: path corregido. |
 | `tools/sql/fase2-m1-prevalidation-metadata.sql` | F2.1.0 | Script standalone de validacion pre-backfill (cierra RH-001). NO migracion. |
 | `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M0_AddFc13Phase2Settings.cs` | F2.0 | 4 cols settings + validacion + `ReviewRequiredReason.HasProvincialTributes` (no requiere col DB, es bitflag int). |
-| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M1_AddFiscalLiquidationOwnedVoAndBackfill.cs` | F2.1 | 10 cols owned VO + CHECK suma + backfill SQL en DOS PASOS atomicos (RH-001) + tabla `ArcaIdempotencyKeys` para idempotencia ARCA (RH-004). M1 NO se aplica hasta que F2.1.0 paso con count = 0. **Decision M1 (cierra M1 reviewer)**: 1 migracion fisica con todo (mismo patron Fase 1) — el snapshot EF queda monolitico, se acepta a cambio de tener atomicidad para el rollback. Justificacion en §T6.4. |
+| `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M1_AddFiscalLiquidationOwnedVoAndBackfill.cs` | F2.1 + F2.5 | 10 cols owned VO + CHECK suma + CHECK consistency (RH3-003 igualdad exacta sin tolerancia) + backfill SQL en DOS PASOS atomicos (RH-001, paso 5.B lee `bc.LiquidationComputedAt` directamente) + tabla `ArcaIdempotencyKeys` para idempotencia ARCA (RH-004) con columna `LastSeenNumeroBeforePost int NULL` (RH3-001 round 4 Camino A) + **RH2-002 (round 3)**: 2 cols `Invoice.MonId (nvarchar(3) DEFAULT 'PES')` + `Invoice.MonCotiz (numeric(18,6) DEFAULT 1)` para multimoneda en SOAP envelope. M1 NO se aplica hasta que F2.1.0 paso con count = 0. **Decision M1 (cierra M1 reviewer)**: 1 migracion fisica con todo (mismo patron Fase 1) — el snapshot EF queda monolitico, se acepta a cambio de tener atomicidad para el rollback. Justificacion en §T6.4. |
 | `src/TravelApi.Infrastructure/Persistence/Migrations/App/{ts}_Fase2_M2_AddDualFlowSupport.cs` | F2.4 [GATED] | Solo si gate G-F2-A se abre. `PostCancellationInvoiceId` + enum status 12. |
 | `src/TravelApi.Tests/Unit/PartialCreditNoteIvaCalculatorTests.cs` | F2.2 | 12 unit tests. |
 | `src/TravelApi.Tests/Cancellation/Integration/PartialCreditNoteRealEmissionTests.cs` | F2.2 + F2.3 | 12 integration tests del flow real. |
@@ -918,19 +1285,23 @@ El reviewer detecto que el plan v1 mencionaba "extender `ArcaAnnulmentReconcilia
 
 | Archivo | Sub-fase | Que cambia |
 |---|---|---|
-| `src/TravelApi.Domain/Entities/OperationalFinanceSettings.cs` | F2.0 | + 4 settings nuevos. |
+| `src/TravelApi.Domain/Entities/OperationalFinanceSettings.cs` | F2.0 | + 5 settings nuevos (round 3 suma `IdempotencyKeyStaleThresholdMinutes` por RH2-004). |
+| `src/TravelApi.Domain/Entities/Invoice.cs` | F2.5 | + `MonId (nvarchar(3) DEFAULT 'PES')` + `MonCotiz (numeric(18,6) DEFAULT 1)` (cierra RH2-002). Cambios DEFAULT garantizan back-compat FC1.2. |
+| `src/TravelApi.Application/DTOs/CreateInvoiceRequest.cs` | F2.5 | + `MonId` (default `"PES"`) + `MonCotiz` (default `1m`) (cierra RH2-002). Props opcionales — callers FC1.2 mandan defaults. |
 | `src/TravelApi.Domain/Entities/ReviewRequiredReason.cs` | F2.0.G-F2-C | + `HasProvincialTributes = 1 << 11` (cierra G-F2-C). |
 | `src/TravelApi.Domain/Entities/BookingCancellation.cs` | F2.1 + F2.4 [gated] | + `FiscalLiquidation` owned VO + (gated) `PostCancellationInvoiceId`. |
 | `src/TravelApi.Domain/Entities/BookingCancellationStatus.cs` | F2.4 [GATED] | + `PartialFiscalAwaitingNewInvoice = 12` SOLO si gate G-F2-A abierto. |
-| `src/TravelApi.Infrastructure/Persistence/AppDbContext.cs` | F2.1 | + config owned VO `FiscalLiquidation` con prefix + tabla `ArcaIdempotencyKeys` (RH-004). |
+| `src/TravelApi.Infrastructure/Persistence/AppDbContext.cs` | F2.1 | + config owned VO `FiscalLiquidation` con prefix + tabla `ArcaIdempotencyKeys` (RH-004) con columna nueva `LastSeenNumeroBeforePost int NULL` (RH3-001 round 4 Camino A). |
 | `src/TravelApi.Application/Interfaces/IInvoiceService.cs` | F2.2 | + `EnqueuePartialCreditNoteAsync`. |
+| `src/TravelApi.Application/Interfaces/IAfipService.cs` | F2.2 | **RH3-001 (round 4) Camino A**: + `QueryLastAuthorizedWithDetailsAsync(int puntoVenta, int cbteTipo, int? lastSeenNumeroBeforePost, CancellationToken ct)`. Devuelve `ArcaCompoundQueryResult`. Usado por la capa 1.5 stale key recovery. |
+| `src/TravelApi.Application/DTOs/AfipDtos.cs` | F2.2 | **RH3-001 (round 4) Camino A**: extender `AfipVoucherDetails` con campos OPCIONALES nullable `Cae`, `CbteAsoc`, `IssuedAt`, `MonId`, `MonCotiz` para soportar la respuesta enriquecida de `GetVoucherDetails`. **NO romper otros callers** — todos los campos nuevos son nullable y el parseo SOAP los deja `null` si no estan en el response. |
 | `src/TravelApi.Infrastructure/Services/InvoiceService.cs` | F2.2 + F2.4 [gated] | + `EnqueuePartialCreditNoteAsync` + `ProcessPartialCreditNoteJob` + (gated) `EnqueueNewInvoiceForRemainder`. |
 | `src/TravelApi.Infrastructure/Services/BookingCancellationService.cs` | F2.3 + F2.4 [gated] | Reemplazar lineas 1431-1468 con flow nuevo (gated por flag F2) + persistir doble representacion FiscalLiquidation (RH-002) + (gated) handler dual flow casos 4/7. |
 | `src/TravelApi.Infrastructure/Services/FiscalLiquidationCalculator.cs` | F2.0.G-F2-C + F2.5 | + deteccion `HasProvincialTributes` (G-F2-C). + quitar disparador `MultiCurrency` cuando F2 ON. |
 | `src/TravelApi/Program.cs` | F2.0 + F2.6a | + registro `PartialCreditNotePostingReconciliationJob` + validacion startup pre-condicion F2 requiere F1. |
 | `src/TravelApi.Application/DTOs/Cancellation/BookingCancellationDto.cs` | F2.1 | + exposicion del FiscalLiquidation. |
 | `src/TravelApi.Application/Constants/AuditActions.cs` | F2.3 + F2.4 [gated] | + `BookingCancellationPartialCreditNoteEmitted`, **`PartialCreditNoteEconomicReversalNoCascade`** (G-F2-D + RH-005), + (gated) `BookingCancellationFiscalDualStep1Submitted`, `BookingCancellationFiscalDualStep2Submitted`, `BookingCancellationDualFlowForceStep2`. |
-| `src/TravelApi.Infrastructure/Services/AfipService.cs` | F2.3 + F2.5 | **F2.3 (RH-005)**: modificar `ApplyCreditNoteEconomicReversalAsync` para distinguir NC total vs parcial (NC parcial NO cascade-voider receipts + audit `PartialCreditNoteEconomicReversalNoCascade`). **F2.5 (M3 reviewer)**: + soporte `MonId` + `MonCotiz` parametrizables (con defaults PES/1 para no romper resto). Cambia firma `CreateInvoiceRequest` con parametros opcionales. **Callers a auditar para M3**: (a) `InvoiceService.EnqueueAnnulmentAsync` -> usa defaults, no requiere cambio. (b) Frontend al crear factura nueva manual -> usa defaults. (c) Tests integration de FC1.2 -> usan defaults. Criterio aceptacion M3: tests integration de los callers existentes siguen verdes con defaults `MonId="PES"`, `MonCotiz=1`. |
+| `src/TravelApi.Infrastructure/Services/AfipService.cs` | F2.2 + F2.3 + F2.5 | **F2.2 (RH3-001 round 4 Camino A)**: sumar metodo nuevo `QueryLastAuthorizedWithDetailsAsync` que internamente reusa `GetNextVoucherNumber` (cambia visibilidad a internal o lo invoca via un helper) + `GetVoucherDetails`. Extender el parseo SOAP de `GetVoucherDetails` (linea 1195+) para mapear nodos `CodAutorizacion -> Cae`, primer item del array `CbtesAsoc -> CbteAsoc`, `CbteFch -> IssuedAt` (formato `yyyyMMdd`), `MonId`, `MonCotiz` cuando esten presentes en el response. Estos campos son OPCIONALES en `AfipVoucherDetails` y se dejan `null` si no aparecen. **F2.3 (RH-005)**: modificar `ApplyCreditNoteEconomicReversalAsync` (linea 1006-1114) para distinguir NC total vs parcial — discriminacion **primaria por `bc.CreditNoteKind`** (RH2-003 round 3), fallback por monto solo cuando BC no esta asociado. NC parcial NO cascade-voider receipts + audit `PartialCreditNoteEconomicReversalNoCascade` con `liveReceipts` cargados via `_context.PaymentReceipts.Where(r => r.Payment.RelatedInvoiceId == invoice.OriginalInvoiceId && r.Status == PaymentReceiptStatuses.Issued)` (cierra RH2-006). **F2.5 (M3 reviewer + RH2-002 round 3 + RH3-002 round 4)**: tarea 0 grep auditoria de `MonId/MonCotiz` (confirma solo lineas 879-880). `CreatePendingInvoice` (linea 564+) puebla `invoice.MonId` + `invoice.MonCotiz` desde `request.MonId` + `request.MonCotiz`. `ProcessInvoiceJob` (linea 729+) lee `invoice.MonId/MonCotiz` (ya disponibles en la entidad cargada) e interpola en el XML SOAP linea 879-880 (`<MonId>{invoice.MonId}</MonId><MonCotiz>{invoice.MonCotiz.ToString("0.000000", CultureInfo.InvariantCulture)}</MonCotiz>`). **Callers a auditar para M3**: (a) `InvoiceService.EnqueueAnnulmentAsync` -> arma `CreateInvoiceRequest` sin setear MonId/MonCotiz, usa defaults. (b) Frontend al crear factura nueva manual -> JSON no incluye campos -> defaults aplican. (c) Tests integration de FC1.2 -> usan defaults. Criterio aceptacion M3 (RH2-002): tests `Fc12NormalInvoice_StillEmitsWithPesos` + `Fc12Annulment_StillEmitsWithPesos` verdes confirmando defaults `MonId="PES"`, `MonCotiz=1`. Criterio aceptacion RH3-002: grep post-refactor sin ocurrencias hardcoded fuera de comentarios. |
 
 ### T4.3 Archivos NO tocados
 
@@ -1173,7 +1544,7 @@ El reviewer planteo si separar las migraciones de Fase 2 para que el snapshot EF
 
 ## T8. Open questions / dependencias del contador
 
-**Importante**: estas son las open questions de **arquitectura tecnica**. Las del contador (12 puntos round 3) ya estan en `docs/operations/2026-05-21-mensaje-contador-fc1-3-round-3.md` y se mapean a F1..F4 de §T1.3.
+**Importante**: estas son las open questions de **arquitectura tecnica**. Las del contador (5 preguntas fiscales F1..F5 + 8 confirmaciones profesionales + 1 confirmacion G4 = 14 puntos round 3) estan en `docs/operations/2026-05-21-mensaje-contador-fc1-3-round-3.md` y las fiscales se mapean a F1..F5 de §T1.3 (F5 se sumo en round 2 sobre TC en NC parcial multimoneda — ver OQ-E).
 
 ### OQ-1: Verificar comportamiento ARCA con multiples NCs parciales sobre misma factura origen
 
@@ -1252,7 +1623,7 @@ El reviewer planteo si separar las migraciones de Fase 2 para que el snapshot EF
 
 ---
 
-## T10. Tabla de cierre round 2 — bloqueantes + decisiones nuevas
+## T10. Tabla de cierre — bloqueantes + decisiones (round 2 + round 3)
 
 ### T10.1 Cierre de bloqueantes RH-001..RH-006
 
@@ -1287,12 +1658,35 @@ El reviewer planteo si separar las migraciones de Fase 2 para que el snapshot EF
 | **Minor counter Serilog adicional** | `Fc13.PartialCreditNote.LiquidationSumValidationFailedAtEnqueue` separado | §FC1.3.F2.6 lista de counters actualizada. |
 | **Minor ADR-009 §12** | Documentar dualidad Metadata + columnas como deliberada | A incluir en `§12.1` de ADR-009 amendment (sub-task de F2.7). |
 
+### T10.4 Cierre de hallazgos round 3 (RH2-001..RH2-007)
+
+| ID | Severidad | Titulo del hallazgo | Donde se cierra en el plan v3 | Test / evidencia |
+|---|---|---|---|---|
+| **RH2-001** | BLOQUEANTE | Query SQL §FC1.3.F2.4.0 sobrecuenta casos 4 y 7 por bitflags | §FC1.3.F2.4.0 reescrita usando `bc."CreditNoteKind" = 2` (`CreditNoteKind.TotalPlusNewInvoice`, verificado en `CreditNoteKind.cs:24`). Comentario inline explica la prioridad estricta del calculator. | Manual: comparar output de la query vieja vs nueva sobre dump staging — la nueva da count <= vieja. Para QA: seed 3 BCs (Factura A + RetentionChangesNature, Factura B + OriginalInvoiceUnclear, Factura B sin flags) y verificar que la nueva cuenta solo el segundo. |
+| **RH2-002** | BLOQUEANTE | F2.5 multimoneda no toca el XML SOAP hardcoded en `AfipService.cs:879-880` | §FC1.3.F2.5 expandida con 9 tareas atomicas: columnas `Invoice.MonId/MonCotiz` en M1, DTO `CreateInvoiceRequest` con props opcionales default `("PES", 1)`, refactor `CreatePendingInvoice` + `ProcessInvoiceJob` con interpolacion del XML, mapping en `ProcessPartialCreditNoteJob`. §T4.1 + §T4.2 actualizados con todos los archivos. §T2.2 advierte sobre el riesgo de regresion FC1.2. | `Fc12NormalInvoice_StillEmitsWithPesos`, `Fc12Annulment_StillEmitsWithPesos`, `PartialCreditNoteUsd_EmitsWithDolarAndSnapshotRate`, `PartialCreditNoteArs_EmitsWithPesoAndOne`. |
+| **RH2-003** | MAJOR | Discriminacion NC total vs parcial fragil por monto | §FC1.3.F2.3 punto 5 reescrito: `bc.CreditNoteKind == PartialOnOriginal` es discriminador **primario**. Comparacion por monto solo como fallback historico para NCs sin BC asociado. Pseudocodigo explicito agregado. Verificado en codigo: `BookingCancellation.CreditNoteInvoiceId` existe (`BookingCancellation.cs:50`). | Tests integration de §FC1.3.F2.3 punto 5 cubren ambas ramas (path canonico + fallback). |
+| **RH2-004** | MAJOR | Idempotencia ARCA con key huerfana entre INSERT y POST | §FC1.3.F2.2 punto 4 expandido con "capa 1.5 — stale key recovery". Setting nuevo `IdempotencyKeyStaleThresholdMinutes` (default 10) sumado a `OperationalFinanceSettings` (§FC1.3.F2.0). Logica de recovery con dos ramas (POST viajo -> derivar CAE; POST nunca viajo -> borrar key + retry limpio). | `ProcessPartialCreditNoteJob_KeyOrphanedAfterCrash_AllowsRetryAfterStaleThreshold`. |
+| **RH2-005** | MINOR | Ruta del job nuevo inconsistente (`Jobs/` vs `Services/`) | §FC1.3.F2.6a + §T4.1 + §T4.2 actualizados: todas las ocurrencias de `Infrastructure/Jobs/` migradas a `Infrastructure/Services/` (convencion verificada: `PartialCreditNoteBridgeReconciliationJob` esta en `Services/`). | Manual: review de §T4.1 muestra paths corregidos. |
+| **RH2-006** | MINOR | Audit `PartialCreditNoteEconomicReversalNoCascade` con `ReceiptsAffected` sin query especificada | §FC1.3.F2.3 punto 5 ahora incluye query EF Core explicita: `_context.PaymentReceipts.Include(r => r.Payment).Where(r => r.Payment.RelatedInvoiceId == invoice.OriginalInvoiceId && r.Status == PaymentReceiptStatuses.Issued)`. Verificado en codigo: `PaymentReceipt.cs`, `Payment.RelatedInvoiceId` (`Payment.cs:50`), `PaymentReceiptStatuses.Issued` (constante string, no enum). | Test integration `ApplyCreditNoteEconomicReversal_NcParcial_MultiPayments_NoCascade` (ya existia en v2) confirma que `liveReceipts` tiene los 3 IDs esperados. |
+| **RH2-007** | INFO | "12 puntos round 3" inconsistente con doc real | §T8 corregido a "5 preguntas fiscales (F1..F5) + 8 confirmaciones profesionales + 1 confirmacion G4 = 14 puntos round 3". §T1.4 punto 3 ajustado (la sub-pregunta TC multimoneda ya esta en el mensaje round 3 como F5, no "round 4 futuro"). | Manual: cross-check con `docs/operations/2026-05-21-mensaje-contador-fc1-3-round-3.md` linea 3 ("13 puntos: 4 fiscales nuevas + 8 confirmaciones profesionales + 1 confirmacion G4") + linea 5 (F5 sumada round 2) = 14 puntos efectivos. |
+
 ---
 
-**Fin del plan tactico Fase 2 v2 round 2.** Pendiente review de `software-architect-reviewer` round 2 para validar:
+### T10.5 Cierre de hallazgos round 4 (RH3-001..RH3-003 + RH2-008)
 
-1. Cierre efectivo de RH-001..RH-006 (en particular el dos-pasos del backfill y la idempotencia ARCA de dos capas).
-2. Aplicacion correcta de G-F2-A (F2.4 fuera del PR base).
-3. Aplicacion correcta de G-F2-C (flag bitwise + calculator).
-4. Aplicacion correcta de G-F2-D (cascade receipts politica + tests con 3 payments).
-5. Decision M1 monolitica documentada con justificacion.
+| ID | Severidad | Titulo del hallazgo | Donde se cierra en el plan v4 | Test / evidencia |
+|---|---|---|---|---|
+| **RH3-001** | BLOQUEANTE | Capa 1.5 stale key recovery invocaba metodo + DTO que no existen | §FC1.3.F2.2 capa 1.5 reescrita con sub-tareas A.1..A.7 (Camino A robusto, Gaston). DTO nuevo `ArcaCompoundQueryResult` (§T4.1 + §T4.2 `AfipDtos.cs`). Metodo nuevo `QueryLastAuthorizedWithDetailsAsync` en `IAfipService` (§T4.2). Extension de `GetVoucherDetails` SOAP parsing para sumar `Cae`, `CbteAsoc`, `IssuedAt`, `MonId`, `MonCotiz` como nullable. Columna `LastSeenNumeroBeforePost int NULL` en `ArcaIdempotencyKeys` (M1 + §T4.2 `AppDbContext.cs`). Counter `Fc13.PartialCreditNote.RecoveredFromStaleKey` (§FC1.3.F2.6). | `ProcessPartialCreditNoteJob_KeyOrphanedPostNeverArrived_DeletesKeyAndRetries`, `ProcessPartialCreditNoteJob_KeyOrphanedPostArrived_RecoversFromArca`, `ProcessPartialCreditNoteJob_KeyOrphanedMismatchAmount_TreatsAsPostNeverArrived`. |
+| **RH3-002** | MINOR | Auditoria `<MonId>/<MonCotiz>` faltante pre-refactor F2.5 | §FC1.3.F2.5 tarea atomica 0 (pre-refactor): correr `grep -n "MonId\|MonCotiz" src/TravelApi.Infrastructure/Services/AfipService.cs` antes de tocar. Hoy se conoce ocurrencias en linea 879-880; si grep muestra mas, integrarlas. Criterio aceptacion: post-refactor `grep -c "PES\b\|MonCotiz>1"` da cero o solo en comentarios. | Manual: ejecucion del grep documentada en doc trainee F2.7. |
+| **RH3-003** | MINOR | CHECK consistency podria dispararse en backfill por divergencia JSON vs columna | Backfill paso 5.B reescrito: `"FiscalLiquidation_ComputedAt" = bc."LiquidationComputedAt"` (lee de columna summary Fase 1, NO del JSON). CHECK `chk_BookingCancellations_fiscalliquidation_consistency` queda como igualdad exacta sin tolerancia. SQL del CHECK explicitado en §FC1.3.F2.1 punto 4. | Test integration `Backfill_FromExistingApprovalMetadata_PopulatesAllColumns` (ya existia v2) ahora valida igualdad exacta entre las dos columnas. |
+| **RH2-008** | INFO | Justificacion §FC1.3.F2.6a referenciaba job hipotetico | §FC1.3.F2.6a reescrita. Verificado con `Grep "class ArcaAnnulmentReconciliationJob"` -> 0 matches en `src/`. Solo existe como comentario aspiracional en `Invoice.cs:62` + mencion en migracion legacy `20260514030142_FC1_AddCancellationModule.cs`. Patron replicado: `PartialCreditNoteBridgeReconciliationJob` (si existe y funciona). Deuda historica fuera de scope Fase 2 — sub-fase opt-in F2.6b si llega a requerirse. | Manual: ejecucion del Grep documentada en el changelog v3 -> v4. |
+
+---
+
+**Fin del plan tactico Fase 2 v4 round 4.** Pendiente review de `software-architect-reviewer` round 4 para validar:
+
+1. Cierre efectivo de RH3-001 (Camino A robusto: DTO + metodo + columna nuevos, sin invocaciones a APIs inexistentes).
+2. Backfill paso 5.B leyendo `bc.LiquidationComputedAt` directamente — CHECK consistency con igualdad exacta sin riesgo de falso positivo (RH3-003).
+3. Pre-refactor F2.5 tarea atomica 0 ejecutada y documentada (RH3-002).
+4. Justificacion F2.6a alineada con la realidad del repo: `ArcaAnnulmentReconciliationJob` NO existe (RH2-008).
+5. Mantenimiento de los cierres v2 + v3 (RH-001..RH-006 + G-F2-A/C/D + M1..M4 + RH2-001..RH2-007 + minors) sin regresion.
