@@ -31,6 +31,28 @@ public class Invoice : IHasPublicId
     [Column(TypeName = "decimal(18,2)")]
     public decimal ImporteIva { get; set; }
 
+    // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.5, 2026-05-27): moneda del
+    // comprobante segun el catalogo de ARCA. Hoy (FC1.2) todo se factura en pesos,
+    // asi que el default deja la estructura lista sin cambiar comportamiento.
+    //
+    // IMPORTANTE: en esta sub-fase (Etapa 0) estas dos columnas son INERTES. El XML
+    // SOAP que se manda a ARCA en AfipService sigue hardcoded en 'PES'/1 por ahora;
+    // el uso real (multimoneda) lo conecta F2.5, NO esta etapa. Solo creamos la
+    // estructura para que la migracion F2.5 no tenga que tocar el schema.
+
+    /// <summary>
+    /// Codigo de moneda de ARCA. "PES" = pesos argentinos, "DOL" = dolar, etc.
+    /// Default "PES" para back-compat con FC1.2: las facturas que ya existen y los
+    /// callers que no setean este campo quedan en pesos sin cambios.
+    /// </summary>
+    public string MonId { get; set; } = "PES";
+
+    /// <summary>
+    /// Cotizacion de la moneda contra el peso. Para "PES" siempre vale 1. Para una
+    /// moneda extranjera seria el tipo de cambio del comprobante. Default 1 (pesos).
+    /// </summary>
+    public decimal MonCotiz { get; set; } = 1m;
+
     public bool WasForced { get; set; }
     public string? ForceReason { get; set; }
     public string? ForcedByUserId { get; set; }

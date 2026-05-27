@@ -313,6 +313,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ClientCreditEntry> ClientCreditEntries => Set<ClientCreditEntry>();
     public DbSet<ClientCreditWithdrawal> ClientCreditWithdrawals => Set<ClientCreditWithdrawal>();
 
+    // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.2, 2026-05-27): tabla operacional
+    // (no fiscal) para idempotencia de emision de NC parcial al ARCA. Evita doble-POST
+    // si Hangfire reintenta el job. Configuracion (indice UNIQUE) en OnModelCreating.
+    public DbSet<ArcaIdempotencyKey> ArcaIdempotencyKeys => Set<ArcaIdempotencyKey>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -571,6 +576,22 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(i => i.ForcedByUserName).HasMaxLength(200);
             entity.Property(i => i.OutstandingBalanceAtIssuance).HasPrecision(18, 2);
             entity.HasIndex(i => i.CreatedAt);
+
+            // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.5, 2026-05-27): moneda del
+            // comprobante. NOT NULL con default a nivel BD ('PES' / 1) para que las
+            // filas existentes (FC1.2) y los callers que no setean estos campos queden
+            // en pesos. El HasDefaultValue ademas mantiene migracion <-> snapshot
+            // coherentes: sin el, EF detecta drift entre el defaultValue de la
+            // migracion y el modelo (mismo patron que FiscalLiquidation_Currency).
+            //
+            // Estas columnas son INERTES en esta etapa: el SOAP de AfipService sigue
+            // mandando 'PES'/1 hardcoded. El uso real es F2.5.
+            entity.Property(i => i.MonId)
+                  .HasMaxLength(3)
+                  .HasDefaultValue("PES");
+            entity.Property(i => i.MonCotiz)
+                  .HasPrecision(18, 6)
+                  .HasDefaultValue(1m);
 
             // B1.15 Fase 1: trazabilidad de quien emitio la factura.
             entity.Property(i => i.IssuedByUserId).HasMaxLength(450);
@@ -1444,6 +1465,29 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(m => m.OperatorRefundReceivedId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ===== ArcaIdempotencyKey (FC1.3 Fase 2 §FC1.3.F2.2, 2026-05-27) =====
+        // Tabla operacional anti-doble-POST de NC parcial al ARCA. Ver comentario
+        // de la entidad ArcaIdempotencyKey para el por que completo.
+        modelBuilder.Entity<ArcaIdempotencyKey>(entity =>
+        {
+            // Key = hash SHA256 en hex (64 chars fijos). Acotamos a varchar(64) en vez
+            // de text libre: autodocumenta el contrato del hash y es mas predecible para
+            // el indice UNIQUE. Si F2.2 cambiara el algoritmo, ampliar el varchar es una
+            // migracion aditiva trivial.
+            entity.Property(k => k.Key).IsRequired().HasMaxLength(64);
+
+            // JobId de Hangfire = id numerico corto como string. varchar(50) holgado.
+            entity.Property(k => k.JobId).HasMaxLength(50);
+
+            // Indice UNIQUE sobre Key = corazon del mecanismo anti-duplicados.
+            // Cuando un reintento de Hangfire intenta insertar la misma key, Postgres
+            // rechaza el INSERT (violacion de unique) y el job sabe que ya hubo un
+            // intento previo -> consulta ARCA en vez de re-emitir.
+            entity.HasIndex(k => k.Key)
+                  .IsUnique()
+                  .HasDatabaseName("IX_ArcaIdempotencyKeys_Key");
         });
     }
 

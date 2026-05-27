@@ -365,6 +365,12 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
         // necesitan que la tabla este limpia entre tests para no contaminar
         // los queries por EntityId/RequestType. El CASCADE arrastra tambien
         // los FKs de Invoices.AnnulmentApprovalRequestId si los hubiera.
+        //
+        // FC1.3 Fase 2 Etapa 0 (2026-05-27): se agrega "ArcaIdempotencyKeys" al
+        // TRUNCATE. Los tests de la migracion Fase2_M1b (UNIQUE index anti-doble-POST)
+        // seedean keys reales y necesitan la tabla limpia entre tests para no chocar
+        // por el indice UNIQUE de un test previo. No tiene FKs hacia el resto del
+        // modulo (es operacional), por eso el orden no importa.
         await ctx.Database.ExecuteSqlRawAsync("""
             TRUNCATE TABLE
                 "ClientCreditWithdrawals",
@@ -381,6 +387,7 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
                 "Customers",
                 "Suppliers",
                 "ApprovalRequests",
+                "ArcaIdempotencyKeys",
                 "AuditLogs"
             RESTART IDENTITY CASCADE;
             """);
