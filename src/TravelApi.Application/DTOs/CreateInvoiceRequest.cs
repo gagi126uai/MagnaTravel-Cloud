@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace TravelApi.Application.DTOs;
 
 public class CreateInvoiceRequest
@@ -7,14 +9,65 @@ public class CreateInvoiceRequest
     public int Concepto { get; set; } = 3; // 1: Productos, 2: Servicios, 3: Ambos
     public int DocTipo { get; set; } = 99;
     public long DocNro { get; set; } = 0;
-    
+
     public List<InvoiceItemDto> Items { get; set; } = new();
     public List<InvoiceTributeDto> Tributes { get; set; } = new();
-    public string? OriginalInvoiceId { get; set; } 
-    public bool IsCreditNote { get; set; } 
-    public bool IsDebitNote { get; set; } 
+    public string? OriginalInvoiceId { get; set; }
+    public bool IsCreditNote { get; set; }
+    public bool IsDebitNote { get; set; }
     public bool ForceIssue { get; set; }
     public string? ForceReason { get; set; }
     public string? ForcedByUserId { get; set; }
     public string? ForcedByUserName { get; set; }
+
+    /// <summary>
+    /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): desglose de totales YA REDONDEADO que el
+    /// caller calculo aparte (la NC parcial lo trae del <c>PartialCreditNoteIvaCalculator</c>).
+    ///
+    /// <para><b>Por que existe</b>: el pipeline compartido (<c>CreatePendingInvoice</c> +
+    /// <c>ProcessInvoiceJob</c>) recalcula el IVA item por item SIN redondear y recien redondea
+    /// al serializar. Con varias lineas de la misma alicuota, la suma de los redondeos por
+    /// linea puede diferir en 1-2 centavos del redondeo del agregado, y el ARCA rebota el
+    /// comprobante. Cuando el caller ya tiene el cuadre exacto (mismos numeros que valida
+    /// antes de POSTear), lo pasa por aca y el pipeline usa ESTOS numeros tal cual, sin
+    /// recalcular.</para>
+    ///
+    /// <para><b>null = comportamiento FC1.2 actual</b>: la facturacion normal y la NC total
+    /// NO pueblan este campo. Si es <c>null</c>, el pipeline calcula los totales exactamente
+    /// como hasta hoy (no cambia una sola linea de comportamiento para esos flujos).</para>
+    /// </summary>
+    public InvoiceTotalsOverride? TotalsOverride { get; set; }
 }
+
+/// <summary>
+/// FC1.3.F2.2 (fix fiscal B1): totales del comprobante YA REDONDEADOS a 2 decimales por el
+/// caller, listos para viajar al ARCA sin recalculo.
+///
+/// <para>El invariante que garantiza este override es el que exige el ARCA:
+/// <c>ImpTotal == ImpNeto + ImpIVA + ImpTrib</c> y <c>ImpIVA == Σ AlicIvas.Importe</c>,
+/// con <c>ImpNeto == Σ AlicIvas.BaseImp</c>. El caller es responsable de que estos numeros
+/// cierren EXACTO a 2 decimales antes de armar el override.</para>
+/// </summary>
+/// <param name="AlicIvas">Desglose de IVA por alicuota, con Importe ya redondeado por grupo.</param>
+/// <param name="ImpNeto">Neto total (suma de las bases imponibles), ya redondeado.</param>
+/// <param name="ImpIVA">IVA total (suma de los Importe por grupo), ya redondeado.</param>
+/// <param name="ImpTrib">Total de tributos, ya redondeado. 0 cuando no hay tributos.</param>
+/// <param name="ImpTotal">Total del comprobante (neto + IVA + tributos), ya redondeado.</param>
+public record InvoiceTotalsOverride(
+    IReadOnlyList<AlicIvaOverride> AlicIvas,
+    decimal ImpNeto,
+    decimal ImpIVA,
+    decimal ImpTrib,
+    decimal ImpTotal);
+
+/// <summary>
+/// FC1.3.F2.2 (fix fiscal B1): una alicuota del desglose de IVA, con el importe YA redondeado
+/// por grupo. Equivale a un nodo <c>AlicIva</c> del XML del ARCA.
+/// </summary>
+/// <param name="Id">Codigo de alicuota ARCA (3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%).</param>
+/// <param name="BaseImp">Base imponible acreditada con esta alicuota (suma del Total de las lineas del grupo).</param>
+/// <param name="Importe">IVA de este grupo, ya redondeado a 2 decimales (round(BaseImp * tasa, 2)).</param>
+public record AlicIvaOverride(
+    int Id,
+    decimal BaseImp,
+    decimal Importe);

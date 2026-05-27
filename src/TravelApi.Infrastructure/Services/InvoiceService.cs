@@ -1093,52 +1093,713 @@ public class InvoiceService : IInvoiceService
     }
 
     /// <summary>
-    /// FC1.3.F2.2 — Background Job de emision de NC PARCIAL. ESQUELETO (Etapa 4 de 5).
+    /// FC1.3.F2.2 (Etapa 5, plan tactico §FC1.3.F2.2, 2026-05-27): Background Job que
+    /// emite la Nota de Credito (NC) PARCIAL real al ARCA.
     ///
-    /// <para><b>!!! NO IMPLEMENTADO TODAVIA !!!</b> Este metodo existe SOLO para que el
-    /// encolado de <see cref="EnqueuePartialCreditNoteAsync"/> compile. Hangfire resuelve
-    /// la expresion <c>Enqueue&lt;IInvoiceService&gt;(s =&gt; s.ProcessPartialCreditNoteJob(...))</c>
-    /// contra el TIPO de la interfaz, asi que el metodo tiene que existir y estar
-    /// declarado en <see cref="IInvoiceService"/>. Sin este esqueleto, el encolado no
-    /// compilaria. Pero el CUERPO real se implementa en la Etapa 5.</para>
+    /// <para><b>Que hace</b>: toma la liquidacion ya calculada (lineas + montos),
+    /// prorratea el IVA, valida que el comprobante cuadre fiscalmente y lo emite via el
+    /// pipeline existente (<c>CreatePendingInvoice</c> + <c>ProcessInvoiceJob</c>). NO
+    /// toca el path SOAP de <c>AfipService</c>: arma el <c>CreateInvoiceRequest</c> y
+    /// deja que el pipeline normal lo envie.</para>
     ///
-    /// <para><b>Que va a hacer la Etapa 5</b> (NO ahora):
-    /// <list type="bullet">
-    ///   <item>Capturar el snapshot del numerador ARCA (<c>GetLastAuthorizedNumeroAsync</c>)
-    ///   como PRIMERA operacion, antes de cualquier otra cosa (RH4-001).</item>
-    ///   <item>Calcular la <c>idemKey</c> SHA256 e insertar en <c>ArcaIdempotencyKeys</c>
-    ///   con el snapshot del numerador (idempotencia anti-doble-POST, capa 1).</item>
-    ///   <item>Stale key recovery: si la key ya existe y esta huerfana, consultar ARCA
-    ///   via <c>QueryLastAuthorizedWithDetailsAsync</c> y arbitrar entre derivar el CAE
-    ///   ya emitido o borrar la key y reintentar limpio (capa 1.5, RH3-001).</item>
-    ///   <item>Prorratear el IVA segun <c>settings.IvaProrrateoMode</c> usando
-    ///   <c>PartialCreditNoteIvaCalculator</c>.</item>
-    ///   <item>Armar el <c>CreateInvoiceRequest</c> de la NC y entregarlo al pipeline
-    ///   existente (<c>CreatePendingInvoice</c> + <c>ProcessInvoiceJob</c>).</item>
-    ///   <item>Setear <c>AnnulmentStatus = Succeeded/Failed</c> segun la respuesta ARCA.</item>
+    /// <para><b>Por que <c>[AutomaticRetry(Attempts = 0)]</c></b>: igual que
+    /// <c>AfipService.ProcessInvoiceJob</c>, NO queremos que Hangfire reintente solo a
+    /// ciegas un job que toca ARCA: un reintento descontrolado podria emitir 2
+    /// comprobantes. El reintento se maneja de forma controlada via la idempotencia
+    /// (tabla <c>ArcaIdempotencyKeys</c> + stale key recovery): si el job vuelve a
+    /// correr, detecta la key del intento anterior y decide derivar el CAE ya emitido o
+    /// reintentar limpio, en vez de re-POSTear.</para>
+    ///
+    /// <para><b>Flow anti-doble-POST</b> (capas de idempotencia del plan):
+    /// <list type="number">
+    ///   <item>(a) Snapshot del numerador ARCA como PRIMERA operacion (RH4-001), ANTES
+    ///   de insertar la key.</item>
+    ///   <item>(b) Calcular la <c>idemKey</c> deterministica (SHA256).</item>
+    ///   <item>(c) Capa 1: INSERT de la key con el snapshot. UNIQUE en <c>Key</c>.</item>
+    ///   <item>(d) Si el INSERT choca por unique violation -> capa 1.5 (stale key
+    ///   recovery): si la key es huerfana y vieja, consultar ARCA y arbitrar; si es
+    ///   reciente, abortar como duplicado.</item>
+    ///   <item>(e) Si el INSERT tuvo exito -> armar el comprobante + emitir.</item>
     /// </list>
     /// </para>
     ///
-    /// <para><b>Por que lanza NotImplementedException y no es no-op</b>: aunque el job se
-    /// ENCOLA (para validar el plumbing del encolado), en runtime NADIE lo dispara
-    /// todavia — su unico caller real (el flow F2.3 que conecta el BookingCancellation
-    /// con la emision parcial) AUN NO EXISTE. Si por error alguien forzara su ejecucion,
-    /// preferimos un fallo ruidoso e inequivoco antes que una NC silenciosa a medias.
-    /// El <see cref="NotImplementedException"/> garantiza que ningun comprobante fiscal
-    /// se emita a partir de este esqueleto.</para>
+    /// <para><b>SIGNOFF del contador antes de prender el flag</b>: este job arma el
+    /// comprobante con las lineas que vienen en el input TAL CUAL (es F2.3 quien decide
+    /// que parte pierde causa fiscal). El criterio fiscal fino — items exentos vs 0%,
+    /// percepciones, tratamiento intermediario vs reseller — es responsabilidad del
+    /// contador y se valida ANTES de poner <c>EnablePartialCreditNoteRealEmission=true</c>
+    /// en produccion. Este metodo NO reinterpreta las lineas.</para>
     /// </summary>
-    public Task ProcessPartialCreditNoteJob(
+    [AutomaticRetry(Attempts = 0)] // No reintentar a ciegas un job que toca ARCA (ver doc de arriba).
+    public async Task ProcessPartialCreditNoteJob(
         int originalInvoiceId,
         string liquidationJson,
         string userId,
         int approvalRequestId)
     {
-        throw new NotImplementedException(
-            "ProcessPartialCreditNoteJob: logica de emision real pendiente de Etapa 5 (F2.2). " +
-            "Este esqueleto existe solo para que el encolado de EnqueuePartialCreditNoteAsync compile. " +
-            "El cuerpo real (snapshot numerador + idempotencia ArcaIdempotencyKeys + stale key recovery " +
-            "+ prorrateo IVA + CreatePendingInvoice + POST ARCA) NO debe ejecutarse en runtime todavia: " +
-            "su unico caller (F2.3) aun no existe.");
+        // El job de Hangfire no recibe CancellationToken propio. Usamos None: una vez
+        // que arrancamos el POST a ARCA no queremos cortar a mitad de camino (cancelar
+        // dejaria el comprobante en estado incierto). Es el mismo criterio que
+        // ProcessAnnulmentJob.
+        var ct = CancellationToken.None;
+
+        // 1) Deserializar la liquidacion que viajo por Hangfire como JSON. Si viene rota
+        //    es un bug de plumbing del encolado, no un error de negocio: dejamos que la
+        //    excepcion suba y el job quede Failed en el dashboard (visibilidad).
+        var liquidation = System.Text.Json.JsonSerializer.Deserialize<PartialCreditNoteEmissionInput>(liquidationJson)
+            ?? throw new InvalidOperationException(
+                $"ProcessPartialCreditNoteJob: liquidationJson nulo/invalido para Invoice {originalInvoiceId}.");
+
+        // Cargar la factura origen. Necesitamos PuntoDeVenta + NumeroComprobante (para el
+        // snapshot del numerador y la comparacion del recovery) + PublicId (para vincular
+        // la NC nueva como CbteAsoc via el pipeline existente).
+        var originalInvoice = await _context.Invoices
+            .FirstOrDefaultAsync(i => i.Id == originalInvoiceId, ct)
+            ?? throw new InvalidOperationException(
+                $"ProcessPartialCreditNoteJob: factura origen {originalInvoiceId} no encontrada.");
+
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+
+        // Defense-in-depth: aunque EnqueuePartialCreditNoteAsync ya valido el flag, el job
+        // puede llegar a correr por un reintento o reschedule. Si el flag se apago en el
+        // medio, NO emitimos: marcamos Failed y salimos sin tocar ARCA.
+        if (!settings.EnablePartialCreditNoteRealEmission)
+        {
+            await MarkPartialCreditNoteFailedAsync(
+                originalInvoice,
+                userId,
+                "Emision real de NC parcial deshabilitada (EnablePartialCreditNoteRealEmission=false) " +
+                "al momento de ejecutar el job. No se emitio el comprobante.",
+                ct);
+            return;
+        }
+
+        // Mapear el tipo de NC a partir del tipo de la factura origen (A->3, B->8, C->13).
+        // Factura M (51) devuelve null: ya la rechaza EnqueuePartialCreditNoteAsync, pero
+        // re-chequeamos aca por defensa (el job puede correr por reschedule).
+        int? creditNoteCbteTipo = InvoiceComprobanteHelpers.GetCreditNoteTypeForInvoice(originalInvoice.TipoComprobante);
+        if (creditNoteCbteTipo is null)
+        {
+            await MarkPartialCreditNoteFailedAsync(
+                originalInvoice,
+                userId,
+                $"El tipo de comprobante {originalInvoice.TipoComprobante} no soporta NC parcial " +
+                "automatica en Fase 2 (Factura M no soportada, RH-003). No se emitio el comprobante.",
+                ct);
+            return;
+        }
+
+        try
+        {
+            // (a) Snapshot del numerador ARCA PRIMERO (RH4-001). Tiene que vivir en la
+            //     misma ejecucion del job que el POST efectivo: por eso NO se captura en el
+            //     encolado. Si Hangfire reintenta el job, este snapshot se recaptura y la
+            //     capa 1.5 usa el de la corrida ANTERIOR (ya persistido en la key huerfana).
+            int lastSeenNumeroBeforePost = await _afipService.GetLastAuthorizedNumeroAsync(
+                puntoVenta: originalInvoice.PuntoDeVenta,
+                cbteTipo: creditNoteCbteTipo.Value,
+                ct);
+
+            // (b) Calcular la idemKey deterministica. El formato fija 2 decimales en el
+            //     monto (F2) para que dos intentos por la misma cancelacion produzcan
+            //     EXACTAMENTE el mismo hash (sin esto, 300000 y 300000.00 darian hashes
+            //     distintos y la idempotencia no agruparia los reintentos).
+            string idemKey = BuildIdempotencyKey(
+                originalInvoiceId: originalInvoiceId,
+                approvalRequestId: approvalRequestId,
+                fiscalAmountToCredit: liquidation.FiscalAmountToCredit,
+                currency: liquidation.Currency);
+
+            // (c) Capa 1: intentar insertar la key ANTES de tocar ARCA. El UNIQUE sobre
+            //     "Key" es lo que rechaza un segundo intento concurrente.
+            bool insertSucceeded = await TryInsertIdempotencyKeyAsync(
+                idemKey,
+                lastSeenNumeroBeforePost,
+                ct);
+
+            if (!insertSucceeded)
+            {
+                // (d) La key ya existia. Capa 1.5: decidir si recuperar el CAE ya emitido,
+                //     borrar la key huerfana y reintentar, o abortar como duplicado activo.
+                //     Devuelve true si recupero (no hay que emitir) o si abortamos como
+                //     duplicado; false si limpio la key huerfana y hay que emitir de nuevo.
+                bool resolvedWithoutNewPost = await HandleStaleIdempotencyKeyAsync(
+                    idemKey: idemKey,
+                    originalInvoice: originalInvoice,
+                    liquidation: liquidation,
+                    creditNoteCbteTipo: creditNoteCbteTipo.Value,
+                    userId: userId,
+                    settings: settings,
+                    ct: ct);
+
+                if (resolvedWithoutNewPost)
+                {
+                    return; // recovery derivo el CAE, o no es nuestro turno: no re-POSTear.
+                }
+
+                // La key huerfana fue borrada -> reintentar el INSERT limpio. Si vuelve a
+                // chocar (otra corrida lo gano en el medio), tratamos como duplicado activo.
+                bool reinsertSucceeded = await TryInsertIdempotencyKeyAsync(
+                    idemKey,
+                    lastSeenNumeroBeforePost,
+                    ct);
+
+                if (!reinsertSucceeded)
+                {
+                    throw new IdempotencyDuplicateException(
+                        $"IdempotencyKey activa tras limpiar la huerfana: otro intento gano la carrera " +
+                        $"para Invoice {originalInvoiceId}. No se re-emite la NC parcial.");
+                }
+            }
+
+            // (e) INSERT OK -> armar el comprobante + emitir via el pipeline existente.
+            await EmitPartialCreditNoteAsync(
+                idemKey: idemKey,
+                originalInvoice: originalInvoice,
+                liquidation: liquidation,
+                creditNoteCbteTipo: creditNoteCbteTipo.Value,
+                userId: userId,
+                approvalRequestId: approvalRequestId,
+                settings: settings,
+                ct: ct);
+        }
+        catch (IdempotencyDuplicateException dup)
+        {
+            // Duplicado legitimo (otro intento en vuelo, o key reciente): NO es un error
+            // tecnico. Logueamos como warning + counter y NO marcamos Failed (el otro
+            // intento o el job de reconciliacion lo resuelven). NO rethrow: con
+            // AutomaticRetry(0) no se reintenta, y queremos que el job termine "limpio".
+            _logger.LogWarning(
+                "ProcessPartialCreditNoteJob duplicado para Invoice {InvoiceId}: {Message}",
+                originalInvoiceId, dup.Message);
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.IdempotencyDuplicate | originalInvoiceId={OriginalInvoiceId} approvalRequestId={ApprovalRequestId}",
+                originalInvoiceId, approvalRequestId);
+        }
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 (plan §F2.2 punto b): construye la clave de idempotencia deterministica
+    /// de la NC parcial. Dos intentos por la MISMA cancelacion (misma factura origen, mismo
+    /// approval, mismo monto, misma moneda) producen el MISMO hash, y el indice UNIQUE de
+    /// <c>ArcaIdempotencyKeys</c> rechaza el segundo INSERT.
+    ///
+    /// <para><b>Por que el formato <c>:F2</c> en el monto</b>: fija 2 decimales para que el
+    /// hash sea estable. Sin esto, <c>300000</c> y <c>300000.00</c> (mismo monto, distinta
+    /// representacion decimal) generarian hashes distintos y la idempotencia no agruparia
+    /// los reintentos del mismo hecho.</para>
+    ///
+    /// <para>Se usa <c>CultureInfo.InvariantCulture</c> en el <c>:F2</c>: en una maquina con
+    /// cultura es-AR el separador decimal seria coma, y el hash cambiaria segun el server.
+    /// Invariant fija el punto y hace el hash reproducible en cualquier entorno.</para>
+    /// </summary>
+    private static string BuildIdempotencyKey(
+        int originalInvoiceId,
+        int approvalRequestId,
+        decimal fiscalAmountToCredit,
+        string currency)
+    {
+        string raw = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{originalInvoiceId}|{approvalRequestId}|{fiscalAmountToCredit:F2}|{currency}");
+
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
+
+        // Hex en minuscula. La columna Key es varchar(64); SHA256 en hex son 64 chars exactos.
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 (plan §F2.2 capa 1): intenta insertar la clave de idempotencia ANTES del
+    /// POST a ARCA. Devuelve <c>true</c> si el INSERT entro, <c>false</c> si choco con el
+    /// indice UNIQUE (ya existe una key con ese valor).
+    ///
+    /// <para><b>Por que un context aislado</b> (<c>CreateScopedContext</c> NO se usa aca,
+    /// pero si limpiamos el ChangeTracker): si el INSERT falla por unique violation, el
+    /// <c>_context</c> queda con la entidad en estado Added "pegada". Si despues el flujo
+    /// hace otro SaveChanges (ej. el recovery), EF intentaria re-insertarla y volveria a
+    /// fallar. Por eso, ante el choque, sacamos la entidad del tracker (<c>Entry.State =
+    /// Detached</c>) para dejar el context limpio.</para>
+    /// </summary>
+    private async Task<bool> TryInsertIdempotencyKeyAsync(
+        string idemKey,
+        int lastSeenNumeroBeforePost,
+        CancellationToken ct)
+    {
+        var entity = new ArcaIdempotencyKey
+        {
+            Key = idemKey,
+            // JobId: el job real tendria un id de Hangfire; en este punto no lo exponemos
+            // de forma simple. Dejamos null (el schema lo permite) — la correlacion con
+            // logs se hace por la key + el InvoiceId que sale en los warnings.
+            JobId = null,
+            CreatedAt = DateTime.UtcNow,
+            ResolvedAt = null,
+            LastSeenNumeroBeforePost = lastSeenNumeroBeforePost,
+        };
+
+        _context.ArcaIdempotencyKeys.Add(entity);
+        try
+        {
+            await _context.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            // Ya existe una key con ese valor (otro intento, o una huerfana de un crash).
+            // Limpiamos el tracker para que el context quede usable por el recovery.
+            _context.Entry(entity).State = EntityState.Detached;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 (plan §F2.2 capa 1.5, sub-tareas A.5/A.6): recupera de una clave de
+    /// idempotencia que ya existe. Decide entre tres caminos segun el estado real en ARCA:
+    ///
+    /// <list type="bullet">
+    ///   <item><b>Caso reciente</b> (key &lt; umbral): otro intento la esta procesando
+    ///   AHORA. Lanza <see cref="IdempotencyDuplicateException"/> -> no re-POSTear.</item>
+    ///   <item><b>Caso A</b> (huerfana + ARCA emitio el comprobante que matchea factura
+    ///   origen + monto): el POST viajo en una corrida anterior. Deriva el CAE, resuelve la
+    ///   key y NO re-POSTea. Devuelve <c>true</c>.</item>
+    ///   <item><b>Caso B</b> (huerfana + POST nunca viajo, o el comprobante encontrado NO
+    ///   matchea): borra la key y devuelve <c>false</c> para que el caller reintente
+    ///   limpio.</item>
+    /// </list>
+    ///
+    /// <para>Devuelve <c>true</c> si NO hay que emitir (recuperado o duplicado), <c>false</c>
+    /// si la key huerfana fue borrada y hay que reintentar la emision.</para>
+    /// </summary>
+    private async Task<bool> HandleStaleIdempotencyKeyAsync(
+        string idemKey,
+        Invoice originalInvoice,
+        PartialCreditNoteEmissionInput liquidation,
+        int creditNoteCbteTipo,
+        string userId,
+        OperationalFinanceSettings settings,
+        CancellationToken ct)
+    {
+        var existingKey = await _context.ArcaIdempotencyKeys
+            .FirstOrDefaultAsync(k => k.Key == idemKey, ct);
+
+        // Carrera: la key existia cuando el INSERT choco pero ya no esta (otro intento la
+        // resolvio + el housekeeping la borro entre medio). Tratamos como duplicado para no
+        // re-POSTear a ciegas: el job de reconciliacion lo recoge si quedo algo pendiente.
+        if (existingKey is null)
+        {
+            throw new IdempotencyDuplicateException(
+                $"IdempotencyKey desaparecio entre el INSERT fallido y la lectura para Invoice " +
+                $"{originalInvoice.Id}. Otro intento la resolvio. No se re-emite.");
+        }
+
+        // Si ya esta resuelta, el intento anterior termino (exito o fallo terminal). No
+        // re-emitimos: si fue exito, la NC ya existe; si fue fallo terminal, el back-office
+        // decide. Tratamos como duplicado.
+        if (existingKey.ResolvedAt is not null)
+        {
+            throw new IdempotencyDuplicateException(
+                $"IdempotencyKey ya resuelta (ResolvedAt={existingKey.ResolvedAt:o}) para Invoice " +
+                $"{originalInvoice.Id}. No se re-emite la NC parcial.");
+        }
+
+        double ageMinutes = (DateTime.UtcNow - existingKey.CreatedAt).TotalMinutes;
+
+        // Key reciente: otro intento esta en vuelo. No es nuestro turno.
+        if (ageMinutes <= settings.IdempotencyKeyStaleThresholdMinutes)
+        {
+            throw new IdempotencyDuplicateException(
+                $"IdempotencyKey activa, otro job procesando (age={ageMinutes:F1}min, " +
+                $"umbral={settings.IdempotencyKeyStaleThresholdMinutes}min) para Invoice {originalInvoice.Id}. " +
+                "Reintento en el proximo ciclo.");
+        }
+
+        // Key huerfana (vieja + sin resolver): preguntamos a ARCA que paso realmente.
+        var arcaResult = await _afipService.QueryLastAuthorizedWithDetailsAsync(
+            puntoVenta: originalInvoice.PuntoDeVenta,
+            cbteTipo: creditNoteCbteTipo,
+            lastSeenNumeroBeforePost: existingKey.LastSeenNumeroBeforePost,
+            ct);
+
+        // RH3-001 (verificado en codigo): ArcaCompoundQueryResult.CbteAsoc es el NUMERO de
+        // comprobante de la factura origen (parseado de <CbteAsoc><Nro> en AfipService:1356),
+        // NO el Id interno de la DB. Por eso comparamos contra originalInvoice.NumeroComprobante
+        // y NO contra originalInvoice.Id (el plan v5 escribia ".Id" — es un error de alineacion
+        // con el codigo real: comparar contra el PK daria un mismatch casi siempre y degradaria
+        // a "retry limpio", que es seguro pero podria re-POSTear). Ver "No verificado" del reporte.
+        bool arcaMatchesOurInvoice =
+            arcaResult.Found
+            && arcaResult.CbteAsoc == originalInvoice.NumeroComprobante
+            && Math.Abs((arcaResult.ImporteTotal ?? 0m) - liquidation.FiscalAmountToCredit)
+               <= settings.PartialCreditNoteRoundingTolerance;
+
+        if (arcaMatchesOurInvoice)
+        {
+            // Caso A: el POST viajo en una corrida anterior y ARCA emitio el comprobante que
+            // matchea nuestra factura origen + monto. Derivamos el CAE de la NC ya emitida y
+            // resolvemos la key. NO re-POSTeamos.
+            //
+            // Buscamos la NC PENDING que la corrida anterior dejo (CreatePendingInvoice corre
+            // antes del POST). Si existe, le pegamos el CAE; si no (crash antes de
+            // CreatePendingInvoice pero el POST viajo igual — escenario muy improbable), al
+            // menos resolvemos la key y dejamos rastro en el log para remediacion manual.
+            var pendingCreditNote = await _context.Invoices
+                .Where(i => i.OriginalInvoiceId == originalInvoice.Id
+                            && i.TipoComprobante == creditNoteCbteTipo
+                            && i.Resultado != "A")
+                .OrderByDescending(i => i.Id)
+                .FirstOrDefaultAsync(ct);
+
+            existingKey.ResolvedAt = DateTime.UtcNow;
+
+            if (pendingCreditNote is not null)
+            {
+                pendingCreditNote.CAE = arcaResult.Cae;
+                pendingCreditNote.Resultado = "A";
+                pendingCreditNote.NumeroComprobante = arcaResult.LastNumero ?? pendingCreditNote.NumeroComprobante;
+                if (arcaResult.IssuedAt.HasValue)
+                {
+                    pendingCreditNote.IssuedAt = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);
+                }
+            }
+
+            // La factura origen queda anulada (la NC ya existe del lado de ARCA).
+            originalInvoice.AnnulmentStatus = AnnulmentStatus.Succeeded;
+            originalInvoice.AnnulledAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            _logger.LogWarning(
+                "Idempotency recovery (caso A): derivado CAE de comprobante ya emitido. " +
+                "OriginalInvoiceId={InvoiceId} CAE={Cae} KeyAgeMin={Age:F1}",
+                originalInvoice.Id, arcaResult.Cae, ageMinutes);
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.RecoveredFromStaleKey | originalInvoiceId={OriginalInvoiceId} cae={Cae}",
+                originalInvoice.Id, arcaResult.Cae);
+
+            return true; // recuperado: no emitir de nuevo.
+        }
+
+        // Caso B: el POST nunca viajo (Found=false) o el comprobante encontrado NO matchea
+        // (otro proceso ocupo el numerador, o array CbtesAsoc inesperado). Borramos la key
+        // huerfana y devolvemos false para reintentar limpio.
+        _context.ArcaIdempotencyKeys.Remove(existingKey);
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "Idempotency stale key removed (huerfana de crash previo o mismatch de numerador). " +
+            "Key={Key} KeyAgeMin={Age:F1} ArcaFound={Found} ArcaCbteAsoc={CbteAsoc} " +
+            "ArcaImporte={Importe} EsperadoImporte={Esperado}. Reintento limpio.",
+            idemKey, ageMinutes, arcaResult.Found, arcaResult.CbteAsoc,
+            arcaResult.ImporteTotal, liquidation.FiscalAmountToCredit);
+
+        return false; // hay que reintentar la emision.
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 (plan §F2.2 punto e + deuda fiscal puntos 1-2): arma el
+    /// <c>CreateInvoiceRequest</c> de la NC parcial, valida el cuadre que exige ARCA y la
+    /// emite via el pipeline existente. Al terminar, resuelve la clave de idempotencia.
+    /// </summary>
+    private async Task EmitPartialCreditNoteAsync(
+        string idemKey,
+        Invoice originalInvoice,
+        PartialCreditNoteEmissionInput liquidation,
+        int creditNoteCbteTipo,
+        string userId,
+        int approvalRequestId,
+        OperationalFinanceSettings settings,
+        CancellationToken ct)
+    {
+        // Guard: la NC necesita una reserva asociada (CreatePendingInvoice resuelve la
+        // Reserva por su Id para tomar el cliente/snapshot). Igual que ProcessAnnulmentJob,
+        // si la factura origen no tiene reserva no podemos emitir: marcamos Failed + resolvemos
+        // la key (este intento termino) en vez de dejar que CreatePendingInvoice reviente con
+        // un error oscuro a mitad de camino.
+        if (originalInvoice.ReservaId is null)
+        {
+            await ResolveIdempotencyKeyAsync(idemKey, ct);
+            await MarkPartialCreditNoteFailedAsync(
+                originalInvoice, userId,
+                $"La factura {originalInvoice.Id} no tiene reserva asociada. No se puede emitir la NC parcial.",
+                ct);
+            return;
+        }
+
+        // Prorrateo del IVA con el helper puro (E2). Devuelve el desglose por alicuota con
+        // los importes YA redondeados a 2 decimales por grupo. Si la liquidacion no cierra
+        // contra FiscalAmountToCredit dentro de la tolerancia, lanza InvalidOperationException
+        // (defense-in-depth contra una liquidacion incoherente).
+        PartialCreditNoteIvaResult iva;
+        try
+        {
+            iva = PartialCreditNoteIvaCalculator.Calculate(
+                input: liquidation,
+                mode: settings.IvaProrrateoMode,
+                roundingTolerance: settings.PartialCreditNoteRoundingTolerance);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            // No mandamos un comprobante inconsistente al ARCA. Resolvemos la key (este
+            // intento termino, fallo terminal) + marcamos Failed + notificamos.
+            await ResolveIdempotencyKeyAsync(idemKey, ct);
+            await MarkPartialCreditNoteFailedAsync(
+                originalInvoice, userId,
+                $"El prorrateo de IVA no cierra: {ex.Message}", ct);
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.RoundingValidationFailed | originalInvoiceId={OriginalInvoiceId} stage=calculator",
+                originalInvoice.Id);
+            return;
+        }
+
+        // --- Cuadre que exige ARCA (deuda fiscal punto 2, CRITICO) ---
+        //
+        // Reproducimos exactamente como AfipService arma el envelope para anticipar el
+        // descuadre ANTES de POSTear:
+        //   - Cada <AlicIva><Importe> se formatea a 2 decimales (ToString("0.00")), o sea
+        //     que ARCA recibe round(grupo, 2). El calculator E2 ya devuelve esos importes
+        //     redondeados por grupo, asi que pasamos esos mismos numeros.
+        //   - <ImpIVA> = suma de los importes por grupo.
+        //   - Fase 2 NO lleva tributos provinciales (G-F2-C reroutea a manual si la factura
+        //     origen tiene Tributes). Por eso ImpTrib = 0.
+        //
+        // ARCA valida: ImpTotal == ImpNeto + ImpIVA + ImpTrib  y  ImpIVA == Σ AlicIva.Importe.
+        // Si no cuadra (por acumulacion de centavos entre alicuotas), NO emitimos.
+        decimal impNeto = iva.CreditedNetAmount;
+        decimal impIva = iva.VatGroups.Sum(g => g.ImporteIva); // suma de importes YA redondeados por grupo
+        const decimal impTrib = 0m; // Fase 2 no prorratea tributos provinciales (G-F2-C).
+        decimal impTotal = Math.Round(impNeto + impIva + impTrib, 2);
+
+        decimal squareGap = Math.Abs(impTotal - (impNeto + impIva + impTrib));
+        if (squareGap > settings.PartialCreditNoteRoundingTolerance)
+        {
+            await ResolveIdempotencyKeyAsync(idemKey, ct);
+            await MarkPartialCreditNoteFailedAsync(
+                originalInvoice, userId,
+                $"El comprobante no cuadra para ARCA: ImpTotal ({impTotal}) != ImpNeto ({impNeto}) " +
+                $"+ ImpIVA ({impIva}) + ImpTrib ({impTrib}). Gap {squareGap} > tolerancia " +
+                $"{settings.PartialCreditNoteRoundingTolerance}. No se emite la NC parcial.", ct);
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.RoundingValidationFailed | originalInvoiceId={OriginalInvoiceId} stage=arcaSquare",
+                originalInvoice.Id);
+            return;
+        }
+
+        // Armado del request. Pasamos las lineas del input TAL CUAL (NO reinterpretamos que
+        // se acredita: eso es criterio de F2.3 + signoff del contador).
+        //
+        // FC1.3.F2.2 (fix fiscal B1): ademas pasamos TotalsOverride con el desglose EXACTO que
+        // acabamos de validar (mismos numeros que el cuadre ARCA de arriba). Asi el pipeline
+        // compartido NO recalcula el IVA item por item (que con varias lineas de la misma
+        // alicuota podia descuadrar en 1-2 centavos y hacer rebotar el comprobante en ARCA):
+        // usa estos importes ya redondeados por grupo tal cual. El invariante que viaja es el
+        // que validamos: ImpIVA == Σ AlicIva.Importe, ImpTotal == ImpNeto + ImpIVA + ImpTrib.
+        var totalsOverride = new InvoiceTotalsOverride(
+            // Un AlicIva por cada grupo de alicuota del calculator, con el Importe YA
+            // redondeado por grupo (asi lo devuelve PartialCreditNoteIvaCalculator).
+            AlicIvas: iva.VatGroups
+                .Select(group => new AlicIvaOverride(
+                    Id: group.AlicuotaIvaId,
+                    BaseImp: group.BaseImponible,
+                    Importe: group.ImporteIva))
+                .ToList(),
+            ImpNeto: impNeto,
+            ImpIVA: impIva,
+            ImpTrib: impTrib,
+            ImpTotal: impTotal);
+
+        // --- Invariantes ARCA EXPLICITOS sobre el override que se va a mandar (MEJORA 1) ---
+        //
+        // El cuadre de arriba ya valido ImpTotal == ImpNeto + ImpIVA + ImpTrib. Los otros DOS
+        // invariantes que exige ARCA quedaban implicitos "por construccion" (impNeto/impIva se
+        // arman desde los mismos VatGroups que poblan AlicIvas). Los hacemos EXPLICITOS aca,
+        // sobre el TotalsOverride ya armado, ANTES de POSTear:
+        //   - Σ AlicIva.Importe == ImpIVA
+        //   - Σ AlicIva.BaseImp == ImpNeto
+        // POR QUE blindarlo igual: si manana el calculator o el reparto cambian (regresion) y
+        // rompen este vinculo, hoy nadie se entera hasta que ARCA REBOTA el comprobante en
+        // produccion. Validarlo aca convierte ese bug silencioso en un Failed local con log
+        // claro y SIN POST (mismo patron terminal que el cuadre existente: resolver key +
+        // marcar Failed + return, sin reintentar a ciegas).
+        decimal sumAlicIvaImporte = totalsOverride.AlicIvas.Sum(group => group.Importe);
+        decimal sumAlicIvaBaseImp = totalsOverride.AlicIvas.Sum(group => group.BaseImp);
+
+        // Exacto a 2 decimales (gap 0). NO usamos la tolerancia de redondeo del cuadre total:
+        // estos numeros provienen del MISMO origen (los VatGroups), asi que cualquier diferencia
+        // es un bug de programacion aguas arriba, no acumulacion legitima de centavos.
+        decimal ivaInvariantGap = Math.Abs(Math.Round(sumAlicIvaImporte, 2) - Math.Round(impIva, 2));
+        decimal netoInvariantGap = Math.Abs(Math.Round(sumAlicIvaBaseImp, 2) - Math.Round(impNeto, 2));
+        if (ivaInvariantGap > 0m || netoInvariantGap > 0m)
+        {
+            await ResolveIdempotencyKeyAsync(idemKey, ct);
+            await MarkPartialCreditNoteFailedAsync(
+                originalInvoice, userId,
+                $"El override de la NC parcial viola un invariante ARCA: " +
+                $"Σ AlicIva.Importe ({sumAlicIvaImporte}) vs ImpIVA ({impIva}) y " +
+                $"Σ AlicIva.BaseImp ({sumAlicIvaBaseImp}) vs ImpNeto ({impNeto}). " +
+                "No se emite la NC parcial (posible regresion del calculator o del reparto de IVA).",
+                ct);
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.RoundingValidationFailed | originalInvoiceId={OriginalInvoiceId} stage=arcaAlicIvaInvariant",
+                originalInvoice.Id);
+            return;
+        }
+
+        var request = new CreateInvoiceRequest
+        {
+            // ReservaId no es null aca (el guard del inicio del metodo ya lo garantizo).
+            ReservaId = originalInvoice.ReservaId!.Value.ToString(),
+            CbteTipo = creditNoteCbteTipo,
+            Concepto = 3, // Productos y Servicios (igual que ProcessAnnulmentJob).
+            // OriginalInvoiceId apunta a la factura origen por su PublicId (igual que la NC
+            // total). CreatePendingInvoice lo resuelve y vincula la NC -> <CbtesAsoc>.
+            OriginalInvoiceId = originalInvoice.PublicId.ToString(),
+            IsCreditNote = true,
+            IsDebitNote = false,
+            Items = liquidation.Lines.Select(line => new InvoiceItemDto
+            {
+                Description = line.Description,
+                Quantity = line.Quantity,
+                UnitPrice = line.UnitPrice,
+                Total = line.Total,
+                AlicuotaIvaId = line.AlicuotaIvaId,
+            }).ToList(),
+            // Tributes vacio: Fase 2 no prorratea tributos provinciales (G-F2-C). Si la
+            // factura origen tuviera tributos, NUNCA llegamos aca (rerouted a manual en F2.0).
+            Tributes = new List<InvoiceTributeDto>(),
+            // Cuadre exacto ya validado: el pipeline lo usa en vez de recalcular (fix B1).
+            TotalsOverride = totalsOverride,
+        };
+
+        // NOTA multimoneda (F2.5, FUERA DE SCOPE): NO seteamos MonId/MonCotiz en el request.
+        // La NC nace con los defaults 'PES'/1. El XML SOAP de AfipService tambien sigue
+        // hardcoded en 'PES'/1. La factura en USD con NC en USD se conecta en F2.5.
+
+        // Emitir via el pipeline existente. CreatePendingInvoice crea la NC en estado PENDING
+        // + ProcessInvoiceJob la POSTea a ARCA y persiste el resultado (A / R / PENDING).
+        // El INSERT exitoso de la idemKey (capa 1) ya protege contra el doble-POST.
+        var newCreditNote = await _afipService.CreatePendingInvoice(originalInvoice.ReservaId!.Value, request);
+        await _afipService.ProcessInvoiceJob(newCreditNote.Id);
+
+        // Releer el resultado que dejo ProcessInvoiceJob.
+        await _context.Entry(newCreditNote).ReloadAsync(ct);
+
+        if (newCreditNote.Resultado == "A")
+        {
+            // ARCA aprobo: la factura origen queda anulada (levanta el bloqueo fiscal de
+            // cancel de reserva, igual que la NC total).
+            originalInvoice.AnnulmentStatus = AnnulmentStatus.Succeeded;
+            originalInvoice.AnnulledAt = newCreditNote.IssuedAt ?? DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            await ResolveIdempotencyKeyAsync(idemKey, ct);
+
+            // Consumir el approval (la accion solicitada se ejecuto). Idempotente.
+            if (_approvalService is not null)
+            {
+                await _approvalService.MarkConsumedAsync(approvalRequestId, ct);
+            }
+
+            await CreateNotification(
+                userId,
+                $"NC parcial emitida. Comprobante {newCreditNote.NumeroComprobante} (CAE {newCreditNote.CAE}).",
+                "Success",
+                newCreditNote.Id);
+
+            // Sincronizar el BC asociado (si existe), mismo patron try/catch que la NC total:
+            // la NC ya quedo commiteada, NO podemos rethrow (Hangfire reintentaria y
+            // re-POSTearia). Si el bridge falla, remediacion manual via ForceArcaConfirmation.
+            if (_bcBridge is not null)
+            {
+                try
+                {
+                    await _bcBridge.OnArcaSucceededAsync(originalInvoice.Id, newCreditNote.Id, CancellationToken.None);
+                }
+                catch (Exception bridgeEx)
+                {
+                    _logger.LogError(
+                        bridgeEx,
+                        "Bridge BC.OnArcaSucceededAsync fallo para NC parcial. OriginalInvoiceId={InvoiceId} CN={CreditNoteId}. " +
+                        "La NC quedo Succeeded en ARCA. Remediacion: ForceArcaConfirmationAsync manual.",
+                        originalInvoice.Id, newCreditNote.Id);
+                    _logger.LogError(
+                        "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaSucceeded_PartialCN",
+                        originalInvoice.Id, newCreditNote.Id, bridgeEx.GetType().Name);
+                }
+            }
+        }
+        else
+        {
+            // ARCA rechazo (Resultado "R") o quedo PENDING (error tecnico). En ambos casos
+            // NO marcamos la key Resolved si quedo PENDING: un PENDING puede reintentarse
+            // (el numerador no avanzo). Pero el contrato de F2.2 nos pide marcar Failed la
+            // factura origen para mantener el bloqueo. Distinguimos:
+            //   - "R": rechazo definitivo -> resolvemos la key (intento terminal).
+            //   - PENDING/otro: error tecnico -> NO resolvemos la key (permite recovery).
+            if (newCreditNote.Resultado == "R")
+            {
+                await ResolveIdempotencyKeyAsync(idemKey, ct);
+            }
+
+            await MarkPartialCreditNoteFailedAsync(
+                originalInvoice, userId,
+                $"ARCA no aprobo la NC parcial (Resultado={newCreditNote.Resultado}): {newCreditNote.Observaciones}",
+                ct);
+
+            if (_bcBridge is not null)
+            {
+                try
+                {
+                    await _bcBridge.OnArcaFailedAsync(originalInvoice.Id, newCreditNote.Observaciones, CancellationToken.None);
+                }
+                catch (Exception bridgeEx)
+                {
+                    _logger.LogError(
+                        bridgeEx,
+                        "Bridge BC.OnArcaFailedAsync fallo para NC parcial. OriginalInvoiceId={InvoiceId}.",
+                        originalInvoice.Id);
+                    _logger.LogError(
+                        "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaFailed_PartialCN",
+                        originalInvoice.Id, (int?)null, bridgeEx.GetType().Name);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2: marca la clave de idempotencia como resuelta (intento terminado, exito o
+    /// fallo terminal). Idempotente: si la key no existe (ya borrada), es no-op.
+    /// </summary>
+    private async Task ResolveIdempotencyKeyAsync(string idemKey, CancellationToken ct)
+    {
+        var key = await _context.ArcaIdempotencyKeys.FirstOrDefaultAsync(k => k.Key == idemKey, ct);
+        if (key is null)
+        {
+            return;
+        }
+
+        key.ResolvedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2: marca la factura origen como anulacion fallida (mantiene el bloqueo de
+    /// cancel de reserva hasta que el back-office resuelva) + notifica al usuario. NO toca
+    /// el approval (no se consume si la accion no se ejecuto).
+    /// </summary>
+    private async Task MarkPartialCreditNoteFailedAsync(
+        Invoice originalInvoice,
+        string userId,
+        string reason,
+        CancellationToken ct)
+    {
+        originalInvoice.AnnulmentStatus = AnnulmentStatus.Failed;
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "ProcessPartialCreditNoteJob marco Failed la Invoice {InvoiceId}: {Reason}",
+            originalInvoice.Id, reason);
+
+        await CreateNotification(userId, reason, "Error", originalInvoice.Id);
     }
 
     private async Task CreateNotification(string userId, string message, string type, int relatedId)

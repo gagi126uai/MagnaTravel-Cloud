@@ -641,26 +641,77 @@ public class AfipService : IAfipService
         }
 
         // 4. Calculate Totals
-        // (Logic kept same)
-        var ivaGroups = request.Items
-            .GroupBy(i => i.AlicuotaIvaId)
-            .Select(g => new 
-            {
-                Id = g.Key,
-                BaseImp = g.Sum(x => x.Total), 
-                Importe = g.Sum(x => x.Total * GetVatMultiplier(g.Key))
-            })
-            .ToList();
-            
-        decimal net = request.Items.Sum(i => i.Total);
-        decimal iva = ivaGroups.Sum(g => g.Importe);
-        decimal tributosTotal = request.Tributes.Sum(t => t.Importe);
-        decimal total = net + iva + tributosTotal;
+        //
+        // FC1.3.F2.2 (fix fiscal B1, 2026-05-27): dos caminos.
+        //
+        //   - request.TotalsOverride == null  -> FACTURACION NORMAL (FC1.2) + NC total.
+        //     El pipeline calcula los totales como siempre (rama 'else' de abajo). Ese
+        //     bloque quedo IDENTICO en comportamiento al codigo previo al fix.
+        //
+        //   - request.TotalsOverride != null  -> NC PARCIAL (caller con cuadre exacto).
+        //     El caller (InvoiceService.EmitPartialCreditNoteAsync) ya prorrateo el IVA con
+        //     PartialCreditNoteIvaCalculator y nos pasa los mismos numeros que valida antes
+        //     de POSTear. Usamos ESOS numeros tal cual, sin recalcular, para que el envelope
+        //     cuadre EXACTO a 2 decimales (ImpIVA == Σ AlicIva.Importe). Ver clase
+        //     InvoiceTotalsOverride para el invariante.
+        decimal net;
+        decimal iva;
+        decimal tributosTotal;
+        decimal total;
+        List<InvoiceItem> invoiceItems;
 
-        net = Math.Round(net, 2);
-        iva = Math.Round(iva, 2);
-        tributosTotal = Math.Round(tributosTotal, 2);
-        total = Math.Round(total, 2);
+        if (request.TotalsOverride != null)
+        {
+            var ov = request.TotalsOverride;
+
+            // Tomamos los totales del override TAL CUAL: ya vienen redondeados a 2 decimales
+            // y cuadrados por el caller. NO recalculamos ni redondeamos de nuevo.
+            net = ov.ImpNeto;
+            iva = ov.ImpIVA;
+            tributosTotal = ov.ImpTrib;
+            total = ov.ImpTotal;
+
+            // Construimos los InvoiceItem repartiendo el IVA redondeado de cada grupo de
+            // alicuota entre sus items. Esto es la pieza delicada del fix: el job RELEE la
+            // Invoice de BD y vuelve a agrupar invoice.Items por alicuota sumando
+            // InvoiceItem.ImporteIva. Para que esa suma por grupo de EXACTAMENTE el Importe
+            // redondeado del override (y la suma total de EXACTAMENTE ImpIVA), persistimos
+            // los ImporteIva de los items ya distribuidos y cuadrados aca.
+            invoiceItems = BuildInvoiceItemsFromOverride(request.Items, ov);
+        }
+        else
+        {
+            // ===== RAMA FC1.2 / NC total (comportamiento original, sin cambios) =====
+            var ivaGroups = request.Items
+                .GroupBy(i => i.AlicuotaIvaId)
+                .Select(g => new
+                {
+                    Id = g.Key,
+                    BaseImp = g.Sum(x => x.Total),
+                    Importe = g.Sum(x => x.Total * GetVatMultiplier(g.Key))
+                })
+                .ToList();
+
+            net = request.Items.Sum(i => i.Total);
+            iva = ivaGroups.Sum(g => g.Importe);
+            tributosTotal = request.Tributes.Sum(t => t.Importe);
+            total = net + iva + tributosTotal;
+
+            net = Math.Round(net, 2);
+            iva = Math.Round(iva, 2);
+            tributosTotal = Math.Round(tributosTotal, 2);
+            total = Math.Round(total, 2);
+
+            invoiceItems = request.Items.Select(i => new InvoiceItem
+            {
+                Description = i.Description,
+                Quantity = i.Quantity,
+                UnitPrice = i.UnitPrice,
+                Total = i.Total,
+                AlicuotaIvaId = i.AlicuotaIvaId,
+                ImporteIva = i.Total * GetVatMultiplier(i.AlicuotaIvaId)
+            }).ToList();
+        }
 
         // 5. Create PENDING Invoice
         var agencySettings = await _context.AgencySettings.FirstOrDefaultAsync();
@@ -687,15 +738,7 @@ public class AfipService : IAfipService
              OutstandingBalanceAtIssuance = reserva.Balance,
              AgencySnapshot = agencySettings != null ? System.Text.Json.JsonSerializer.Serialize(agencySettings) : null,
              CustomerSnapshot = System.Text.Json.JsonSerializer.Serialize(customer, new JsonSerializerOptions { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles }),
-             Items = request.Items.Select(i => new InvoiceItem 
-             {
-                 Description = i.Description,
-                 Quantity = i.Quantity,
-                 UnitPrice = i.UnitPrice,
-                 Total = i.Total,
-                 AlicuotaIvaId = i.AlicuotaIvaId,
-                 ImporteIva = i.Total * GetVatMultiplier(i.AlicuotaIvaId)
-             }).ToList(),
+             Items = invoiceItems,
              Tributes = request.Tributes.Select(t => new InvoiceTribute
              {
                  TributeId = t.TributeId,
@@ -708,13 +751,157 @@ public class AfipService : IAfipService
 
         _context.Invoices.Add(invoice);
         await _context.SaveChangesAsync();
-        
+
         return invoice;
     }
 
-    // Helper functions need to be static or duplicated if used in ProcessInvoiceJob? 
+    // Helper functions need to be static or duplicated if used in ProcessInvoiceJob?
     // No, ProcessInvoiceJob is in same class.
-    private decimal GetVatMultiplier(int id) => id switch 
+    private decimal GetVatMultiplier(int id) => id switch
+    {
+        3 => 0m,     // 0%
+        4 => 0.105m, // 10.5%
+        5 => 0.21m,  // 21%
+        6 => 0.27m,  // 27%
+        8 => 0.05m,  // 5%
+        9 => 0.025m, // 2.5%
+        _ => 0m
+    };
+
+    /// <summary>
+    /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): construye los <see cref="InvoiceItem"/> de una
+    /// NC parcial cuando el caller paso un <see cref="InvoiceTotalsOverride"/> con el cuadre
+    /// ya redondeado.
+    ///
+    /// <para><b>Por que es estatico y puro</b>: no toca BD ni ARCA. Recibe las lineas + el
+    /// override y devuelve los items con su <c>ImporteIva</c> ya distribuido. Asi se puede
+    /// testear LOCAL sin Docker el caso que rompia B1 (≥2 lineas de la misma alicuota cuyos
+    /// IVA por linea redondeados suman distinto que el round del agregado).</para>
+    ///
+    /// <para><b>La mecanica (el punto delicado del fix)</b>: el override trae el IVA YA
+    /// REDONDEADO POR GRUPO de alicuota (un <see cref="AlicIvaOverride"/> por alicuota). Pero
+    /// puede haber N lineas por alicuota, y el job (<c>ProcessInvoiceJob</c>) RELEE la Invoice
+    /// de BD y reagrupa <c>invoice.Items</c> sumando <c>InvoiceItem.ImporteIva</c>. Para que
+    /// esa suma por grupo de EXACTAMENTE el Importe redondeado del override, repartimos ese
+    /// Importe entre los items del grupo asi:
+    /// <list type="number">
+    ///   <item>A cada item del grupo le asignamos <c>round(Total * tasa, 2)</c> (su IVA propio).</item>
+    ///   <item>Calculamos el residuo = Importe del grupo - Σ de esos redondeos por item.</item>
+    ///   <item>Ese residuo (1-2 centavos como mucho) se lo sumamos al ULTIMO item del grupo.</item>
+    /// </list>
+    /// Resultado: <c>Σ InvoiceItem.ImporteIva del grupo == override.Importe del grupo</c>,
+    /// exacto y persistido. Y como la suma de todos los grupos del override es <c>ImpIVA</c>
+    /// (el caller ya lo cuadro), el envelope cierra exacto al releer de BD.</para>
+    ///
+    /// <para><b>Sobre el residuo en el ultimo item</b>: NO buscamos repartir "justo" el
+    /// centavo entre items (eso es criterio fiscal de detalle que el contador no pidio). Solo
+    /// nos importa que el AGREGADO por alicuota cuadre, que es lo unico que el ARCA valida en
+    /// el <c>AlicIva</c>. Cargar el residuo al ultimo item es deterministico y simple.</para>
+    ///
+    /// <para><b>Guardas defensivas (MEJORA 2)</b>: este metodo LANZA
+    /// <see cref="InvalidOperationException"/> si detecta un override desalineado con las lineas
+    /// (bug de programacion aguas arriba): (a) si el residuo cargado al ultimo item supera unos
+    /// centavos o dejaria su IVA negativo, o (b) si una alicuota presente en las lineas no esta
+    /// en el override. En ambos casos preferimos fallar ruidoso a persistir un comprobante con
+    /// IVA raro/faltante que ARCA despues rebota. El caller (<c>EmitPartialCreditNoteAsync</c>)
+    /// valida el cuadre ANTES, asi que en el flujo normal estas guardas nunca disparan.</para>
+    /// </summary>
+    /// <param name="lines">Las lineas de la NC tal cual vienen en el request (no se mutan).</param>
+    /// <param name="totalsOverride">El override con el desglose por alicuota ya redondeado.</param>
+    /// <returns>Los <see cref="InvoiceItem"/> a persistir, con <c>ImporteIva</c> cuadrado por grupo.</returns>
+    /// <exception cref="InvalidOperationException">Override desalineado con las lineas (ver Guardas defensivas).</exception>
+    internal static List<InvoiceItem> BuildInvoiceItemsFromOverride(
+        IReadOnlyList<InvoiceItemDto> lines,
+        InvoiceTotalsOverride totalsOverride)
+    {
+        // Indexamos el override por codigo de alicuota para buscar rapido el Importe del grupo.
+        var importePorAlicuota = totalsOverride.AlicIvas
+            .ToDictionary(group => group.Id, group => group.Importe);
+
+        var items = new List<InvoiceItem>(lines.Count);
+
+        // Recorremos las lineas agrupadas por alicuota MANTENIENDO el orden de aparicion.
+        // GroupBy de LINQ preserva el orden del primer elemento de cada grupo, lo que hace
+        // el reparto deterministico (el "ultimo item" es siempre el mismo dado el mismo input).
+        foreach (var lineGroup in lines.GroupBy(line => line.AlicuotaIvaId))
+        {
+            int alicuotaIvaId = lineGroup.Key;
+            var groupLines = lineGroup.ToList();
+
+            // GUARDA (b) (MEJORA 2): si las lineas traen una alicuota que el override NO incluye,
+            // antes repartiamos 0 de IVA en SILENCIO para ese grupo. Eso es un descuadre fiscal
+            // serio (el comprobante saldria con menos IVA del que corresponde a esas lineas) que
+            // hoy pasaba callado. Es un bug de programacion aguas arriba: el calculator genera un
+            // grupo por cada alicuota presente, asi que si falta es porque el override y las lineas
+            // se desincronizaron. Fallamos RUIDOSO en vez de emitir un comprobante con IVA faltante.
+            if (!importePorAlicuota.TryGetValue(alicuotaIvaId, out var importeDelGrupo))
+            {
+                throw new InvalidOperationException(
+                    $"BuildInvoiceItemsFromOverride: la alicuota {alicuotaIvaId} esta presente en " +
+                    $"las lineas pero NO en el override (AlicIvas). Override desincronizado con las " +
+                    $"lineas: se emitiria una NC con IVA faltante para ese grupo. Abortado.");
+            }
+
+            // Paso 1: IVA redondeado por item. Paso 2: residuo al ultimo item del grupo.
+            decimal acumuladoRedondeado = 0m;
+            for (int indice = 0; indice < groupLines.Count; indice++)
+            {
+                var line = groupLines[indice];
+                bool esUltimoDelGrupo = indice == groupLines.Count - 1;
+
+                decimal importeIvaItem;
+                if (esUltimoDelGrupo)
+                {
+                    // El ultimo item absorbe lo que falte para que el grupo sume EXACTO el
+                    // Importe redondeado del override.
+                    importeIvaItem = importeDelGrupo - acumuladoRedondeado;
+
+                    // GUARDA (a) (MEJORA 2): el residuo (lo que carga el ultimo item por encima de
+                    // su IVA redondeado propio) deberia ser de 1-2 centavos como mucho. Si es mas
+                    // grande, o si deja el IVA del ultimo item NEGATIVO, el override esta
+                    // desalineado con las lineas (bug aguas arriba: el Importe del grupo no se
+                    // calculo sobre estas mismas lineas). Mejor fallar ruidoso con diagnostico que
+                    // persistir un InvoiceItem con IVA raro/negativo que ARCA despues rebota.
+                    decimal ivaRedondeadoUltimoItem = Math.Round(line.Total * GetVatMultiplierStatic(alicuotaIvaId), 2);
+                    decimal residuo = importeIvaItem - ivaRedondeadoUltimoItem;
+                    if (importeIvaItem < 0m || Math.Abs(residuo) > 0.05m)
+                    {
+                        throw new InvalidOperationException(
+                            $"BuildInvoiceItemsFromOverride: el reparto de IVA del grupo alicuota " +
+                            $"{alicuotaIvaId} quedo inconsistente. Importe override del grupo=" +
+                            $"{importeDelGrupo}, Σ redondeos por item={acumuladoRedondeado + ivaRedondeadoUltimoItem}, " +
+                            $"residuo cargado al ultimo item={residuo}, IVA resultante del ultimo item=" +
+                            $"{importeIvaItem}. El override esta desalineado con las lineas. Abortado.");
+                    }
+                }
+                else
+                {
+                    importeIvaItem = Math.Round(line.Total * GetVatMultiplierStatic(alicuotaIvaId), 2);
+                    acumuladoRedondeado += importeIvaItem;
+                }
+
+                items.Add(new InvoiceItem
+                {
+                    Description = line.Description,
+                    Quantity = line.Quantity,
+                    UnitPrice = line.UnitPrice,
+                    Total = line.Total,
+                    AlicuotaIvaId = line.AlicuotaIvaId,
+                    ImporteIva = importeIvaItem
+                });
+            }
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2: version estatica de <see cref="GetVatMultiplier"/>, para usar desde el
+    /// helper puro <see cref="BuildInvoiceItemsFromOverride"/> (que no tiene instancia).
+    /// MISMA tabla canonica que la version de instancia y que
+    /// <c>PartialCreditNoteIvaCalculator.GetVatMultiplier</c>.
+    /// </summary>
+    private static decimal GetVatMultiplierStatic(int id) => id switch
     {
         3 => 0m,     // 0%
         4 => 0.105m, // 10.5%
@@ -775,12 +962,22 @@ public class AfipService : IAfipService
             // 3. Re-Calculate IVA Groups (AFIP Needs breakdown)
             bool isFacturaC = invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13;
 
+            // FC1.3.F2.2 (fix fiscal B1): el job RELEE la Invoice de BD y reagrupa los items
+            // por alicuota sumando InvoiceItem.ImporteIva (NO recalcula Total*tasa). Por eso el
+            // cuadre exacto de la NC parcial tiene que estar YA PERSISTIDO en los items:
+            // CreatePendingInvoice + BuildInvoiceItemsFromOverride distribuyen el IVA de cada
+            // grupo de modo que Σ ImporteIva por grupo == el Importe redondeado del override.
+            // INVARIANTE (no romper): <ImpIVA> == Σ <AlicIva><Importe> == invoice.ImporteIva.
+            // Como aca NO se vuelve a redondear (solo ToString("0.00") al serializar) y los
+            // ImporteIva persistidos ya son de 2 decimales, la suma es exacta. Para la
+            // facturacion FC1.2 / NC total los items vienen de la rama sin override, identico
+            // a como era antes del fix.
             var ivaGroups = invoice.Items
                 .GroupBy(i => i.AlicuotaIvaId)
-                .Select(g => new 
+                .Select(g => new
                 {
                     Id = g.Key,
-                    BaseImp = g.Sum(x => x.Total), 
+                    BaseImp = g.Sum(x => x.Total),
                     Importe = g.Sum(x => x.ImporteIva)
                 })
                 .ToList();
@@ -861,6 +1058,9 @@ public class AfipService : IAfipService
             </FeCabReq>
             <FeDetReq>
                 <FECAEDetRequest>
+                    <!-- DEUDA F2.x (B2): Concepto/fechas (CbteFch, FchServDesde/Hasta,
+                         FchVtoPago) hardcoded. El arquitecto lo difirio como deuda +
+                         preguntas al contador. NO se cambia el comportamiento en este fix. -->
                     <Concepto>2</Concepto>
                     <DocTipo>{docTipo}</DocTipo>
                     <DocNro>{docNro}</DocNro>
