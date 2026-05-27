@@ -445,7 +445,14 @@ public sealed class FiscalLiquidationBackfillIntegrationTests
     public async Task Backfill_FromExistingApprovalMetadata_PopulatesAllColumns()
     {
         await using var ctx = _fixture.CreateDbContext();
-        var (customerId, supplierId, reservaId) = await SeedBaseAsync(ctx);
+        // IMPORTANTE: existe el indice unico IX_BookingCancellations_ReservaId, asi que
+        // NO puede haber 2 BookingCancellations colgados de la misma Reserva. Por eso
+        // cada BC necesita su PROPIA reserva (SeedBaseAsync genera una reserva nueva con
+        // NumeroReserva unico por llamada). Customer y Supplier pueden compartirse, pero
+        // crear bases independientes mantiene el seed simple y aislado.
+        var (customerId1, supplierId1, reservaId1) = await SeedBaseAsync(ctx);
+        var (customerId2, supplierId2, reservaId2) = await SeedBaseAsync(ctx);
+        var (customerId3, supplierId3, reservaId3) = await SeedBaseAsync(ctx);
 
         // Tres BCs con montos distintos. Suma valida: fiscal + noReembolsable + penalty = original.
         // Ejemplo 1: original 100k = fiscal 90k + penalty 10k + noReemb 0.
@@ -455,13 +462,13 @@ public sealed class FiscalLiquidationBackfillIntegrationTests
         // Ejemplo 3: original 50k = fiscal 50k + 0 + 0 (cancelacion limpia sin retenciones).
         var bc3Meta = BuildMetadataJson(50_000m, 50_000m, 0m, 0m, 50_000m, 0m);
 
-        var inv1 = await SeedInvoiceAsync(ctx, reservaId, 100_000m);
-        var inv2 = await SeedInvoiceAsync(ctx, reservaId, 200_000m);
-        var inv3 = await SeedInvoiceAsync(ctx, reservaId, 50_000m);
+        var inv1 = await SeedInvoiceAsync(ctx, reservaId1, 100_000m);
+        var inv2 = await SeedInvoiceAsync(ctx, reservaId2, 200_000m);
+        var inv3 = await SeedInvoiceAsync(ctx, reservaId3, 50_000m);
 
-        var (bc1, _, _) = await SeedBcWithPendingApprovalAsync(ctx, customerId, supplierId, reservaId, inv1, bc1Meta);
-        var (bc2, _, _) = await SeedBcWithPendingApprovalAsync(ctx, customerId, supplierId, reservaId, inv2, bc2Meta);
-        var (bc3, _, _) = await SeedBcWithPendingApprovalAsync(ctx, customerId, supplierId, reservaId, inv3, bc3Meta);
+        var (bc1, _, _) = await SeedBcWithPendingApprovalAsync(ctx, customerId1, supplierId1, reservaId1, inv1, bc1Meta);
+        var (bc2, _, _) = await SeedBcWithPendingApprovalAsync(ctx, customerId2, supplierId2, reservaId2, inv2, bc2Meta);
+        var (bc3, _, _) = await SeedBcWithPendingApprovalAsync(ctx, customerId3, supplierId3, reservaId3, inv3, bc3Meta);
 
         // ACT — correr el backfill.
         await RunBackfillAsync(ctx);
