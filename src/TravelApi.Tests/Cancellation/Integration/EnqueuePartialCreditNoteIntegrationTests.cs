@@ -151,6 +151,35 @@ public sealed class EnqueuePartialCreditNoteIntegrationTests
     }
 
     /// <summary>
+    /// Persiste un <see cref="ApprovalRequest"/> tipo PartialCreditNoteApproval y
+    /// devuelve su Id. El happy path lo necesita porque
+    /// <c>EnqueuePartialCreditNoteAsync</c> setea
+    /// <c>invoice.AnnulmentApprovalRequestId</c>, que es FK obligatoria a
+    /// <c>ApprovalRequests</c> (la NC parcial SIEMPRE viene de un approval). Sin un
+    /// approval real en la BD, el INSERT viola la FK
+    /// (FK_Invoices_ApprovalRequests_AnnulmentApprovalRequestId, SqlState 23503).
+    /// </summary>
+    private async Task<int> SeedApprovalRequestAsync()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        var approval = new ApprovalRequest
+        {
+            RequestType = ApprovalRequestType.PartialCreditNoteApproval,
+            EntityType = "Invoice",
+            EntityId = 0,
+            RequestedByUserId = "vendedor-X",
+            RequestedAt = DateTime.UtcNow,
+            Status = ApprovalStatus.Pending,
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+            Reason = "NC parcial test",
+            Metadata = "{}",
+        };
+        ctx.ApprovalRequests.Add(approval);
+        await ctx.SaveChangesAsync();
+        return approval.Id;
+    }
+
+    /// <summary>
     /// Liquidacion coherente: factura origen consistente (neto + IVA == total) y las
     /// lineas suman exactamente el monto fiscal a acreditar. Ejemplo: de una factura B
     /// de 1.000.000 se acreditan 300.000.
@@ -183,6 +212,8 @@ public sealed class EnqueuePartialCreditNoteIntegrationTests
     public async Task EnqueuePartialCreditNoteAsync_HappyPath_PersistsPendingAndEnqueuesJob()
     {
         var invoiceId = await SeedInvoiceAsync();
+        // El approval debe existir en la BD: la FK obligatoria a ApprovalRequests lo exige.
+        var approvalId = await SeedApprovalRequestAsync();
 
         await using var ctx = _fixture.CreateDbContext();
         var (service, jobClientMock) = BuildService(ctx);
@@ -193,7 +224,7 @@ public sealed class EnqueuePartialCreditNoteIntegrationTests
             userId: "vendedor-X",
             userName: "Vendedor X",
             reason: "Cancelacion parcial de hotel",
-            approvalRequestId: 42,
+            approvalRequestId: approvalId,
             ct: CancellationToken.None);
 
         // La factura quedo marcada como anulacion en curso, con la trazabilidad.
@@ -203,7 +234,7 @@ public sealed class EnqueuePartialCreditNoteIntegrationTests
         Assert.Equal("vendedor-X", refreshed.AnnulledByUserId);
         Assert.Equal("Vendedor X", refreshed.AnnulledByUserName);
         Assert.Equal("Cancelacion parcial de hotel", refreshed.AnnulmentReason);
-        Assert.Equal(42, refreshed.AnnulmentApprovalRequestId);
+        Assert.Equal(approvalId, refreshed.AnnulmentApprovalRequestId);
         // AnnulledAt se setea cuando el ARCA confirma la NC (job, Etapa 5), no aca.
         Assert.Null(refreshed.AnnulledAt);
 
