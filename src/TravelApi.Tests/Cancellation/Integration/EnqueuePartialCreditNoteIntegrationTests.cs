@@ -180,6 +180,32 @@ public sealed class EnqueuePartialCreditNoteIntegrationTests
     }
 
     /// <summary>
+    /// Persiste un <see cref="ApplicationUser"/> con el Id dado. El happy path lo
+    /// necesita porque <c>EnqueuePartialCreditNoteAsync</c> setea
+    /// <c>invoice.AnnulledByUserId</c>, que es FK a AspNetUsers
+    /// (FK_Invoices_AspNetUsers_AnnulledByUserId). Sin el usuario en la BD, el INSERT
+    /// viola la FK (SqlState 23503). Insertamos directo via el DbSet (sin UserManager):
+    /// para satisfacer la FK alcanza con que exista la fila.
+    /// </summary>
+    private async Task SeedUserAsync(string userId)
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        if (await ctx.Users.AnyAsync(u => u.Id == userId)) return;
+        ctx.Users.Add(new ApplicationUser
+        {
+            Id = userId,
+            UserName = userId,
+            NormalizedUserName = userId.ToUpperInvariant(),
+            Email = $"{userId}@test.local",
+            NormalizedEmail = $"{userId.ToUpperInvariant()}@TEST.LOCAL",
+            FullName = "Vendedor Test",
+            IsActive = true,
+            SecurityStamp = Guid.NewGuid().ToString(),
+        });
+        await ctx.SaveChangesAsync();
+    }
+
+    /// <summary>
     /// Liquidacion coherente: factura origen consistente (neto + IVA == total) y las
     /// lineas suman exactamente el monto fiscal a acreditar. Ejemplo: de una factura B
     /// de 1.000.000 se acreditan 300.000.
@@ -214,6 +240,8 @@ public sealed class EnqueuePartialCreditNoteIntegrationTests
         var invoiceId = await SeedInvoiceAsync();
         // El approval debe existir en la BD: la FK obligatoria a ApprovalRequests lo exige.
         var approvalId = await SeedApprovalRequestAsync();
+        // El usuario tambien: AnnulledByUserId es FK a AspNetUsers.
+        await SeedUserAsync("vendedor-X");
 
         await using var ctx = _fixture.CreateDbContext();
         var (service, jobClientMock) = BuildService(ctx);
