@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using System.Globalization;
 using TravelApi.Application.DTOs;
+using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -929,6 +930,215 @@ public class InvoiceService : IInvoiceService
             await CreateNotification(userId, $"Error técnico al anular: {errorMsg}. Se reintentará automáticamente.", "Error", invoiceId);
             throw; // Retry job for network/transient errors
         }
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 (plan tactico §FC1.3.F2.2 puntos 1/3/7, 2026-05-27): punto de
+    /// entrada para emitir una Nota de Credito (NC) PARCIAL real al ARCA.
+    ///
+    /// <para><b>Que hace</b> (y que NO hace): valida la coherencia de los montos del
+    /// input, marca la factura origen como anulacion en curso (AnnulmentStatus =
+    /// Pending) y encola el job <see cref="ProcessPartialCreditNoteJob"/>. NO toca el
+    /// ARCA ni la tabla ArcaIdempotencyKeys — eso es responsabilidad del job
+    /// (RH4-001). El motivo: entre encolar y ejecutar el job pueden pasar varios
+    /// minutos bajo carga de Hangfire, y el numerador del ARCA puede avanzar por
+    /// otros emisores en el medio. Si capturaramos el snapshot del numerador aca,
+    /// el recovery posterior compararia contra un dato viejo. Por eso el snapshot
+    /// vive DENTRO del job, en la misma ejecucion que el POST efectivo.</para>
+    ///
+    /// <para><b>Diferencia con <see cref="EnqueueAnnulmentAsync"/></b>: aquella emite
+    /// NC TOTAL replicando 1:1 los items de la factura origen. Esta emite NC sobre
+    /// solo una parte (la liquidacion ya viene calculada con las lineas a acreditar).</para>
+    /// </summary>
+    public async Task EnqueuePartialCreditNoteAsync(
+        int originalInvoiceId,
+        PartialCreditNoteEmissionInput liquidation,
+        string userId,
+        string? userName,
+        string? reason,
+        int approvalRequestId,
+        CancellationToken ct)
+    {
+        // 1) Cargar la factura origen. Si no existe, fail-fast antes de cualquier
+        //    side-effect (igual que EnqueueAnnulmentAsync).
+        var invoice = await _context.Invoices.FirstOrDefaultAsync(i => i.Id == originalInvoiceId, ct)
+            ?? throw new KeyNotFoundException($"Factura {originalInvoiceId} no encontrada.");
+
+        // 2) Idempotencia: misma regla que EnqueueAnnulmentAsync. Pending o Succeeded
+        //    bloquean — la factura ya tiene una NC en curso o aprobada y emitir otra
+        //    romperia la numeracion correlativa / duplicaria la acreditacion fiscal.
+        //    Failed permite reintento (util si el ARCA dio timeout).
+        if (invoice.AnnulmentStatus is AnnulmentStatus.Pending or AnnulmentStatus.Succeeded)
+        {
+            throw new InvalidOperationException(
+                invoice.AnnulmentStatus == AnnulmentStatus.Succeeded
+                    ? "La factura ya fue anulada (NC aprobada). No se puede emitir otra NC parcial."
+                    : "La factura tiene una anulacion en curso. Espera el resultado o reintenta si quedo en Failed.");
+        }
+
+        // 3) Solo Facturas A/B/C soportan NC parcial automatica (RH-003). Factura M
+        //    (51) NO esta soportada en Fase 2: el helper la deja afuera. NDs y NCs
+        //    tampoco pueden ser origen. Fail-fast aca evita encolar un job condenado.
+        if (!InvoiceComprobanteHelpers.IsSupportedForAnnulment(invoice.TipoComprobante))
+        {
+            throw new InvalidOperationException(
+                $"El tipo de comprobante {invoice.TipoComprobante} no soporta NC parcial automatica. " +
+                "Factura M no soportada para NC parcial en Fase 2 (RH-003). " +
+                "Solo se emiten NC parciales sobre Facturas A/B/C.");
+        }
+
+        // 4) Validacion defensiva PRE-encolado (plan punto 7 / M4). Si los montos del
+        //    input no son coherentes entre si, rebotamos ACA — ANTES de mutar el
+        //    AnnulmentStatus y ANTES de encolar. Cero side-effects si la validacion
+        //    falla: la factura queda intacta y no hay job huerfano en la cola.
+        //
+        //    Esta validacion es redundante con la que hara el job (defense-in-depth),
+        //    pero detecta el problema upstream: mejor rebotar con un mensaje claro
+        //    aca que dejar un job encolado que va a fallar al construir el XML.
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+
+        // 4.bis) Guard del feature flag maestro de Fase 2 (defense in depth, RH4).
+        //    Este metodo es public: hoy su unico caller (F2.3, el BC service) todavia
+        //    NO existe, pero igual no debe poder emitir NC parcial real si el flag esta
+        //    apagado. No confiamos en que el caller valide el flag — lo chequeamos aca,
+        //    upstream de cualquier side-effect. Con el flag OFF el sistema sigue
+        //    operando como FC1.2 (NC total), asi que emitir una NC parcial aca seria un
+        //    cambio de comportamiento no autorizado.
+        //
+        //    Va ANTES de mutar AnnulmentStatus y ANTES de encolar el job: si el flag
+        //    esta apagado, cero side-effects (la factura queda intacta, no hay job
+        //    huerfano), igual que la validacion de montos.
+        if (!settings.EnablePartialCreditNoteRealEmission)
+        {
+            throw new InvalidOperationException(
+                "Emision real de NC parcial deshabilitada (EnablePartialCreditNoteRealEmission=false). " +
+                "Prenda el flag para operar.");
+        }
+
+        ValidateLiquidationAmounts(liquidation, settings.PartialCreditNoteRoundingTolerance);
+
+        // 5) Persistir la solicitud: AnnulmentStatus = Pending bloquea cancel de la
+        //    reserva mientras la NC no este aprobada por el ARCA (igual que la NC total).
+        //    AnnulledAt queda null hasta que el job confirme la NC con el ARCA.
+        invoice.AnnulledByUserId = userId;
+        invoice.AnnulledByUserName = userName;
+        invoice.AnnulmentReason = reason;
+        invoice.AnnulmentStatus = AnnulmentStatus.Pending;
+        // Cross-reference fiscal: que ApprovalRequest autorizo esta NC parcial. A
+        // diferencia de la NC total, aca el approval SIEMPRE es obligatorio (no hay
+        // path Admin bypass para NC parcial — el caller del BC service ya lo exige).
+        invoice.AnnulmentApprovalRequestId = approvalRequestId;
+        await _context.SaveChangesAsync(ct);
+
+        // 6) Serializar el input a JSON para pasarlo al job. Hangfire no serializa de
+        //    forma confiable un record con IReadOnlyList anidada sin configuracion
+        //    extra, asi que lo mandamos como string y el job lo deserializa (Etapa 5).
+        var liquidationJson = System.Text.Json.JsonSerializer.Serialize(liquidation);
+
+        // 7) Encolar el job. Mismo cliente Hangfire que EnqueueAnnulmentAsync:
+        //    _backgroundJobClient.Enqueue<IInvoiceService>(...). Hangfire resuelve la
+        //    expresion contra el TIPO IInvoiceService y serializa los argumentos.
+        _backgroundJobClient.Enqueue<IInvoiceService>(service =>
+            service.ProcessPartialCreditNoteJob(originalInvoiceId, liquidationJson, userId, approvalRequestId));
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 (M4): valida la coherencia interna de los montos de la liquidacion
+    /// ANTES de mutar estado o encolar. Lanza <see cref="ArgumentException"/> si algo
+    /// no cuadra. No tiene side-effects.
+    ///
+    /// <para>Dos chequeos:
+    /// <list type="number">
+    ///   <item>Que la factura origen sea consistente: neto + IVA == total (dentro de
+    ///   la tolerancia de redondeo). Si la factura venia rota, mejor rebotar aca que
+    ///   mandar un XML inconsistente al ARCA.</item>
+    ///   <item>Que la suma de las lineas a acreditar coincida con el monto fiscal a
+    ///   acreditar. Si no coincide, la NC que armaria el job no representaria el monto
+    ///   que se pretende devolver.</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private static void ValidateLiquidationAmounts(
+        PartialCreditNoteEmissionInput liquidation,
+        decimal tolerance)
+    {
+        // Chequeo 1: neto + IVA de la factura origen == total de la factura origen.
+        var originalGap = Math.Abs(
+            liquidation.OriginalNetAmount + liquidation.OriginalVatAmount - liquidation.OriginalTotalAmount);
+        if (originalGap > tolerance)
+        {
+            throw new ArgumentException(
+                "Los montos de la factura origen no son coherentes: " +
+                $"neto ({liquidation.OriginalNetAmount}) + IVA ({liquidation.OriginalVatAmount}) " +
+                $"!= total ({liquidation.OriginalTotalAmount}). Diferencia {originalGap} > tolerancia {tolerance}.",
+                nameof(liquidation));
+        }
+
+        // Chequeo 2: suma de las lineas a acreditar == monto fiscal a acreditar.
+        decimal linesTotal = 0m;
+        foreach (var line in liquidation.Lines)
+        {
+            linesTotal += line.Total;
+        }
+
+        var linesGap = Math.Abs(linesTotal - liquidation.FiscalAmountToCredit);
+        if (linesGap > tolerance)
+        {
+            throw new ArgumentException(
+                "La suma de las lineas no coincide con el monto fiscal a acreditar: " +
+                $"suma de lineas ({linesTotal}) != FiscalAmountToCredit ({liquidation.FiscalAmountToCredit}). " +
+                $"Diferencia {linesGap} > tolerancia {tolerance}.",
+                nameof(liquidation));
+        }
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 — Background Job de emision de NC PARCIAL. ESQUELETO (Etapa 4 de 5).
+    ///
+    /// <para><b>!!! NO IMPLEMENTADO TODAVIA !!!</b> Este metodo existe SOLO para que el
+    /// encolado de <see cref="EnqueuePartialCreditNoteAsync"/> compile. Hangfire resuelve
+    /// la expresion <c>Enqueue&lt;IInvoiceService&gt;(s =&gt; s.ProcessPartialCreditNoteJob(...))</c>
+    /// contra el TIPO de la interfaz, asi que el metodo tiene que existir y estar
+    /// declarado en <see cref="IInvoiceService"/>. Sin este esqueleto, el encolado no
+    /// compilaria. Pero el CUERPO real se implementa en la Etapa 5.</para>
+    ///
+    /// <para><b>Que va a hacer la Etapa 5</b> (NO ahora):
+    /// <list type="bullet">
+    ///   <item>Capturar el snapshot del numerador ARCA (<c>GetLastAuthorizedNumeroAsync</c>)
+    ///   como PRIMERA operacion, antes de cualquier otra cosa (RH4-001).</item>
+    ///   <item>Calcular la <c>idemKey</c> SHA256 e insertar en <c>ArcaIdempotencyKeys</c>
+    ///   con el snapshot del numerador (idempotencia anti-doble-POST, capa 1).</item>
+    ///   <item>Stale key recovery: si la key ya existe y esta huerfana, consultar ARCA
+    ///   via <c>QueryLastAuthorizedWithDetailsAsync</c> y arbitrar entre derivar el CAE
+    ///   ya emitido o borrar la key y reintentar limpio (capa 1.5, RH3-001).</item>
+    ///   <item>Prorratear el IVA segun <c>settings.IvaProrrateoMode</c> usando
+    ///   <c>PartialCreditNoteIvaCalculator</c>.</item>
+    ///   <item>Armar el <c>CreateInvoiceRequest</c> de la NC y entregarlo al pipeline
+    ///   existente (<c>CreatePendingInvoice</c> + <c>ProcessInvoiceJob</c>).</item>
+    ///   <item>Setear <c>AnnulmentStatus = Succeeded/Failed</c> segun la respuesta ARCA.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para><b>Por que lanza NotImplementedException y no es no-op</b>: aunque el job se
+    /// ENCOLA (para validar el plumbing del encolado), en runtime NADIE lo dispara
+    /// todavia — su unico caller real (el flow F2.3 que conecta el BookingCancellation
+    /// con la emision parcial) AUN NO EXISTE. Si por error alguien forzara su ejecucion,
+    /// preferimos un fallo ruidoso e inequivoco antes que una NC silenciosa a medias.
+    /// El <see cref="NotImplementedException"/> garantiza que ningun comprobante fiscal
+    /// se emita a partir de este esqueleto.</para>
+    /// </summary>
+    public Task ProcessPartialCreditNoteJob(
+        int originalInvoiceId,
+        string liquidationJson,
+        string userId,
+        int approvalRequestId)
+    {
+        throw new NotImplementedException(
+            "ProcessPartialCreditNoteJob: logica de emision real pendiente de Etapa 5 (F2.2). " +
+            "Este esqueleto existe solo para que el encolado de EnqueuePartialCreditNoteAsync compile. " +
+            "El cuerpo real (snapshot numerador + idempotencia ArcaIdempotencyKeys + stale key recovery " +
+            "+ prorrateo IVA + CreatePendingInvoice + POST ARCA) NO debe ejecutarse en runtime todavia: " +
+            "su unico caller (F2.3) aun no existe.");
     }
 
     private async Task CreateNotification(string userId, string message, string type, int relatedId)

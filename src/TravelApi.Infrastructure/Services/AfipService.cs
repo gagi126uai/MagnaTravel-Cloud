@@ -1264,10 +1264,213 @@ public class AfipService : IAfipService
             });
         }
 
+        // ---- FC1.3.F2.2 (sub-tarea A.3.1, RH3-001 / RH4-002 round 4, 2026-05-27) ----
+        // Extension ADITIVA del parseo: llenamos los campos nullable nuevos de
+        // AfipVoucherDetails (Cae, IssuedAt, MonId, MonCotiz, CbteAsoc). Los callers
+        // viejos (InvoiceService:723) NO se rompen: solo leen ImporteTotal/VatDetails/
+        // TributeDetails/ImporteNeto, que siguen igual. Si el nodo no viene en el
+        // response, el campo queda en null (es opcional por diseño).
+        ParseVoucherDetailExtras(result, details, _logger);
+
         return details;
     }
 
+    /// <summary>
+    /// FC1.3.F2.2 (sub-tarea A.3.1): mapea los nodos OPCIONALES del response de
+    /// <c>FECompConsultar</c> a los campos nullable de <see cref="AfipVoucherDetails"/>.
+    /// Aislado en su propio metodo (y <c>static</c>) para mantener <c>GetVoucherDetails</c>
+    /// legible y poder testear el parseo del array <c>CbtesAsoc</c> sin pegarle a ARCA ni
+    /// instanciar todo el servicio. Es <c>internal</c> porque el assembly de tests tiene
+    /// <c>InternalsVisibleTo</c>.
+    /// </summary>
+    /// <param name="result">El nodo <c>ResultGet</c> del response SOAP.</param>
+    /// <param name="details">El DTO que se esta poblando (mutado in-place).</param>
+    /// <param name="logger">Logger para el warning defensivo de multiples CbtesAsoc.</param>
+    internal static void ParseVoucherDetailExtras(XElement result, AfipVoucherDetails details, ILogger logger)
+    {
+        var ns = "http://ar.gov.afip.dif.FEV1/";
 
+        // CAE: en el response de FECompConsultar viene como <CodAutorizacion>
+        // (no como <CAE>, que es el nombre del nodo en el response de FECAESolicitar).
+        var cae = result.Element(XName.Get("CodAutorizacion", ns))?.Value;
+        if (!string.IsNullOrWhiteSpace(cae))
+        {
+            details.Cae = cae;
+        }
+
+        // Fecha de emision: <CbteFch> viene en formato yyyyMMdd (ej. "20260527").
+        // Si no parsea, dejamos IssuedAt en null en vez de romper toda la consulta.
+        var cbteFch = result.Element(XName.Get("CbteFch", ns))?.Value;
+        if (!string.IsNullOrWhiteSpace(cbteFch)
+            && DateTime.TryParseExact(
+                cbteFch,
+                "yyyyMMdd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var parsedDate))
+        {
+            details.IssuedAt = parsedDate;
+        }
+
+        // Moneda + cotizacion del comprobante. MonId es texto ("PES", "DOL"),
+        // MonCotiz es decimal. Solo se setean si vienen en el response.
+        var monId = result.Element(XName.Get("MonId", ns))?.Value;
+        if (!string.IsNullOrWhiteSpace(monId))
+        {
+            details.MonId = monId;
+        }
+
+        var monCotiz = result.Element(XName.Get("MonCotiz", ns))?.Value;
+        if (!string.IsNullOrWhiteSpace(monCotiz)
+            && decimal.TryParse(monCotiz, NumberStyles.Any, CultureInfo.InvariantCulture, out var cotiz))
+        {
+            details.MonCotiz = cotiz;
+        }
+
+        // ---- Contrato defensivo del array CbtesAsoc [RH4-002 round 4] ----
+        //
+        // Por construccion, una NC parcial Fase 2 emite exactamente 1 <CbteAsoc>
+        // apuntando a la factura origen (ver el path de emision AfipService:830-838).
+        // Entonces el response de FECompConsultar para esa NC deberia traer
+        // exactamente 1 item bajo <CbtesAsoc>. Pero NO confiamos a ciegas:
+        //
+        //   - 1 item  -> caso normal: mapeamos su <Nro> a CbteAsoc.
+        //   - 0 items -> CbteAsoc queda null. La capa de recovery lo lee como
+        //                "mismatch" y reintenta limpio (seguro: no deriva CAE de la nada).
+        //   - N>1     -> ARCA cambio comportamiento o el comprobante no es lo que creemos.
+        //                Logueamos warning y dejamos CbteAsoc en null. NO elegimos uno
+        //                "a ojo": derivar un CAE del comprobante asociado equivocado es
+        //                peor (riesgo fiscal real) que un reintento extra del job.
+        //
+        // Nota: descendemos solo sobre el nodo <CbteAsoc> que cuelga de <CbtesAsoc>,
+        // no sobre cualquier <CbteAsoc> del documento, para no contar nodos de otra parte.
+        var cbtesAsocContainer = result.Element(XName.Get("CbtesAsoc", ns));
+        if (cbtesAsocContainer != null)
+        {
+            var cbteAsocItems = cbtesAsocContainer
+                .Elements(XName.Get("CbteAsoc", ns))
+                .ToList();
+
+            if (cbteAsocItems.Count == 1)
+            {
+                var nroText = cbteAsocItems[0].Element(XName.Get("Nro", ns))?.Value;
+                if (int.TryParse(nroText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var nro))
+                {
+                    details.CbteAsoc = nro;
+                }
+                // Si <Nro> no parsea, CbteAsoc queda null -> mismatch -> retry limpio.
+            }
+            else if (cbteAsocItems.Count > 1)
+            {
+                // Defensa proactiva: ARCA nunca deberia devolver multiples para nuestra NC.
+                // No exponemos montos ni CUIT en el log, solo la cantidad inesperada.
+                logger.LogWarning(
+                    "FECompConsultar devolvio multiples CbtesAsoc inesperado " +
+                    "(Count={Count}). Se deja CbteAsoc en null para forzar retry limpio.",
+                    cbteAsocItems.Count);
+            }
+            // Count == 0 -> CbteAsoc queda en null (valor inicial), sin warning.
+        }
+    }
+
+
+
+    // ---- FC1.3.F2.2 (sub-tareas A.7.0 / A.2 / A.3, RH3-001 / RH3-004 round 4) ----
+    // Metodos de CONSULTA a ARCA para el anti-duplicados del job de NC parcial.
+    // NO emiten nada. Reutilizan el numerador interno (GetNextVoucherNumber) y el
+    // detalle (GetVoucherDetails) que ya existen, encapsulando la carga de settings
+    // + auth para no exponer internals al caller.
+
+    /// <summary>
+    /// FC1.3.F2.2 (sub-tarea A.7.0, RH3-004 round 4): ultimo numero autorizado por
+    /// ARCA para el punto de venta + tipo dados (= proximo numerador - 1).
+    /// </summary>
+    public async Task<int> GetLastAuthorizedNumeroAsync(int puntoVenta, int cbteTipo, CancellationToken ct)
+    {
+        // Leemos settings TRACKED (no GetSettingsAsync, que es AsNoTracking y ademas no
+        // refresca el token) siguiendo el mismo patron que el path de emision
+        // (ProcessInvoiceJob:742-749): cargar settings -> EnsureAuth -> GetNextVoucherNumber.
+        // EnsureAuth garantiza un token WSAA valido; sin el, GetNextVoucherNumber le pega
+        // a ARCA con un token vencido y rebota.
+        var settings = await _context.AfipSettings.FirstOrDefaultAsync(ct);
+        if (settings == null) throw new InvalidOperationException("AFIP no esta configurado.");
+
+        await EnsureAuth(settings);
+
+        // GetNextVoucherNumber devuelve el PROXIMO numero a emitir; el ultimo autorizado
+        // es ese menos uno. Si ARCA todavia no autorizo ninguno (proximo == 1),
+        // el ultimo autorizado es 0 (no hay comprobante previo).
+        var proximo = await GetNextVoucherNumber(settings, cbteTipo);
+        return proximo - 1;
+    }
+
+    /// <summary>
+    /// FC1.3.F2.2 (sub-tareas A.2 / A.3, RH3-001 round 4): consulta compuesta para el
+    /// stale key recovery. Decide <c>Found</c> comparando el numerador actual de ARCA
+    /// contra el snapshot que el job tomo ANTES de postear (<paramref name="lastSeenNumeroBeforePost"/>).
+    /// Si avanzo, trae el detalle del ultimo comprobante.
+    /// </summary>
+    public async Task<ArcaCompoundQueryResult> QueryLastAuthorizedWithDetailsAsync(
+        int puntoVenta,
+        int cbteTipo,
+        int? lastSeenNumeroBeforePost,
+        CancellationToken ct)
+    {
+        // Paso 1: ultimo numero autorizado AHORA (reusa el helper publico, que ya hace
+        // settings + auth adentro).
+        var ultimo = await GetLastAuthorizedNumeroAsync(puntoVenta, cbteTipo, ct);
+
+        // Paso 2: si no teniamos snapshot (key vieja sin LastSeenNumeroBeforePost) o el
+        // numerador NO avanzo respecto al snapshot, el POST nunca viajo -> Found=false.
+        // El job lo trata como huerfana: borra la key y reintenta limpio.
+        if (lastSeenNumeroBeforePost == null || ultimo <= lastSeenNumeroBeforePost.Value)
+        {
+            return new ArcaCompoundQueryResult(
+                Found: false,
+                LastNumero: ultimo,
+                Cae: null,
+                CbteAsoc: null,
+                IssuedAt: null,
+                ImporteTotal: null,
+                MonId: null,
+                MonCotiz: null);
+        }
+
+        // Paso 3: el numerador avanzo -> hay un comprobante nuevo que inspeccionar.
+        // Traemos su detalle (incluye los campos extra que parseamos en A.3.1).
+        var detail = await GetVoucherDetails(cbteTipo, puntoVenta, ultimo);
+
+        // Si por algun motivo el detalle no viene (timeout, comprobante no consultable),
+        // degradamos a Found=false: mejor reintentar limpio que afirmar que el POST viajo
+        // sin tener el comprobante en mano.
+        if (detail == null)
+        {
+            _logger.LogWarning(
+                "QueryLastAuthorizedWithDetailsAsync: el numerador avanzo a {Ultimo} pero " +
+                "FECompConsultar no devolvio detalle. Se degrada a Found=false.",
+                ultimo);
+
+            return new ArcaCompoundQueryResult(
+                Found: false,
+                LastNumero: ultimo,
+                Cae: null,
+                CbteAsoc: null,
+                IssuedAt: null,
+                ImporteTotal: null,
+                MonId: null,
+                MonCotiz: null);
+        }
+
+        return new ArcaCompoundQueryResult(
+            Found: true,
+            LastNumero: ultimo,
+            Cae: detail.Cae,
+            CbteAsoc: detail.CbteAsoc,
+            IssuedAt: detail.IssuedAt,
+            ImporteTotal: detail.ImporteTotal,
+            MonId: detail.MonId,
+            MonCotiz: detail.MonCotiz);
+    }
 
     private int GetConditionIvaId(string? taxCondition, int docTipo)
     {
