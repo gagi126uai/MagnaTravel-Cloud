@@ -10,6 +10,10 @@
 # - PartialCreditNoteE2ETests (3 tests, ~425 lineas).
 # - FiscalLiquidationBackfillIntegrationTests (11 tests, F2.1: backfill + doble-write
 #   + CHECKs + CommissionOnly + reject + dos ediciones).
+# - InvoiceCurrencyAndArcaIdempotencyIntegrationTests (4 tests, F2.2 Etapa 0:
+#   defaults MonId/MonCotiz + UNIQUE de ArcaIdempotencyKeys).
+# - EnqueuePartialCreditNoteIntegrationTests (6 tests, F2.2 Etapa 4: validacion
+#   pre-encolado + guard flag + Factura M + encolado).
 #
 # Requisitos en el VPS:
 # - .NET 8 SDK instalado (dotnet --version retorna >= 8.0).
@@ -30,7 +34,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 LOG_FILE="test-results-fc13.log"
-FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests|FullyQualifiedName~FiscalLiquidationBackfillIntegrationTests'
+FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests|FullyQualifiedName~FiscalLiquidationBackfillIntegrationTests|FullyQualifiedName~InvoiceCurrencyAndArcaIdempotencyIntegrationTests|FullyQualifiedName~EnqueuePartialCreditNoteIntegrationTests'
 
 echo "== run-tests-fc13.sh =="
 echo "Fecha: $(date)"
@@ -74,7 +78,7 @@ fi
 
 # 4) Run tests focales
 echo ""
-echo "[4/4] Corriendo 37 tests FC1.3 (Fase 1: BookingCancellationService + ForceBridgeCallback + E2E; Fase 2: FiscalLiquidationBackfill)..."
+echo "[4/4] Corriendo 47 tests FC1.3 (Fase 1: BookingCancellationService + ForceBridgeCallback + E2E; Fase 2: FiscalLiquidationBackfill + InvoiceCurrencyAndArcaIdempotency + EnqueuePartialCreditNote)..."
 echo "  Filter: $FILTER"
 echo "  Log completo: $LOG_FILE"
 echo ""
