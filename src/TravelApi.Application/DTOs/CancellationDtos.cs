@@ -55,6 +55,35 @@ public class BookingCancellationDto
     public DateTime? ArcaConfirmedManuallyAt { get; set; }
     public string? ArcaConfirmedManuallyByUserId { get; set; }
     public string? ArcaErrorMessage { get; set; }
+
+    /// <summary>
+    /// FC1.3 Fase 2 (RH-002): detalle de la liquidacion fiscal de la NC parcial
+    /// (montos). Null cuando el BC no tiene liquidacion calculada (BCs FC1.2 puros,
+    /// rechazados, o legacy sin backfill). Cuando existe, expone los componentes que
+    /// el back-office necesita para auditar la NC parcial sin abrir el Metadata JSON
+    /// del approval.
+    /// </summary>
+    public FiscalLiquidationSummaryDto? FiscalLiquidation { get; set; }
+}
+
+/// <summary>
+/// FC1.3 Fase 2 (RH-002): resumen del <c>FiscalLiquidation</c> owned VO para exponer
+/// en la API. Mismo patron que <see cref="FiscalSnapshotSummaryDto"/>: clase con
+/// GET/SET, solo los campos que el frontend necesita ver.
+/// </summary>
+public class FiscalLiquidationSummaryDto
+{
+    public decimal OriginalInvoiceAmount { get; set; }
+    public decimal CancellationAmount { get; set; }
+    public decimal OperatorPenaltyAmount { get; set; }
+    public decimal NonRefundableItemsAmount { get; set; }
+    public decimal FiscalAmountToCredit { get; set; }
+    public decimal AmountToRefundCustomer { get; set; }
+    public decimal FinalNetInvoiced { get; set; }
+    public string? Currency { get; set; }
+    public DateTime? ComputedAt { get; set; }
+    public string? ComputedByUserId { get; set; }
+    public string? ComputedByUserName { get; set; }
 }
 
 /// <summary>

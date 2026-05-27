@@ -458,15 +458,49 @@ public class BookingCancellationService
                     "Apague EnablePartialCreditNotes para esta operacion o espere a Fase 2.");
             }
 
-            // (f) Persistir summary minimo (GR-004): NO guardamos los montos del
-            // calculator en BD. Solo el resultado + timestamps + quien lo corrio.
-            // El detalle entero se serializa al Metadata del approval en
-            // SubmitForReviewAsync (si aplica).
+            // (f) Persistir summary (GR-004) + detalle completo (FC1.3 Fase 2, RH-002).
+            //
+            // Capturamos el timestamp UNA sola vez en una variable local y lo usamos
+            // tanto para la columna summary LiquidationComputedAt como para el VO
+            // FiscalLiquidation.ComputedAt. Es CRITICO que sean el MISMO valor: el
+            // CHECK chk_BookingCancellations_fiscalliquidation_consistency exige
+            // igualdad EXACTA entre ambos. Si usaramos dos DateTime.UtcNow distintos
+            // (uno por linea), Postgres rebotaria el INSERT/UPDATE.
+            var computedAt = DateTime.UtcNow;
+
             bc.CreditNoteKind = liquidation.Kind;
             bc.ReviewRequiredReason = liquidation.ReviewRequiredReason;
-            bc.LiquidationComputedAt = DateTime.UtcNow;
+            bc.LiquidationComputedAt = computedAt;
             bc.LiquidationComputedByUserId = userId;
             bc.LiquidationComputedByUserName = userName;
+
+            // FC1.3 Fase 2 (RH-002): doble-write. Persistimos el detalle COMPLETO de
+            // la liquidacion en las 10 columnas dedicadas, ademas del summary de
+            // arriba. Esto cubre los DOS sub-paths que siguen:
+            //  - auto-aprobable (reason None): cae al step 8 y se guarda en el
+            //    SaveChanges del paso 9.
+            //  - manual review (reason != None): va a SubmitForReviewAsync, que
+            //    serializa el MISMO detalle al Metadata JSON y hace su propio
+            //    SaveChanges.
+            // En ambos casos el VO ya quedo seteado en la entidad trackeada.
+            //
+            // B-FISC-1 (decision Gaston, opcion A): EXCEPCION para modo CommissionOnly.
+            // En CommissionOnly (operador intermediario) el calculator hace early-exit
+            // y devuelve FiscalAmountToCredit=0 + NonRefundableItemsAmount=0 +
+            // OperatorPenaltyAmount=penalty con OriginalInvoiceAmount>0. Esa terna NO
+            // cumple el CHECK de suma (0+0+penalty != original), asi que persistir el VO
+            // haria rebotar a Postgres (SqlState 23514) una operacion LEGITIMA que solo
+            // va a revision manual. Ademas semanticamente en intermediario NO hay un
+            // "total a descomponer" en componentes fiscales — la NC depende solo de la
+            // comision, formula que Fase 2 todavia no modela (espera respuesta F2 del
+            // contador). Por eso dejamos el VO en NULL: las columnas FiscalLiquidation_*
+            // quedan NULL y el CHECK no aplica (clausula "...IS NULL OR..."). El detalle
+            // igual viaja al JSON Metadata via SubmitForReviewAsync, para que el humano
+            // que revisa manualmente vea los numeros del input.
+            if (!IsCommissionOnlyLiquidation(liquidation))
+            {
+                bc.FiscalLiquidation = BuildFiscalLiquidationVo(liquidation, computedAt, userId, userName);
+            }
 
             // (g) Si hay motivos para review manual -> abrir approval + transicionar
             //     a ManualReviewPending + retornar. No caemos al step 8 de FC1.2.
@@ -1134,11 +1168,69 @@ public class BookingCancellationService
         bc.CreditNoteKind = req.CreditNoteKindOverride ?? newLiquidation.Kind;
         bc.ReviewRequiredReason = newLiquidation.ReviewRequiredReason;
 
-        // 9) Apend al Metadata.edits[] del approval. RH-006 cubierto: si otro
-        //    admin edito entre la lectura y el save, EF tira
-        //    DbUpdateConcurrencyException via xmin del ApprovalRequest.
+        // 8.bis) FC1.3 Fase 2 (RH-002): doble-write en el edit. Actualizamos las 10
+        // columnas FiscalLiquidation_* con los nuevos montos del calculator, igual
+        // que se reescriben las claves top-level del Metadata mas abajo. Ambas
+        // representaciones tienen que reflejar el cambio (test
+        // EditLiquidation_PostFase2_UpdatesBothRepresentations).
+        //
+        // IMPORTANTE — ComputedAt NO cambia: el edit re-corre el calculator pero NO
+        // re-setea bc.LiquidationComputedAt (el "cuando se calculo originalmente" se
+        // preserva; el "cuando se edito" queda en Metadata.edits[].at). Por eso el VO
+        // mantiene el ComputedAt original. El CHECK de consistencia sigue cumpliendose
+        // porque VO.ComputedAt == bc.LiquidationComputedAt (ninguno de los dos cambia).
+        //
+        // Fallback defensivo: si por backfill incompleto el VO viniera null, lo creamos
+        // usando el LiquidationComputedAt ya persistido (no un UtcNow nuevo, que romperia
+        // el CHECK). En BCs normales nunca es null aca: la migracion M1 los backfillea.
+        //
+        // B-FISC-1 (decision Gaston opcion A): si el edit re-clasifico a CommissionOnly
+        // NO persistimos el VO (lo dejamos null, igual que en ConfirmAsync) — la terna
+        // 0+0+penalty violaria el CHECK de suma. El JSON top-level si se actualiza igual
+        // (lo necesita el humano que revisa). En el flujo normal del edit el modo no
+        // cambia, pero el penalty override podria mover el caso, asi que aplicamos la
+        // misma guarda por las dudas y para mantener coherencia con Confirm.
+        if (IsCommissionOnlyLiquidation(newLiquidation))
+        {
+            bc.FiscalLiquidation = null;
+        }
+        else
+        {
+            var computedAtForEdit = bc.LiquidationComputedAt ?? DateTime.UtcNow;
+            bc.FiscalLiquidation = BuildFiscalLiquidationVo(
+                newLiquidation, computedAtForEdit, userId, userName);
+        }
+
+        // 9) Actualizar Metadata del approval. RH-006 cubierto: si otro admin edito
+        //    entre la lectura y el save, EF tira DbUpdateConcurrencyException via xmin
+        //    del ApprovalRequest.
         var approval = bc.PartialCreditNoteApprovalRequest;
         var metadataObj = DeserializeMetadataOrEmpty(approval.Metadata);
+
+        // 9.a) B1 fix (RH-002): reescribir las claves TOP-LEVEL del Metadata con los
+        // montos NUEVOS del calculator. Antes solo se appendeaba a edits[] y las claves
+        // top-level (fiscalAmountToCredit, operatorPenaltyAmount, etc.) quedaban con el
+        // valor PRE-edit. Eso hacia divergir el JSON top-level de las columnas
+        // FiscalLiquidation_*, violando el doble-write y corrompiendo el rollback de la
+        // migracion (que lee el JSON top-level como fuente de verdad). El historico de
+        // cambios queda en edits[] (paso 9.b); el top-level refleja SIEMPRE el estado
+        // actual de la liquidacion. computedCase tambien se actualiza porque un edit
+        // puede mover el caso (ej. penalty override que dispara Case3).
+        metadataObj["computedCase"] = newLiquidation.Case.ToString();
+        metadataObj["originalInvoiceAmount"] = newLiquidation.OriginalInvoiceAmount;
+        metadataObj["cancellationAmount"] = newLiquidation.CancellationAmount;
+        metadataObj["operatorPenaltyAmount"] = newLiquidation.OperatorPenaltyAmount;
+        metadataObj["nonRefundableItemsAmount"] = newLiquidation.NonRefundableItemsAmount;
+        metadataObj["fiscalAmountToCredit"] = newLiquidation.FiscalAmountToCredit;
+        metadataObj["amountToRefundCustomer"] = newLiquidation.AmountToRefundCustomer;
+        metadataObj["finalNetInvoiced"] = newLiquidation.FinalNetInvoiced;
+        metadataObj["creditNoteKind"] = bc.CreditNoteKind?.ToString();
+        metadataObj["reviewRequiredReason"] = bc.ReviewRequiredReason.ToString();
+        metadataObj["currency"] = newLiquidation.Currency;
+        metadataObj["classificationExplanation"] = newLiquidation.ClassificationExplanation;
+
+        // 9.b) Append al historico edits[] (no se pisa, se acumula). Mantiene el
+        //    rastro de quien edito que y cuando, independiente del top-level actual.
         var newEdit = new
         {
             at = DateTime.UtcNow,
@@ -1154,9 +1246,37 @@ public class BookingCancellationService
             newOperatorPenaltyAmount = newLiquidation.OperatorPenaltyAmount,
             newNonRefundableItemsAmount = newLiquidation.NonRefundableItemsAmount,
         };
-        metadataObj["edits"] = (metadataObj.TryGetValue("edits", out var existing) && existing is List<object> list)
-            ? new List<object>(list) { newEdit }
-            : new List<object> { newEdit };
+        // RH-012: acumulamos el historico de ediciones en edits[] sin pisarlo.
+        //
+        // OJO con el round-trip de System.Text.Json: DeserializeMetadataOrEmpty
+        // deserializa a Dictionary<string, object?>. Cuando un valor es un array
+        // JSON, System.Text.Json NO lo materializa como List<object>, lo deja como
+        // JsonElement (ValueKind == Array). Por eso `existing is List<object>` da
+        // SIEMPRE false al releer un metadata que ya fue serializado y guardado en
+        // la edicion anterior. El bug que evitamos: en el 2do edit consecutivo,
+        // edits[] se reescribia con un solo elemento y se perdia el rastro previo
+        // (auditoria fiscal RH-012). Reconstruimos la lista enumerando el JsonElement.
+        var edits = new List<object>();
+        if (metadataObj.TryGetValue("edits", out var existing))
+        {
+            if (existing is JsonElement editsElement && editsElement.ValueKind == JsonValueKind.Array)
+            {
+                // Caso normal: el metadata viene de un round-trip (ya fue guardado
+                // y releido). Cada item es un JsonElement, que es serializable de
+                // vuelta sin problema (re-serializa al JSON original).
+                foreach (var item in editsElement.EnumerateArray())
+                    edits.Add(item);
+            }
+            else if (existing is List<object> previousEdits)
+            {
+                // Caso borde: el dict todavia tiene la List<object> en memoria sin
+                // haber pasado por un round-trip (p.ej. inicializada por
+                // SubmitForReviewAsync dentro de la misma operacion).
+                edits.AddRange(previousEdits);
+            }
+        }
+        edits.Add(newEdit);
+        metadataObj["edits"] = edits;
         approval.Metadata = JsonSerializer.Serialize(metadataObj);
 
         // 10) Audit con diff RH-012. Shape canonico {"Field":{"Old":"...","New":"..."}}.
@@ -1581,6 +1701,17 @@ public class BookingCancellationService
         bc.LiquidationComputedByUserId = null;
         bc.LiquidationComputedByUserName = null;
         bc.PartialCreditNoteApprovalRequestId = null;
+
+        // B2 fix (FC1.3 Fase 2, RH-002): limpiar TAMBIEN el owned VO FiscalLiquidation.
+        // Antes el reset limpiaba LiquidationComputedAt (columna summary) pero NO seteaba
+        // bc.FiscalLiquidation = null, dejando las columnas FiscalLiquidation_* pobladas
+        // (con FiscalLiquidation_ComputedAt no-null) mientras LiquidationComputedAt
+        // quedaba null. El CHECK de consistencia NO atrapa esa combinacion (compara
+        // null = timestamp => UNKNOWN => pasa), asi que quedaba un BC en Drafted con una
+        // "liquidacion fantasma" visible en reportes. Al volver a Drafted la liquidacion
+        // ya no aplica: la fuente de verdad para reprocesar es el Metadata JSON del
+        // approval (que persiste para auditoria), no estas columnas.
+        bc.FiscalLiquidation = null;
         // ManualReviewer* fields NO se limpian: el rechazo en si es un evento
         // que vale la pena trazar inline en el BC (ademas del audit log).
         bc.ManualReviewerUserId = resolverUserId;
@@ -1633,10 +1764,16 @@ public class BookingCancellationService
     {
         // 1) Armar metadata JSON con schemaVersion=1 (ADR-009 §2.7). Si en el
         //    futuro cambia el schema, se versiona y el reader detecta.
+        // FC1.3 Fase 2 (RH-002): el computedAt del JSON usa el MISMO valor que la
+        // columna summary bc.LiquidationComputedAt (seteado en ConfirmAsync paso f),
+        // no un DateTime.UtcNow nuevo. Asi las dos representaciones del doble-write
+        // (JSON + columnas FiscalLiquidation_*) quedan coherentes en el timestamp.
+        // Fallback defensivo a UtcNow solo si por algun bug llegara null (no deberia:
+        // ConfirmAsync siempre lo setea antes de invocar este metodo).
         var metadata = new Dictionary<string, object?>
         {
             ["schemaVersion"] = 1,
-            ["computedAt"] = DateTime.UtcNow,
+            ["computedAt"] = bc.LiquidationComputedAt ?? DateTime.UtcNow,
             ["computedByUserId"] = userId,
             ["computedByUserName"] = userName,
             ["computedCase"] = liquidation.Case.ToString(),
@@ -1775,6 +1912,61 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// FC1.3 Fase 2 (RH-002): arma el owned VO <c>FiscalLiquidation</c> a partir del
+    /// resultado del calculator. Centraliza el doble-write para que ConfirmAsync y
+    /// EditLiquidationAsync construyan el VO de la misma forma (un solo lugar que
+    /// mapea DTO -> VO).
+    ///
+    /// <para><b>computedAt es parametro, no DateTime.UtcNow interno</b>: el caller
+    /// pasa el MISMO timestamp que ya escribio en <c>bc.LiquidationComputedAt</c>.
+    /// El CHECK <c>chk_BookingCancellations_fiscalliquidation_consistency</c> exige
+    /// igualdad exacta entre el VO y esa columna; generar un timestamp aca propio
+    /// rebotaria el INSERT.</para>
+    /// </summary>
+    /// <summary>
+    /// FC1.3 Fase 2 (B-FISC-1, decision Gaston opcion A): indica si la liquidacion
+    /// corresponde al modo CommissionOnly (operador intermediario), en cuyo caso NO
+    /// se persiste el owned VO <see cref="FiscalLiquidation"/> (queda null).
+    ///
+    /// <para><b>Por que el discriminador es el flag y no el Case</b>: el calculator
+    /// hace early-exit en STEP 0 cuando el modo es CommissionOnly (GR-003) y devuelve
+    /// SIEMPRE <c>ReviewRequiredReason.InvoicingModeCommissionOnly</c> como UNICO motivo
+    /// (el early-exit corre ANTES de evaluar Factura A, items no reintegrables, etc.,
+    /// por eso nunca se combina con otros flags). Ese flag es el marcador 1:1 del modo
+    /// CommissionOnly en el DTO. Los Cases 5/6 acompanan pero el flag es lo canonico:
+    /// se persiste como int en la columna ReviewRequiredReason y permite query directa.</para>
+    ///
+    /// <para><b>Por que importa</b>: en CommissionOnly el calculator devuelve
+    /// FiscalAmountToCredit=0 + NonRefundable=0 + Penalty=penalty con Original>0. Esa
+    /// terna viola el CHECK de suma. Dejar el VO null evita el rebote de Postgres y es
+    /// fiscalmente correcto (en intermediario no hay total a descomponer).</para>
+    /// </summary>
+    private static bool IsCommissionOnlyLiquidation(FiscalLiquidationDto liquidation)
+        => liquidation.ReviewRequiredReason.HasFlag(ReviewRequiredReason.InvoicingModeCommissionOnly);
+
+    private static FiscalLiquidation BuildFiscalLiquidationVo(
+        FiscalLiquidationDto liquidation,
+        DateTime computedAt,
+        string userId,
+        string? userName)
+    {
+        return new FiscalLiquidation
+        {
+            OriginalInvoiceAmount = liquidation.OriginalInvoiceAmount,
+            CancellationAmount = liquidation.CancellationAmount,
+            OperatorPenaltyAmount = liquidation.OperatorPenaltyAmount,
+            NonRefundableItemsAmount = liquidation.NonRefundableItemsAmount,
+            FiscalAmountToCredit = liquidation.FiscalAmountToCredit,
+            AmountToRefundCustomer = liquidation.AmountToRefundCustomer,
+            FinalNetInvoiced = liquidation.FinalNetInvoiced,
+            Currency = liquidation.Currency,
+            ComputedAt = computedAt,
+            ComputedByUserId = userId,
+            ComputedByUserName = userName,
+        };
+    }
+
+    /// <summary>
     /// Mapeo entidad → DTO. Lo hacemos manual (sin AutoMapper) porque queremos
     /// controlar exactamente que PublicIds exponemos y como se aplana el
     /// owned <c>FiscalSnapshot</c>.
@@ -1786,6 +1978,15 @@ public class BookingCancellationService
             .Include(b => b.Reserva)
             .Include(b => b.Customer)
             .Include(b => b.Supplier)
+            // NOTA (B-007): este Include trae la factura origen pero NO sus Tributes
+            // (impuestos provinciales / IIBB) a proposito: el DTO actual no los proyecta,
+            // asi que cargarlos seria traer datos al pedo en cada lectura.
+            // CUANDO la UI futura necesite MOSTRAR los tributos provinciales, hay que
+            // agregar aca: .ThenInclude(i => i.Tributes)  -- igual que en los 2 callers
+            // del calculador (ConfirmAsync / EditLiquidationAsync). Si te lo olvidas,
+            // la coleccion Tributes llega vacia (new List<>()) y el front muestra "sin
+            // impuestos" aunque la base tenga 5 IIBB. Es el mismo bug fantasma del B-001:
+            // sin lazy proxies, una navigation collection no incluida no es null, es vacia.
             .Include(b => b.OriginatingInvoice)
             .Include(b => b.CreditNoteInvoice)
             .FirstOrDefaultAsync(b => b.Id == bcId, ct);
@@ -1804,6 +2005,28 @@ public class BookingCancellationService
                 SupplierTaxConditionAtEvent = bc.FiscalSnapshot.SupplierTaxConditionAtEvent,
                 AgencyTaxConditionAtEvent = bc.FiscalSnapshot.AgencyTaxConditionAtEvent,
                 ManualJustification = bc.FiscalSnapshot.ManualJustification,
+            };
+        }
+
+        // FC1.3 Fase 2 (RH-002): proyectar el owned VO FiscalLiquidation si existe.
+        // Los owned types se cargan automaticamente con la entidad (no necesitan
+        // Include explicito). Null = BC sin liquidacion calculada.
+        FiscalLiquidationSummaryDto? liquidationDto = null;
+        if (bc.FiscalLiquidation != null)
+        {
+            liquidationDto = new FiscalLiquidationSummaryDto
+            {
+                OriginalInvoiceAmount = bc.FiscalLiquidation.OriginalInvoiceAmount,
+                CancellationAmount = bc.FiscalLiquidation.CancellationAmount,
+                OperatorPenaltyAmount = bc.FiscalLiquidation.OperatorPenaltyAmount,
+                NonRefundableItemsAmount = bc.FiscalLiquidation.NonRefundableItemsAmount,
+                FiscalAmountToCredit = bc.FiscalLiquidation.FiscalAmountToCredit,
+                AmountToRefundCustomer = bc.FiscalLiquidation.AmountToRefundCustomer,
+                FinalNetInvoiced = bc.FiscalLiquidation.FinalNetInvoiced,
+                Currency = bc.FiscalLiquidation.Currency,
+                ComputedAt = bc.FiscalLiquidation.ComputedAt,
+                ComputedByUserId = bc.FiscalLiquidation.ComputedByUserId,
+                ComputedByUserName = bc.FiscalLiquidation.ComputedByUserName,
             };
         }
 
@@ -1829,6 +2052,7 @@ public class BookingCancellationService
             EstimatedRefundAmount = bc.EstimatedRefundAmount,
             ReceivedRefundAmount = bc.ReceivedRefundAmount,
             FiscalSnapshot = snapshotDto,
+            FiscalLiquidation = liquidationDto,
             ArcaConfirmedManuallyAt = bc.ArcaConfirmedManuallyAt,
             ArcaConfirmedManuallyByUserId = bc.ArcaConfirmedManuallyByUserId,
             ArcaErrorMessage = bc.ArcaErrorMessage,

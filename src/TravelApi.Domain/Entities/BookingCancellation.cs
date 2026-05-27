@@ -130,6 +130,25 @@ public class BookingCancellation : IHasPublicId
     /// </summary>
     public FiscalSnapshot FiscalSnapshot { get; set; } = null!;
 
+    /// <summary>
+    /// FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.1, cierra RH-002): owned value
+    /// object con el detalle COMPLETO de la liquidacion fiscal de la NC parcial
+    /// (los montos, no solo el resumen).
+    ///
+    /// <para><b>Nullable a proposito</b>: los BCs creados en Fase 1 (pre-F2.1) tienen
+    /// el detalle solo en <c>ApprovalRequest.Metadata</c> JSON, no en columnas
+    /// dedicadas. El backfill de la migracion <c>Fase2_M1</c> popula este VO para los
+    /// BCs Fase 1 que tienen un approval asociado; los rechazados o que nunca pasaron
+    /// por manual review quedan en null (la liquidacion no aplica).</para>
+    ///
+    /// <para><b>Doble-write invariante (RH-002)</b>: cuando el service escribe la
+    /// liquidacion (ConfirmAsync path NC parcial + EditLiquidationAsync), DEBE poblar
+    /// este VO Y el JSON del Metadata con los MISMOS valores. Ver
+    /// <see cref="FiscalLiquidation"/> para el detalle del invariante y la coherencia
+    /// de <c>ComputedAt</c> con <see cref="LiquidationComputedAt"/>.</para>
+    /// </summary>
+    public FiscalLiquidation? FiscalLiquidation { get; set; }
+
     // ===== Backfill / legacy =====
 
     /// <summary>

@@ -188,6 +188,39 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
               ON "OperatorRefundAllocations" ("OperatorRefundReceivedId", "BookingCancellationId")
               WHERE "IsVoided" = false;
             """);
+
+        // (h) FC1.3 Fase 2 (F2.1): CHECK de suma del FiscalLiquidation.
+        //     Mismo SQL que la migracion Fase2_M1 (mantener sincronizado). EnsureCreated
+        //     no los crea porque son migrationBuilder.Sql, no fluent API.
+        //     I1 fix: COALESCE(..., 0) en cada componente para que un NULL parcial cuente
+        //     como 0 y el CHECK valide de verdad (ver comentario completo en la migracion).
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "BookingCancellations"
+              DROP CONSTRAINT IF EXISTS chk_BookingCancellations_fiscalliquidation_sum;
+            ALTER TABLE "BookingCancellations"
+              ADD CONSTRAINT chk_BookingCancellations_fiscalliquidation_sum
+              CHECK (
+                "FiscalLiquidation_FiscalAmountToCredit" IS NULL
+                OR ABS(
+                     COALESCE("FiscalLiquidation_FiscalAmountToCredit", 0)
+                     + COALESCE("FiscalLiquidation_NonRefundableItemsAmount", 0)
+                     + COALESCE("FiscalLiquidation_OperatorPenaltyAmount", 0)
+                     - COALESCE("FiscalLiquidation_OriginalInvoiceAmount", 0)
+                   ) <= 0.01
+              );
+            """);
+
+        // (i) FC1.3 Fase 2 (F2.1): CHECK de consistencia de timestamp del FiscalLiquidation.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "BookingCancellations"
+              DROP CONSTRAINT IF EXISTS chk_BookingCancellations_fiscalliquidation_consistency;
+            ALTER TABLE "BookingCancellations"
+              ADD CONSTRAINT chk_BookingCancellations_fiscalliquidation_consistency
+              CHECK (
+                "FiscalLiquidation_ComputedAt" IS NULL
+                OR "LiquidationComputedAt" = "FiscalLiquidation_ComputedAt"
+              );
+            """);
     }
 
     public async Task DisposeAsync()

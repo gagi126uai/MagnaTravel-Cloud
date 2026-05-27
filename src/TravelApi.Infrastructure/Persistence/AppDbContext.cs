@@ -1230,6 +1230,35 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 snap.Property(s => s.InvoicingModeAtEvent).HasConversion<int?>();
             });
 
+            // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.1, 2026-05-26, RH-002):
+            // FiscalLiquidation owned VO — columnas con prefijo "FiscalLiquidation_"
+            // en la misma tabla "BookingCancellations" (mismo patron que
+            // FiscalSnapshot arriba). Persiste el detalle completo de la liquidacion
+            // (montos) que antes vivia solo en ApprovalRequest.Metadata JSON.
+            //
+            // Precision (18, 2) para todos los montos: dos decimales = centavos, que
+            // es lo que ARCA y la contabilidad esperan para importes. Currency con
+            // largo 3 (codigo ISO 4217: ARS/USD/EUR).
+            entity.OwnsOne(b => b.FiscalLiquidation, liquidation =>
+            {
+                liquidation.Property(l => l.OriginalInvoiceAmount).HasPrecision(18, 2);
+                liquidation.Property(l => l.CancellationAmount).HasPrecision(18, 2);
+                liquidation.Property(l => l.OperatorPenaltyAmount).HasPrecision(18, 2);
+                liquidation.Property(l => l.NonRefundableItemsAmount).HasPrecision(18, 2);
+                liquidation.Property(l => l.FiscalAmountToCredit).HasPrecision(18, 2);
+                liquidation.Property(l => l.AmountToRefundCustomer).HasPrecision(18, 2);
+                liquidation.Property(l => l.FinalNetInvoiced).HasPrecision(18, 2);
+
+                // Currency con default 'ARS' a nivel BD. Asi la migracion M1 puede
+                // crear la columna con default y el backfill nunca falla por currency
+                // faltante. HasDefaultValue mantiene snapshot y migracion consistentes
+                // (sin esto EF detecta drift entre el defaultValue de la migracion y
+                // el modelo).
+                liquidation.Property(l => l.Currency).HasMaxLength(3).HasDefaultValue("ARS");
+                liquidation.Property(l => l.ComputedByUserId).HasMaxLength(450);
+                liquidation.Property(l => l.ComputedByUserName).HasMaxLength(200);
+            });
+
             // ============================================================
             // FC1.3 (ADR-009 §2.3.2, 2026-05-21): persistencia summary del
             // resultado del clasificador NC parcial + FK al ApprovalRequest
