@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # run-tests-fc13.sh
 #
-# Corre los 26 tests integration + E2E nuevos de FC1.3 Fase 1 (commit 93c1b58).
+# Corre los tests integration + E2E de FC1.3 Fase 1 (commit 93c1b58) + Fase 2 F2.1
+# (commit 3eebbc3).
 #
 # Tests:
 # - BookingCancellationServicePartialCreditNoteIntegrationTests (16 tests, ~1047 lineas).
 # - ForceBridgeCallbackEndpointTests (7 tests, ~563 lineas).
 # - PartialCreditNoteE2ETests (3 tests, ~425 lineas).
+# - FiscalLiquidationBackfillIntegrationTests (11 tests, F2.1: backfill + doble-write
+#   + CHECKs + CommissionOnly + reject + dos ediciones).
 #
 # Requisitos en el VPS:
 # - .NET 8 SDK instalado (dotnet --version retorna >= 8.0).
@@ -27,7 +30,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 LOG_FILE="test-results-fc13.log"
-FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests'
+FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests|FullyQualifiedName~FiscalLiquidationBackfillIntegrationTests'
 
 echo "== run-tests-fc13.sh =="
 echo "Fecha: $(date)"
@@ -71,7 +74,7 @@ fi
 
 # 4) Run tests focales
 echo ""
-echo "[4/4] Corriendo 26 tests FC1.3 (BookingCancellationService + ForceBridgeCallback + E2E)..."
+echo "[4/4] Corriendo 37 tests FC1.3 (Fase 1: BookingCancellationService + ForceBridgeCallback + E2E; Fase 2: FiscalLiquidationBackfill)..."
 echo "  Filter: $FILTER"
 echo "  Log completo: $LOG_FILE"
 echo ""
