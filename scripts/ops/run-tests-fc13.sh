@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # run-tests-fc13.sh
 #
-# Corre los tests integration + E2E de FC1.3 Fase 1 (commit 93c1b58) + Fase 2 F2.1
-# (commit 3eebbc3).
+# Corre los tests de FC1.3 Fase 1 + Fase 2 (F2.1..F2.2 Etapa 5) + regresion FC1.2
+# (facturacion normal / NC total) para confirmar que F2.2 no la rompio.
 #
-# Tests:
-# - BookingCancellationServicePartialCreditNoteIntegrationTests (16 tests, ~1047 lineas).
-# - ForceBridgeCallbackEndpointTests (7 tests, ~563 lineas).
-# - PartialCreditNoteE2ETests (3 tests, ~425 lineas).
-# - FiscalLiquidationBackfillIntegrationTests (11 tests, F2.1: backfill + doble-write
-#   + CHECKs + CommissionOnly + reject + dos ediciones).
-# - InvoiceCurrencyAndArcaIdempotencyIntegrationTests (4 tests, F2.2 Etapa 0:
-#   defaults MonId/MonCotiz + UNIQUE de ArcaIdempotencyKeys).
-# - EnqueuePartialCreditNoteIntegrationTests (6 tests, F2.2 Etapa 4: validacion
-#   pre-encolado + guard flag + Factura M + encolado).
+# Tests FC1.3:
+# - BookingCancellationServicePartialCreditNoteIntegrationTests (16 tests).
+# - ForceBridgeCallbackEndpointTests (7 tests).
+# - PartialCreditNoteE2ETests (3 tests).
+# - FiscalLiquidationBackfillIntegrationTests (11 tests, F2.1).
+# - InvoiceCurrencyAndArcaIdempotencyIntegrationTests (4 tests, F2.2 Etapa 0).
+# - EnqueuePartialCreditNoteIntegrationTests (6 tests, F2.2 Etapa 4).
+# - ProcessPartialCreditNoteJobIntegrationTests (10 tests, F2.2 Etapa 5: el job
+#   de emision real + idempotencia + recovery).
+# - AfipServiceTotalsOverrideTests (8 tests, F2.2 Etapa 5: cuadre ARCA exacto).
+# Regresion FC1.2 (que el fix del cuadre no rompio la facturacion normal / NC total):
+# - InvoiceServiceFilteringAndAnnulmentTests, AfipServiceCascadeReceiptVoidTests,
+#   InvoiceServiceRetryIdempotencyTests.
 #
 # Requisitos en el VPS:
 # - .NET 8 SDK instalado (dotnet --version retorna >= 8.0).
@@ -34,7 +37,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 LOG_FILE="test-results-fc13.log"
-FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests|FullyQualifiedName~FiscalLiquidationBackfillIntegrationTests|FullyQualifiedName~InvoiceCurrencyAndArcaIdempotencyIntegrationTests|FullyQualifiedName~EnqueuePartialCreditNoteIntegrationTests'
+FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests|FullyQualifiedName~FiscalLiquidationBackfillIntegrationTests|FullyQualifiedName~InvoiceCurrencyAndArcaIdempotencyIntegrationTests|FullyQualifiedName~EnqueuePartialCreditNoteIntegrationTests|FullyQualifiedName~ProcessPartialCreditNoteJobIntegrationTests|FullyQualifiedName~AfipServiceTotalsOverrideTests|FullyQualifiedName~InvoiceServiceFilteringAndAnnulmentTests|FullyQualifiedName~AfipServiceCascadeReceiptVoidTests|FullyQualifiedName~InvoiceServiceRetryIdempotencyTests'
 
 echo "== run-tests-fc13.sh =="
 echo "Fecha: $(date)"
@@ -78,7 +81,7 @@ fi
 
 # 4) Run tests focales
 echo ""
-echo "[4/4] Corriendo 47 tests FC1.3 (Fase 1: BookingCancellationService + ForceBridgeCallback + E2E; Fase 2: FiscalLiquidationBackfill + InvoiceCurrencyAndArcaIdempotency + EnqueuePartialCreditNote)..."
+echo "[4/4] Corriendo tests FC1.3 (Fase 1 + Fase 2 hasta Etapa 5) + regresion FC1.2 (facturacion normal / NC total)..."
 echo "  Filter: $FILTER"
 echo "  Log completo: $LOG_FILE"
 echo ""
