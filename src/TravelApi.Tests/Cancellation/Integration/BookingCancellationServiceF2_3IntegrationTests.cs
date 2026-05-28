@@ -155,6 +155,18 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
             string currencyAtEvent = "ARS",
             decimal exchangeRateAtEvent = 1m)
     {
+        // FIX 2026-05-28: auto-completar penalty para que el CHECK constraint
+        // chk_BookingCancellations_fiscalliquidation_sum cuadre. El invariante exige
+        // OriginalInvoiceAmount = FiscalAmountToCredit + NonRefundableItemsAmount + OperatorPenaltyAmount.
+        // Cuando el caller pasa solo importeTotal+fiscalAmountToCredit (defaults nonRefundable=0,
+        // penalty=0), la suma NO daria importeTotal y la DB rebota. Atribuimos el delta restante
+        // al penalty del operador (es el "balde" semantico mas natural del seed).
+        if (operatorPenaltyAmount == 0m)
+        {
+            var delta = importeTotal - fiscalAmountToCredit - nonRefundableAmount;
+            if (delta > 0m) operatorPenaltyAmount = delta;
+        }
+
         var customer = new Customer
         {
             FullName = "Cliente F2.3 Test",
