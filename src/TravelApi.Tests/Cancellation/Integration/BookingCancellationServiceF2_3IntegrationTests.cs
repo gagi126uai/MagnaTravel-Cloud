@@ -592,7 +592,7 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
 
             // Audit log con la accion nueva.
             var audit = await bundle.Ctx.AuditLogs.AsNoTracking()
-                .Where(a => a.Action == "PartialCreditNoteEmissionAborted_LiquidationSumMismatch")
+                .Where(a => a.Action == "PartialNcEmissionAborted_SumMismatch")
                 .FirstOrDefaultAsync();
             Assert.NotNull(audit);
 
@@ -621,6 +621,14 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
             // con COALESCE(..., 0). Sin esto, si este test corre primero (xUnit no
             // garantiza orden), los tests siguientes pierden la proteccion del CHECK
             // y un bug aguas arriba podria pasar sin ser detectado.
+            //
+            // FIX 2026-05-28: usamos NOT VALID porque el UPDATE raw del ACT dejo la
+            // fila violando el constraint. Sin NOT VALID, PostgreSQL rechaza el
+            // ADD CONSTRAINT con error 23514 ("is violated by some row").
+            // NOT VALID re-instala el constraint para PROXIMOS inserts/updates pero
+            // no valida las filas existentes. El siguiente test corre ResetDatabaseAsync
+            // (TRUNCATE CASCADE) que elimina la fila violatoria, y a partir de ahi el
+            // constraint queda efectivo al 100%.
             await bundle.Ctx.Database.ExecuteSqlRawAsync(@"
                 ALTER TABLE ""BookingCancellations""
                   DROP CONSTRAINT IF EXISTS chk_BookingCancellations_fiscalliquidation_sum;
@@ -634,7 +642,8 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
                          + COALESCE(""FiscalLiquidation_OperatorPenaltyAmount"", 0)
                          - COALESCE(""FiscalLiquidation_OriginalInvoiceAmount"", 0)
                        ) <= 0.01
-                  );
+                  )
+                  NOT VALID;
             ");
         }
     }
@@ -774,7 +783,7 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
     /// parcial real porque el XML SOAP al ARCA todavia esta hardcoded en pesos (MonId=PES,
     /// MonCotiz=1; deuda que cierra F2.5). El service debe:
     ///   - loguear critical;
-    ///   - persistir audit "PartialCreditNoteEmissionAborted_MulticurrencyNotSupported";
+    ///   - persistir audit "PartialNcEmissionAborted_Multicurrency";
     ///   - NO llamar a EnqueuePartialCreditNoteAsync;
     ///   - tirar BusinessInvariantViolationException con mensaje que mencione "USD" y "F2.5";
     ///   - dejar el BC en ManualReviewApproved (el audit del paso 6 ya gatillo SaveChanges
@@ -807,7 +816,7 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
 
         // El audit nuevo debe estar persistido.
         var audit = await bundle.Ctx.AuditLogs.AsNoTracking()
-            .Where(a => a.Action == "PartialCreditNoteEmissionAborted_MulticurrencyNotSupported")
+            .Where(a => a.Action == "PartialNcEmissionAborted_Multicurrency")
             .FirstOrDefaultAsync();
         Assert.NotNull(audit);
 

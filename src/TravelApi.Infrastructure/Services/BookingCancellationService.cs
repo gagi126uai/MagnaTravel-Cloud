@@ -2056,7 +2056,8 @@ public class BookingCancellationService
                 fl.OperatorPenaltyAmount, sumComponents, fl.OriginalInvoiceAmount, sumDiff);
 
             await _auditService.LogBusinessEventAsync(
-                action: "PartialCreditNoteEmissionAborted_LiquidationSumMismatch",
+                // Nombre acortado <=50 chars (columna AuditLogs.Action es varchar(50)).
+                action: "PartialNcEmissionAborted_SumMismatch",
                 entityName: AuditActions.BookingCancellationEntityName,
                 entityId: bc.Id.ToString(),
                 details: JsonSerializer.Serialize(new
@@ -2103,7 +2104,8 @@ public class BookingCancellationService
                 currencyFromSnapshot, bc.Id, bc.OriginatingInvoiceId);
 
             await _auditService.LogBusinessEventAsync(
-                action: "PartialCreditNoteEmissionAborted_MulticurrencyNotSupported",
+                // Nombre acortado <=50 chars (columna AuditLogs.Action es varchar(50)).
+                action: "PartialNcEmissionAborted_Multicurrency",
                 entityName: AuditActions.BookingCancellationEntityName,
                 entityId: bc.Id.ToString(),
                 details: JsonSerializer.Serialize(new
