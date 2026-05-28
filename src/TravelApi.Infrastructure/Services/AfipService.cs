@@ -769,14 +769,19 @@ public class AfipService : IAfipService
     };
 
     /// <summary>
-    /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): construye los <see cref="InvoiceItem"/> de una
-    /// NC parcial cuando el caller paso un <see cref="InvoiceTotalsOverride"/> con el cuadre
-    /// ya redondeado.
+    /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27 + fix de semantica BRUTO 2026-05-28): construye
+    /// los <see cref="InvoiceItem"/> de una NC parcial cuando el caller paso un
+    /// <see cref="InvoiceTotalsOverride"/> con el cuadre ya redondeado.
     ///
     /// <para><b>Por que es estatico y puro</b>: no toca BD ni ARCA. Recibe las lineas + el
     /// override y devuelve los items con su <c>ImporteIva</c> ya distribuido. Asi se puede
     /// testear LOCAL sin Docker el caso que rompia B1 (≥2 lineas de la misma alicuota cuyos
     /// IVA por linea redondeados suman distinto que el round del agregado).</para>
+    ///
+    /// <para><b>SEMANTICA DE <c>line.Total</c> (decision Gaston 2026-05-28)</b>: el <c>Total</c>
+    /// de cada <see cref="InvoiceItemDto"/> de la NC parcial es BRUTO (incluye IVA por dentro),
+    /// igual que en la factura origen. El IVA por item se EXTRAE del bruto: NO se hace gross-up.
+    /// Ver <c>PartialCreditNoteIvaCalculator</c> para el rationale completo.</para>
     ///
     /// <para><b>La mecanica (el punto delicado del fix)</b>: el override trae el IVA YA
     /// REDONDEADO POR GRUPO de alicuota (un <see cref="AlicIvaOverride"/> por alicuota). Pero
@@ -785,9 +790,13 @@ public class AfipService : IAfipService
     /// esa suma por grupo de EXACTAMENTE el Importe redondeado del override, repartimos ese
     /// Importe entre los items del grupo asi:
     /// <list type="number">
-    ///   <item>A cada item del grupo le asignamos <c>round(Total * tasa, 2)</c> (su IVA propio).</item>
-    ///   <item>Calculamos el residuo = Importe del grupo - Σ de esos redondeos por item.</item>
-    ///   <item>Ese residuo (1-2 centavos como mucho) se lo sumamos al ULTIMO item del grupo.</item>
+    ///   <item>A cada item del grupo le EXTRAEMOS su IVA del bruto: <c>itemBaseImp =
+    ///   round(item.Total / (1+tasa), 2)</c>, <c>itemIva = item.Total - itemBaseImp</c>
+    ///   (residuo exacto a nivel item).</item>
+    ///   <item>Calculamos el residuo del GRUPO = <c>override.Importe del grupo - Σ de esos
+    ///   itemIva ya calculados</c>.</item>
+    ///   <item>Ese residuo de grupo (1-2 centavos como mucho) se lo sumamos al ULTIMO item
+    ///   del grupo para que el AGREGADO por alicuota cierre exacto contra el override.</item>
     /// </list>
     /// Resultado: <c>Σ InvoiceItem.ImporteIva del grupo == override.Importe del grupo</c>,
     /// exacto y persistido. Y como la suma de todos los grupos del override es <c>ImpIVA</c>
@@ -842,12 +851,20 @@ public class AfipService : IAfipService
                     $"lineas: se emitiria una NC con IVA faltante para ese grupo. Abortado.");
             }
 
-            // Paso 1: IVA redondeado por item. Paso 2: residuo al ultimo item del grupo.
+            // Paso 1: EXTRAEMOS el IVA de cada item por separado. Paso 2: el residuo del
+            // grupo (Importe override - Σ IVA por item) se lo cargamos al ULTIMO item.
+            decimal multiplier = GetVatMultiplierStatic(alicuotaIvaId);
             decimal acumuladoRedondeado = 0m;
             for (int indice = 0; indice < groupLines.Count; indice++)
             {
                 var line = groupLines[indice];
                 bool esUltimoDelGrupo = indice == groupLines.Count - 1;
+
+                // IVA "propio" del item: extraido del bruto del item. La base se redondea a 2
+                // decimales y el IVA queda como residuo, garantizando lineBaseImp + lineIva
+                // == line.Total a centavo exacto (lo que el cliente vio en la factura).
+                decimal itemBaseImp = Math.Round(line.Total / (1m + multiplier), 2);
+                decimal itemIvaExtraido = line.Total - itemBaseImp;
 
                 decimal importeIvaItem;
                 if (esUltimoDelGrupo)
@@ -857,26 +874,25 @@ public class AfipService : IAfipService
                     importeIvaItem = importeDelGrupo - acumuladoRedondeado;
 
                     // GUARDA (a) (MEJORA 2): el residuo (lo que carga el ultimo item por encima de
-                    // su IVA redondeado propio) deberia ser de 1-2 centavos como mucho. Si es mas
+                    // su IVA extraido propio) deberia ser de 1-2 centavos como mucho. Si es mas
                     // grande, o si deja el IVA del ultimo item NEGATIVO, el override esta
                     // desalineado con las lineas (bug aguas arriba: el Importe del grupo no se
                     // calculo sobre estas mismas lineas). Mejor fallar ruidoso con diagnostico que
                     // persistir un InvoiceItem con IVA raro/negativo que ARCA despues rebota.
-                    decimal ivaRedondeadoUltimoItem = Math.Round(line.Total * GetVatMultiplierStatic(alicuotaIvaId), 2);
-                    decimal residuo = importeIvaItem - ivaRedondeadoUltimoItem;
+                    decimal residuo = importeIvaItem - itemIvaExtraido;
                     if (importeIvaItem < 0m || Math.Abs(residuo) > 0.05m)
                     {
                         throw new InvalidOperationException(
                             $"BuildInvoiceItemsFromOverride: el reparto de IVA del grupo alicuota " +
                             $"{alicuotaIvaId} quedo inconsistente. Importe override del grupo=" +
-                            $"{importeDelGrupo}, Σ redondeos por item={acumuladoRedondeado + ivaRedondeadoUltimoItem}, " +
+                            $"{importeDelGrupo}, Σ IVA extraido por item={acumuladoRedondeado + itemIvaExtraido}, " +
                             $"residuo cargado al ultimo item={residuo}, IVA resultante del ultimo item=" +
                             $"{importeIvaItem}. El override esta desalineado con las lineas. Abortado.");
                     }
                 }
                 else
                 {
-                    importeIvaItem = Math.Round(line.Total * GetVatMultiplierStatic(alicuotaIvaId), 2);
+                    importeIvaItem = itemIvaExtraido;
                     acumuladoRedondeado += importeIvaItem;
                 }
 

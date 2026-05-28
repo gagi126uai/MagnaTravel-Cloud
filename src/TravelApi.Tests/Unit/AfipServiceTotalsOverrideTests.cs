@@ -9,8 +9,15 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): tests UNIT (sin DB, sin Docker) del armado de los
-/// <see cref="InvoiceItem"/> de una NC parcial cuando viene un <see cref="InvoiceTotalsOverride"/>.
+/// FC1.3.F2.2 (fix fiscal B1, 2026-05-27 + fix de semantica BRUTO 2026-05-28): tests UNIT
+/// (sin DB, sin Docker) del armado de los <see cref="InvoiceItem"/> de una NC parcial cuando
+/// viene un <see cref="InvoiceTotalsOverride"/>.
+///
+/// <para><b>SEMANTICA DE <c>line.Total</c> que asumen estos tests (decision Gaston
+/// 2026-05-28)</b>: el <c>Total</c> de cada <see cref="InvoiceItemDto"/> es BRUTO (incluye
+/// IVA por dentro), porque la NC parcial refleja el bruto de la factura origen (lo que el
+/// cliente vio). El helper EXTRAE el IVA por item: <c>itemBaseImp = round(item.Total /
+/// (1+tasa), 2)</c>, <c>itemIva = item.Total - itemBaseImp</c>.</para>
 ///
 /// <para><b>Que atrapan</b>: el bug B1 era que el pipeline VALIDABA el cuadre con unos montos
 /// (los del <c>PartialCreditNoteIvaCalculator</c>, redondeados por grupo de alicuota) pero
@@ -42,17 +49,19 @@ public class AfipServiceTotalsOverrideTests
         };
 
     /// <summary>
-    /// TEST CRITICO B1: dos lineas de la MISMA alicuota (21%) cuyos IVA individuales redondeados
-    /// suman DISTINTO que el round del agregado.
+    /// TEST CRITICO B1: dos lineas de la MISMA alicuota (21%) cuyos IVA individuales extraidos
+    /// y redondeados suman DISTINTO que la extraccion sobre el bruto agregado del grupo.
     ///
-    /// <para>Numeros: dos lineas de Total 23.45 a 21%.
+    /// <para>Numeros (BRUTO): dos lineas de Total 23.45 a 21%.
     /// <list type="bullet">
-    ///   <item>Per item: round(23.45 * 0.21, 2) = round(4.9245) = 4.92. Dos lineas = 9.84.</item>
-    ///   <item>Agregado: round(46.90 * 0.21, 2) = round(9.849) = 9.85.</item>
+    ///   <item>Per item extraido: BaseImp = round(23.45/1.21, 2) = round(19.380165..., 2) =
+    ///   19.38. IVA item = 23.45 - 19.38 = 4.07. Dos lineas = 8.14 IVA.</item>
+    ///   <item>Agregado por grupo: bruto = 46.90. BaseImp = round(46.90/1.21, 2) = round(38.7603..., 2)
+    ///   = 38.76. IVA grupo = 46.90 - 38.76 = 8.14.</item>
     /// </list>
-    /// El bug viejo mandaba 9.84 en <c>Σ AlicIva.Importe</c> pero 9.85 en <c>ImpIVA</c> -> rebote.
-    /// El calculator (ProportionalToNet) devuelve 9.85 por grupo. El override lleva 9.85, y este
-    /// helper reparte el IVA entre los dos items de modo que sumen EXACTO 9.85.</para>
+    /// En este caso "limpio" per item y por grupo coinciden (8.14 = 8.14). El test cubre el
+    /// invariante estructural: lo que el job sumara al reagrupar (Σ ImporteIva del grupo) ==
+    /// override.Importe del grupo, exacto.</para>
     /// </summary>
     [Fact]
     public void BuildInvoiceItemsFromOverride_TwoLinesSameAlicuota_SumOfItemVatEqualsGroupImporte()
@@ -64,9 +73,9 @@ public class AfipServiceTotalsOverrideTests
         };
 
         // El override trae el cuadre EXACTO que produce el calculator:
-        //   BaseImp = 46.90, Importe (IVA) = round(46.90 * 0.21, 2) = 9.85.
-        const decimal grupoBaseImp = 46.90m;
-        const decimal grupoImporteIva = 9.85m; // round del agregado, NO suma de redondeos por linea
+        //   bruto = 46.90, BaseImp = 38.76, Importe = 46.90 - 38.76 = 8.14.
+        const decimal grupoBaseImp = 38.76m;
+        const decimal grupoImporteIva = 8.14m; // residuo = bruto - BaseImp
         var totalsOverride = new InvoiceTotalsOverride(
             AlicIvas: new List<AlicIvaOverride>
             {
@@ -75,7 +84,7 @@ public class AfipServiceTotalsOverrideTests
             ImpNeto: grupoBaseImp,
             ImpIVA: grupoImporteIva,
             ImpTrib: 0m,
-            ImpTotal: grupoBaseImp + grupoImporteIva);
+            ImpTotal: 46.90m); // bruto total = sum(line.Total)
 
         var items = AfipService.BuildInvoiceItemsFromOverride(lines, totalsOverride);
 
@@ -89,8 +98,9 @@ public class AfipServiceTotalsOverrideTests
         // Cada item quedo con 2 decimales (el job los serializa con ToString("0.00")).
         Assert.All(items, i => Assert.Equal(i.ImporteIva, decimal.Round(i.ImporteIva, 2)));
 
-        // La base imponible de los items no se toca (suma de Total).
-        Assert.Equal(grupoBaseImp, items.Sum(i => i.Total));
+        // El Total (BRUTO) por linea se preserva tal cual del request (lo que el cliente vio
+        // en la factura origen). El sumarlo da el bruto del grupo.
+        Assert.Equal(46.90m, items.Sum(i => i.Total));
     }
 
     /// <summary>
@@ -101,6 +111,7 @@ public class AfipServiceTotalsOverrideTests
     [Fact]
     public void BuildInvoiceItemsFromOverride_TwoAlicuotas_EachGroupSumsToItsImporte()
     {
+        // BRUTOS por linea.
         var lines = new List<InvoiceItemDto>
         {
             Line(total: 23.45m, alicuotaIvaId: AlicuotaVeintiuno),
@@ -109,22 +120,26 @@ public class AfipServiceTotalsOverrideTests
             Line(total: 10.05m, alicuotaIvaId: AlicuotaDiezYMedio),
         };
 
-        // 21%: 46.90 -> round(9.849) = 9.85.
-        // 10.5%: 20.10 -> round(2.1105) = 2.11.
-        const decimal importe21 = 9.85m;
-        const decimal importe105 = 2.11m;
-        const decimal impIva = importe21 + importe105; // 11.96
-        const decimal impNeto = 46.90m + 20.10m;        // 67.00
+        // 21%: bruto 46.90 -> BaseImp round(46.90/1.21, 2) = 38.76, IVA = 8.14.
+        // 10.5%: bruto 20.10 -> BaseImp round(20.10/1.105, 2) = round(18.190045..., 2) = 18.19,
+        //                       IVA = 20.10 - 18.19 = 1.91.
+        const decimal baseImp21 = 38.76m;
+        const decimal importe21 = 8.14m;
+        const decimal baseImp105 = 18.19m;
+        const decimal importe105 = 1.91m;
+        const decimal impIva = importe21 + importe105;        // 10.05
+        const decimal impNeto = baseImp21 + baseImp105;       // 56.95
+        const decimal impTotal = 46.90m + 20.10m;             // 67.00 (bruto total)
         var totalsOverride = new InvoiceTotalsOverride(
             AlicIvas: new List<AlicIvaOverride>
             {
-                new(Id: AlicuotaVeintiuno, BaseImp: 46.90m, Importe: importe21),
-                new(Id: AlicuotaDiezYMedio, BaseImp: 20.10m, Importe: importe105),
+                new(Id: AlicuotaVeintiuno, BaseImp: baseImp21, Importe: importe21),
+                new(Id: AlicuotaDiezYMedio, BaseImp: baseImp105, Importe: importe105),
             },
             ImpNeto: impNeto,
             ImpIVA: impIva,
             ImpTrib: 0m,
-            ImpTotal: impNeto + impIva);
+            ImpTotal: impTotal);
 
         var items = AfipService.BuildInvoiceItemsFromOverride(lines, totalsOverride);
 
@@ -144,6 +159,9 @@ public class AfipServiceTotalsOverrideTests
     [Fact]
     public void BuildInvoiceItemsFromOverride_SingleLinePerAlicuota_AssignsFullGroupImporte()
     {
+        // BRUTO $100.000 a 21%.
+        //   Extraccion: BaseImp = round(100000/1.21, 2) = round(82644.628099..., 2) = 82644.63.
+        //               IVA = 100000 - 82644.63 = 17355.37.
         var lines = new List<InvoiceItemDto>
         {
             Line(total: 100_000m, alicuotaIvaId: AlicuotaVeintiuno),
@@ -151,15 +169,15 @@ public class AfipServiceTotalsOverrideTests
         var totalsOverride = new InvoiceTotalsOverride(
             AlicIvas: new List<AlicIvaOverride>
             {
-                new(Id: AlicuotaVeintiuno, BaseImp: 100_000m, Importe: 21_000m),
+                new(Id: AlicuotaVeintiuno, BaseImp: 82_644.63m, Importe: 17_355.37m),
             },
-            ImpNeto: 100_000m,
-            ImpIVA: 21_000m,
+            ImpNeto: 82_644.63m,
+            ImpIVA: 17_355.37m,
             ImpTrib: 0m,
-            ImpTotal: 121_000m);
+            ImpTotal: 100_000m);
 
         var item = Assert.Single(AfipService.BuildInvoiceItemsFromOverride(lines, totalsOverride));
-        Assert.Equal(21_000m, item.ImporteIva);
+        Assert.Equal(17_355.37m, item.ImporteIva);
         Assert.Equal(100_000m, item.Total);
     }
 
@@ -172,6 +190,7 @@ public class AfipServiceTotalsOverrideTests
     [Fact]
     public void OverrideEnvelope_SatisfiesArcaInvariants_ExactZeroGap()
     {
+        // BRUTOS por linea (mismos numeros que el test TwoAlicuotas).
         var lines = new List<InvoiceItemDto>
         {
             Line(total: 23.45m, alicuotaIvaId: AlicuotaVeintiuno),
@@ -179,17 +198,19 @@ public class AfipServiceTotalsOverrideTests
             Line(total: 10.05m, alicuotaIvaId: AlicuotaDiezYMedio),
             Line(total: 10.05m, alicuotaIvaId: AlicuotaDiezYMedio),
         };
-        const decimal importe21 = 9.85m;
-        const decimal importe105 = 2.11m;
-        const decimal impNeto = 67.00m;
-        const decimal impIva = importe21 + importe105; // 11.96
+        const decimal baseImp21 = 38.76m;
+        const decimal importe21 = 8.14m;
+        const decimal baseImp105 = 18.19m;
+        const decimal importe105 = 1.91m;
+        const decimal impNeto = baseImp21 + baseImp105;       // 56.95
+        const decimal impIva = importe21 + importe105;        // 10.05
         const decimal impTrib = 0m;
-        const decimal impTotal = impNeto + impIva;     // 78.96
+        const decimal impTotal = 46.90m + 20.10m;             // 67.00 (= bruto total)
         var totalsOverride = new InvoiceTotalsOverride(
             AlicIvas: new List<AlicIvaOverride>
             {
-                new(Id: AlicuotaVeintiuno, BaseImp: 46.90m, Importe: importe21),
-                new(Id: AlicuotaDiezYMedio, BaseImp: 20.10m, Importe: importe105),
+                new(Id: AlicuotaVeintiuno, BaseImp: baseImp21, Importe: importe21),
+                new(Id: AlicuotaDiezYMedio, BaseImp: baseImp105, Importe: importe105),
             },
             ImpNeto: impNeto,
             ImpIVA: impIva,
@@ -207,15 +228,15 @@ public class AfipServiceTotalsOverrideTests
             .GroupBy(i => i.AlicuotaIvaId)
             .Select(g => g.Sum(x => x.ImporteIva))
             .ToList();
-        var alicIvaBases = items
-            .GroupBy(i => i.AlicuotaIvaId)
-            .Select(g => g.Sum(x => x.Total))
-            .ToList();
 
         // Invariante 1: ImpIVA == Σ AlicIva.Importe (gap exacto 0).
         Assert.Equal(totalsOverride.ImpIVA, alicIvaImportes.Sum());
-        // Invariante 2: ImpNeto == Σ AlicIva.BaseImp.
-        Assert.Equal(totalsOverride.ImpNeto, alicIvaBases.Sum());
+        // Invariante 2 (estructural del override): ImpNeto == Σ AlicIva.BaseImp.
+        // El override la mantiene por construccion (lo arma EmitPartialCreditNoteAsync). Lo
+        // afirmamos sobre el override propio (no sobre los items: los items persisten
+        // ImporteIva, no BaseImp por item — la base se reagrupa en el envelope via Σ Total
+        // del grupo en la rama FC1.2, pero aca la base vive en el override).
+        Assert.Equal(totalsOverride.ImpNeto, totalsOverride.AlicIvas.Sum(a => a.BaseImp));
         // Invariante 3: ImpTotal == ImpNeto + ImpIVA + ImpTrib.
         Assert.Equal(totalsOverride.ImpTotal, totalsOverride.ImpNeto + totalsOverride.ImpIVA + totalsOverride.ImpTrib);
         // Invariante 4: cada AlicIva.Importe == el Importe redondeado por grupo del override.
@@ -236,70 +257,89 @@ public class AfipServiceTotalsOverrideTests
     private const decimal Multiplier21 = 0.21m;
 
     /// <summary>
-    /// BLINDAJE de la frontera entre las DOS ramas de <c>CreatePendingInvoice</c> (fix B1).
+    /// BLINDAJE de la frontera entre las DOS ramas de <c>CreatePendingInvoice</c> (fix B1 + fix
+    /// de semantica BRUTO 2026-05-28).
     ///
-    /// <para><b>Que protege</b>: la rama FC1.2 (override == null, facturacion normal + NC total)
-    /// calcula el IVA por item como <c>Total * multiplier</c> SIN redondear por item (el round
-    /// recien ocurre al serializar). La rama override (NC parcial) SI redondea por item y carga
-    /// el residuo al ultimo. Son comportamientos DISTINTOS a proposito. Si manana alguien
-    /// "unifica" las dos ramas (p.ej. mete <c>Math.Round</c> por item tambien en FC1.2), cambia
-    /// el IVA por item de TODA la facturacion normal sin querer. Este test deja escrito el
-    /// contrato historico de la rama FC1.2 para que esa regresion explote en CI.</para>
+    /// <para><b>Que protege</b>: las dos ramas tienen SEMANTICAS DISTINTAS de <c>line.Total</c>
+    /// a proposito:
+    /// <list type="bullet">
+    ///   <item>Rama FC1.2 (override == null, facturacion normal + NC total): <c>Total = NETO</c>.
+    ///   El IVA se hace GROSS-UP: <c>item.ImporteIva = Total * tasa</c> (sin redondear por item;
+    ///   el round recien ocurre al serializar).</item>
+    ///   <item>Rama override (NC parcial, fix de semantica 2026-05-28): <c>Total = BRUTO</c>
+    ///   (incluye IVA por dentro). El IVA se EXTRAE: <c>item.ImporteIva = Total - round(Total /
+    ///   (1+tasa), 2)</c>. Se redondea por item y el residuo se carga al ultimo del grupo.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>Si manana alguien "unifica" las dos ramas (p.ej. mete extraccion tambien en FC1.2,
+    /// o pone gross-up en la rama override), rompe la facturacion normal o vuelve a romper el
+    /// camino feliz del bruto del VPS. Este test deja escrito el contrato historico de cada
+    /// rama para que esa regresion explote en CI.</para>
     ///
     /// <para><b>Por que no llamamos a CreatePendingInvoice</b>: es metodo de instancia y necesita
-    /// _context (Postgres) + reserva + AfipSettings. La parte testeable LOCAL es la formula del
-    /// IVA por item de la rama else, que es <c>i.Total * GetVatMultiplier(i.AlicuotaIvaId)</c>
-    /// (ver AfipService.cs, rama 'else' de CreatePendingInvoice). La reproducimos con el mismo
-    /// multiplier canonico y verificamos que NO esta redondeada, contrastandola contra lo que
-    /// haria la rama override para los mismos numeros.</para>
+    /// _context (Postgres) + reserva + AfipSettings. La parte testeable LOCAL son las formulas
+    /// del IVA por item de cada rama. Las reproducimos con el mismo multiplier canonico y
+    /// verificamos los dos comportamientos sobre el mismo numero.</para>
     /// </summary>
     [Fact]
     public void Fc12Branch_OverrideNull_VatPerItemIsNotRoundedUnlikeOverrideBranch()
     {
-        // Total elegido para que Total * 0.21 tenga MAS de 2 decimales: 23.45 * 0.21 = 4.9245.
+        // En la rama FC1.2 esto seria un NETO. En la rama override es un BRUTO. Probamos las
+        // dos formulas sobre el mismo numero para ver que dan DISTINTO (semanticas distintas).
         const decimal lineTotal = 23.45m;
 
         // --- Rama FC1.2 (override == null): IVA por item = Total * multiplier, SIN round. ---
-        // Replica EXACTA de la formula de la rama else de CreatePendingInvoice.
+        // Replica EXACTA de la formula de la rama else de CreatePendingInvoice:
+        //   ivaPorItem = i.Total * GetVatMultiplier(i.AlicuotaIvaId).
         decimal fc12VatPerItem = lineTotal * Multiplier21;
         Assert.Equal(4.9245m, fc12VatPerItem);
 
         // Confirmamos que NO esta redondeado a 2 decimales (si lo estuviera, seria 4.92).
         Assert.NotEqual(decimal.Round(fc12VatPerItem, 2), fc12VatPerItem);
 
-        // --- Rama override (NC parcial): el MISMO item, via BuildInvoiceItemsFromOverride,
-        //     queda redondeado por item (4.92) porque el override manda el cuadre por grupo. ---
+        // --- Rama override (NC parcial): el MISMO numero, tratado como BRUTO via
+        //     BuildInvoiceItemsFromOverride. La extraccion da otro valor de IVA por item. ---
+        // Extraccion: itemBaseImp = round(23.45/1.21, 2) = 19.38. itemIvaExtraido = 23.45 - 19.38
+        // = 4.07. Como es la UNICA linea del grupo, el "ultimo item" absorbe el Importe completo
+        // del override. Lo seteamos al valor extraido para que el reparto cierre exacto.
         var lines = new List<InvoiceItemDto> { Line(total: lineTotal, alicuotaIvaId: AlicuotaVeintiuno) };
         var overrideExact = new InvoiceTotalsOverride(
             AlicIvas: new List<AlicIvaOverride>
             {
-                // Una sola linea: el "ultimo item" absorbe el Importe completo del grupo.
-                // Lo seteamos al redondeo per-item (4.92) para que el reparto cierre exacto.
-                new(Id: AlicuotaVeintiuno, BaseImp: lineTotal, Importe: 4.92m),
+                new(Id: AlicuotaVeintiuno, BaseImp: 19.38m, Importe: 4.07m),
             },
-            ImpNeto: lineTotal,
-            ImpIVA: 4.92m,
+            ImpNeto: 19.38m,
+            ImpIVA: 4.07m,
             ImpTrib: 0m,
-            ImpTotal: lineTotal + 4.92m);
+            ImpTotal: lineTotal); // 23.45 BRUTO
 
         var overrideItem = Assert.Single(AfipService.BuildInvoiceItemsFromOverride(lines, overrideExact));
 
-        // La rama override produce 4.92 (redondeado); la rama FC1.2 produciria 4.9245. Distintas.
-        Assert.Equal(4.92m, overrideItem.ImporteIva);
+        // La rama override produce 4.07 (extraido del bruto); la rama FC1.2 produciria 4.9245
+        // (gross-up del neto). Las dos semanticas son distintas a proposito.
+        Assert.Equal(4.07m, overrideItem.ImporteIva);
         Assert.NotEqual(fc12VatPerItem, overrideItem.ImporteIva);
+
+        // Y la rama override garantiza la invariante por item: itemBaseImp + itemIvaExtraido
+        // = item.Total (el bruto que viaja al ARCA y que el cliente vio en la factura origen).
+        Assert.Equal(lineTotal, 19.38m + overrideItem.ImporteIva);
     }
 
     /// <summary>
     /// MEJORA 3: tres lineas de la MISMA alicuota que generan residuo acumulado. Verifica que el
     /// reparto del helper sigue cerrando exacto (Σ ImporteIva del grupo == override.Importe).
     ///
-    /// <para>Numeros: tres lineas de 33.33 a 21%.
+    /// <para>Numeros (BRUTO): tres lineas de 33.33 a 21%.
     /// <list type="bullet">
-    ///   <item>Per item: round(33.33 * 0.21, 2) = round(6.9993) = 7.00. Tres = 21.00.</item>
-    ///   <item>Agregado: round(99.99 * 0.21, 2) = round(20.9979) = 21.00.</item>
+    ///   <item>Per item extraido: BaseImp = round(33.33/1.21, 2) = round(27.5454..., 2) = 27.55.
+    ///   IVA item = 33.33 - 27.55 = 5.78. Tres = 17.34 IVA.</item>
+    ///   <item>Agregado por grupo: bruto = 99.99. BaseImp = round(99.99/1.21, 2) = round(82.6363..., 2)
+    ///   = 82.64. IVA = 99.99 - 82.64 = 17.35.</item>
     /// </list>
-    /// Aca el agregado coincide con la suma de redondeos (residuo 0), pero el helper igual tiene
-    /// que repartir entre 3 items y el ultimo absorber el residuo. Verificamos el cierre exacto.</para>
+    /// El override dice 17.35. La suma per item da 17.34. Diferencia 0.01: ese centavo es el
+    /// residuo que el helper carga al ULTIMO item para que el grupo cierre EXACTO contra el
+    /// override.</para>
     /// </summary>
     [Fact]
     public void BuildInvoiceItemsFromOverride_ThreeLinesSameAlicuota_GroupSumEqualsOverrideImporte()
@@ -311,8 +351,8 @@ public class AfipServiceTotalsOverrideTests
             Line(total: 33.33m, alicuotaIvaId: AlicuotaVeintiuno, description: "Linea C"),
         };
 
-        const decimal grupoBaseImp = 99.99m;
-        const decimal grupoImporteIva = 21.00m; // round(99.99 * 0.21, 2)
+        const decimal grupoBaseImp = 82.64m;
+        const decimal grupoImporteIva = 17.35m; // bruto 99.99 - BaseImp 82.64
         var totalsOverride = new InvoiceTotalsOverride(
             AlicIvas: new List<AlicIvaOverride>
             {
@@ -321,7 +361,7 @@ public class AfipServiceTotalsOverrideTests
             ImpNeto: grupoBaseImp,
             ImpIVA: grupoImporteIva,
             ImpTrib: 0m,
-            ImpTotal: grupoBaseImp + grupoImporteIva);
+            ImpTotal: 99.99m);
 
         var items = AfipService.BuildInvoiceItemsFromOverride(lines, totalsOverride);
 
@@ -333,13 +373,14 @@ public class AfipServiceTotalsOverrideTests
     }
 
     /// <summary>
-    /// MEJORA 3 (guarda (a)): override del grupo MENOR que la Σ de redondeos por item -> el
+    /// MEJORA 3 (guarda (a)): override del grupo MENOR que la Σ de IVA extraido por item -> el
     /// ultimo item quedaria con IVA negativo / residuo fuera de rango. La guarda debe LANZAR
     /// en vez de persistir IVA negativo en silencio.
     ///
-    /// <para>Numeros: dos lineas de 100.000 a 21% (round per item = 21.000 c/u, Σ = 42.000).
-    /// Si el override del grupo dice 10.000 (desalineado, aguas arriba mal calculado), el ultimo
-    /// item recibiria 10.000 - 21.000 = -11.000. Eso es un override roto: la guarda corta.</para>
+    /// <para>Numeros (BRUTO): dos lineas de 100.000 a 21% (extraccion per item = 17355.37 c/u,
+    /// Σ = 34710.74). Si el override del grupo dice 10.000 (desalineado, aguas arriba mal
+    /// calculado), el ultimo item recibiria 10.000 - 17355.37 = -7355.37. Eso es un override
+    /// roto: la guarda corta.</para>
     /// </summary>
     [Fact]
     public void BuildInvoiceItemsFromOverride_OverrideBelowPerItemRounding_Throws()
@@ -350,7 +391,7 @@ public class AfipServiceTotalsOverrideTests
             Line(total: 100_000m, alicuotaIvaId: AlicuotaVeintiuno, description: "Linea B"),
         };
 
-        // Override desalineado a proposito: Importe del grupo MUCHO menor que Σ redondeos (42.000).
+        // Override desalineado a proposito: Importe del grupo MUCHO menor que Σ extraido (34710.74).
         var totalsOverrideRoto = new InvoiceTotalsOverride(
             AlicIvas: new List<AlicIvaOverride>
             {

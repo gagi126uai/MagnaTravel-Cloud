@@ -710,6 +710,22 @@ public sealed class ProcessPartialCreditNoteJobIntegrationTests
     /// <summary>
     /// ARCA rechaza (Resultado "R"): la factura origen queda Failed y la key se resuelve
     /// (intento terminal).
+    ///
+    /// <para><b>Endurecimiento 2026-05-28 (fix de semantica BRUTO)</b>: este test ASSERT
+    /// EXPLICITAMENTE que el job LLEGO A EMITIR. Antes del fix de semantica, el calculator
+    /// rechazaba el camino feliz por su cuenta (porque trataba <c>line.Total</c> como neto y
+    /// el cuadre no cerraba) y la factura quedaba <c>Failed</c> por OTRA causa, NO por
+    /// rechazo de ARCA. Es decir, el test pasaba por el motivo equivocado. Ahora afirmamos
+    /// que:
+    /// <list type="bullet">
+    ///   <item><c>CreatePendingInvoice</c> SI fue invocado exactamente 1 vez (el job llego a
+    ///   emitir).</item>
+    ///   <item>La NC creada quedo con <c>Resultado == "R"</c> (lo que setea el mock para
+    ///   <see cref="ArcaEmissionResult.Rejected"/>).</item>
+    ///   <item>La factura origen quedo <c>Failed</c> POR el rechazo de ARCA (path correcto).</item>
+    ///   <item>La key se resuelve (intento terminal).</item>
+    /// </list>
+    /// </para>
     /// </summary>
     [Fact]
     public async Task ProcessPartialCreditNoteJob_ArcaRejects_MarksFailed()
@@ -726,10 +742,25 @@ public sealed class ProcessPartialCreditNoteJobIntegrationTests
             userId: "vendedor-X",
             approvalRequestId: 0);
 
+        // El job LLEGO a emitir (no rebotamos antes por descuadre del calculator). Esto
+        // garantiza que el path bajo test es realmente "ARCA rechazo", no "calculator
+        // rebota". Si el calculator vuelve a rechazar el bruto, este assert ROMPE
+        // explicitamente en vez de pasar el test por el motivo equivocado.
+        Assert.Equal(1, bundle.CreatePendingInvoiceCallCount);
+
+        // La NC creada quedo con el resultado simulado por el mock (Rejected -> "R").
         await using var verifyCtx = _fixture.CreateDbContext();
+        var createdCreditNote = await verifyCtx.Invoices
+            .AsNoTracking()
+            .Where(i => i.OriginalInvoiceId == originalId)
+            .SingleAsync();
+        Assert.Equal("R", createdCreditNote.Resultado);
+
+        // La factura origen quedo Failed POR el rechazo de ARCA.
         var refreshed = await verifyCtx.Invoices.AsNoTracking().FirstAsync(i => i.Id == originalId);
         Assert.Equal(AnnulmentStatus.Failed, refreshed.AnnulmentStatus);
 
+        // La key se resuelve (intento terminal).
         var key = await verifyCtx.ArcaIdempotencyKeys.AsNoTracking().SingleAsync();
         Assert.NotNull(key.ResolvedAt);
     }

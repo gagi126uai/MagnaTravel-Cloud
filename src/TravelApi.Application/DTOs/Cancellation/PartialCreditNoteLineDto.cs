@@ -15,6 +15,16 @@ namespace TravelApi.Application.DTOs.Cancellation;
 /// <see cref="TravelApi.Application.DTOs.InvoiceItemDto"/>). La etapa F2.2 agrupa las
 /// lineas por este id para prorratear el IVA a nivel grupo de alicuota.</para>
 ///
+/// <para><b>Semantica del <c>Total</c>: BRUTO (con IVA incluido)</b> (decision Gaston 2026-05-28).
+/// El <c>Total</c> de cada linea es <b>el monto que el cliente vio facturado</b> (igual que
+/// la factura origen), NO la base imponible neta. El sistema EXTRAE el IVA por dentro al
+/// armar el comprobante para ARCA: <c>BaseImp = round(Total/(1+tasa), 2)</c> y
+/// <c>ImporteIva = Total - BaseImp</c>. Asi, una linea de Hotel facturada en $363.000 (con
+/// IVA 21% incluido) viaja como <c>BaseImp=$300.000 + ImporteIva=$63.000</c> en el envelope
+/// ARCA, pero el <c>Total</c> que se persiste en el comprobante sigue siendo $363.000 (lo
+/// que el cliente conoce). Coherente con como <c>FiscalLiquidationCalculator</c> y
+/// <c>FiscalAmountToCredit</c> manejan los montos (todos brutos).</para>
+///
 /// <para><b>Inmutable</b> (record posicional con init-only), igual que el resto de DTOs
 /// de esta carpeta: el caller arma la linea y no la muta. Los tipos coinciden con
 /// <see cref="TravelApi.Application.DTOs.InvoiceItemDto"/> a proposito, porque cada linea
@@ -35,7 +45,7 @@ namespace TravelApi.Application.DTOs.Cancellation;
 /// <param name="Description">Descripcion del item, copiada del item de la factura original.</param>
 /// <param name="Quantity">Cantidad a acreditar (puede ser menor a la original si la cancelacion es parcial sobre el item).</param>
 /// <param name="UnitPrice">Precio unitario (en la moneda de la factura original).</param>
-/// <param name="Total">Total de la linea (en general <c>Quantity * UnitPrice</c>; el caller lo provee explicito para evitar redondeos sorpresa).</param>
+/// <param name="Total">Total BRUTO de la linea (con IVA incluido, lo que el cliente vio facturado). En general <c>Quantity * UnitPrice</c>; el caller lo provee explicito para evitar redondeos sorpresa. Ver el doc de la clase para la semantica de extraccion del IVA.</param>
 /// <param name="AlicuotaIvaId">Codigo de alicuota de IVA segun ARCA (3=0%, 4=10.5%, 5=21%, etc.).</param>
 public record PartialCreditNoteLineDto(
     string Description,

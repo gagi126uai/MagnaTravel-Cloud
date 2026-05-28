@@ -7,8 +7,9 @@ using TravelApi.Domain.Entities;
 namespace TravelApi.Infrastructure.Services;
 
 /// <summary>
-/// FC1.3.F2.2 (plan tactico Fase 2 §FC1.3.F2.2 puntos 4 y 5, 2026-05-27): calculadora
-/// PURA del prorrateo de IVA de una Nota de Credito (NC) parcial.
+/// FC1.3.F2.2 (plan tactico Fase 2 §FC1.3.F2.2 puntos 4 y 5, 2026-05-27 + fix fiscal de
+/// semantica 2026-05-28): calculadora PURA del prorrateo de IVA de una Nota de Credito
+/// (NC) parcial.
 ///
 /// <para><b>Por que existe</b>: cuando se cancela parte de una reserva ya facturada, se
 /// emite una NC que solo acredita una PARTE de la factura origen. Antes de armar el XML
@@ -19,13 +20,34 @@ namespace TravelApi.Infrastructure.Services;
 /// <para><b>Por que es PURO</b>: no toca la base de datos, no llama al ARCA, no tiene
 /// dependencias inyectadas. Recibe la liquidacion ya armada (lineas + montos) + los
 /// settings, y devuelve numeros. Eso lo hace facil de testear sin Docker ni Postgres
-/// (los ~12 tests unitarios corren en milisegundos) y permite reusarlo desde el job de
+/// (los ~14 tests unitarios corren en milisegundos) y permite reusarlo desde el job de
 /// emision (<c>ProcessPartialCreditNoteJob</c>) sin arrastrar infraestructura.</para>
+///
+/// <para><b>SEMANTICA CANONICA DE <c>line.Total</c> (decision Gaston, 2026-05-28)</b>: el
+/// <c>Total</c> de cada <see cref="PartialCreditNoteLineDto"/> es BRUTO, es decir el monto
+/// que el cliente ve en la factura (incluye IVA por dentro). Es el MISMO numero que
+/// aparece como total de linea en el comprobante origen.
+///
+/// <para>Esta semantica esta alineada con: (a) el plan firmado §FC1.3.F2.2 punto 4 — la
+/// suma de <c>line.Total</c> es el <c>FiscalAmountToCredit</c>, que tambien es bruto;
+/// (b) <c>FiscalLiquidationCalculator</c> + <c>InvoiceService.ValidateLiquidationAmounts</c>
+/// (que validan suma de totales contra el bruto a acreditar); (c) el XML doc del DTO,
+/// que define <c>FiscalAmountToCredit</c> como "neto+iva a acreditar". El sistema entero
+/// asume bruto: el calculator hace la EXTRACCION del IVA por dentro.</para>
+///
+/// <para>HISTORIA: la version inicial de este calculator asumia <c>line.Total</c> NETO y
+/// hacia "gross-up" (IVA on-top). Eso rompia el camino feliz porque <c>creditedTotal</c>
+/// quedaba por encima de <c>FiscalAmountToCredit</c> (el calculator devolvia
+/// neto + 21% on-top, pero el caller le pasaba el bruto). El fix es extraer el IVA POR
+/// DENTRO: <c>BaseImp = Total / (1 + tasa)</c>, <c>IVA = Total - BaseImp</c> (residuo
+/// exacto). Asi el comprobante ARCA recibe la BASE y el IVA discriminados, y cuadra
+/// EXACTO contra el bruto que el cliente vio en la factura.</para>
+/// </para>
 ///
 /// <para><b>De donde sale el porcentaje de cada alicuota</b>: cada linea trae un
 /// <c>AlicuotaIvaId</c> (codigo ARCA: 3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%). El
 /// metodo <see cref="GetVatMultiplier"/> traduce ese codigo a la tasa decimal. Es la
-/// MISMA tabla que ya usa <c>AfipService.GetVatMultiplier</c> (AfipService.cs:717) y la
+/// MISMA tabla que ya usa <c>AfipService.GetVatMultiplier</c> (AfipService.cs:760) y la
 /// que documenta <see cref="InvoiceItem.AlicuotaIvaId"/>. Se duplica aca a proposito:
 /// el helper es puro y no debe depender de <c>AfipService</c> (que arrastra SOAP, settings
 /// de certificados, etc.). Si manana cambia una alicuota, hay que tocar los dos lugares —
@@ -34,22 +56,28 @@ namespace TravelApi.Infrastructure.Services;
 /// <para><b>Los dos modos de prorrateo</b> (<see cref="IvaProrrateoMode"/>):
 /// <list type="bullet">
 ///   <item><see cref="IvaProrrateoMode.ProportionalToNet"/> (default): agrupa las lineas
-///   por alicuota, suma el <c>Total</c> de cada grupo como base imponible y le aplica la
-///   tasa del grupo. El IVA total es la suma de los IVA de cada grupo.</item>
-///   <item><see cref="IvaProrrateoMode.PerItem"/>: calcula el IVA de cada linea por separado
-///   y despues lo suma. El desglose por alicuota se construye agregando los items que
-///   comparten alicuota. Resultado numerico igual al modo anterior cuando no hay redondeo
-///   intermedio; difiere solo en como se redondea (item por item vs por grupo).</item>
+///   por alicuota, suma el <c>Total</c> (BRUTO) de cada grupo y EXTRAE el IVA por dentro
+///   del total bruto del grupo. <c>BaseImp = round(brutoGrupo / (1+tasa), 2)</c>;
+///   <c>IVA = brutoGrupo - BaseImp</c>. El IVA total es la suma de los IVA de cada grupo.</item>
+///   <item><see cref="IvaProrrateoMode.PerItem"/>: extrae el IVA de cada linea por separado
+///   (redondeando por item) y despues suma. El desglose por alicuota se construye agregando
+///   los items que comparten alicuota. Resultado numerico igual al modo anterior cuando no
+///   hay redondeo intermedio; difiere solo en como se distribuyen los centavos (item por
+///   item vs por grupo).</item>
 /// </list>
 /// </para>
 ///
-/// <para><b>Validacion de tolerancia</b> (plan §FC1.3.F2.2 punto 5): la suma neto+IVA del
-/// resultado tiene que coincidir con el <c>FiscalAmountToCredit</c> del input dentro de
-/// <see cref="OperationalFinanceSettings.PartialCreditNoteRoundingTolerance"/> (default
-/// 0.01). Si se desvia mas que eso, se lanza <see cref="InvalidOperationException"/> y el
-/// caller (el job) marca la factura como <c>AnnulmentStatus = Failed</c> SIN mandar el XML
-/// al ARCA. Un XML con totales inconsistentes rebota con un error oscuro del ARCA y deja
-/// el job huerfano — preferimos cortar aca con un mensaje claro.</para>
+/// <para><b>Validacion de tolerancia</b> (plan §FC1.3.F2.2 punto 5): por construccion de
+/// la extraccion, <c>BaseImp + IVA == brutoGrupo</c> exacto por grupo, y la suma de los
+/// brutos por grupo es <c>Σ line.Total</c>, que el contrato del input promete igual a
+/// <c>FiscalAmountToCredit</c>. Asi que en input coherente, <c>creditedTotal ==
+/// FiscalAmountToCredit</c> EXACTO. La tolerancia queda como GUARD defensivo contra inputs
+/// inconsistentes (alguien pasa <c>FiscalAmountToCredit</c> distinto a la suma de
+/// <c>line.Total</c>): si se desvia mas que la tolerancia, se lanza
+/// <see cref="InvalidOperationException"/> y el caller (el job) marca la factura como
+/// <c>AnnulmentStatus = Failed</c> SIN mandar el XML al ARCA. Un XML con totales
+/// inconsistentes rebota con un error oscuro del ARCA y deja el job huerfano —
+/// preferimos cortar aca con un mensaje claro.</para>
 /// </summary>
 public static class PartialCreditNoteIvaCalculator
 {
@@ -111,11 +139,14 @@ public static class PartialCreditNoteIvaCalculator
             _ => CalculateProportionalToNet(input.Lines),
         };
 
-        // El neto acreditado es la suma de las bases imponibles (Total de las lineas).
-        // El IVA acreditado es la suma del IVA de cada grupo.
+        // El neto acreditado es la suma de las BASES IMPONIBLES extraidas (sin IVA).
+        // El IVA acreditado es la suma del IVA extraido por cada grupo.
+        // El TOTAL acreditado es la suma de los Total BRUTOS de las lineas (= la suma de
+        // los brutos por grupo). En input coherente coincide EXACTO con FiscalAmountToCredit,
+        // porque la extraccion garantiza BaseImp + IVA == brutoGrupo por construccion.
         decimal creditedNet = Math.Round(groups.Sum(g => g.BaseImponible), 2);
         decimal creditedVat = Math.Round(groups.Sum(g => g.ImporteIva), 2);
-        decimal creditedTotal = Math.Round(creditedNet + creditedVat, 2);
+        decimal creditedTotal = Math.Round(input.Lines.Sum(line => line.Total), 2);
 
         ValidateAgainstFiscalAmount(
             creditedTotal: creditedTotal,
@@ -132,9 +163,21 @@ public static class PartialCreditNoteIvaCalculator
 
     /// <summary>
     /// Modo <see cref="IvaProrrateoMode.ProportionalToNet"/>: agrupa por alicuota, suma el
-    /// <c>Total</c> de cada grupo como base imponible y aplica la tasa una sola vez sobre
-    /// esa base. Es el mismo patron que <c>AfipService</c> usa al armar la factura
-    /// (AfipService.cs:645-653): <c>BaseImp = sum(Total)</c>, <c>Importe = BaseImp * tasa</c>.
+    /// <c>Total</c> BRUTO de cada grupo y EXTRAE el IVA del bruto del grupo.
+    ///
+    /// <para><b>Formula de extraccion</b> (decision Gaston 2026-05-28, ver doc de la clase):
+    /// <c>line.Total</c> es BRUTO (incluye IVA). Extraemos el IVA por dentro asi:
+    /// <list type="bullet">
+    ///   <item><c>brutoGrupo = Σ line.Total del grupo</c>.</item>
+    ///   <item><c>BaseImp = round(brutoGrupo / (1 + tasa), 2)</c>.</item>
+    ///   <item><c>IVA = brutoGrupo - BaseImp</c> (residuo exacto, no redondeo aparte).</item>
+    /// </list>
+    /// El residuo en el IVA en vez de redondear el IVA por separado garantiza
+    /// <c>BaseImp + IVA == brutoGrupo</c> a centavo exacto, que es lo que ARCA exige en el
+    /// <c>AlicIva</c> y lo que el comprobante origen tiene impreso.</para>
+    ///
+    /// <para>El caso de alicuota 0% (tasa = 0) cae naturalmente: <c>BaseImp = brutoGrupo /
+    /// 1 = brutoGrupo</c> y <c>IVA = brutoGrupo - brutoGrupo = 0</c>. Sin caso especial.</para>
     /// </summary>
     private static IReadOnlyList<PartialCreditNoteIvaGroup> CalculateProportionalToNet(
         IReadOnlyList<PartialCreditNoteLineDto> lines)
@@ -148,12 +191,12 @@ public static class PartialCreditNoteIvaCalculator
             int alicuotaIvaId = lineGroup.Key;
             decimal multiplier = GetVatMultiplier(alicuotaIvaId);
 
-            // Base imponible del grupo = suma de los Total de las lineas de esa alicuota.
-            decimal baseImponible = lineGroup.Sum(line => line.Total);
+            // Total BRUTO del grupo = suma de los Total de las lineas de esa alicuota.
+            decimal brutoGrupo = lineGroup.Sum(line => line.Total);
 
-            // IVA del grupo = base imponible * tasa, redondeado a 2 decimales una sola vez
-            // (a nivel grupo). Esto difiere del modo PerItem, que redondea linea por linea.
-            decimal importeIva = Math.Round(baseImponible * multiplier, 2);
+            // Extraccion del IVA por dentro del bruto del grupo.
+            decimal baseImponible = Math.Round(brutoGrupo / (1m + multiplier), 2);
+            decimal importeIva = brutoGrupo - baseImponible;
 
             groups.Add(new PartialCreditNoteIvaGroup(
                 AlicuotaIvaId: alicuotaIvaId,
@@ -165,16 +208,23 @@ public static class PartialCreditNoteIvaCalculator
     }
 
     /// <summary>
-    /// Modo <see cref="IvaProrrateoMode.PerItem"/>: calcula el IVA de cada linea por
+    /// Modo <see cref="IvaProrrateoMode.PerItem"/>: EXTRAE el IVA de cada linea por
     /// separado (redondeando linea por linea) y despues agrega las lineas que comparten
     /// alicuota para devolver el desglose por alicuota. Mas preciso a nivel item pero puede
     /// acumular mas centavos de redondeo que el modo proporcional. Solo se usa si el
     /// contador lo confirma (respuesta F1 round 3).
+    ///
+    /// <para><b>Formula de extraccion por linea</b> (decision Gaston 2026-05-28):
+    /// <c>line.Total</c> es BRUTO. Para cada linea: <c>lineBaseImp = round(line.Total /
+    /// (1+tasa), 2)</c>, <c>lineVat = line.Total - lineBaseImp</c>. Como el IVA por linea
+    /// es residuo, <c>lineBaseImp + lineVat == line.Total</c> a centavo exacto. Despues
+    /// agregamos por alicuota.</para>
     /// </summary>
     private static IReadOnlyList<PartialCreditNoteIvaGroup> CalculatePerItem(
         IReadOnlyList<PartialCreditNoteLineDto> lines)
     {
-        // Primero calculamos el IVA de cada linea individual y lo redondeamos. Despues
+        // Primero EXTRAEMOS el IVA de cada linea individual (redondeando la base por linea
+        // y dejando el IVA como residuo, garantizando cuadre exacto por linea). Despues
         // sumamos por alicuota. El redondeo por linea es lo que distingue este modo del
         // proporcional (que redondea recien a nivel grupo).
         var perAlicuota = new Dictionary<int, (decimal BaseImponible, decimal ImporteIva)>();
@@ -182,17 +232,20 @@ public static class PartialCreditNoteIvaCalculator
         foreach (var line in lines)
         {
             decimal multiplier = GetVatMultiplier(line.AlicuotaIvaId);
-            decimal lineVat = Math.Round(line.Total * multiplier, 2);
+
+            // Extraccion del IVA por dentro de la linea bruta.
+            decimal lineBaseImp = Math.Round(line.Total / (1m + multiplier), 2);
+            decimal lineVat = line.Total - lineBaseImp;
 
             if (perAlicuota.TryGetValue(line.AlicuotaIvaId, out var acumulado))
             {
                 perAlicuota[line.AlicuotaIvaId] = (
-                    acumulado.BaseImponible + line.Total,
+                    acumulado.BaseImponible + lineBaseImp,
                     acumulado.ImporteIva + lineVat);
             }
             else
             {
-                perAlicuota[line.AlicuotaIvaId] = (line.Total, lineVat);
+                perAlicuota[line.AlicuotaIvaId] = (lineBaseImp, lineVat);
             }
         }
 
@@ -284,8 +337,8 @@ public record PartialCreditNoteIvaResult(
 /// esa alicuota y el IVA resultante.
 /// </summary>
 /// <param name="AlicuotaIvaId">Codigo de alicuota ARCA (3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%).</param>
-/// <param name="BaseImponible">Neto acreditado con esta alicuota (suma del Total de las lineas del grupo).</param>
-/// <param name="ImporteIva">IVA acreditado de este grupo (base imponible * tasa).</param>
+/// <param name="BaseImponible">Neto acreditado con esta alicuota (base imponible EXTRAIDA del bruto del grupo, redondeada a 2 decimales).</param>
+/// <param name="ImporteIva">IVA acreditado de este grupo (residuo entre el bruto del grupo y la base imponible: <c>brutoGrupo - BaseImponible</c>).</param>
 public record PartialCreditNoteIvaGroup(
     int AlicuotaIvaId,
     decimal BaseImponible,
