@@ -571,6 +571,14 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
             await bundle.Ctx.Database.ExecuteSqlRawAsync(
                 @"UPDATE ""BookingCancellations"" SET ""FiscalLiquidation_FiscalAmountToCredit"" = 999999999;");
 
+            // FIX 2026-05-28: el UPDATE raw cambio el xmin (concurrency token) de la
+            // fila. EF tiene el BC trackeado con el xmin viejo, asi que cuando el
+            // service mute el BC y persista (via AuditService.SaveChanges interno) va
+            // a hacer UPDATE ... WHERE xmin=<viejo> -> 0 filas afectadas ->
+            // DbUpdateConcurrencyException. Limpiamos el tracking aca para que cuando
+            // el service recargue el BC lea el xmin actualizado.
+            bundle.Ctx.ChangeTracker.Clear();
+
             // ACT + ASSERT: debe tirar INV-FC1.3-005.
             var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
                 ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
