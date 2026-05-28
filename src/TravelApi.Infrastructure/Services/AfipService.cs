@@ -1218,6 +1218,24 @@ public class AfipService : IAfipService
     /// Crea la reversion economica de un Payment cuando AFIP aprobo la NC y, si
     /// existe Receipt Issued atado al Payment, lo marca Voided con audit trail
     /// completo (VoidedByUser* / VoidReason / accion `ReceiptVoidedByCascade`).
+    ///
+    /// <para><b>FC1.3 F2.3 (2026-05-28, cierra RH-005 + G-F2-D)</b>: el comportamiento
+    /// cambia segun NC total vs NC parcial.
+    /// <list type="bullet">
+    ///   <item><b>NC TOTAL</b> (FC1.2 / fallback Fase 2 / kind null/total): comportamiento
+    ///   actual sin cambios. Cascade-void del receipt cuando hay match exacto por monto.</item>
+    ///   <item><b>NC PARCIAL</b> (FC1.3 Fase 2, <c>BookingCancellation.CreditNoteKind ==
+    ///   PartialOnOriginal</c>): NO cascade-void de receipts. Crear el Payment reversal con
+    ///   <c>OriginalPaymentId = null</c> y emitir un audit <c>PartialCreditNoteEconomicReversalNoCascade</c>
+    ///   con la lista de receipt IDs vivos para que el admin pueda anular manualmente.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para><b>Discriminador NC total vs parcial</b>: leer el <c>BookingCancellation</c>
+    /// asociado a la NC via <c>bc.CreditNoteInvoiceId == invoice.Id</c>. Si existe BC con
+    /// <c>CreditNoteKind == PartialOnOriginal</c> -> parcial. Si no existe BC (NCs
+    /// pre-FC1.3 historicas), fallback a comparacion por monto contra la factura original.
+    /// </para>
     /// </summary>
     internal async Task ApplyCreditNoteEconomicReversalAsync(int invoiceId)
     {
@@ -1242,6 +1260,133 @@ public class AfipService : IAfipService
         if (invoice?.ReservaId == null || invoice.Reserva == null)
             return;
 
+        // FC1.3 F2.3: detectar NC parcial vs total ANTES de tocar Payments.
+        // Decision primaria (RH2-003): leer BookingCancellation asociado al CreditNoteInvoiceId.
+        // Si existe BC con CreditNoteKind == PartialOnOriginal -> parcial.
+        // Fallback historico: comparacion por monto contra OriginalInvoice (NCs pre-FC1.3
+        // que no tienen BC asociado tienen ImporteTotal == OriginalInvoice.ImporteTotal).
+        var bc = await _context.BookingCancellations
+            .FirstOrDefaultAsync(b => b.CreditNoteInvoiceId == invoice.Id);
+
+        bool isPartialNc;
+        if (bc != null)
+        {
+            // Path canonico FC1.3+: el kind persistido es la fuente de verdad.
+            isPartialNc = bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal;
+        }
+        else
+        {
+            // Fallback historico: NCs pre-FC1.3 sin BC asociado. La comparacion por monto
+            // sigue siendo correcta porque las NCs emitidas via FC1.2 son siempre totales
+            // y matchean el ImporteTotal original. Si la NC parcial existe en BD pero el
+            // BC no esta seteado (deberia ser imposible en Fase 2), tambien caemos aca y
+            // detectamos parcial por monto.
+            isPartialNc = invoice.OriginalInvoice != null
+                          && invoice.ImporteTotal < invoice.OriginalInvoice.ImporteTotal;
+        }
+
+        if (isPartialNc)
+        {
+            await ApplyPartialCreditNoteReversalAsync(invoice, bc);
+        }
+        else
+        {
+            await ApplyTotalCreditNoteReversalAsync(invoice);
+        }
+
+        await RecalculateReservaBalanceAsync(invoice.ReservaId.Value);
+    }
+
+    /// <summary>
+    /// FC1.3 F2.3 (2026-05-28, cierra RH-005 + G-F2-D): aplica la reversion economica de
+    /// una NC PARCIAL. A diferencia de la NC total, NO cascade-voida receipts: deja todos
+    /// los receipts del payment original vivos y emite un audit con la lista de receipt IDs
+    /// para que el admin decida manualmente cual anular (UI Fase 3, fuera de scope).
+    ///
+    /// <para><b>Diseño del Payment reversal</b>: <c>OriginalPaymentId = null</c> intencional
+    /// — una NC parcial no apunta a un Payment unico (puede haber multiples, ej. G-F2-D:
+    /// factura $1.000 pagada en 3 cuotas $300+$300+$400, NC parcial $250 no tiene un
+    /// Payment "exacto" al cual atarse). El monto del reversal es el ImporteTotal de la NC
+    /// parcial en negativo.</para>
+    /// </summary>
+    private async Task ApplyPartialCreditNoteReversalAsync(Invoice invoice, BookingCancellation? bc)
+    {
+        // 1) Crear el Payment reversal por el ImporteTotal de la NC parcial.
+        //    OriginalPaymentId = null por diseño (no hay payment unico para apuntar).
+        var reversal = new Payment
+        {
+            ReservaId = invoice.ReservaId,
+            Amount = -invoice.ImporteTotal,
+            PaidAt = DateTime.UtcNow,
+            Method = "CreditNote",
+            Reference = $"NC parcial AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",
+            Notes = $"Reversion economica por nota de credito PARCIAL AFIP #{invoice.Id}. " +
+                    $"Receipts NO cascade-voided (politica F2.3). Revision manual via UI Fase 3.",
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.CreditNoteReversal,
+            AffectsCash = false,
+            RelatedInvoiceId = invoice.Id,
+            OriginalPaymentId = null, // NC parcial: por diseño, sin payment exacto.
+        };
+        _context.Payments.Add(reversal);
+
+        // 2) Query de receipts vivos (RH2-006): los Issued cuyos Payments tienen
+        //    RelatedInvoiceId == invoice.OriginalInvoiceId. Estos son los receipts que
+        //    el admin podra anular manualmente en la UI Fase 3.
+        var liveReceiptIds = new List<int>();
+        if (invoice.OriginalInvoiceId.HasValue)
+        {
+            liveReceiptIds = await _context.PaymentReceipts
+                .Include(r => r.Payment)
+                .Where(r => r.Payment!.RelatedInvoiceId == invoice.OriginalInvoiceId
+                            && r.Status == PaymentReceiptStatuses.Issued)
+                .Select(r => r.Id)
+                .ToListAsync();
+        }
+
+        await _context.SaveChangesAsync();
+
+        // 3) Audit nuevo (PartialCreditNoteEconomicReversalNoCascade) con detalle JSON.
+        //    Sirve para auditoria + futuras queries: "cuantas NCs parciales emitidas dejaron
+        //    receipts vivos sin anular?".
+        var auditUserId = invoice.OriginalInvoice?.AnnulledByUserId ?? "system";
+        var auditUserName = invoice.OriginalInvoice?.AnnulledByUserName ?? "Sistema";
+
+        if (_auditService is not null)
+        {
+            await _auditService.LogBusinessEventAsync(
+                action: "PartialCreditNoteEconomicReversalNoCascade",
+                entityName: "Invoice",
+                entityId: invoice.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    invoiceId = invoice.Id,
+                    bcPublicId = bc?.PublicId.ToString(),
+                    reversalAmount = -invoice.ImporteTotal,
+                    liveReceiptIds = liveReceiptIds,
+                    liveReceiptCount = liveReceiptIds.Count,
+                    note = "NC parcial: receipts NO cascade-voided. Admin debe revisar manualmente.",
+                }),
+                userId: auditUserId,
+                userName: auditUserName,
+                ct: CancellationToken.None);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "PartialCreditNoteEconomicReversalNoCascade. InvoiceId={InvoiceId} BcPublicId={BcPublicId} " +
+                "ReversalAmount={Amount} LiveReceiptCount={Count} LiveReceiptIds={Ids}",
+                invoice.Id, bc?.PublicId, -invoice.ImporteTotal, liveReceiptIds.Count,
+                string.Join(",", liveReceiptIds));
+        }
+    }
+
+    /// <summary>
+    /// FC1.2 (comportamiento historico, byte-identico al previo a F2.3): aplica la
+    /// reversion economica de una NC TOTAL — cascade-voida el Receipt asociado si existe.
+    /// </summary>
+    private async Task ApplyTotalCreditNoteReversalAsync(Invoice invoice)
+    {
         var matchedPayment = await _context.Payments
             .Include(p => p.Receipt)
             .Where(p =>
@@ -1325,8 +1470,6 @@ public class AfipService : IAfipService
                     voidedReceipt.Id, voidedReceipt.ReceiptNumber, matchedPayment!.Id, invoice.Id, voidUserId, voidReason);
             }
         }
-
-        await RecalculateReservaBalanceAsync(invoice.ReservaId.Value);
     }
 
     private async Task RecalculateReservaBalanceAsync(int reservaId)

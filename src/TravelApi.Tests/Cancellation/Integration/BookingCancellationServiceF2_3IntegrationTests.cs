@@ -1,0 +1,825 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using TravelApi.Application.Constants;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.DTOs.Cancellation;
+using TravelApi.Application.Exceptions;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
+using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Repositories;
+using TravelApi.Infrastructure.Services;
+using TravelApi.Tests.Fixtures;
+using Xunit;
+
+namespace TravelApi.Tests.Cancellation.Integration;
+
+/// <summary>
+/// FC1.3 Fase 2 — F2.3 integration tests (plan tactico Fase 2 §FC1.3.F2.3, 2026-05-28):
+/// valida el reemplazo del fallback FC1.2 por la emision real de NC parcial en
+/// <c>BookingCancellationService.OnApprovedAsync</c>.
+///
+/// <para><b>Que cubren estos 7 tests del path Fase 2</b>:
+/// <list type="bullet">
+///   <item>Flag F2 ON => llama a <c>EnqueuePartialCreditNoteAsync</c> con los Lines correctos.</item>
+///   <item>Flag F2 OFF => fallback FC1.2 (NC TOTAL) con log warning, sin regresion.</item>
+///   <item>Items no reintegrables => excluidos de los Lines.</item>
+///   <item>Multi-alicuotas => las 2 alicuotas se preservan con prorrateo.</item>
+///   <item>Sum mismatch en runtime => aborta + audit log + emit no se llama.</item>
+///   <item>Idempotencia: 2 invocaciones => 2da es no-op.</item>
+///   <item>Multi-payments scenario (G-F2-D) => receipts NO cascade-voided.</item>
+/// </list>
+/// </para>
+///
+/// <para><b>Por que Postgres real</b>: el doble-write FiscalLiquidation_* + JSON del
+/// Metadata depende del CHECK SQL chk_BookingCancellations_fiscalliquidation_sum y del
+/// CHECK chk_BookingCancellations_fiscalliquidation_consistency. InMemory no los aplica
+/// y los tests pasarian falsamente.</para>
+/// </summary>
+[Trait("Category", "Integration")]
+public sealed class BookingCancellationServiceF2_3IntegrationTests
+    : IClassFixture<PostgresIntegrationFixture>, IAsyncLifetime
+{
+    private readonly PostgresIntegrationFixture _fixture;
+
+    public BookingCancellationServiceF2_3IntegrationTests(PostgresIntegrationFixture fixture)
+    {
+        _fixture = fixture;
+    }
+
+    public Task InitializeAsync() => _fixture.ResetDatabaseAsync();
+    public Task DisposeAsync() => Task.CompletedTask;
+
+    // =========================================================================
+    // Helpers — copian el patron de BookingCancellationServicePartialCreditNoteIntegrationTests
+    // pero exponen los settings del flag F2 ON/OFF.
+    // =========================================================================
+
+    private record ServiceBundle(
+        BookingCancellationService Service,
+        AppDbContext Ctx,
+        Mock<IInvoiceService> InvoiceMock,
+        Mock<IAdminUserCountService> AdminCountMock,
+        Mock<IOperationalFinanceSettingsService> SettingsMock,
+        IApprovalRequestService ApprovalService);
+
+    /// <summary>
+    /// Arma el bundle con el calculator REAL + settings configurables.
+    /// </summary>
+    /// <param name="enableF2RealEmission">Si <c>true</c>, prende
+    /// <c>EnablePartialCreditNoteRealEmission</c> (path Fase 2).</param>
+    private ServiceBundle BuildService(
+        bool enableF2RealEmission = true,
+        AppDbContext? ctxIn = null)
+    {
+        var ctx = ctxIn ?? _fixture.CreateDbContext();
+
+        var invoiceMock = new Mock<IInvoiceService>();
+        invoiceMock
+            .Setup(s => s.EnqueueAnnulmentAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<int?>()))
+            .Returns(Task.CompletedTask);
+        invoiceMock
+            .Setup(s => s.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(), It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        settingsMock
+            .Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings
+            {
+                EnableNewCancellationFlow = true,
+                EnablePartialCreditNotes = true,
+                EnablePartialCreditNoteRealEmission = enableF2RealEmission,
+                OnePerReservaInvoicePolicy = true,
+                OperatorRefundTimeoutDays = 60,
+                PartialNcAutoApprovalThreshold = 500_000m,
+                PartialNcAdminReviewThreshold = 2_000_000m,
+                PartialNcAccountingReviewThreshold = null,
+                PartialNcDescriptionTemplate =
+                    "NC parcial s/Fc {invoiceType} {invoiceNumber} (PV {pointOfSale}). " +
+                    "Monto fiscal acreditado: {fiscalAmount} {currency}.",
+            });
+
+        var approvalService = new ApprovalRequestService(ctx, settingsMock.Object);
+        var auditRepo = new Repository<AuditLog>(ctx);
+        var auditService = new AuditService(auditRepo, NullLogger<AuditService>.Instance);
+        var calculator = new FiscalLiquidationCalculator(NullLogger<FiscalLiquidationCalculator>.Instance);
+
+        var adminCountMock = new Mock<IAdminUserCountService>();
+        adminCountMock
+            .Setup(a => a.CountActiveAdminsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2);
+
+        var service = new BookingCancellationService(
+            ctx, invoiceMock.Object, approvalService, auditService,
+            NullLogger<BookingCancellationService>.Instance,
+            settingsMock.Object, calculator, adminCountMock.Object);
+
+        return new ServiceBundle(service, ctx, invoiceMock, adminCountMock, settingsMock, approvalService);
+    }
+
+    /// <summary>
+    /// Seed para los tests de F2.3: factura Hotel con items configurables.
+    /// Devuelve el BC en estado ManualReviewPending listo para invocar el bridge.
+    ///
+    /// <para>El BC se arma manualmente (sin pasar por DraftAsync/ConfirmAsync) porque
+    /// algunos tests requieren control fino del estado (multi-payments, multi-alicuotas,
+    /// items no reintegrables, etc.).</para>
+    /// </summary>
+    private async Task<(int CustomerId, int SupplierId, int ReservaId, int InvoiceId, Guid BcPublicId, int ApprovalId)>
+        SeedManualReviewPendingBcAsync(
+            AppDbContext ctx,
+            decimal importeTotal,
+            decimal fiscalAmountToCredit,
+            decimal nonRefundableAmount = 0m,
+            decimal operatorPenaltyAmount = 0m,
+            int tipoComprobante = 6,
+            IReadOnlyList<(string Description, decimal Total, int AlicuotaId, bool IsRefundable)>? customItems = null,
+            ReviewRequiredReason extraFlags = ReviewRequiredReason.AmountAboveAdminThreshold,
+            // F2.3 R1 contador: parametros opcionales para forzar moneda no-ARS en la
+            // semilla. Default ARS / TC=1 mantiene compatible los tests anteriores.
+            string currencyAtEvent = "ARS",
+            decimal exchangeRateAtEvent = 1m)
+    {
+        var customer = new Customer
+        {
+            FullName = "Cliente F2.3 Test",
+            TaxCondition = "Consumidor Final",
+            IsActive = true,
+            TaxId = "20111111111",
+        };
+        var supplier = new Supplier
+        {
+            Name = "Operador F2.3",
+            IsActive = true,
+            TaxCondition = "IVA_RESP_INSCRIPTO",
+            InvoicingMode = SupplierInvoicingMode.TotalToCustomer,
+        };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva
+        {
+            NumeroReserva = $"F23-{Guid.NewGuid().ToString("N")[..8]}",
+            Name = "Reserva F2.3",
+            Status = EstadoReserva.Confirmed,
+            PayerId = customer.Id,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var hotelService = new ServicioReserva
+        {
+            ReservaId = reserva.Id,
+            CustomerId = customer.Id,
+            SupplierId = supplier.Id,
+            ProductType = ServiceTypes.Hotel,
+            ServiceType = "Hotel",
+            Description = "Hotel F2.3",
+            DepartureDate = DateTime.UtcNow.AddDays(15),
+        };
+        ctx.Set<ServicioReserva>().Add(hotelService);
+        await ctx.SaveChangesAsync();
+
+        // Para multi-alicuotas se requieren items con AlicuotaIvaId distintos.
+        var importeNeto = Math.Round(importeTotal / 1.21m, 2);
+        var importeIva = importeTotal - importeNeto;
+
+        var invoice = new Invoice
+        {
+            TipoComprobante = tipoComprobante,
+            PuntoDeVenta = 1,
+            NumeroComprobante = 999,
+            CAE = "12345678901234",
+            VencimientoCAE = DateTime.UtcNow.AddDays(10),
+            Resultado = "A",
+            ImporteTotal = importeTotal,
+            ImporteNeto = importeNeto,
+            ImporteIva = importeIva,
+            ReservaId = reserva.Id,
+            AnnulmentStatus = AnnulmentStatus.None,
+            CreatedAt = DateTime.UtcNow,
+        };
+        ctx.Invoices.Add(invoice);
+        await ctx.SaveChangesAsync();
+
+        // Items: si el caller pasa customItems los usamos, sino armamos uno default refundable.
+        if (customItems != null && customItems.Count > 0)
+        {
+            foreach (var ci in customItems)
+            {
+                var ivaRate = ci.AlicuotaId switch
+                {
+                    4 => 0.105m, // 10.5%
+                    5 => 0.21m,  // 21%
+                    _ => 0m,
+                };
+                var ciNeto = Math.Round(ci.Total / (1 + ivaRate), 2);
+                var ciIva = ci.Total - ciNeto;
+                ctx.Set<InvoiceItem>().Add(new InvoiceItem
+                {
+                    InvoiceId = invoice.Id,
+                    Description = ci.Description,
+                    Quantity = 1,
+                    UnitPrice = ci.Total,
+                    Total = ci.Total,
+                    AlicuotaIvaId = ci.AlicuotaId,
+                    ImporteIva = ciIva,
+                    IsRefundable = ci.IsRefundable,
+                    ItemCategory = ci.IsRefundable ? InvoiceItemCategory.Service : InvoiceItemCategory.AdministrativeFee,
+                    SourceServicioReservaId = hotelService.Id,
+                });
+            }
+        }
+        else
+        {
+            ctx.Set<InvoiceItem>().Add(new InvoiceItem
+            {
+                InvoiceId = invoice.Id,
+                Description = "Hotel 3 noches",
+                Quantity = 1,
+                UnitPrice = importeTotal,
+                Total = importeTotal,
+                AlicuotaIvaId = 5,
+                ImporteIva = importeIva,
+                IsRefundable = true,
+                ItemCategory = InvoiceItemCategory.Service,
+                SourceServicioReservaId = hotelService.Id,
+            });
+        }
+        await ctx.SaveChangesAsync();
+
+        // Approval primero (necesario para FK del BC).
+        var approval = new ApprovalRequest
+        {
+            RequestType = ApprovalRequestType.PartialCreditNoteApproval,
+            EntityType = "BookingCancellation",
+            EntityId = 0,
+            RequestedByUserId = "vendedor-1",
+            RequestedAt = DateTime.UtcNow,
+            Status = ApprovalStatus.Approved, // ya aprobado: estamos en el callback
+            ResolvedByUserId = "admin-distinto",
+            ResolvedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+            Reason = "Pendiente revision F2.3",
+            Metadata = "{}",
+        };
+        ctx.ApprovalRequests.Add(approval);
+        await ctx.SaveChangesAsync();
+
+        // BC en ManualReviewPending con FiscalLiquidation persistido (F2.1 invariante).
+        var computedAt = DateTime.UtcNow;
+        var bc = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = customer.Id,
+            SupplierId = supplier.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Status = BookingCancellationStatus.ManualReviewPending,
+            Reason = "Cancelacion F2.3 manual review",
+            DraftedAt = DateTime.UtcNow,
+            DraftedByUserId = "vendedor-1",
+            DraftedByUserName = "Vendedor 1",
+            AmountPaidAtCancellation = importeTotal,
+            EstimatedRefundAmount = fiscalAmountToCredit,
+            FiscalSnapshot = new FiscalSnapshot
+            {
+                Source = ExchangeRateSource.BCRA_A3500,
+                ExchangeRateAtOriginalInvoice = exchangeRateAtEvent,
+                CurrencyAtEvent = currencyAtEvent,
+                FetchedAt = DateTime.UtcNow,
+                AgencyTaxConditionAtEvent = "MONOTRIBUTISTA",
+                SupplierTaxConditionAtEvent = "IVA_RESP_INSCRIPTO",
+                CustomerTaxConditionAtEvent = "CONSUMIDOR_FINAL",
+                InvoicingModeAtEvent = SupplierInvoicingMode.TotalToCustomer,
+            },
+            CreditNoteKind = CreditNoteKind.PartialOnOriginal,
+            ReviewRequiredReason = extraFlags,
+            LiquidationComputedAt = computedAt,
+            LiquidationComputedByUserId = "vendedor-1",
+            LiquidationComputedByUserName = "Vendedor 1",
+            PartialCreditNoteApprovalRequestId = approval.Id,
+            FiscalLiquidation = new FiscalLiquidation
+            {
+                OriginalInvoiceAmount = importeTotal,
+                CancellationAmount = importeTotal,
+                OperatorPenaltyAmount = operatorPenaltyAmount,
+                NonRefundableItemsAmount = nonRefundableAmount,
+                FiscalAmountToCredit = fiscalAmountToCredit,
+                AmountToRefundCustomer = fiscalAmountToCredit,
+                FinalNetInvoiced = importeTotal - fiscalAmountToCredit,
+                Currency = currencyAtEvent,
+                ComputedAt = computedAt,
+                ComputedByUserId = "vendedor-1",
+                ComputedByUserName = "Vendedor 1",
+            },
+        };
+        ctx.BookingCancellations.Add(bc);
+        await ctx.SaveChangesAsync();
+
+        return (customer.Id, supplier.Id, reserva.Id, invoice.Id, bc.PublicId, approval.Id);
+    }
+
+    // =========================================================================
+    // Tests del path Fase 2 (F2.3)
+    // =========================================================================
+
+    /// <summary>
+    /// F2.3 happy path: con flag ON, el bridge invoca el flow nuevo de NC parcial real.
+    /// Verifica que <c>EnqueuePartialCreditNoteAsync</c> recibe el input correcto.
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_Fase2On_EmitsRealPartialCreditNote()
+    {
+        // ARRANGE
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, invoiceId, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000_000m,
+                fiscalAmountToCredit: 700_000m);
+
+        // ACT
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            resolverUserId: "admin-distinto",
+            resolverUserName: "Admin",
+            resolverNotes: "Aprobado F2.3 con justificacion completa de longitud suficiente para pasar el minimo",
+            CancellationToken.None);
+
+        // ASSERT — el path Fase 2 llama al endpoint nuevo. El antiguo NO se invoca.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                invoiceId,
+                It.Is<PartialCreditNoteEmissionInput>(input =>
+                    input.FiscalAmountToCredit == 700_000m
+                    && input.OriginalTotalAmount == 1_000_000m
+                    && input.Currency == "ARS"
+                    && input.Lines.Count >= 1),
+                "admin-distinto",
+                "Admin",
+                It.IsAny<string?>(),
+                approvalId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueueAnnulmentAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<int?>()),
+            Times.Never);
+
+        // BC transiciono a AwaitingFiscalConfirmation.
+        var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
+            .FirstAsync(b => b.PublicId == bcPublicId);
+        Assert.Equal(BookingCancellationStatus.AwaitingFiscalConfirmation, bcAfter.Status);
+    }
+
+    /// <summary>
+    /// F2.3 con flag OFF: fallback FC1.2 (NC TOTAL) sin regresion.
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_Fase2Off_FallsBackToFc12FlowWithWarning()
+    {
+        var bundle = BuildService(enableF2RealEmission: false);
+        var (_, _, _, _, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 100_000m,
+                fiscalAmountToCredit: 70_000m);
+
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado fallback FC1.2 con justificacion completa de longitud suficiente para minimo",
+            CancellationToken.None);
+
+        // Path FC1.2: se invoca EnqueueAnnulmentAsync (NC total), NO el nuevo.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueueAnnulmentAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), true, It.IsAny<CancellationToken>(), It.IsAny<int?>()),
+            Times.Once);
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(), It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
+            .FirstAsync(b => b.PublicId == bcPublicId);
+        Assert.Equal(BookingCancellationStatus.AwaitingFiscalConfirmation, bcAfter.Status);
+    }
+
+    /// <summary>
+    /// F2.3: items no reintegrables se EXCLUYEN de los Lines del request.
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_NonRefundableItems_ExcludedFromLines()
+    {
+        var bundle = BuildService(enableF2RealEmission: true);
+
+        // Factura $1.000.000: 3 items. 2 refundables ($400k + $500k) + 1 no refundable ($100k).
+        // FiscalAmountToCredit = $900k (los dos refundables), penalty=0, nonRefundable=$100k.
+        var customItems = new List<(string Description, decimal Total, int AlicuotaId, bool IsRefundable)>
+        {
+            ("Hotel noche 1", 400_000m, 5, true),
+            ("Hotel noche 2", 500_000m, 5, true),
+            ("Cargo de gestion", 100_000m, 5, false),
+        };
+
+        var (_, _, _, _, _, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000_000m,
+                fiscalAmountToCredit: 900_000m,
+                nonRefundableAmount: 100_000m,
+                customItems: customItems,
+                extraFlags: ReviewRequiredReason.HasNonRefundableItems | ReviewRequiredReason.AmountAboveAdminThreshold);
+
+        PartialCreditNoteEmissionInput? captured = null;
+        bundle.InvoiceMock
+            .Setup(s => s.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(),
+                It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback<int, PartialCreditNoteEmissionInput, string, string?, string?, int, CancellationToken>(
+                (id, inp, u, un, r, a, c) => captured = inp)
+            .Returns(Task.CompletedTask);
+
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado: cliente cancelo pero la agencia retiene el cargo de gestion segun criterio contador",
+            CancellationToken.None);
+
+        Assert.NotNull(captured);
+        // Solo 2 lines (los refundables).
+        Assert.Equal(2, captured!.Lines.Count);
+        Assert.DoesNotContain(captured.Lines, l => l.Description.Contains("gestion", StringComparison.OrdinalIgnoreCase));
+        // La suma de las lines debe matchear el FiscalAmountToCredit.
+        Assert.Equal(900_000m, captured.Lines.Sum(l => l.Total));
+    }
+
+    /// <summary>
+    /// F2.3: factura multi-alicuotas (10.5% + 21%). Las 2 alicuotas se preservan
+    /// con prorrateo proporcional. Una linea por alicuota.
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_MultipleAlicuotas_PreservesAll()
+    {
+        var bundle = BuildService(enableF2RealEmission: true);
+
+        // Factura $1.000.000: $400k al 10.5% (alic 4) + $600k al 21% (alic 5).
+        // FiscalAmountToCredit = $500k (la mitad).
+        var customItems = new List<(string Description, decimal Total, int AlicuotaId, bool IsRefundable)>
+        {
+            ("Hotel pais limitrofe", 400_000m, 4, true),
+            ("Hotel local", 600_000m, 5, true),
+        };
+
+        var (_, _, _, _, _, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000_000m,
+                fiscalAmountToCredit: 500_000m,
+                customItems: customItems);
+
+        PartialCreditNoteEmissionInput? captured = null;
+        bundle.InvoiceMock
+            .Setup(s => s.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(),
+                It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback<int, PartialCreditNoteEmissionInput, string, string?, string?, int, CancellationToken>(
+                (id, inp, u, un, r, a, c) => captured = inp)
+            .Returns(Task.CompletedTask);
+
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado: factura multi-alicuotas debe preservar las dos en la NC parcial",
+            CancellationToken.None);
+
+        Assert.NotNull(captured);
+        // 2 lines: una por alicuota.
+        Assert.Equal(2, captured!.Lines.Count);
+        Assert.Contains(captured.Lines, l => l.AlicuotaIvaId == 4);
+        Assert.Contains(captured.Lines, l => l.AlicuotaIvaId == 5);
+        // La suma de las lines = FiscalAmountToCredit.
+        Assert.Equal(500_000m, captured.Lines.Sum(l => l.Total));
+    }
+
+    /// <summary>
+    /// F2.3: si la suma de la liquidacion no cuadra (UPDATE raw rompio INV-FC1.3-005),
+    /// el service detecta + log critical + audit + abort emit.
+    ///
+    /// <para><b>Nota</b>: en este test bypasseamos EF haciendo un UPDATE directo via
+    /// raw SQL despues del seed, porque EF tracking impediria persistir un VO violatorio.
+    /// El CHECK SQL de BD tambien se desactiva temporalmente — ver comentario.</para>
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_LiquidationSumMismatch_AbortsEmission()
+    {
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, _, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000_000m,
+                fiscalAmountToCredit: 700_000m);
+
+        try
+        {
+            // Romper la liquidacion via UPDATE raw, bypasseando EF + CHECK temporalmente.
+            // Patron: drop check -> update -> re-add en el finally.
+            // Esto simula un actor malicioso o un bug que rompio la coherencia.
+            await bundle.Ctx.Database.ExecuteSqlRawAsync(
+                @"ALTER TABLE ""BookingCancellations"" DROP CONSTRAINT IF EXISTS chk_BookingCancellations_fiscalliquidation_sum;");
+            await bundle.Ctx.Database.ExecuteSqlRawAsync(
+                @"UPDATE ""BookingCancellations"" SET ""FiscalLiquidation_FiscalAmountToCredit"" = 999999999;");
+
+            // ACT + ASSERT: debe tirar INV-FC1.3-005.
+            var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+                ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+                    approvalId,
+                    "admin-distinto",
+                    "Admin",
+                    "Aprobado: pero la liquidacion esta corrupta, deberia abortar emision real F2.3",
+                    CancellationToken.None));
+
+            Assert.Equal("INV-FC1.3-005", ex.InvariantCode);
+
+            // EnqueuePartialCreditNoteAsync NO debe haber sido llamado.
+            bundle.InvoiceMock.Verify(
+                i => i.EnqueuePartialCreditNoteAsync(
+                    It.IsAny<int>(), It.IsAny<PartialCreditNoteEmissionInput>(),
+                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                    It.IsAny<int>(), It.IsAny<CancellationToken>()),
+                Times.Never);
+
+            // Audit log con la accion nueva.
+            var audit = await bundle.Ctx.AuditLogs.AsNoTracking()
+                .Where(a => a.Action == "PartialCreditNoteEmissionAborted_LiquidationSumMismatch")
+                .FirstOrDefaultAsync();
+            Assert.NotNull(audit);
+
+            // MENOR 1 backend reviewer (2026-05-28): documentar el dead-end manual.
+            // El BC quedo en ManualReviewApproved (el SaveChanges implicito del
+            // AuditService al loguear el manual review approved persistio la transicion)
+            // pero la emision real abortarse no consumio el approval. La operadora
+            // tiene que intervenir manualmente — el flag NO desconsuma el approval
+            // ni revierte el BC, porque eso podria habilitar segundas pasadas con la
+            // misma liquidacion corrupta.
+            var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
+                .FirstAsync(b => b.PublicId == bcPublicId);
+            Assert.Equal(BookingCancellationStatus.ManualReviewApproved, bcAfter.Status);
+            Assert.NotNull(bcAfter.ManualReviewerUserId);
+            // El approval queda Approved pero NO Consumed (dead-end manual intencional):
+            // ConsumedAt sigue null porque MarkConsumedAsync se ejecuta DESPUES de
+            // EnqueuePartialCreditNoteAsync en EmitRealPartialCreditNoteAsync.
+            var approval = await bundle.Ctx.ApprovalRequests.AsNoTracking()
+                .FirstAsync(a => a.Id == approvalId);
+            Assert.Null(approval.ConsumedAt);
+        }
+        finally
+        {
+            // Restaurar el CHECK con la MISMA definicion de la migracion Fase2_M1.
+            // OJO: la migracion usa "<= 0.01" (no "< 0.01") y envuelve cada componente
+            // con COALESCE(..., 0). Sin esto, si este test corre primero (xUnit no
+            // garantiza orden), los tests siguientes pierden la proteccion del CHECK
+            // y un bug aguas arriba podria pasar sin ser detectado.
+            await bundle.Ctx.Database.ExecuteSqlRawAsync(@"
+                ALTER TABLE ""BookingCancellations""
+                  DROP CONSTRAINT IF EXISTS chk_BookingCancellations_fiscalliquidation_sum;
+                ALTER TABLE ""BookingCancellations""
+                  ADD CONSTRAINT chk_BookingCancellations_fiscalliquidation_sum
+                  CHECK (
+                    ""FiscalLiquidation_FiscalAmountToCredit"" IS NULL
+                    OR ABS(
+                         COALESCE(""FiscalLiquidation_FiscalAmountToCredit"", 0)
+                         + COALESCE(""FiscalLiquidation_NonRefundableItemsAmount"", 0)
+                         + COALESCE(""FiscalLiquidation_OperatorPenaltyAmount"", 0)
+                         - COALESCE(""FiscalLiquidation_OriginalInvoiceAmount"", 0)
+                       ) <= 0.01
+                  );
+            ");
+        }
+    }
+
+    /// <summary>
+    /// F2.3: idempotencia. 2 invocaciones del bridge sobre el mismo approval =>
+    /// la 2da es no-op (el BC ya no esta en ManualReviewPending).
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_IdempotenceTwoCallsSecondNoop()
+    {
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, _, _, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000_000m,
+                fiscalAmountToCredit: 700_000m);
+
+        // Primera invocacion: deberia hacer todo el flow.
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado primera invocacion con justificacion suficientemente larga para superar minimo",
+            CancellationToken.None);
+
+        // Segunda invocacion: debe ser no-op (el BC ya no esta en ManualReviewPending).
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado segunda invocacion debe ser no-op idempotente segun ADR-009 §2.8.3",
+            CancellationToken.None);
+
+        // EnqueuePartialCreditNoteAsync se invoco UNA SOLA vez.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(), It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// F2.3 + cascade integrado (RH-005 + G-F2-D end-to-end): factura $1.000 + 3 payments
+    /// ($300+$300+$400) con 3 receipts vivos + NC parcial $250. Despues de aprobar:
+    /// <list type="bullet">
+    ///   <item>EnqueuePartialCreditNoteAsync se invoca (mock).</item>
+    ///   <item>BC pasa a AwaitingFiscalConfirmation.</item>
+    ///   <item>El cascade NO se ejecuta aca porque no llega a aplicarse (mock no procesa AFIP).</item>
+    /// </list>
+    /// El test de cascade real (AfipService) vive en AfipServicePartialCreditNoteReversalTests.
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_Fase2_PartialNc_MultiplePaymentsScenario_PreservesReceipts()
+    {
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, reservaId, invoiceId, _, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000m,
+                fiscalAmountToCredit: 250m);
+
+        // Crear 3 payments con receipts vivos (Issued) atados al payment.
+        var p1 = new Payment
+        {
+            ReservaId = reservaId, Amount = 300m, PaidAt = DateTime.UtcNow.AddDays(-5),
+            Method = "Transfer", Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true,
+            RelatedInvoiceId = invoiceId,
+        };
+        var p2 = new Payment
+        {
+            ReservaId = reservaId, Amount = 300m, PaidAt = DateTime.UtcNow.AddDays(-3),
+            Method = "Transfer", Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true,
+            RelatedInvoiceId = invoiceId,
+        };
+        var p3 = new Payment
+        {
+            ReservaId = reservaId, Amount = 400m, PaidAt = DateTime.UtcNow.AddDays(-1),
+            Method = "Transfer", Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true,
+            RelatedInvoiceId = invoiceId,
+        };
+        bundle.Ctx.Payments.AddRange(p1, p2, p3);
+        await bundle.Ctx.SaveChangesAsync();
+
+        bundle.Ctx.PaymentReceipts.AddRange(
+            new PaymentReceipt
+            {
+                PaymentId = p1.Id, ReservaId = reservaId, ReceiptNumber = "R1",
+                Amount = 300m, Status = PaymentReceiptStatuses.Issued,
+                IssuedAt = DateTime.UtcNow,
+            },
+            new PaymentReceipt
+            {
+                PaymentId = p2.Id, ReservaId = reservaId, ReceiptNumber = "R2",
+                Amount = 300m, Status = PaymentReceiptStatuses.Issued,
+                IssuedAt = DateTime.UtcNow,
+            },
+            new PaymentReceipt
+            {
+                PaymentId = p3.Id, ReservaId = reservaId, ReceiptNumber = "R3",
+                Amount = 400m, Status = PaymentReceiptStatuses.Issued,
+                IssuedAt = DateTime.UtcNow,
+            });
+        await bundle.Ctx.SaveChangesAsync();
+
+        // ACT
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado: factura $1000 pagada en 3 cuotas, NC parcial $250 sin cascade automatico de receipts",
+            CancellationToken.None);
+
+        // ASSERT — el flow F2.3 corrio correctamente.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                invoiceId,
+                It.Is<PartialCreditNoteEmissionInput>(input => input.FiscalAmountToCredit == 250m),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                approvalId, It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Los 3 receipts originales siguen Issued (el cascade no se invoco aca — depende
+        // del AfipService cuando AFIP confirme la NC, ver AfipServicePartialCreditNoteReversalTests).
+        var receipts = await bundle.Ctx.PaymentReceipts.AsNoTracking().ToListAsync();
+        Assert.Equal(3, receipts.Count);
+        Assert.All(receipts, r => Assert.Equal(PaymentReceiptStatuses.Issued, r.Status));
+    }
+
+    /// <summary>
+    /// FC1.3.F2.3 (review contador 2026-05-28, R1 ALTO): guard multimoneda.
+    /// Si el snapshot fiscal dice que la factura origen es USD, F2.3 NO emite la NC
+    /// parcial real porque el XML SOAP al ARCA todavia esta hardcoded en pesos (MonId=PES,
+    /// MonCotiz=1; deuda que cierra F2.5). El service debe:
+    ///   - loguear critical;
+    ///   - persistir audit "PartialCreditNoteEmissionAborted_MulticurrencyNotSupported";
+    ///   - NO llamar a EnqueuePartialCreditNoteAsync;
+    ///   - tirar BusinessInvariantViolationException con mensaje que mencione "USD" y "F2.5";
+    ///   - dejar el BC en ManualReviewApproved (el audit del paso 6 ya gatillo SaveChanges
+    ///     por el side-effect del AuditService).
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_Fase2_PartialNc_CurrencyUsd_AbortsEmissionUntilF25()
+    {
+        // ARRANGE: BC con FiscalSnapshot.CurrencyAtEvent = "USD" y un TC realista.
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, _, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000m,
+                fiscalAmountToCredit: 700m,
+                currencyAtEvent: "USD",
+                exchangeRateAtEvent: 1000m);
+
+        // ACT + ASSERT: debe tirar BusinessInvariantViolationException por moneda no soportada.
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+                approvalId,
+                "admin-distinto",
+                "Admin",
+                "Aprobado: factura USD deberia bloquearse en F2.3 hasta que F2.5 cierre el envelope multimoneda",
+                CancellationToken.None));
+
+        Assert.Contains("USD", ex.Message);
+        Assert.Contains("F2.5", ex.Message);
+
+        // El audit nuevo debe estar persistido.
+        var audit = await bundle.Ctx.AuditLogs.AsNoTracking()
+            .Where(a => a.Action == "PartialCreditNoteEmissionAborted_MulticurrencyNotSupported")
+            .FirstOrDefaultAsync();
+        Assert.NotNull(audit);
+
+        // EnqueuePartialCreditNoteAsync NO debe haberse invocado.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(), It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // El BC queda en ManualReviewApproved (dead-end manual): el audit del paso 6
+        // de OnApprovedAsync gatillo SaveChanges, por eso la transicion quedo persistida
+        // aun cuando la emision real abortarse despues.
+        var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
+            .FirstAsync(b => b.PublicId == bcPublicId);
+        Assert.Equal(BookingCancellationStatus.ManualReviewApproved, bcAfter.Status);
+        Assert.NotNull(bcAfter.ManualReviewerUserId);
+
+        // Approval queda Approved pero NO Consumed (MarkConsumedAsync vive despues del
+        // throw dentro de EmitRealPartialCreditNoteAsync, asi que nunca corrio).
+        var approval = await bundle.Ctx.ApprovalRequests.AsNoTracking()
+            .FirstAsync(a => a.Id == approvalId);
+        Assert.Null(approval.ConsumedAt);
+    }
+
+}

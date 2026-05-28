@@ -1456,8 +1456,15 @@ public class BookingCancellationService
         CancellationToken ct)
     {
         // 1) Localizar BC por la FK.
+        //    F2.3: agregamos Include(OriginatingInvoice) + Include(Customer) porque el path
+        //    Fase 2 (NC parcial real) los necesita para armar las Lines del request al
+        //    InvoiceService y para renderizar la descripcion template. Sin Include el
+        //    template renderiza con valores default ("?") y la URL del InvoiceService
+        //    explota al armar el XML.
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
+            .Include(b => b.OriginatingInvoice)
+            .Include(b => b.Customer)
             .Include(b => b.PartialCreditNoteApprovalRequest)
             .FirstOrDefaultAsync(b => b.PartialCreditNoteApprovalRequestId == approvalRequestId, ct);
 
@@ -1562,43 +1569,66 @@ public class BookingCancellationService
             userName: resolverUserName,
             ct: ct);
 
-        // 7) Fase 1: emision automatica AVANZANDO A AwaitingFiscalConfirmation con
-        //    el path FC1.2 (NC total real al ARCA). En Fase 2 esto se reemplaza
-        //    por InvoiceService.EnqueuePartialCreditNoteAsync que emitira NC
-        //    parcial real.
+        // 7) Emision de la NC. Hay DOS caminos posibles segun el flag de Fase 2:
+        //
+        //  a) Flag Fase 2 ON (settings.EnablePartialCreditNoteRealEmission=true)
+        //     + kind PartialOnOriginal: Fase 2 emite NC PARCIAL REAL contra ARCA
+        //     usando InvoiceService.EnqueuePartialCreditNoteAsync con las lineas
+        //     reducidas que arma F2.3.
+        //
+        //  b) Flag Fase 2 OFF (default) + kind PartialOnOriginal: fallback FC1.2.
+        //     El AfipService emite NC TOTAL (no parcial) — comportamiento Fase 1
+        //     intacto + log warning. Mantenemos este path byte-identico para que
+        //     no haya regresion mientras el flag no este prendido en prod.
+        //
+        // F2.3 (plan tactico Fase 2 §FC1.3.F2.3, 2026-05-28): este bloque es la
+        // unica diferencia funcional de F2.3 vs F2.2 — todo el resto del flow
+        // (transicion BC, OperatorRefundDueBy, ApprovalConsumed) queda igual.
         if (bc.CreditNoteKind == CreditNoteKind.PartialOnOriginal)
         {
-            _logger.LogWarning(
-                "FC1.3 Fase 1: BC {BcPublicId} aprobado con CreditNoteKind=PartialOnOriginal pero " +
-                "AfipService emite NC TOTAL real (no parcial). Fase 2 implementa parcial real. " +
-                "Razon FC1.3: {Reason}. Monto facturado: {Total}.",
-                bc.PublicId, bc.ReviewRequiredReason, bc.OriginatingInvoice?.ImporteTotal);
+            if (settings.EnablePartialCreditNoteRealEmission)
+            {
+                // ===== PATH FASE 2: NC PARCIAL REAL CONTRA ARCA =====
+                await EmitRealPartialCreditNoteAsync(
+                    bc, settings, resolverUserId, resolverUserName, resolverNotes,
+                    approvalRequestId, ct);
+            }
+            else
+            {
+                // ===== PATH FASE 1 (fallback FC1.2): NC TOTAL REAL =====
+                // Mantenemos el log warning historico — sirve a operaciones para
+                // detectar BCs que cayeron al fallback aunque Fase 2 ya este
+                // mergeada (caso: olvido prender el flag, rollback de Fase 2).
+                _logger.LogWarning(
+                    "FC1.3 Fase 1: BC {BcPublicId} aprobado con CreditNoteKind=PartialOnOriginal pero " +
+                    "AfipService emite NC TOTAL real (no parcial). Fase 2 implementa parcial real. " +
+                    "Razon FC1.3: {Reason}. Monto facturado: {Total}.",
+                    bc.PublicId, bc.ReviewRequiredReason, bc.OriginatingInvoice?.ImporteTotal);
 
-            // Recuperamos settings de nuevo para OperatorRefundTimeoutDays
-            // (no es hot path; lo importante es que la transicion sea atomica).
-            bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
-            bc.ConfirmedWithClientAt ??= DateTime.UtcNow;
-            bc.ConfirmedByUserId ??= resolverUserId;
-            bc.ConfirmedByUserName ??= resolverUserName;
-            bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
-            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+                bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
+                bc.ConfirmedWithClientAt ??= DateTime.UtcNow;
+                bc.ConfirmedByUserId ??= resolverUserId;
+                bc.ConfirmedByUserName ??= resolverUserName;
+                bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+                bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
 
-            await _db.SaveChangesAsync(ct);
+                await _db.SaveChangesAsync(ct);
 
-            // Encolar la NC en AFIP. En Fase 1 emite total (mismo path que FC1.2).
-            // Pasamos requesterIsAdmin=true porque el approval FC1.3 ya cubrio la
-            // autorizacion (no necesitamos otro approval InvoiceAnnulment).
-            await _invoiceService.EnqueueAnnulmentAsync(
-                id: bc.OriginatingInvoiceId,
-                userId: resolverUserId,
-                userName: resolverUserName,
-                reason: $"FC1.3 manual review approved: {resolverNotes?.Trim()}",
-                requesterIsAdmin: true,
-                ct: ct,
-                approvalRequestId: approvalRequestId);
+                // Encolar la NC en AFIP. En Fase 1 emite total (mismo path que FC1.2).
+                // Pasamos requesterIsAdmin=true porque el approval FC1.3 ya cubrio la
+                // autorizacion (no necesitamos otro approval InvoiceAnnulment).
+                await _invoiceService.EnqueueAnnulmentAsync(
+                    id: bc.OriginatingInvoiceId,
+                    userId: resolverUserId,
+                    userName: resolverUserName,
+                    reason: $"FC1.3 manual review approved: {resolverNotes?.Trim()}",
+                    requesterIsAdmin: true,
+                    ct: ct,
+                    approvalRequestId: approvalRequestId);
 
-            // Marcar el approval como Consumed para que no se reuse.
-            await _approvalService.MarkConsumedAsync(approvalRequestId, ct);
+                // Marcar el approval como Consumed para que no se reuse.
+                await _approvalService.MarkConsumedAsync(approvalRequestId, ct);
+            }
         }
         else
         {
@@ -1964,6 +1994,455 @@ public class BookingCancellationService
             ComputedByUserId = userId,
             ComputedByUserName = userName,
         };
+    }
+
+    // =========================================================================
+    // FC1.3.F2.3 (plan tactico Fase 2 §FC1.3.F2.3, 2026-05-28): helpers para el
+    // path Fase 2 (NC parcial REAL contra ARCA).
+    // =========================================================================
+
+    /// <summary>
+    /// F2.3 path Fase 2: emite la NC parcial real llamando al InvoiceService nuevo.
+    /// Se ejecuta solo cuando <c>settings.EnablePartialCreditNoteRealEmission=true</c>
+    /// y el kind es <c>PartialOnOriginal</c>. Caso contrario el caller usa el fallback
+    /// FC1.2 (NC total via EnqueueAnnulmentAsync).
+    ///
+    /// <para><b>Defense in depth</b>: antes de armar las lineas y llamar al
+    /// InvoiceService, re-validamos INV-FC1.3-005 sobre el VO persistido. Si la suma
+    /// quedo rota (concurrent edit malicioso entre el approval y este callback), abortamos
+    /// emision + log critical. El CHECK SQL ya bloquea esto a nivel BD, pero esta
+    /// validacion en C# da un mensaje de error mas claro.</para>
+    /// </summary>
+    private async Task EmitRealPartialCreditNoteAsync(
+        BookingCancellation bc,
+        OperationalFinanceSettings settings,
+        string resolverUserId,
+        string? resolverUserName,
+        string? resolverNotes,
+        int approvalRequestId,
+        CancellationToken ct)
+    {
+        // 1) Validar precondiciones: FiscalLiquidation debe estar persistido (F2.1).
+        //    Sin VO no podemos saber cuanto creditar. Esto NO deberia pasar en Fase 2
+        //    (ConfirmAsync siempre lo setea para PartialOnOriginal), pero defendemos
+        //    porque si llega null algo se rompio antes y mejor explotar aca que mandar
+        //    una NC con monto 0 al ARCA.
+        if (bc.FiscalLiquidation is null)
+        {
+            _logger.LogCritical(
+                "F2.3 ABORT: BC {BcPublicId} sin FiscalLiquidation persistido. " +
+                "No se puede emitir NC parcial real. Approval {ApprovalRequestId} queda Approved sin efecto.",
+                bc.PublicId, approvalRequestId);
+            throw new InvalidOperationException(
+                $"BC {bc.PublicId} no tiene FiscalLiquidation persistida — Fase 2 requiere doble-write (F2.1).");
+        }
+
+        // 2) Defense in depth: re-validar INV-FC1.3-005 (suma cuadra) sobre el VO.
+        //    El CHECK SQL chk_BookingCancellations_fiscalliquidation_sum hace lo mismo
+        //    a nivel BD con tolerancia 0.01. Aca duplicamos la validacion para emitir
+        //    un audit log explicito + mensaje claro si la suma divergio (ej. UPDATE
+        //    raw que bypassea EF).
+        var fl = bc.FiscalLiquidation;
+        var sumComponents = fl.FiscalAmountToCredit + fl.NonRefundableItemsAmount + fl.OperatorPenaltyAmount;
+        var sumDiff = Math.Abs(sumComponents - fl.OriginalInvoiceAmount);
+        if (sumDiff > 0.01m)
+        {
+            _logger.LogCritical(
+                "F2.3 ABORT: BC {BcPublicId} INV-FC1.3-005 violado en runtime. " +
+                "FiscalAmountToCredit ({Fiscal}) + NonRefundableItemsAmount ({Nr}) + " +
+                "OperatorPenaltyAmount ({Penalty}) = {Sum}, esperado OriginalInvoiceAmount={Original}. " +
+                "Diff={Diff}. Probable concurrent edit malicioso.",
+                bc.PublicId, fl.FiscalAmountToCredit, fl.NonRefundableItemsAmount,
+                fl.OperatorPenaltyAmount, sumComponents, fl.OriginalInvoiceAmount, sumDiff);
+
+            await _auditService.LogBusinessEventAsync(
+                action: "PartialCreditNoteEmissionAborted_LiquidationSumMismatch",
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bc.PublicId,
+                    approvalRequestId,
+                    fl.FiscalAmountToCredit,
+                    fl.NonRefundableItemsAmount,
+                    fl.OperatorPenaltyAmount,
+                    sumComponents,
+                    fl.OriginalInvoiceAmount,
+                    diff = sumDiff,
+                }),
+                userId: resolverUserId,
+                userName: resolverUserName,
+                ct: ct);
+
+            throw new BusinessInvariantViolationException(
+                $"BC {bc.PublicId}: la suma de la liquidacion fiscal no cuadra con el monto original. " +
+                "No se emite NC parcial. Intervencion manual requerida.",
+                invariantCode: "INV-FC1.3-005");
+        }
+
+        // 2.bis) FC1.3.F2.3 (review contador 2026-05-28, R1 ALTO): GUARD MULTIMONEDA.
+        //
+        // El snapshot fiscal guarda Currency (USD/ARS) pero el XML SOAP que arma
+        // AfipService al ARCA sigue hardcoded en MonId=PES, MonCotiz=1 (deuda
+        // pendiente que cierra F2.5). Si la factura origen es USD y prendemos el
+        // flag F2.3 antes de F2.5, la NC saldria en pesos al ARCA aunque
+        // internamente este marcada en USD => desfasaje fiscal grave.
+        //
+        // Mientras F2.5 (multimoneda real) no este desplegada, abortamos con
+        // BusinessInvariantViolationException + audit log. El BC queda en
+        // ManualReviewApproved (el audit del paso 6 ya gatillo SaveChanges via
+        // el side effect del AuditService) pero sin emision: tratamiento manual.
+        //
+        // Cuando F2.5 quede online y el XML soporte MonId/MonCotiz reales, este
+        // guard se retira.
+        var currencyFromSnapshot = bc.FiscalSnapshot?.CurrencyAtEvent ?? "ARS";
+        if (!string.Equals(currencyFromSnapshot, "ARS", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogCritical(
+                "F2.3 ABORT - currency {Currency} no soportada hasta F2.5. bcId={BcId}, invoiceId={InvoiceId}",
+                currencyFromSnapshot, bc.Id, bc.OriginatingInvoiceId);
+
+            await _auditService.LogBusinessEventAsync(
+                action: "PartialCreditNoteEmissionAborted_MulticurrencyNotSupported",
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bcPublicId = bc.PublicId,
+                    originalInvoiceId = bc.OriginatingInvoiceId,
+                    currency = currencyFromSnapshot,
+                    reason = "F2.5 multimoneda no desplegada todavia. Flag F2.3 no debe operar facturas USD hasta entonces.",
+                }),
+                userId: resolverUserId,
+                userName: resolverUserName,
+                ct: ct);
+
+            throw new BusinessInvariantViolationException(
+                $"NC parcial real no soportada para moneda {currencyFromSnapshot} hasta F2.5. " +
+                $"BookingCancellation {bc.PublicId} queda en ManualReviewApproved sin emision. " +
+                $"Apagar flag o esperar F2.5.");
+        }
+
+        // 3) Cargar items de la factura origen para construir Lines.
+        //    NOTA: bc.OriginatingInvoice ya esta Included (path desde OnApprovedAsync),
+        //    pero los Items hay que cargarlos por separado (no se include cascada).
+        var invoiceItems = await _db.Set<InvoiceItem>()
+            .Where(i => i.InvoiceId == bc.OriginatingInvoiceId)
+            .ToListAsync(ct);
+
+        if (invoiceItems.Count == 0)
+        {
+            // Factura sin items — caso degenerado. NO podemos armar lineas para la NC.
+            // Mas allá del CHECK de BD, el InvoiceService igual rechazaria con XML invalido.
+            // Mejor abortar aca con mensaje claro.
+            throw new InvalidOperationException(
+                $"BC {bc.PublicId}: factura origen {bc.OriginatingInvoiceId} no tiene items. " +
+                "No se puede emitir NC parcial.");
+        }
+
+        // 4) Construir las Lines (corazon del cambio F2.3).
+        var lines = BuildPartialCreditNoteLines(bc, invoiceItems, settings);
+
+        // 5) Armar el input para el InvoiceService.
+        var originalInvoice = bc.OriginatingInvoice;
+        // Currency del comprobante: lo tomamos del snapshot fiscal (T0) si esta disponible,
+        // sino caemos al VO de la liquidacion (consistente con FiscalLiquidationDto.Currency).
+        var currency = bc.FiscalSnapshot?.CurrencyAtEvent ?? fl.Currency;
+        // Tipo de cambio: el snapshot lo persiste exactamente T0 (ExchangeRateAtOriginalInvoice).
+        // Para pesos vale 1.
+        var exchangeRate = bc.FiscalSnapshot?.ExchangeRateAtOriginalInvoice > 0m
+            ? bc.FiscalSnapshot.ExchangeRateAtOriginalInvoice
+            : 1m;
+
+        var emissionInput = new PartialCreditNoteEmissionInput(
+            OriginalNetAmount: originalInvoice.ImporteNeto,
+            OriginalVatAmount: originalInvoice.ImporteIva,
+            OriginalTotalAmount: originalInvoice.ImporteTotal,
+            FiscalAmountToCredit: fl.FiscalAmountToCredit,
+            Currency: currency,
+            ExchangeRateAtOriginalInvoice: exchangeRate,
+            Lines: lines);
+
+        // 6) Transicionar BC + Reserva ANTES de encolar (asi el job encuentra el BC
+        //    en el estado esperado cuando arranque).
+        bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
+        bc.ConfirmedWithClientAt ??= DateTime.UtcNow;
+        bc.ConfirmedByUserId ??= resolverUserId;
+        bc.ConfirmedByUserName ??= resolverUserName;
+        bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+        bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+
+        await _db.SaveChangesAsync(ct);
+
+        // 7) Encolar la NC parcial real contra ARCA (job Hangfire F2.2).
+        await _invoiceService.EnqueuePartialCreditNoteAsync(
+            originalInvoiceId: bc.OriginatingInvoiceId,
+            liquidation: emissionInput,
+            userId: resolverUserId,
+            userName: resolverUserName,
+            reason: $"FC1.3 F2 partial NC: {resolverNotes?.Trim()}",
+            approvalRequestId: approvalRequestId,
+            ct: ct);
+
+        // 8) Marcar el approval como Consumed para que no se reuse.
+        await _approvalService.MarkConsumedAsync(approvalRequestId, ct);
+
+        _logger.LogInformation(
+            "FC1.3 F2.3: BC {BcPublicId} emitio NC parcial real (encolada). " +
+            "FiscalAmountToCredit={Amount} {Currency}, lines={LineCount}.",
+            bc.PublicId, fl.FiscalAmountToCredit, currency, lines.Count);
+    }
+
+    /// <summary>
+    /// F2.3 — construye las lineas de la NC parcial a partir de la factura origen y
+    /// la liquidacion fiscal persistida.
+    ///
+    /// <para><b>Casos</b> (cubren los 3 escenarios mas comunes del plan F2.3 punto 2):
+    /// <list type="number">
+    ///   <item><b>Hay items no reintegrables</b> (flag <c>HasNonRefundableItems</c>):
+    ///   excluimos esos items y prorrateamos el resto por factor de escala
+    ///   <c>FiscalAmountToCredit / SUM(refundable_items.Total)</c>. Cada item refundable
+    ///   sale como linea propia con su <c>AlicuotaIvaId</c> original. Esto preserva la
+    ///   alicuota por item (mas fiel fiscalmente que colapsar).</item>
+    ///   <item><b>No hay items no reintegrables + factura multi-alicuotas</b>:
+    ///   default (RH-001/OQ-2) reproducir TODAS las alicuotas con prorrateo proporcional
+    ///   al total por alicuota — preserva fidelidad fiscal. Una linea por alicuota.</item>
+    ///   <item><b>Factura mono-alicuota</b>: una unica linea con
+    ///   <c>Total = FiscalAmountToCredit</c> + alicuota dominante de la factura origen
+    ///   + <c>Description</c> renderizada desde <see cref="OperationalFinanceSettings.PartialNcDescriptionTemplate"/>.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para><b>CRITICO (decision Gaston 2026-05-28)</b>: el <c>Total</c> de cada
+    /// <see cref="PartialCreditNoteLineDto"/> es BRUTO (con IVA incluido), igual que el
+    /// <c>InvoiceItem.Total</c> original. El calculator del InvoiceService extrae el IVA
+    /// por dentro al armar el XML para ARCA. NO restar IVA aca.</para>
+    /// </summary>
+    private static IReadOnlyList<PartialCreditNoteLineDto> BuildPartialCreditNoteLines(
+        BookingCancellation bc,
+        IReadOnlyList<InvoiceItem> invoiceItems,
+        OperationalFinanceSettings settings)
+    {
+        var fl = bc.FiscalLiquidation!; // ya validado no-null en el caller
+        var fiscalAmountToCredit = fl.FiscalAmountToCredit;
+
+        // Caso 1: hay items no reintegrables. Excluirlos y prorratear los refundables.
+        if (bc.ReviewRequiredReason.HasFlag(ReviewRequiredReason.HasNonRefundableItems))
+        {
+            var refundableItems = invoiceItems.Where(i => i.IsRefundable).ToList();
+            if (refundableItems.Count == 0)
+            {
+                // Edge case: todos los items eran no reintegrables. Hipoteticamente el
+                // calculator no deberia haber clasificado esto como PartialOnOriginal,
+                // pero defendemos: emitimos una sola linea con la descripcion template.
+                return new[]
+                {
+                    new PartialCreditNoteLineDto(
+                        Description: RenderPartialNcDescription(bc, settings, fiscalAmountToCredit),
+                        Quantity: 1m,
+                        UnitPrice: fiscalAmountToCredit,
+                        Total: fiscalAmountToCredit,
+                        AlicuotaIvaId: GetDominantAlicuotaId(invoiceItems)),
+                };
+            }
+
+            // Factor de escala: cuanto del Total bruto refundable se acredita.
+            // Si refundableSum es 0 (raro: items refundable con Total=0), factor=0 y
+            // todas las lineas salen en 0 — el caller defensive lo va a rechazar igual.
+            var refundableSumGross = refundableItems.Sum(i => i.Total);
+            var scaleFactor = refundableSumGross > 0m ? fiscalAmountToCredit / refundableSumGross : 0m;
+
+            var lines = new List<PartialCreditNoteLineDto>(refundableItems.Count);
+            for (int i = 0; i < refundableItems.Count; i++)
+            {
+                var item = refundableItems[i];
+                // Total escalado = item.Total * factor. Redondeo a 2 decimales para
+                // que el XML al ARCA no lleve ruido. La ultima linea absorbe el
+                // residuo de redondeo para que SUM(Lines.Total) == FiscalAmountToCredit
+                // exacto (defensa contra mismatch en validacion pre-envio del job F2.2).
+                decimal scaledTotal;
+                if (i < refundableItems.Count - 1)
+                {
+                    scaledTotal = Math.Round(item.Total * scaleFactor, 2, MidpointRounding.AwayFromZero);
+                }
+                else
+                {
+                    var sumSoFar = lines.Sum(l => l.Total);
+                    scaledTotal = Math.Round(fiscalAmountToCredit - sumSoFar, 2, MidpointRounding.AwayFromZero);
+                }
+
+                // UnitPrice mantiene relacion con quantity original. Si quantity es 0
+                // (defensive), fallback a 1 para no dividir por cero.
+                var qty = item.Quantity > 0m ? item.Quantity : 1m;
+                var unitPrice = Math.Round(scaledTotal / qty, 2, MidpointRounding.AwayFromZero);
+
+                lines.Add(new PartialCreditNoteLineDto(
+                    Description: item.Description,
+                    Quantity: qty,
+                    UnitPrice: unitPrice,
+                    Total: scaledTotal,
+                    AlicuotaIvaId: item.AlicuotaIvaId));
+            }
+            return lines;
+        }
+
+        // Casos 2 y 3: no hay items no reintegrables. Vemos si la factura es mono o
+        // multi-alicuota para decidir cuantas lineas armar.
+        //
+        // OJO: cambiamos el shape del groupBy para incluir un item "representativo"
+        // por grupo. En MULTI-alicuota usamos la Description de ese item (MENOR 3
+        // backend reviewer 2026-05-28): si dos lineas distintas comparten el mismo
+        // template renderizado, el comprobante fisico no permite distinguirlas.
+        // Tomar la descripcion del primer item del grupo preserva la trazabilidad
+        // fiscal hacia los items originales de la factura.
+        var alicuotaGroups = invoiceItems
+            .GroupBy(i => i.AlicuotaIvaId)
+            .Select(g => new
+            {
+                AlicuotaId = g.Key,
+                GroupTotal = g.Sum(i => i.Total),
+                RepresentativeDescription = g.First().Description ?? string.Empty,
+            })
+            .ToList();
+
+        // Caso 3 (mono-alicuota): una sola linea con template rendered.
+        // Justificacion: con UNA sola alicuota no hay ambiguedad entre lineas, y la
+        // factura entera se acredita en un unico item — usamos la descripcion
+        // narrativa del template ("NC parcial s/Fc... monto fiscal acreditado: $X").
+        if (alicuotaGroups.Count == 1)
+        {
+            return new[]
+            {
+                new PartialCreditNoteLineDto(
+                    Description: RenderPartialNcDescription(bc, settings, fiscalAmountToCredit),
+                    Quantity: 1m,
+                    UnitPrice: fiscalAmountToCredit,
+                    Total: fiscalAmountToCredit,
+                    AlicuotaIvaId: alicuotaGroups[0].AlicuotaId),
+            };
+        }
+
+        // Caso 2 (multi-alicuotas): default (RH-001/OQ-2) preservar TODAS las alicuotas
+        // con prorrateo proporcional al total por alicuota. Una linea por alicuota.
+        // El setting IvaProrrateoMode puede cambiar el comportamiento en el FUTURO
+        // (ProportionalToNet => colapsar a dominante), pero el plan F2.3 confirmo que
+        // el default conservador es PerItem-like: preservar fidelidad fiscal.
+        // DEUDA F2.x: cuando el contador confirme F1 (pregunta IvaProrrateoMode), si
+        // dice "colapsar a dominante", aca habria que ramificar segun settings.IvaProrrateoMode.
+        //
+        // MENOR 3 (backend reviewer 2026-05-28): cada linea usa la Description del
+        // item representativo de SU grupo de alicuota (no el template comun). Asi
+        // dos lineas con alicuotas distintas quedan distinguibles en el comprobante
+        // fisico. El render del template solo se usa en el caso mono-alicuota (ver
+        // arriba), donde la factura completa se acredita y no hay riesgo de
+        // ambiguedad.
+        var totalGross = alicuotaGroups.Sum(g => g.GroupTotal);
+        var multiLines = new List<PartialCreditNoteLineDto>(alicuotaGroups.Count);
+        for (int i = 0; i < alicuotaGroups.Count; i++)
+        {
+            var g = alicuotaGroups[i];
+            decimal lineTotal;
+            if (i < alicuotaGroups.Count - 1)
+            {
+                // Prorrateo: porcion del FiscalAmountToCredit proporcional al peso de la
+                // alicuota en la factura origen.
+                var factor = totalGross > 0m ? g.GroupTotal / totalGross : 0m;
+                lineTotal = Math.Round(fiscalAmountToCredit * factor, 2, MidpointRounding.AwayFromZero);
+            }
+            else
+            {
+                // Ultima linea absorbe residuo de redondeo (mismo patron que el caso 1).
+                var sumSoFar = multiLines.Sum(l => l.Total);
+                lineTotal = Math.Round(fiscalAmountToCredit - sumSoFar, 2, MidpointRounding.AwayFromZero);
+            }
+
+            // Truncado defensivo a 200 chars (mismo limite que aplica RenderPartialNcDescription).
+            // InvoiceItem.Description en BD tiene MaxLength=200; si pasamos mas la insercion
+            // del job F2.2 rebotaria.
+            var description = g.RepresentativeDescription;
+            if (description.Length > 200)
+                description = description[..200];
+
+            multiLines.Add(new PartialCreditNoteLineDto(
+                Description: description,
+                Quantity: 1m,
+                UnitPrice: lineTotal,
+                Total: lineTotal,
+                AlicuotaIvaId: g.AlicuotaId));
+        }
+        return multiLines;
+    }
+
+    /// <summary>
+    /// F2.3 — devuelve el id de alicuota IVA dominante (el que tiene mayor Total
+    /// acumulado en los items de la factura origen).
+    ///
+    /// <para><b>R2 contador (2026-05-28)</b>: si la lista llega vacia, NO devolvemos
+    /// un default fiscal (antes devolviamos 5 = 21%). Razon: una factura de hoteleria
+    /// puede estar al 10.5% (alicuota 4); si por un bug aguas arriba se filtra mal
+    /// y los items quedan vacios, devolver 21% por defecto haria que la NC parcial
+    /// salga al ARCA con la alicuota equivocada = error fiscal silencioso. Mejor
+    /// explotar aca con mensaje claro y que el operador investigue el bug.</para>
+    ///
+    /// <para><b>Visibilidad</b>: <c>internal static</c> (no <c>private</c>) para que el
+    /// proyecto de tests pueda chequear esta regla directamente sin tener que armar
+    /// todo el escenario de BookingCancellation. <c>InternalsVisibleTo</c> de
+    /// TravelApi.Infrastructure -> TravelApi.Tests ya esta configurado en el csproj.</para>
+    /// </summary>
+    internal static int GetDominantAlicuotaId(IReadOnlyList<InvoiceItem> items)
+    {
+        if (items.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "GetDominantAlicuotaId llamado sin items. " +
+                "No se puede inferir alicuota IVA. " +
+                "Esto indica un bug aguas arriba (factura sin InvoiceItems o filtrado incorrecto).");
+        }
+
+        return items
+            .GroupBy(i => i.AlicuotaIvaId)
+            .OrderByDescending(g => g.Sum(i => i.Total))
+            .First()
+            .Key;
+    }
+
+    /// <summary>
+    /// F2.3 — renderiza el template <see cref="OperationalFinanceSettings.PartialNcDescriptionTemplate"/>
+    /// reemplazando las variables conocidas (<c>{invoiceType}</c>, <c>{invoiceNumber}</c>,
+    /// <c>{fiscalAmount}</c>, etc.) con los valores del BC.
+    ///
+    /// <para><b>Truncado defensivo</b>: <c>InvoiceItem.Description</c> tiene
+    /// <c>MaxLength=200</c>. Si el template renderizado supera ese limite, truncamos
+    /// a 200 chars para no romper el INSERT en el job F2.2.</para>
+    /// </summary>
+    private static string RenderPartialNcDescription(
+        BookingCancellation bc,
+        OperationalFinanceSettings settings,
+        decimal fiscalAmount)
+    {
+        var template = string.IsNullOrWhiteSpace(settings.PartialNcDescriptionTemplate)
+            ? "Cancelacion parcial de reserva {invoiceNumber}." // fallback defensivo
+            : settings.PartialNcDescriptionTemplate;
+
+        var invoice = bc.OriginatingInvoice;
+        var currency = bc.FiscalLiquidation?.Currency ?? bc.FiscalSnapshot?.CurrencyAtEvent ?? "ARS";
+        var nonRefAmount = bc.FiscalLiquidation?.NonRefundableItemsAmount ?? 0m;
+        var penaltyAmount = bc.FiscalLiquidation?.OperatorPenaltyAmount ?? 0m;
+
+        var rendered = template
+            .Replace("{invoiceType}", invoice?.TipoComprobante.ToString() ?? "?")
+            .Replace("{invoiceNumber}", invoice?.NumeroComprobante.ToString() ?? "?")
+            .Replace("{pointOfSale}", invoice?.PuntoDeVenta.ToString() ?? "?")
+            .Replace("{fiscalAmount}", fiscalAmount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))
+            .Replace("{currency}", currency)
+            .Replace("{cancellationReason}", bc.Reason ?? "")
+            .Replace("{nonRefundableAmount}", nonRefAmount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))
+            .Replace("{operatorPenaltyAmount}", penaltyAmount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))
+            .Replace("{customerName}", bc.Customer?.FullName ?? "")
+            .Replace("{customerTaxId}", bc.Customer?.TaxId ?? "");
+
+        // Truncado defensivo a 200 chars (MaxLength de InvoiceItem.Description).
+        return rendered.Length > 200 ? rendered[..200] : rendered;
     }
 
     /// <summary>
