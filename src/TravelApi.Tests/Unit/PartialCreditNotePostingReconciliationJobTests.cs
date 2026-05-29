@@ -446,6 +446,11 @@ public class ReconcileStuckPartialCreditNoteServiceTests
         var mapper = new AutoMapper.MapperConfiguration(
             c => c.AddProfile<TravelApi.Application.Mappings.MappingProfile>()).CreateMapper();
 
+        // El bridge ya NO se inyecta directo en el ctor: InvoiceService lo resuelve LAZY
+        // desde IServiceProvider (fix del ciclo DI que colgaba /api/invoices). Para el test
+        // alcanza con un IServiceProvider que devuelva el mock cuando se pide el bridge.
+        var serviceProvider = new BridgeOnlyServiceProvider(bridgeMock.Object);
+
         var service = new InvoiceService(
             ctx,
             new EntityReferenceResolver(ctx),
@@ -456,9 +461,24 @@ public class ReconcileStuckPartialCreditNoteServiceTests
             NullLogger<InvoiceService>.Instance,
             settingsMock.Object,
             BuildUserManager(),
-            bcBridge: bridgeMock.Object);
+            serviceProvider: serviceProvider);
 
         return (service, ctx, afipMock, bridgeMock);
+    }
+
+    /// <summary>
+    /// IServiceProvider minimo para los tests: solo sabe resolver IInvoiceAnnulmentBcBridge
+    /// (el unico servicio que InvoiceService pide lazy). Cualquier otro tipo devuelve null.
+    /// Reemplaza al viejo parametro de ctor bcBridge, que se saco al romper el ciclo DI.
+    /// </summary>
+    private sealed class BridgeOnlyServiceProvider : IServiceProvider
+    {
+        private readonly IInvoiceAnnulmentBcBridge _bridge;
+
+        public BridgeOnlyServiceProvider(IInvoiceAnnulmentBcBridge bridge) => _bridge = bridge;
+
+        public object? GetService(Type serviceType)
+            => serviceType == typeof(IInvoiceAnnulmentBcBridge) ? _bridge : null;
     }
 
     private delegate TravelApi.Application.DTOs.ArcaCompoundQueryResult ArcaCompoundQueryResultFactory(

@@ -16,6 +16,9 @@ using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Hangfire;
 using Npgsql;
+// Necesario para _serviceProvider.GetService<T>(): el metodo de extension GetService<T>
+// vive en este namespace. Sin este using el contenedor solo expone el GetService(Type) no generico.
+using Microsoft.Extensions.DependencyInjection;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -37,13 +40,18 @@ public class InvoiceService : IInvoiceService
     private readonly IApprovalRequestService? _approvalService;
     // B1.15 Fase B'' (2026-05-11): opcional por la misma razon.
     private readonly IApprovalPolicyService? _approvalPolicyService;
-    // FC1.2.1 (BR-V2-04, MR-V2-02): bridge "chico" hacia BookingCancellationService.
-    // Inyectado opcional porque los unit tests del invoice no necesitan resolverlo
-    // y porque el ciclo DI se rompio justamente con esta interface acotada.
-    // Si esta presente, ProcessAnnulmentJob lo invoca post-CAE para sincronizar
-    // el estado del BC asociado. Si esta null, el job sigue funcionando para
-    // annulaciones standalone (back-office sin BC).
-    private readonly IInvoiceAnnulmentBcBridge? _bcBridge;
+    // FC1.2.1 (BR-V2-04, MR-V2-02): el bridge "chico" hacia BookingCancellationService
+    // NO se inyecta en el ctor. Se resuelve LAZY (recien cuando el job post-CAE lo necesita)
+    // a traves de _serviceProvider.
+    //
+    // POR QUE LAZY (bug cuelgue 2026-05-29): InvoiceService -> IInvoiceAnnulmentBcBridge
+    // (implementado por BookingCancellationService) -> IInvoiceService -> InvoiceService...
+    // era un CICLO de dependencias en el contenedor DI. Resolver IInvoiceService colgaba
+    // el request (504) porque el contenedor entraba en recursion al construir el grafo.
+    // Al resolver el bridge solo en el momento de uso, InvoiceService YA esta construido
+    // y cacheado en el scope: cuando el bridge pide IInvoiceService recibe la instancia
+    // ya existente y no hay recursion. Ver GetBcBridge() mas abajo.
+    private readonly IServiceProvider _serviceProvider;
     private static readonly string[] ActiveInvoicingStatuses =
     {
         EstadoReserva.Confirmed,
@@ -64,7 +72,7 @@ public class InvoiceService : IInvoiceService
         IHttpContextAccessor? httpContextAccessor = null,
         IApprovalRequestService? approvalService = null,
         IApprovalPolicyService? approvalPolicyService = null,
-        IInvoiceAnnulmentBcBridge? bcBridge = null)
+        IServiceProvider? serviceProvider = null)
     {
         _context = context;
         _entityReferenceResolver = entityReferenceResolver;
@@ -79,7 +87,33 @@ public class InvoiceService : IInvoiceService
         _httpContextAccessor = httpContextAccessor;
         _approvalService = approvalService;
         _approvalPolicyService = approvalPolicyService;
-        _bcBridge = bcBridge;
+        // El IServiceProvider es opcional para no romper unit tests que arman el service a mano.
+        // Si es null, GetBcBridge() devuelve null y el flujo se comporta como configuracion
+        // standalone (sin modulo de cancelacion), igual que antes cuando _bcBridge llegaba null.
+        _serviceProvider = serviceProvider ?? EmptyServiceProvider.Instance;
+    }
+
+    /// <summary>
+    /// Resuelve el bridge hacia BookingCancellationService de forma LAZY (recien al usarlo),
+    /// no en el constructor. Esto es lo que rompe el ciclo de dependencias del DI que colgaba
+    /// el endpoint de facturas (ver comentario en el campo _serviceProvider).
+    ///
+    /// Devuelve null si no hay bridge registrado (configuracion standalone sin cancelacion),
+    /// preservando el mismo comportamiento que antes tenia "_bcBridge is null".
+    /// </summary>
+    private IInvoiceAnnulmentBcBridge? GetBcBridge()
+    {
+        return _serviceProvider.GetService<IInvoiceAnnulmentBcBridge>();
+    }
+
+    /// <summary>
+    /// IServiceProvider vacio para los unit tests que construyen InvoiceService sin contenedor.
+    /// Su GetService siempre devuelve null, asi GetBcBridge() se comporta como "sin bridge".
+    /// </summary>
+    private sealed class EmptyServiceProvider : IServiceProvider
+    {
+        public static readonly EmptyServiceProvider Instance = new();
+        public object? GetService(Type serviceType) => null;
     }
 
     /// <summary>
@@ -105,10 +139,8 @@ public class InvoiceService : IInvoiceService
 
     public async Task<PagedResponse<InvoiceListDto>> GetAllAsync(InvoicesListQuery query, CancellationToken ct)
     {
-        _logger.LogWarning("DBG-INV {Metodo}: entrada", nameof(GetAllAsync));
         // B1.15 Fase 2a (FIX 6): filter mine via Reserva.ResponsibleUserId.
         var ownerScope = await GetOwnerScopeOrNullAsync(ct);
-        _logger.LogWarning("DBG-INV {Metodo}: scope ok", nameof(GetAllAsync));
 
         var invoicesQuery = ApplyInvoiceSearch(_context.Invoices.AsNoTracking(), query.Search);
         if (ownerScope is not null)
@@ -119,7 +151,6 @@ public class InvoiceService : IInvoiceService
         invoicesQuery = ApplyInvoiceStructuredFilters(invoicesQuery, query);
         invoicesQuery = ApplyInvoiceOrdering(invoicesQuery, query);
 
-        _logger.LogWarning("DBG-INV {Metodo}: por ejecutar query", nameof(GetAllAsync));
         var result = await invoicesQuery
             .Select(invoice => new InvoiceListDto
             {
@@ -154,21 +185,17 @@ public class InvoiceService : IInvoiceService
                 OriginalInvoicePuntoDeVenta = invoice.OriginalInvoice != null ? (int?)invoice.OriginalInvoice.PuntoDeVenta : null
             })
             .ToPagedResponseAsync(query, ct);
-        _logger.LogWarning("DBG-INV {Metodo}: query OK", nameof(GetAllAsync));
         return result;
     }
 
     public async Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct)
     {
-        _logger.LogWarning("DBG-INV {Metodo}: entrada", nameof(GetInvoicingSummaryAsync));
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        _logger.LogWarning("DBG-INV {Metodo}: settings ok", nameof(GetInvoicingSummaryAsync));
         var allowsOverride = settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason;
 
         // B1.15 Fase 2a (FIX 6): filter mine para totales del summary.
         var ownerScope = await GetOwnerScopeOrNullAsync(ct);
-        _logger.LogWarning("DBG-INV {Metodo}: scope ok", nameof(GetInvoicingSummaryAsync));
 
         var approvedInvoices = _context.Invoices
             .AsNoTracking()
@@ -221,11 +248,9 @@ public class InvoiceService : IInvoiceService
             })
             .Where(item => item.PendingFiscalAmount > 0m);
 
-        _logger.LogWarning("DBG-INV {Metodo}: por ejecutar query", nameof(GetInvoicingSummaryAsync));
         var readyAmount = await pendingFiscalQuery
             .Where(item => item.Balance <= 0m)
             .SumAsync(item => (decimal?)item.PendingFiscalAmount, ct) ?? 0m;
-        _logger.LogWarning("DBG-INV {Metodo}: query OK", nameof(GetInvoicingSummaryAsync));
 
         var invoicedThisMonth = await approvedInvoices
             .Where(invoice => invoice.CreatedAt >= startOfMonth)
@@ -251,21 +276,16 @@ public class InvoiceService : IInvoiceService
 
     public async Task<PagedResponse<InvoicingWorkItemDto>> GetInvoicingWorklistAsync(InvoicingWorklistQuery query, CancellationToken ct)
     {
-        _logger.LogWarning("DBG-INV {Metodo}: entrada", nameof(GetInvoicingWorklistAsync));
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        _logger.LogWarning("DBG-INV {Metodo}: settings ok", nameof(GetInvoicingWorklistAsync));
         // B1.15 Fase 2a (FIX 6): filter mine via Reserva.ResponsibleUserId.
         var ownerScope = await GetOwnerScopeOrNullAsync(ct);
-        _logger.LogWarning("DBG-INV {Metodo}: scope ok", nameof(GetInvoicingWorklistAsync));
         var workItemsQuery = BuildInvoicingWorkItemsQuery(settings, ownerScope);
         workItemsQuery = ApplyInvoicingWorkItemSearch(workItemsQuery, query.Search);
         workItemsQuery = ApplyInvoicingWorkItemStructuredFilters(workItemsQuery, query);
         workItemsQuery = ApplyInvoicingWorkItemStatus(workItemsQuery, query.Status);
         workItemsQuery = ApplyInvoicingWorkItemOrdering(workItemsQuery, query);
 
-        _logger.LogWarning("DBG-INV {Metodo}: por ejecutar query", nameof(GetInvoicingWorklistAsync));
         var result = await workItemsQuery.ToPagedResponseAsync(query, ct);
-        _logger.LogWarning("DBG-INV {Metodo}: query OK", nameof(GetInvoicingWorklistAsync));
         return result;
     }
 
@@ -1137,11 +1157,12 @@ public class InvoiceService : IInvoiceService
                 //   4. Si el bridge falla, el escape hatch documentado es
                 //      BookingCancellationService.ForceArcaConfirmationAsync (BR-V2-01),
                 //      que requiere approval InvariantOverride.
-                if (_bcBridge is not null)
+                var bcBridge = GetBcBridge();
+                if (bcBridge is not null)
                 {
                     try
                     {
-                        await _bcBridge.OnArcaSucceededAsync(invoiceId, newInvoice.Id, CancellationToken.None);
+                        await bcBridge.OnArcaSucceededAsync(invoiceId, newInvoice.Id, CancellationToken.None);
                     }
                     catch (Exception bridgeEx)
                     {
@@ -1180,11 +1201,12 @@ public class InvoiceService : IInvoiceService
                 // el commit Failed ya quedo, no podemos rethrow. El BC quedaria en
                 // AwaitingFiscalConfirmation indefinidamente — el remediation es
                 // manual (back-office decide reintentar o abandonar).
-                if (_bcBridge is not null)
+                var bcBridge = GetBcBridge();
+                if (bcBridge is not null)
                 {
                     try
                     {
-                        await _bcBridge.OnArcaFailedAsync(invoiceId, newInvoice.Observaciones, CancellationToken.None);
+                        await bcBridge.OnArcaFailedAsync(invoiceId, newInvoice.Observaciones, CancellationToken.None);
                     }
                     catch (Exception bridgeEx)
                     {
@@ -2240,11 +2262,12 @@ public class InvoiceService : IInvoiceService
             // Sincronizar el BC asociado (si existe), mismo patron try/catch que la NC total:
             // la NC ya quedo commiteada, NO podemos rethrow (Hangfire reintentaria y
             // re-POSTearia). Si el bridge falla, remediacion manual via ForceArcaConfirmation.
-            if (_bcBridge is not null)
+            var bcBridge = GetBcBridge();
+            if (bcBridge is not null)
             {
                 try
                 {
-                    await _bcBridge.OnArcaSucceededAsync(originalInvoice.Id, newCreditNote.Id, CancellationToken.None);
+                    await bcBridge.OnArcaSucceededAsync(originalInvoice.Id, newCreditNote.Id, CancellationToken.None);
                 }
                 catch (Exception bridgeEx)
                 {
@@ -2286,11 +2309,12 @@ public class InvoiceService : IInvoiceService
                 $"ARCA no aprobo la NC parcial (Resultado={newCreditNote.Resultado}): {newCreditNote.Observaciones}",
                 ct);
 
-            if (_bcBridge is not null)
+            var bcBridge = GetBcBridge();
+            if (bcBridge is not null)
             {
                 try
                 {
-                    await _bcBridge.OnArcaFailedAsync(originalInvoice.Id, newCreditNote.Observaciones, CancellationToken.None);
+                    await bcBridge.OnArcaFailedAsync(originalInvoice.Id, newCreditNote.Observaciones, CancellationToken.None);
                 }
                 catch (Exception bridgeEx)
                 {
@@ -2545,7 +2569,8 @@ public class InvoiceService : IInvoiceService
         int creditNoteInvoiceId,
         CancellationToken ct)
     {
-        if (_bcBridge is null)
+        var bcBridge = GetBcBridge();
+        if (bcBridge is null)
         {
             // Configuracion sin modulo de cancelacion: no hay BC que sincronizar. La NC quedo
             // reconciliada igual; lo dejamos asentado en el log.
@@ -2560,7 +2585,7 @@ public class InvoiceService : IInvoiceService
         // loguea critico con el metric bc_bridge_failed y NO confirma como exitoso -> la NC sigue
         // detectable. Es lo opuesto al emisor (que traga el error porque rethrow alli provocaria
         // re-POST). Ver doc del metodo (M-2).
-        await _bcBridge.OnArcaSucceededAsync(originalInvoiceId, creditNoteInvoiceId, ct);
+        await bcBridge.OnArcaSucceededAsync(originalInvoiceId, creditNoteInvoiceId, ct);
     }
 
     /// <summary>
