@@ -2374,7 +2374,11 @@ public class BookingCancellationService
     /// <c>InvoiceItem.Total</c> original. El calculator del InvoiceService extrae el IVA
     /// por dentro al armar el XML para ARCA. NO restar IVA aca.</para>
     /// </summary>
-    private static IReadOnlyList<PartialCreditNoteLineDto> BuildPartialCreditNoteLines(
+    // Visibilidad internal (no private) para que TravelApi.Tests pueda candar el invariante
+    // de absorcion de residuo (Σ line.Total == FiscalAmountToCredit EXACTO) sin armar todo el
+    // escenario de BookingCancellation. InternalsVisibleTo ya esta configurado en el csproj
+    // (mismo patron que GetDominantAlicuotaId).
+    internal static IReadOnlyList<PartialCreditNoteLineDto> BuildPartialCreditNoteLines(
         BookingCancellation bc,
         IReadOnlyList<InvoiceItem> invoiceItems,
         OperationalFinanceSettings settings)

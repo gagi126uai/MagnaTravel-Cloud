@@ -593,6 +593,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasPrecision(18, 6)
                   .HasDefaultValue(1m);
 
+            // FC1.3 Fase 2 (Fase2_M2, 2026-05-28): huella real de idempotencia de la NC
+            // parcial. NULLABLE y SIN default: las NC viejas no la tienen (caen al
+            // fallback de re-derivacion del job de reconciliacion). MaxLength 64 = mismo
+            // ancho que ArcaIdempotencyKey.Key (un SHA256 en hex son 64 chars exactos).
+            // NO indexamos: el lookup contra ArcaIdempotencyKeys se hace por su columna
+            // Key (que YA tiene su UNIQUE); aca solo guardamos el valor para leerlo.
+            entity.Property(i => i.IdempotencyKey)
+                  .HasMaxLength(64);
+
             // B1.15 Fase 1: trazabilidad de quien emitio la factura.
             entity.Property(i => i.IssuedByUserId).HasMaxLength(450);
             entity.Property(i => i.IssuedByUserName).HasMaxLength(200);

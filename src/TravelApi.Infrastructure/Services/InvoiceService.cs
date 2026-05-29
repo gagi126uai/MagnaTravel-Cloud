@@ -1935,6 +1935,17 @@ public class InvoiceService : IInvoiceService
         // + ProcessInvoiceJob la POSTea a ARCA y persiste el resultado (A / R / PENDING).
         // El INSERT exitoso de la idemKey (capa 1) ya protege contra el doble-POST.
         var newCreditNote = await _afipService.CreatePendingInvoice(originalInvoice.ReservaId!.Value, request);
+
+        // FC1.3 Fase 2 (Fase2_M2, 2026-05-28): grabamos la huella REAL de idempotencia en la
+        // NC, ANTES de POSTear a ARCA. Por que aca y no despues: si el sistema se cae entre el
+        // POST y el persistido del resultado (el escenario "huerfano" que arregla el
+        // barrendero), queremos que la NC ya tenga su key grabada para que la reconciliacion
+        // haga lookup DIRECTO (sin re-derivar el hash). Si no llegamos ni a crear la NC, no hay
+        // fila que correlacionar, asi que no perdemos nada. Es el MISMO string que insertamos en
+        // ArcaIdempotencyKeys.Key (capa 1), no un valor recalculado: la correlacion queda exacta.
+        newCreditNote.IdempotencyKey = idemKey;
+        await _context.SaveChangesAsync(ct);
+
         await _afipService.ProcessInvoiceJob(newCreditNote.Id);
 
         // Releer el resultado que dejo ProcessInvoiceJob.
@@ -2079,30 +2090,21 @@ public class InvoiceService : IInvoiceService
     /// (<see cref="ArbitrateOrphanPartialCreditNoteKeyAsync"/>). Ver el contrato completo en
     /// <see cref="IInvoiceService.ReconcileStuckPartialCreditNoteAsync"/>.
     ///
-    /// <para><b>Como ubica la idempotency key de la NC</b> (clave del rehacer): no existe FK de
-    /// la NC a su <c>ArcaIdempotencyKey</c>, asi que RE-DERIVAMOS la idemKey deterministica a
-    /// partir de datos persistidos:
-    /// <list type="bullet">
-    ///   <item><c>originalInvoiceId</c> = <c>creditNote.OriginalInvoiceId</c>.</item>
-    ///   <item><c>approvalRequestId</c> = <c>originalInvoice.AnnulmentApprovalRequestId</c> (lo
-    ///   setea el emisor en la factura origen al encolar).</item>
-    ///   <item><c>fiscalAmountToCredit</c> = <c>creditNote.ImporteTotal</c>. Por decision de F2.2
-    ///   (2026-05-28) <c>line.Total</c> es BRUTO con IVA incluido y la NC se emite con
-    ///   <c>ImpTotal == Σ line.Total == FiscalAmountToCredit</c>; ambos son <c>decimal(18,2)</c>,
-    ///   asi que el <c>:F2</c> del hash coincide.</item>
-    ///   <item><c>currency</c> = ISO derivado de <c>creditNote.MonId</c> ("PES"->"ARS",
-    ///   "DOL"->"USD").</item>
+    /// <para><b>Como ubica la idempotency key de la NC</b> (clave del rehacer): hay DOS caminos
+    /// segun si la NC tiene su huella real grabada (Fase2_M2, 2026-05-28):
+    /// <list type="number">
+    ///   <item><b>CAMINO PREFERIDO (NC nuevas)</b>: la NC trae la key REAL en
+    ///   <c>creditNote.IdempotencyKey</c> (la grabo el emisor con el MISMO string que inserto en
+    ///   <c>ArcaIdempotencyKeys.Key</c>). Lookup directo y exacto, sin recalcular nada.</item>
+    ///   <item><b>FALLBACK (NC legacy, columna null)</b>: RE-DERIVAMOS la idemKey deterministica
+    ///   desde datos persistidos: <c>originalInvoice.Id</c> + <c>AnnulmentApprovalRequestId</c> +
+    ///   <c>creditNote.ImporteTotal</c> (asumido == <c>FiscalAmountToCredit</c>, ver F2.2) + ISO
+    ///   derivado de <c>creditNote.MonId</c>. Si falta el approval o el MonId no mapea, devolvemos
+    ///   <c>NeedsManualReview</c> en vez de adivinar (nunca confirmamos a ciegas).</item>
     /// </list>
-    /// Si falta el approval (factura origen sin <c>AnnulmentApprovalRequestId</c>) NO podemos
-    /// re-derivar la key de forma confiable -> devolvemos <c>NeedsManualReview</c> en vez de
-    /// adivinar (nunca confirmamos a ciegas).</para>
-    ///
-    /// <para><b>NOTA TECNICA (deuda conocida, sin migracion por decision)</b>: la correlacion
-    /// NC -> key por re-derivacion es fragil ante un cambio futuro del formato de la idemKey o
-    /// de la relacion <c>ImporteTotal == FiscalAmountToCredit</c>. La solucion robusta seria una
-    /// columna <c>Invoice.IdempotencyKey</c> (FK suave) — es una migracion ADITIVA. NO se agrega
-    /// aca por la regla del proyecto "evitar migraciones sin avisar". Si el equipo la aprueba,
-    /// reemplazar la re-derivacion por un lookup directo y borrar este metodo de correlacion.</para>
+    /// La columna <c>Invoice.IdempotencyKey</c> (migracion aditiva Fase2_M2) cierra la deuda que
+    /// hacia fragil la correlacion por re-derivacion: el fallback queda SOLO para las NC emitidas
+    /// antes de la columna, que NO se pueden re-grabar con certeza (no hay backfill).</para>
     /// </summary>
     public async Task<PartialCreditNotePostingReconcileResult> ReconcileStuckPartialCreditNoteAsync(
         int creditNoteInvoiceId,
@@ -2138,17 +2140,9 @@ public class InvoiceService : IInvoiceService
                 "La NC ya estaba aprobada al momento de reconciliar.");
         }
 
-        // Necesitamos el approval que autorizo la NC para re-derivar la idemKey. Lo guardo el
-        // emisor en la FACTURA ORIGEN (no en la NC) al encolar. Sin el, no podemos correlacionar
-        // de forma confiable -> escalamos a manual (NUNCA confirmamos a ciegas).
-        if (originalInvoice.AnnulmentApprovalRequestId is null)
-        {
-            return new PartialCreditNotePostingReconcileResult(
-                PartialCreditNotePostingReconcileOutcome.NeedsManualReview,
-                $"Factura origen {originalInvoice.Id} sin AnnulmentApprovalRequestId: no se puede " +
-                "correlacionar la NC con su intento de emision.");
-        }
-
+        // El tipo de comprobante de la NC lo necesitan AMBOS caminos (el arbitro consulta ARCA
+        // por puntoVenta+cbteTipo y el re-disparo re-POSTea con el). Lo resolvemos primero, antes
+        // de bifurcar por como obtenemos la idempotency key.
         int? creditNoteCbteTipo = InvoiceComprobanteHelpers.GetCreditNoteTypeForInvoice(originalInvoice.TipoComprobante);
         if (creditNoteCbteTipo is null)
         {
@@ -2160,23 +2154,53 @@ public class InvoiceService : IInvoiceService
 
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
 
-        // Re-derivar la idemKey deterministica (ver doc del metodo). El ISO de la moneda sale de
-        // MonId de la NC: si por un dato raro no es uno de los codigos conocidos, escalamos a
-        // manual antes que arriesgar una correlacion incorrecta.
-        string? isoCurrency = ReverseMapArcaCurrencyToIso(creditNote.MonId);
-        if (isoCurrency is null)
+        // --- Obtener la idempotency key de la NC: DOS caminos (Fase2_M2, 2026-05-28) ---
+        //
+        // CAMINO 1 (preferido, NC nuevas): la NC trae su huella REAL grabada en la columna
+        // Invoice.IdempotencyKey (la persistio el emisor en el mismo string que inserto en
+        // ArcaIdempotencyKeys.Key). Lookup DIRECTO y EXACTO, sin recalcular nada. Esto NO
+        // depende de que ImporteTotal == FiscalAmountToCredit ni del mapeo de moneda: usa el
+        // valor que realmente se uso al emitir.
+        //
+        // CAMINO 2 (fallback, NC legacy emitidas antes de esta columna): IdempotencyKey == null.
+        // Caemos a la RE-DERIVACION historica (recalcular el hash desde factura origen + approval
+        // + monto + moneda). Ese camino SI necesita el approval y un MonId mapeable, asi que sus
+        // guards viven dentro de esta rama. NO lo borramos: es la compatibilidad con lo viejo.
+        string idemKey;
+        if (creditNote.IdempotencyKey is not null)
         {
-            return new PartialCreditNotePostingReconcileResult(
-                PartialCreditNotePostingReconcileOutcome.NeedsManualReview,
-                $"NC {creditNote.Id} con MonId '{creditNote.MonId}' no mapeable a ISO: no se puede " +
-                "re-derivar la idempotency key.");
+            idemKey = creditNote.IdempotencyKey;
         }
+        else
+        {
+            // Fallback: re-derivar. Necesitamos el approval que autorizo la NC (lo guardo el
+            // emisor en la FACTURA ORIGEN al encolar). Sin el no podemos correlacionar de forma
+            // confiable -> escalamos a manual (NUNCA confirmamos a ciegas).
+            if (originalInvoice.AnnulmentApprovalRequestId is null)
+            {
+                return new PartialCreditNotePostingReconcileResult(
+                    PartialCreditNotePostingReconcileOutcome.NeedsManualReview,
+                    $"Factura origen {originalInvoice.Id} sin AnnulmentApprovalRequestId y NC sin " +
+                    "IdempotencyKey grabada: no se puede correlacionar la NC con su intento de emision.");
+            }
 
-        string idemKey = BuildIdempotencyKey(
-            originalInvoiceId: originalInvoice.Id,
-            approvalRequestId: originalInvoice.AnnulmentApprovalRequestId.Value,
-            fiscalAmountToCredit: creditNote.ImporteTotal,
-            currency: isoCurrency);
+            // El ISO de la moneda sale del MonId de la NC. Si por un dato raro no es un codigo
+            // conocido, escalamos a manual antes que arriesgar una correlacion incorrecta.
+            string? isoCurrency = ReverseMapArcaCurrencyToIso(creditNote.MonId);
+            if (isoCurrency is null)
+            {
+                return new PartialCreditNotePostingReconcileResult(
+                    PartialCreditNotePostingReconcileOutcome.NeedsManualReview,
+                    $"NC {creditNote.Id} sin IdempotencyKey grabada y con MonId '{creditNote.MonId}' " +
+                    "no mapeable a ISO: no se puede re-derivar la idempotency key.");
+            }
+
+            idemKey = BuildIdempotencyKey(
+                originalInvoiceId: originalInvoice.Id,
+                approvalRequestId: originalInvoice.AnnulmentApprovalRequestId.Value,
+                fiscalAmountToCredit: creditNote.ImporteTotal,
+                currency: isoCurrency);
+        }
 
         var existingKey = await _context.ArcaIdempotencyKeys
             .FirstOrDefaultAsync(k => k.Key == idemKey, ct);

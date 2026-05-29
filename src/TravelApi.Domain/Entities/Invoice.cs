@@ -130,4 +130,27 @@ public class Invoice : IHasPublicId
     public int? OriginalInvoiceId { get; set; }
     [ForeignKey("OriginalInvoiceId")]
     public Invoice? OriginalInvoice { get; set; }
+
+    /// <summary>
+    /// FC1.3 Fase 2 (Fase2_M2, 2026-05-28): huella REAL de idempotencia de la NC
+    /// parcial. Guarda el MISMO string que se inserto en <c>ArcaIdempotencyKeys.Key</c>
+    /// cuando esta NC se emitio (un hash SHA256 deterministico del request de emision).
+    ///
+    /// <para><b>Por que existe</b>: el job de reconciliacion ("el barrendero") y el
+    /// arbitro de idempotencia necesitan correlacionar una NC con su fila en
+    /// <c>ArcaIdempotencyKeys</c>. Antes esa correlacion se RE-DERIVABA recalculando el
+    /// hash desde datos persistidos (factura origen + approval + monto + moneda). Eso
+    /// asume que <c>ImporteTotal == FiscalAmountToCredit</c> a 1 centavo exacto, cosa que
+    /// hoy se cumple pero NO esta garantizada por igualdad estricta (el calculator valida
+    /// con tolerancia). Persistir la huella real elimina esa fragilidad: el lookup es
+    /// directo y exacto.</para>
+    ///
+    /// <para><b>Por que es nullable</b>: las NC emitidas ANTES de esta columna no la
+    /// tienen. Para esas (legacy), el codigo de reconciliacion cae al camino de
+    /// re-derivacion historico (compatibilidad). Solo las NC parciales emitidas de aca
+    /// en adelante quedan con la huella real grabada. NO se hace backfill (no podemos
+    /// reconstruir con certeza la key de una NC vieja sin riesgo de error fiscal).</para>
+    /// </summary>
+    [MaxLength(64)]
+    public string? IdempotencyKey { get; set; }
 }
