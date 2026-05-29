@@ -91,4 +91,37 @@ public interface IInvoiceService
         string liquidationJson,
         string userId,
         int approvalRequestId);
+
+    // FC1.3.F2.6a (rehecho 2026-05-28): reconcilia UNA NC parcial colgada en
+    // Resultado='PENDING' reutilizando EXACTAMENTE el mecanismo de stale-key
+    // recovery del emisor (HandleStaleIdempotencyKeyAsync, F2.2). Lo invoca el
+    // job recurrente PartialCreditNotePostingReconciliationJob.
+    //
+    // POR QUE vive aca y no en el job: la logica fiscal (consultar ARCA con el
+    // numerador REAL capturado antes del POST, matchear por comprobante asociado
+    // y NO por monto, derivar el CAE, anular la factura origen) ya existe en
+    // InvoiceService y toca ARCA + ArcaIdempotencyKeys. Centralizarla evita que
+    // el job reimplemente — y desincronice — esa logica (ese fue el origen de los
+    // bugs B-1/B-2 de la revision). El job queda fino: agenda + escalado.
+    //
+    // Que hace, dado el Id de una NC parcial PENDING:
+    //  1. Ubica su ArcaIdempotencyKey (re-derivando la idemKey deterministica a
+    //     partir de datos persistidos de la NC + factura origen).
+    //  2. Si la key existe y NO esta vencida -> el emisor todavia esta en vuelo:
+    //     devuelve InFlight, NO toca nada (arregla M-1).
+    //  3. Si la key existe y esta vencida (huerfana de crash) -> corre el MISMO
+    //     recovery del emisor: consulta ARCA con el LastSeenNumeroBeforePost REAL
+    //     (arregla B-1) y matchea por comprobante asociado (arregla B-2). Si ARCA
+    //     confirma -> confirma la NC + anula la origen y devuelve Confirmed. Si no
+    //     -> borra la key huerfana, re-encola la emision idempotente y devuelve
+    //     ReEnqueuedEmission.
+    //  4. Si la NC NO tiene key (nunca llego a reservar numero / postear) ->
+    //     re-encola la emision idempotente y devuelve ReEnqueuedEmission. NUNCA
+    //     confirma a ciegas.
+    //
+    // NO notifica admins ni aplica rate-limit: eso es responsabilidad del job
+    // (anti-spam + escalado a manual viven en la capa de agenda).
+    Task<PartialCreditNotePostingReconcileResult> ReconcileStuckPartialCreditNoteAsync(
+        int creditNoteInvoiceId,
+        CancellationToken ct);
 }

@@ -1448,6 +1448,13 @@ public class AfipService : IAfipService
                 invoice.Id, bc?.PublicId, -invoice.ImporteTotal, liveReceiptIds.Count,
                 string.Join(",", liveReceiptIds));
         }
+
+        // FC1.3.F2.6 (counter, G-F2-D): contamos cada vez que la rama PARCIAL preserva
+        // receipts (no cascade-void). El tag liveReceiptCount permite alertar si crece el
+        // backlog de receipts que el admin todavia no anulo manualmente (UI Fase 3).
+        _logger.LogInformation(
+            "metric:Fc13.PartialCreditNote.NoCascadeReceiptsPreserved | creditNoteInvoiceId={InvoiceId} liveReceiptCount={Count}",
+            invoice.Id, liveReceiptIds.Count);
     }
 
     /// <summary>

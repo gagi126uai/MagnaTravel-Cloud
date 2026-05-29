@@ -2132,6 +2132,13 @@ public class BookingCancellationService
                 userName: resolverUserName,
                 ct: ct);
 
+            // FC1.3.F2.6 (counter): abortamos la emision por guard fiscal. El tag reason
+            // distingue los 3 motivos de aborto multimoneda (F2.5) para poder alertar por
+            // separado. Este caso: moneda fuera del catalogo ARCA soportado.
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.AbortedFiscalGuard | bcPublicId={BcPublicId} originalInvoiceId={OriginalInvoiceId} reason=UnsupportedCurrency currency={Currency}",
+                bc.PublicId, bc.OriginatingInvoiceId, currency);
+
             throw new BusinessInvariantViolationException(
                 $"NC parcial real no soportada para moneda {currency}: no esta en el " +
                 $"mapeo de monedas ARCA (solo ARS y USD por ahora). BookingCancellation {bc.PublicId} " +
@@ -2173,6 +2180,12 @@ public class BookingCancellationService
                 userId: resolverUserId,
                 userName: resolverUserName,
                 ct: ct);
+
+            // FC1.3.F2.6 (counter): aborto por guard fiscal, caso cotizacion incoherente
+            // (moneda extranjera con TC <= 0 o = 1 -> valuaria un dolar como un peso).
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.AbortedFiscalGuard | bcPublicId={BcPublicId} originalInvoiceId={OriginalInvoiceId} reason=IncoherentExchangeRate currency={Currency} exchangeRate={Rate}",
+                bc.PublicId, bc.OriginatingInvoiceId, currency, snapshotExchangeRate);
 
             throw new BusinessInvariantViolationException(
                 $"NC parcial real abortada para moneda {currency}: el tipo de cambio del snapshot es " +
@@ -2249,6 +2262,12 @@ public class BookingCancellationService
                 userId: resolverUserId,
                 userName: resolverUserName,
                 ct: ct);
+
+            // FC1.3.F2.6 (counter): aborto por guard fiscal, caso moneda NC != moneda de la
+            // factura origen registrada en ARCA (probable factura USD legacy pre-F2.5).
+            _logger.LogInformation(
+                "metric:Fc13.PartialCreditNote.AbortedFiscalGuard | bcPublicId={BcPublicId} originalInvoiceId={OriginalInvoiceId} reason=CurrencyMismatchVsOrigin ncArcaCurrency={NcArcaCurrency} originArcaCurrency={OriginArcaCurrency}",
+                bc.PublicId, bc.OriginatingInvoiceId, ncArcaCurrencyCode, originInvoiceArcaCurrencyCode);
 
             throw new BusinessInvariantViolationException(
                 $"NC parcial real abortada: la moneda ARCA de la NC ({ncArcaCurrencyCode}) no coincide con " +

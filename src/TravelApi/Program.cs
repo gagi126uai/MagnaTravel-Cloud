@@ -492,6 +492,12 @@ builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteRe
 // resueltos cuyo BC quedo huerfano en ManualReviewPending. Reaplica el callback
 // del bridge con anti-spam (max N reintentos, una notificacion al limite).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteBridgeReconciliationJob>();
+
+// FC1.3.F2.6a (plan tactico Fase 2 §FC1.3.F2.6a, 2026-05-28): job que reconcilia NC
+// PARCIALES colgadas en Resultado='PENDING' (el POST a ARCA se encolo pero el resultado
+// nunca se persistio por crash/timeout). Consulta ARCA y reconcilia o escala a manual.
+// No-op si EnablePartialCreditNotes=false.
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNotePostingReconciliationJob>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
 builder.Services.AddScoped<ICountryService, CountryService>();
@@ -775,6 +781,16 @@ if (hangfireSchedulerEnabled)
     // Es no-op si EnablePartialCreditNotes=false.
     RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.PartialCreditNoteBridgeReconciliationJob>(
         "partial-credit-note-bridge-reconciliation",
+        job => job.RunAsync(CancellationToken.None),
+        "*/30 * * * *");
+
+    // FC1.3.F2.6a (plan tactico Fase 2 §FC1.3.F2.6a, 2026-05-28): reconciliacion del
+    // POSTING de NC parciales colgadas en PENDING. Misma cron que el job bridge (cada 30
+    // min); la ventana de "staleness" para considerar una NC colgada corre EN LA QUERY del
+    // job (setting IdempotencyKeyStaleThresholdMinutes), no en la cron. No-op si
+    // EnablePartialCreditNotes=false.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.PartialCreditNotePostingReconciliationJob>(
+        "partial-credit-note-posting-reconciliation",
         job => job.RunAsync(CancellationToken.None),
         "*/30 * * * *");
 }
