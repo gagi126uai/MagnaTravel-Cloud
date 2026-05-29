@@ -929,17 +929,33 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
 
     /// <summary>
     /// FIX M-1 (revision backend+contable, 2026-05-28): una moneda extranjera SOPORTADA (USD) pero
-    /// con tipo de cambio del snapshot INCOHERENTE (0, por dato cargado via SQL crudo / backfill /
-    /// path que no poblo el TC) debe abortar TERMINAL — nunca emitir una NC en DOL valuada como
-    /// pesos (un dolar a cotizacion 0 o 1).
+    /// con tipo de cambio del snapshot INCOHERENTE debe abortar TERMINAL — nunca emitir una NC en
+    /// DOL valuada como pesos (un dolar a cotizacion 1 = un dolar valuado como un peso).
+    ///
+    /// <para>El guard de produccion (BookingCancellationService ~L2169) caza DOS casos para moneda
+    /// extranjera: <c>rate &lt;= 0</c> O <c>rate == 1</c>. Aca probamos la rama <c>== 1</c> porque
+    /// es la UNICA alcanzable desde un BC persistido:</para>
+    ///   - La rama <c>rate &lt;= 0</c> NO se puede sembrar: el CHECK constraint
+    ///     <c>chk_BookingCancellations_fiscalsnapshot_consistent</c> (migracion FC1_AddCancellationModule)
+    ///     exige <c>FiscalSnapshot_ExchangeRateAtOriginalInvoice &gt; 0</c> para todo BC cuyo Status
+    ///     NO sea 0 ni 6 (o sea cualquier estado post-borrador, y ManualReviewPending lo es). Si
+    ///     sembramos rate=0, el SaveChanges del SEED revienta con 23514 ANTES del ACT. Por eso esa
+    ///     rama del guard es defensa-en-profundidad inalcanzable desde un BC normal: la garantiza la
+    ///     base, no se cubre por integracion.
+    ///   - La rama <c>rate == 1</c> SI se puede sembrar (1 &gt; 0 pasa el CHECK) y el guard igual la
+    ///     aborta. Esta es la que ejercitamos.
     ///
     /// <para>El service debe: NO llamar a EnqueuePartialCreditNoteAsync, persistir audit
     /// "PartialNcAborted_IncoherentRate", y tirar BusinessInvariantViolationException.</para>
     /// </summary>
     [Fact]
-    public async Task OnApprovedAsync_Fase2_PartialNc_ForeignCurrencyZeroRate_AbortsTerminal()
+    public async Task OnApprovedAsync_Fase2_PartialNc_ForeignCurrencyIncoherentRate_AbortsTerminal()
     {
-        // ARRANGE: USD (moneda soportada) PERO con TC del snapshot en 0 (incoherente).
+        // ARRANGE: USD (moneda soportada) PERO con TC del snapshot en 1 (incoherente:
+        // un dolar valuado como un peso).
+        // Usamos 1 y NO 0 a proposito: el CHECK chk_BookingCancellations_fiscalsnapshot_consistent
+        // bloquea rate<=0 para un BC post-borrador, asi que rate=0 ni siquiera se puede sembrar.
+        // rate=1 pasa el CHECK (1>0) y el guard del service igual lo aborta (rama == 1m).
         var bundle = BuildService(enableF2RealEmission: true);
         var (_, _, _, _, bcPublicId, approvalId) =
             await SeedManualReviewPendingBcAsync(
@@ -947,7 +963,7 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
                 importeTotal: 1_000m,
                 fiscalAmountToCredit: 700m,
                 currencyAtEvent: "USD",
-                exchangeRateAtEvent: 0m); // TC incoherente para moneda extranjera
+                exchangeRateAtEvent: 1m); // TC incoherente alcanzable: un dolar a cotizacion 1
 
         // ACT + ASSERT: aborta terminal por cotizacion incoherente.
         var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
