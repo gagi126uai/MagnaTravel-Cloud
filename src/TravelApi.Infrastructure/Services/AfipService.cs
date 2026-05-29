@@ -983,6 +983,46 @@ public class AfipService : IAfipService
                $"<MonCotiz>{monCotiz.ToString("0.000000", CultureInfo.InvariantCulture)}</MonCotiz>";
     }
 
+    /// <summary>
+    /// FC1.3.F2.5 (multimoneda) — arma el fragmento SOAP &lt;CanMisMonExt&gt; del envelope
+    /// FECAESolicitar. CanMisMonExt = "Cancela en Misma Moneda Extranjera".
+    ///
+    /// <para><b>Que significa el campo</b> (RG AFIP/ARCA 5616/2024): para comprobantes emitidos
+    /// en moneda extranjera, indica si el comprobante se COBRA en esa misma moneda extranjera
+    /// ("S") o en otra moneda — pesos ("N"). Ejemplo cotidiano: facturas un paquete en dolares;
+    /// si el cliente despues te paga en dolares es "S", si te paga en pesos es "N".</para>
+    ///
+    /// <para><b>Regla de emision del nodo</b>: el nodo SOLO se emite para moneda extranjera.
+    /// Si el comprobante es en pesos (MonId="PES") NO se emite — devolvemos string vacio para
+    /// que el envelope quede BYTE-IDENTICO al comportamiento historico de la facturacion en
+    /// pesos (cero riesgo de regresion sobre lo ya homologado con ARCA).</para>
+    ///
+    /// <para><b>Valor fijo "N" en el MVP</b>: esta agencia factura en USD pero COBRA en pesos,
+    /// asi que el unico caso real hoy es "N". El caso "S" (cobro en la misma moneda extranjera)
+    /// queda como deuda futura.
+    /// TODO (futuro): cuando exista en el modelo el dato "moneda de cobro" del comprobante, este
+    /// helper debe recibir ese dato por parametro (ej. una moneda de cobro o un bool) y devolver
+    /// "S" cuando la moneda de cobro coincida con la moneda extranjera del comprobante, "N" si no.
+    /// NO implementar "S" hasta tener ese dato: hoy seria adivinar un valor fiscal.</para>
+    /// </summary>
+    /// <param name="monId">Codigo de moneda ARCA del comprobante ("PES", "DOL", ...).</param>
+    /// <returns>
+    /// String vacio si el comprobante es en pesos (no se emite el nodo); de lo contrario
+    /// <c>&lt;CanMisMonExt&gt;N&lt;/CanMisMonExt&gt;</c> (MVP: cobro en pesos).
+    /// </returns>
+    internal static string BuildCanMisMonExtFragment(string monId)
+    {
+        // Pesos: no aplica el campo, no se emite el nodo. Byte-identico al envelope historico.
+        if (string.Equals(monId, "PES", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        // Moneda extranjera: MVP fijo "N" (factura en USD, cobra en pesos). Ver TODO arriba
+        // para el caso "S" (cobro en la misma moneda extranjera) cuando exista el dato de cobro.
+        return "<CanMisMonExt>N</CanMisMonExt>";
+    }
+
     [AutomaticRetry(Attempts = 0)] // Don't auto-retry AFIP calls blindly
     public async Task ProcessInvoiceJob(int invoiceId)
     {
@@ -1128,6 +1168,14 @@ public class AfipService : IAfipService
             decimal impNeto = isFacturaC ? invoice.ImporteTotal - invoice.Tributes.Sum(t => t.Importe) : invoice.ImporteNeto;
             decimal impIva = isFacturaC ? 0 : invoice.ImporteIva;
 
+            // FC1.3.F2.5 (multimoneda) — nodo CanMisMonExt ("Cancela en Misma Moneda Extranjera",
+            // RG ARCA 5616/2024). Lo arma BuildCanMisMonExtFragment(invoice.MonId): para pesos
+            // devuelve "" (no se emite el nodo, envelope byte-identico al historico); para moneda
+            // extranjera devuelve "<CanMisMonExt>N</CanMisMonExt>" (MVP: factura USD, cobra pesos).
+            // ATENCION - CONFIRMAR EN HOMOLOGACION: el ORDEN del nodo en el envelope (DESPUES de
+            // MonId/MonCotiz y ANTES de CondicionIVAReceptorId) hay que verificarlo contra el XSD del
+            // WSFEv1 v4. Un nodo fuera de orden hace REBOTAR el comprobante. No lo afirmamos de
+            // memoria; validar con un CAE aprobado en el ambiente de homologacion ARCA.
              var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
     <soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
       <soap:Body>
@@ -1170,6 +1218,8 @@ public class AfipService : IAfipService
                          fragmento es BYTE-IDENTICO al hardcoded historico; el formato de 6 decimales
                          se usa SOLO para moneda extranjera (ver el metodo). -->
                     {BuildMonedaSoapFragment(invoice.MonId, invoice.MonCotiz)}
+                    <!-- FC1.3.F2.5: CanMisMonExt (solo moneda extranjera). Ver nota arriba del envelope. -->
+                    {BuildCanMisMonExtFragment(invoice.MonId)}
                     <CondicionIVAReceptorId>{GetConditionIvaId(null, docTipo)}</CondicionIVAReceptorId>
                     {sbCbtesAsoc}
                     {sbTrib}

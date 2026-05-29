@@ -86,4 +86,48 @@ public class AfipServiceMonedaSoapFormatTests
             "<MonId>PES</MonId><MonCotiz>1</MonCotiz>",
             AfipService.BuildMonedaSoapFragment("PES", 1.000000m));
     }
+
+    // ---------------------------------------------------------------------------------------
+    // FC1.3.F2.5 (multimoneda) — CanMisMonExt ("Cancela en Misma Moneda Extranjera",
+    // RG ARCA 5616/2024). El nodo solo se emite para moneda extranjera; en pesos NO se emite
+    // (string vacio) para que el envelope quede byte-identico al historico.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// CanMisMonExt_Pesos_EmitsNothing (regresion BYTE-IDENTIDAD): un comprobante en pesos
+    /// (PES) NO debe emitir el nodo &lt;CanMisMonExt&gt;. El helper devuelve string vacio, asi
+    /// el envelope de la facturacion en pesos ya homologada no cambia un solo byte.
+    /// </summary>
+    [Fact]
+    public void CanMisMonExt_Pesos_EmitsNothing()
+    {
+        Assert.Equal(
+            string.Empty,
+            AfipService.BuildCanMisMonExtFragment("PES"));
+    }
+
+    /// <summary>
+    /// CanMisMonExt_Dolar_EmitsN: un comprobante en dolares (DOL) emite &lt;CanMisMonExt&gt;N&lt;/CanMisMonExt&gt;.
+    /// MVP: valor fijo "N" porque la agencia factura en USD pero cobra en pesos.
+    /// </summary>
+    [Fact]
+    public void CanMisMonExt_Dolar_EmitsN()
+    {
+        Assert.Equal(
+            "<CanMisMonExt>N</CanMisMonExt>",
+            AfipService.BuildCanMisMonExtFragment("DOL"));
+    }
+
+    /// <summary>
+    /// CanMisMonExt_PesosLowercase_EmitsNothing: la comparacion de "PES" es case-insensitive
+    /// (OrdinalIgnoreCase), igual que BuildMonedaSoapFragment. "pes" en minuscula tambien
+    /// debe tratarse como pesos y no emitir el nodo.
+    /// </summary>
+    [Fact]
+    public void CanMisMonExt_PesosLowercase_EmitsNothing()
+    {
+        Assert.Equal(
+            string.Empty,
+            AfipService.BuildCanMisMonExtFragment("pes"));
+    }
 }
