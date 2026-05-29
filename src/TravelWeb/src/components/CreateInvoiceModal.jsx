@@ -1,8 +1,21 @@
+/**
+ * Modal para crear una factura AFIP desde una reserva.
+ *
+ * Soporta dos modos:
+ *   - Moneda ARS (default): comportamiento idéntico al original, sin campos extra.
+ *   - Moneda USD (solo si afipSettings.enableMultiCurrencyInvoicing === true):
+ *     muestra selector de moneda y campos de tipo de cambio + justificación.
+ *
+ * La factura se envía a /invoices y queda en estado PENDING hasta que el job de AFIP la procesa.
+ */
+
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Calculator, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 
+// Alícuotas de IVA según catálogo de ARCA/AFIP.
+// El id coincide con el AlicuotaIvaId que espera el backend.
 const VAT_RATES = [
   { id: 3, label: "0%", value: 0 },
   { id: 4, label: "10.5%", value: 0.105 },
@@ -19,6 +32,37 @@ const TRIBUTE_TYPES = [
   { id: 3, label: "Impuestos municipales" },
   { id: 4, label: "Impuestos internos" },
 ];
+
+// Monedas soportadas en el MVP multimoneda.
+// Solo se muestran si afipSettings.enableMultiCurrencyInvoicing === true.
+const CURRENCY_OPTIONS = [
+  { value: "ARS", label: "Pesos (ARS)" },
+  { value: "USD", label: "Dólares (USD)" },
+];
+
+// Valor del enum ExchangeRateSource en el backend para "BNA vendedor divisa".
+// El backend NO tiene JsonStringEnumConverter, así que espera el int, NO el string.
+// Ver: src/TravelApi.Domain/Entities/ExchangeRateSource.cs — BNA_VendedorDivisa = 6
+const EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA = 6;
+
+/**
+ * Formatea un número como moneda según la moneda activa del formulario.
+ * Para ARS usa "es-AR" con símbolo $; para USD usa "en-US" con símbolo US$.
+ */
+function formatCurrency(amount, currencyCode) {
+  if (currencyCode === "USD") {
+    return Number(amount).toLocaleString("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+    });
+  }
+  return Number(amount).toLocaleString("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    minimumFractionDigits: 2,
+  });
+}
 
 const createDefaultItem = (amount, isMonotributista) => {
   const defaultNet = isMonotributista ? Number(amount || 0) : Number(amount || 0) / 1.21;
@@ -48,13 +92,28 @@ export default function CreateInvoiceModal({
   const [forceIssue, setForceIssue] = useState(false);
   const [forceReason, setForceReason] = useState("");
 
+  // Estado de moneda: solo se activa si el flag enableMultiCurrencyInvoicing está ON.
+  // Default ARS para no alterar el flujo normal.
+  const [selectedCurrency, setSelectedCurrency] = useState("ARS");
+  const [exchangeRate, setExchangeRate] = useState("");
+  const [exchangeRateJustification, setExchangeRateJustification] = useState("");
+
   const isMonotributista =
     afipSettings?.taxCondition?.trim() === "Monotributo" ||
     afipSettings?.taxCondition?.trim() === "Exento";
 
+  // Flag que habilita el selector de moneda en la UI.
+  // Si el campo no viene del backend (flag OFF por defecto en settings), queda false.
+  const isMultiCurrencyEnabled = Boolean(afipSettings?.enableMultiCurrencyInvoicing);
+
+  // Si la feature está desactivada, siempre trabajamos en ARS (estado invisible).
+  const activeCurrency = isMultiCurrencyEnabled ? selectedCurrency : "ARS";
+  const isUSD = activeCurrency === "USD";
+
   const requiresOverride = Boolean(reserva && !reserva.isEconomicallySettled && reserva.canEmitAfipInvoice);
   const isBlockedByDebt = Boolean(reserva && !reserva.isEconomicallySettled && !reserva.canEmitAfipInvoice);
 
+  // useEffect con dependencia [isOpen]: fetchea settings cada vez que se abre el modal.
   useEffect(() => {
     const fetchSettings = async () => {
       setFetchingSettings(true);
@@ -74,6 +133,8 @@ export default function CreateInvoiceModal({
     }
   }, [isOpen]);
 
+  // useEffect que reinicia el formulario cada vez que se termina de cargar settings.
+  // Incluye reseteo de los campos de moneda para no arrastrar estado de una sesión anterior.
   useEffect(() => {
     if (!isOpen || fetchingSettings) {
       return;
@@ -83,6 +144,9 @@ export default function CreateInvoiceModal({
     setTributes([]);
     setForceIssue(false);
     setForceReason("");
+    setSelectedCurrency("ARS");
+    setExchangeRate("");
+    setExchangeRateJustification("");
   }, [fetchingSettings, initialAmount, isMonotributista, isOpen]);
 
   const totals = useMemo(() => {
@@ -91,6 +155,7 @@ export default function CreateInvoiceModal({
       0
     );
     const vat = items.reduce((acc, item) => {
+      // Monotributo (Factura C) no discrimina IVA: el total es el neto.
       if (isMonotributista) {
         return acc;
       }
@@ -158,6 +223,25 @@ export default function CreateInvoiceModal({
       return;
     }
 
+    // Validación de campos multimoneda cuando la moneda elegida es USD.
+    // El backend también valida esto, pero lo hacemos acá para dar feedback inmediato al operador.
+    if (isUSD) {
+      const rateNumber = Number(exchangeRate);
+      if (!exchangeRate || isNaN(rateNumber) || rateNumber <= 0) {
+        showError("Ingresá el tipo de cambio para facturas en dólares.");
+        return;
+      }
+      // Un dólar no puede valer un peso: si alguien ingresa 1 casi seguro es un error.
+      if (rateNumber === 1) {
+        showError("El tipo de cambio no puede ser 1. Ingresá el valor en pesos del dólar (ej: 1200).");
+        return;
+      }
+      if (!exchangeRateJustification.trim()) {
+        showError("Ingresá la justificación del tipo de cambio (de dónde lo tomaste).");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -179,6 +263,20 @@ export default function CreateInvoiceModal({
         forceIssue: requiresOverride ? forceIssue : false,
         forceReason: requiresOverride ? forceReason.trim() : null,
       };
+
+      // Campos de multimoneda: solo se agregan al payload cuando la moneda es USD.
+      // Para ARS el payload queda idéntico al original (no manda monId ni monCotiz),
+      // y el backend usa sus defaults ("PES" / 1) sin cambios de comportamiento.
+      if (isUSD) {
+        payload.monId = "USD";
+        payload.monCotiz = Number(exchangeRate);
+        // ExchangeRateSource en el backend es un enum sin JsonStringEnumConverter.
+        // El serializador de .NET espera el int, no el string del nombre.
+        payload.exchangeRateSource = EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA;
+        // Momento exacto en que el operador confirmó el TC (ISO 8601 con zona horaria).
+        payload.exchangeRateFetchedAt = new Date().toISOString();
+        payload.exchangeRateJustification = exchangeRateJustification.trim();
+      }
 
       await api.post("/invoices", payload);
       showSuccess("Comprobante AFIP encolado.");
@@ -289,6 +387,112 @@ export default function CreateInvoiceModal({
             </div>
           )}
 
+          {/* Selector de moneda: visible únicamente si el flag enableMultiCurrencyInvoicing está activo.
+              Si el flag está OFF, este bloque no renderiza y el comportamiento es idéntico al original. */}
+          {isMultiCurrencyEnabled && (
+            <div
+              data-testid="selector-moneda"
+              className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/20 px-4 py-4 space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                  Moneda de la factura
+                </span>
+              </div>
+
+              <div className="flex items-center gap-4">
+                {CURRENCY_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-300"
+                  >
+                    <input
+                      type="radio"
+                      name="currency"
+                      value={option.value}
+                      checked={selectedCurrency === option.value}
+                      onChange={() => {
+                        setSelectedCurrency(option.value);
+                        // Limpiar los campos de TC al cambiar de moneda para no mandar datos viejos.
+                        setExchangeRate("");
+                        setExchangeRateJustification("");
+                      }}
+                      data-testid={`radio-currency-${option.value}`}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+
+              {/* Campos de tipo de cambio: solo se muestran cuando la moneda elegida es USD. */}
+              {isUSD && (
+                <div className="space-y-3 pt-2 border-t border-indigo-200 dark:border-indigo-700">
+                  {/* Informamos la fuente del TC (fija en el MVP = BNA vendedor divisa).
+                      No es un dropdown porque en el MVP solo hay una fuente válida. */}
+                  <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/40 px-3 py-2 rounded-lg">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    Fuente del TC: BNA vendedor divisa (dólar del día hábil anterior)
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="w-full sm:w-40">
+                      <label
+                        htmlFor="exchange-rate-input"
+                        className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
+                      >
+                        Tipo de cambio ($/USD) *
+                      </label>
+                      <input
+                        id="exchange-rate-input"
+                        type="number"
+                        step="0.01"
+                        min="1.01"
+                        value={exchangeRate}
+                        onChange={(event) => setExchangeRate(event.target.value)}
+                        placeholder="Ej: 1200.50"
+                        className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
+                        data-testid="input-tipo-cambio"
+                      />
+                    </div>
+
+                    <div className="flex-1">
+                      <label
+                        htmlFor="exchange-rate-justification"
+                        className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
+                      >
+                        Justificación del TC *
+                      </label>
+                      <textarea
+                        id="exchange-rate-justification"
+                        value={exchangeRateJustification}
+                        onChange={(event) => setExchangeRateJustification(event.target.value)}
+                        rows={2}
+                        placeholder="Ej: Dólar vendedor divisa BNA del 29/05/2026, $1200.50 según web oficial."
+                        className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white px-3 py-2 text-sm"
+                        data-testid="input-justificacion-tc"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Fecha del TC: se usa la fecha actual al momento del submit.
+                      Se muestra read-only para que el operador sepa qué fecha va a quedar registrada. */}
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Fecha del TC que se registrará:{" "}
+                    <span className="font-medium text-slate-700 dark:text-slate-200">
+                      {new Date().toLocaleDateString("es-AR", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 uppercase tracking-wider">Items / Servicios</h3>
@@ -323,15 +527,20 @@ export default function CreateInvoiceModal({
                     />
                   </div>
                   <div className="w-32">
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Precio Unit.</label>
+                    {/* El prefijo del precio cambia según la moneda activa para no confundir al operador. */}
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      Precio Unit. {isUSD ? "(USD)" : ""}
+                    </label>
                     <div className="relative">
-                      <span className="absolute left-2 top-1.5 text-gray-400 text-xs">$</span>
+                      <span className="absolute left-2 top-1.5 text-gray-400 text-xs">
+                        {isUSD ? "US$" : "$"}
+                      </span>
                       <input
                         type="number"
                         step="0.01"
                         value={item.unitPrice}
                         onChange={(event) => handleItemChange(index, "unitPrice", event.target.value)}
-                        className="w-full text-sm pl-6 rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
+                        className="w-full text-sm pl-8 rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
                       />
                     </div>
                   </div>
@@ -352,11 +561,8 @@ export default function CreateInvoiceModal({
                     </div>
                   )}
                   <div className="w-32 text-right pb-2 font-medium text-gray-900 dark:text-white">
-                    {((item.quantity || 0) * (item.unitPrice || 0)).toLocaleString("es-AR", {
-                      style: "currency",
-                      currency: "ARS",
-                      minimumFractionDigits: 2,
-                    })}
+                    {/* Subtotal por ítem: usa la moneda activa para el formateo */}
+                    {formatCurrency((item.quantity || 0) * (item.unitPrice || 0), activeCurrency)}
                   </div>
                   <button
                     onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}
@@ -409,7 +615,9 @@ export default function CreateInvoiceModal({
                   <div className="w-32">
                     <label className="block text-xs font-medium text-gray-500 mb-1">Importe</label>
                     <div className="relative">
-                      <span className="absolute left-2 top-1.5 text-gray-400 text-xs">$</span>
+                      <span className="absolute left-2 top-1.5 text-gray-400 text-xs">
+                        {isUSD ? "US$" : "$"}
+                      </span>
                       <input
                         type="number"
                         step="0.01"
@@ -443,6 +651,11 @@ export default function CreateInvoiceModal({
               <p className="flex items-center gap-1">
                 <AlertCircle className="w-3 h-3" />
                 Los montos se enviarán a AFIP para autorización.
+                {isUSD && (
+                  <span className="ml-1 font-semibold text-indigo-600 dark:text-indigo-400">
+                    Factura en USD — TC: {exchangeRate ? `$${Number(exchangeRate).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "pendiente"}
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-8 w-full md:w-auto">
@@ -450,14 +663,14 @@ export default function CreateInvoiceModal({
                 <div className="text-sm text-gray-500">
                   Neto:{" "}
                   <span className="text-gray-900 dark:text-white font-medium">
-                    {totals.net.toLocaleString("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 })}
+                    {formatCurrency(totals.net, activeCurrency)}
                   </span>
                 </div>
                 {!isMonotributista && (
                   <div className="text-sm text-gray-500">
                     IVA:{" "}
                     <span className="text-gray-900 dark:text-white font-medium">
-                      {totals.vat.toLocaleString("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 })}
+                      {formatCurrency(totals.vat, activeCurrency)}
                     </span>
                   </div>
                 )}
@@ -465,7 +678,7 @@ export default function CreateInvoiceModal({
                   <div className="text-sm text-orange-600">
                     Tributos:{" "}
                     <span className="font-medium">
-                      {totals.tributeAmount.toLocaleString("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 })}
+                      {formatCurrency(totals.tributeAmount, activeCurrency)}
                     </span>
                   </div>
                 )}
@@ -473,7 +686,7 @@ export default function CreateInvoiceModal({
               <div className="text-right">
                 <span className="block text-xs text-gray-500 uppercase font-semibold">Total final</span>
                 <span className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {totals.total.toLocaleString("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 })}
+                  {formatCurrency(totals.total, activeCurrency)}
                 </span>
               </div>
             </div>
@@ -488,11 +701,27 @@ export default function CreateInvoiceModal({
             </button>
             <button
               onClick={handleSubmit}
-              disabled={loading || totals.total <= 0 || isBlockedByDebt || (requiresOverride && !forceIssue)}
+              disabled={
+                loading ||
+                totals.total <= 0 ||
+                isBlockedByDebt ||
+                (requiresOverride && !forceIssue) ||
+                // Si la moneda es USD, bloqueamos hasta que el operador ingrese
+                // un TC válido (> 0 y distinto de 1) y una justificación.
+                // Esto evita que el submit llegue al handleSubmit con datos incompletos.
+                (isUSD && (!(Number(exchangeRate) > 0) || Number(exchangeRate) === 1 || !exchangeRateJustification.trim()))
+              }
+              data-testid="btn-emitir-factura"
               className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-900 disabled:opacity-50 flex items-center gap-2"
               type="button"
             >
-              {loading ? "Emitiendo..." : requiresOverride ? "Emitir por excepción" : "Emitir factura"}
+              {loading
+                ? "Emitiendo..."
+                : requiresOverride
+                  ? "Emitir por excepción"
+                  : isUSD
+                    ? "Emitir factura en USD"
+                    : "Emitir factura"}
             </button>
           </div>
         </div>

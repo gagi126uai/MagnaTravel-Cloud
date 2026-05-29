@@ -15,10 +15,14 @@ namespace TravelApi.Controllers;
 public class AfipController : ControllerBase
 {
     private readonly IAfipService _afipService;
+    private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
 
-    public AfipController(IAfipService afipService)
+    public AfipController(
+        IAfipService afipService,
+        IOperationalFinanceSettingsService operationalFinanceSettingsService)
     {
         _afipService = afipService;
+        _operationalFinanceSettingsService = operationalFinanceSettingsService;
     }
 
     [HttpGet("status")]
@@ -35,12 +39,13 @@ public class AfipController : ControllerBase
     // para decidir si discrimina IVA (Monotributo/Exento -> factura C sin IVA).
     [HttpGet("settings")]
     [RequirePermission(Permissions.CobranzasInvoice)]
-    public async Task<ActionResult<AfipSettingsResponse>> GetSettings()
+    public async Task<ActionResult<AfipSettingsResponse>> GetSettings(CancellationToken cancellationToken)
     {
         var settings = await _afipService.GetSettingsAsync();
         if (settings == null) return NotFound();
 
-        return Ok(MapResponse(settings));
+        var financeSettings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing));
     }
 
     public class AfipSettingsRequest
@@ -59,7 +64,7 @@ public class AfipController : ControllerBase
 
     [HttpPost("settings")]
     [RequirePermission(Permissions.ConfiguracionAfip)]
-    public async Task<ActionResult<AfipSettingsResponse>> UpdateSettings([FromForm] AfipSettingsRequest request)
+    public async Task<ActionResult<AfipSettingsResponse>> UpdateSettings([FromForm] AfipSettingsRequest request, CancellationToken cancellationToken)
     {
         const long maxCertSizeBytes = 100 * 1024; // 100 KB
 
@@ -102,7 +107,10 @@ public class AfipController : ControllerBase
                 request.ProdPassword
             );
 
-            return Ok(MapResponse(settings));
+            // El flag multimoneda no se toca desde este endpoint (es solo lectura), pero lo
+            // proyectamos en la respuesta para que el shape sea identico al del GET /afip/settings.
+            var financeSettings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+            return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing));
         }
         catch (ArgumentException ex)
         {
@@ -114,10 +122,12 @@ public class AfipController : ControllerBase
         }
     }
 
-    private static AfipSettingsResponse MapResponse(AfipSettings settings)
+    private static AfipSettingsResponse MapResponse(AfipSettings settings, bool enableMultiCurrencyInvoicing)
     {
         return new AfipSettingsResponse
         {
+            EnableMultiCurrencyInvoicing = enableMultiCurrencyInvoicing,
+
             Cuit = settings.Cuit,
             PuntoDeVenta = settings.PuntoDeVenta,
             IsProduction = settings.IsProduction,
