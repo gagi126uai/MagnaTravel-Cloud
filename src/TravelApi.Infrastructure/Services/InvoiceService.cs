@@ -410,12 +410,36 @@ public class InvoiceService : IInvoiceService
 
         // Moneda extranjera: el codigo tiene que ser uno que sepamos mapear/mandar al ARCA.
         // ArcaCurrencyMapper es la fuente unica de verdad del catalogo soportado.
-        if (!ArcaCurrencyMapper.IsValidArcaCurrencyCode(currencyCode)
-            && !ArcaCurrencyMapper.IsSupported(currencyCode))
+        //
+        // ADR-012 fix (normalizacion ISO->ARCA, 2026-05-29): el caller puede mandar el codigo
+        // en ISO 4217 ("USD") o ya en codigo ARCA ("DOL"). El job de emision
+        // (AfipService.ProcessInvoiceJob) solo acepta el codigo ARCA (valida con
+        // IsValidArcaCurrencyCode), asi que si dejamos pasar "USD" la factura quedaria PENDING
+        // colgada — el job la rechazaria por codigo invalido. Por eso NORMALIZAMOS aca a ARCA
+        // ANTES de persistir: Invoice.MonId siempre termina en codigo ARCA ("DOL"/"PES"), venga
+        // el caller en ISO o en ARCA. Mutamos request.MonId in place porque el mismo request se
+        // pasa por referencia a CreatePendingInvoice (mismo patron que request.ForceReason mas
+        // arriba), asi el valor normalizado fluye a la Invoice persistida.
+        if (ArcaCurrencyMapper.IsValidArcaCurrencyCode(currencyCode))
         {
-            throw new InvalidOperationException(
-                $"La moneda '{currencyCode}' no esta soportada para facturacion. " +
-                "Solo se admiten pesos (PES) y dolares (DOL/USD) por ahora.");
+            // Ya viene en formato ARCA ("DOL"): lo dejamos tal cual. No lo pasamos por TryMap
+            // porque TryMap espera ISO y "DOL" no es ISO (devolveria null y rechazariamos algo
+            // que el job acepta perfectamente).
+            // Normalizamos la capitalizacion a la del catalogo ("dol" -> "DOL") por prolijidad.
+            request.MonId = ArcaCurrencyMapper.NormalizeArcaCurrencyCode(currencyCode);
+        }
+        else
+        {
+            // No es codigo ARCA: intentamos interpretarlo como ISO ("USD" -> "DOL").
+            string? arcaCode = ArcaCurrencyMapper.TryMap(currencyCode);
+            if (arcaCode is null)
+            {
+                throw new InvalidOperationException(
+                    $"La moneda '{currencyCode}' no esta soportada para facturacion. " +
+                    "Solo se admiten pesos (PES) y dolares (DOL/USD) por ahora.");
+            }
+
+            request.MonId = arcaCode;
         }
 
         // Cotizacion coherente: mismo criterio que el guard de la NC parcial (InvoiceService

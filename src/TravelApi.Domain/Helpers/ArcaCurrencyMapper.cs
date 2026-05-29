@@ -88,4 +88,30 @@ public static class ArcaCurrencyMapper
         return string.Equals(arcaCurrencyCode, "PES", System.StringComparison.OrdinalIgnoreCase)
             || string.Equals(arcaCurrencyCode, "DOL", System.StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// ADR-012 fix (2026-05-29): devuelve el codigo ARCA en su capitalizacion canonica
+    /// ("dol" -> "DOL", "pes" -> "PES"). Sirve para normalizar un codigo que YA es ARCA valido
+    /// (validado antes con <see cref="IsValidArcaCurrencyCode"/>) antes de persistirlo, asi la
+    /// Invoice queda siempre con el codigo en mayusculas como espera el XML SOAP.
+    ///
+    /// <para>Si el codigo no es uno de los ARCA soportados, lo devuelve sin tocar (en mayusculas)
+    /// — el caller deberia haber validado antes con <see cref="IsValidArcaCurrencyCode"/>, asi
+    /// que este fallback solo evita romper si alguien llama fuera de orden.</para>
+    /// </summary>
+    /// <param name="arcaCurrencyCode">Codigo en formato ARCA, en cualquier capitalizacion.</param>
+    public static string NormalizeArcaCurrencyCode(string arcaCurrencyCode)
+    {
+        if (string.Equals(arcaCurrencyCode, "PES", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return "PES";
+        }
+
+        if (string.Equals(arcaCurrencyCode, "DOL", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return "DOL";
+        }
+
+        return arcaCurrencyCode.ToUpperInvariant();
+    }
 }

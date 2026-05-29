@@ -201,6 +201,84 @@ public class MultiCurrencyInvoicingTests
     }
 
     // ============================================================
+    // (b.2) Normalizacion ISO -> ARCA (ADR-012 fix, 2026-05-29).
+    //   El caller puede mandar el codigo en ISO ("USD") o ya en ARCA ("DOL"). El job de
+    //   emision solo acepta ARCA, asi que el gate DEBE normalizar antes de persistir.
+    //   Verificamos que el MonId que llega a CreatePendingInvoice (= el que se persiste)
+    //   sea siempre el codigo ARCA.
+    // ============================================================
+
+    [Fact]
+    public async Task FlagOn_WithIsoCurrencyUsd_NormalizesMonIdToArcaDol()
+    {
+        // (a) Caller manda ISO "USD" -> la factura debe persistir con "DOL" (codigo ARCA),
+        // si no el job (que valida con IsValidArcaCurrencyCode) la rechazaria colgada.
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "USD"; // ISO 4217, NO codigo ARCA
+        request.MonCotiz = 1234.56m;
+        request.ExchangeRateSource = ExchangeRateSource.BNA_VendedorDivisa;
+        request.ExchangeRateFetchedAt = DateTime.UtcNow;
+        request.ExchangeRateJustification = "TC vendedor divisa BNA (RG 5616).";
+
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        // El request que llega a CreatePendingInvoice ya viene normalizado a ARCA.
+        Assert.Equal("DOL", captured[0].MonId);
+    }
+
+    [Fact]
+    public async Task FlagOn_WithArcaCurrencyDol_KeepsMonIdAsDol()
+    {
+        // (b) Caller manda ya el codigo ARCA "DOL" -> se acepta y queda "DOL" (no se rompe
+        // por intentar mapearlo como ISO).
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "DOL"; // ya en formato ARCA
+        request.MonCotiz = 1234.56m;
+        request.ExchangeRateSource = ExchangeRateSource.BNA_VendedorDivisa;
+        request.ExchangeRateFetchedAt = DateTime.UtcNow;
+        request.ExchangeRateJustification = "TC vendedor divisa BNA (RG 5616).";
+
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        Assert.Equal("DOL", captured[0].MonId);
+    }
+
+    [Fact]
+    public async Task FlagOn_WithUnsupportedCurrency_Throws()
+    {
+        // (c) Moneda no soportada ("EUR", ni ISO mapeable ni codigo ARCA valido) -> rechaza
+        // antes de crear la factura. Evita dejar colgada una PENDING que el job rechazaria.
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "EUR"; // no soportada todavia
+        request.MonCotiz = 1234.56m;
+        request.ExchangeRateSource = ExchangeRateSource.BNA_VendedorDivisa;
+        request.ExchangeRateFetchedAt = DateTime.UtcNow;
+        request.ExchangeRateJustification = "TC manual.";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateAsync(request, "u1", "User 1", CancellationToken.None));
+
+        Assert.Empty(captured);
+    }
+
+    // ============================================================
     // (c) Flag ON + USD con MonCotiz == 1 o <= 0 -> rechaza.
     // ============================================================
 
