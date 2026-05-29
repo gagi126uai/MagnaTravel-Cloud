@@ -17,6 +17,7 @@ import {
   Shield,
   ShieldCheck,
   Inbox,
+  FileWarning,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -36,6 +37,8 @@ const mainLinks = [
   { to: "/packages", label: "Paises y destinos", icon: Package, requiredPermission: "paquetes.view" },
   { to: "/approvals/inbox", label: "Aprobaciones", icon: ShieldCheck, requiredPermission: "approvals.review" },
   { to: "/approvals/my-requests", label: "Mis solicitudes", icon: Inbox, requiredPermission: "approvals.request" },
+  // FC1.3 Fase 3: bandeja de reconciliacion NC parciales. Mismo permiso que Aprobaciones.
+  { to: "/credit-note-reconciliation/inbox", label: "Reconciliacion NC", icon: FileWarning, requiredPermission: "approvals.review" },
   { to: "/admin", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
   { to: "/settings", label: "Configuración", icon: Settings, requiredPermission: "configuracion.view" },
 ];

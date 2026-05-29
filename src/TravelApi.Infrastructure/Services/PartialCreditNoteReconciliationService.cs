@@ -165,22 +165,45 @@ public class PartialCreditNoteReconciliationService : IPartialCreditNoteReconcil
         // cerro el mismo caso en paralelo. NO lo atrapamos aca: el controller lo mapea a 409.
         await _db.SaveChangesAsync(ct);
 
-        // Audit obligatorio (ADR-010 §5.4). Best-effort: no rompe la operacion principal.
-        await _auditService.LogBusinessEventAsync(
-            action: "PartialCreditNoteReconciliationResolved",
-            entityName: "PartialCreditNoteReconciliation",
-            entityId: reconciliation.Id.ToString(CultureInfo.InvariantCulture),
-            details: System.Text.Json.JsonSerializer.Serialize(new
-            {
-                publicId = reconciliation.PublicId,
-                resolvedBy = currentUserId,
-                fourEyesBypassApplied = bypassApplied,
-                closedWithLiveReceipts = hasLiveReceipts,
-                notes = notes,
-            }),
-            userId: currentUserId,
-            userName: currentUserName,
-            ct: ct);
+        // Audit obligatorio (ADR-010 §5.4), pero best-effort DE VERDAD: el cierre del caso
+        // ya quedo commiteado en el SaveChanges de arriba y es valido. Si grabar la auditoria
+        // falla, NO podemos devolverle un error al cliente porque la operacion principal ya
+        // sucedio (devolver 500 seria mentirle: el caso esta cerrado).
+        //
+        // Por que el try/catch es necesario: LogBusinessEventAsync RE-LANZA las excepciones
+        // de base de datos (DbUpdateException / DbUpdateConcurrencyException) y las de
+        // invariantes de negocio (BusinessInvariantViolationException); solo se traga las
+        // genericas. Sin este catch, una de esas excepciones tumbaria la respuesta a pesar
+        // del cierre exitoso. Atrapamos Exception general a proposito: ningun fallo de auditoria
+        // debe tumbar la respuesta. Logueamos con detalle (publicId del caso + el error) para
+        // no perder la trazabilidad y poder reconstruir el evento a mano si hiciera falta.
+        try
+        {
+            await _auditService.LogBusinessEventAsync(
+                action: "PartialCreditNoteReconciliationResolved",
+                entityName: "PartialCreditNoteReconciliation",
+                entityId: reconciliation.Id.ToString(CultureInfo.InvariantCulture),
+                details: System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    publicId = reconciliation.PublicId,
+                    resolvedBy = currentUserId,
+                    fourEyesBypassApplied = bypassApplied,
+                    closedWithLiveReceipts = hasLiveReceipts,
+                    notes = notes,
+                }),
+                userId: currentUserId,
+                userName: currentUserName,
+                ct: ct);
+        }
+        catch (Exception auditException)
+        {
+            _logger.LogError(
+                auditException,
+                "Fallo al grabar la auditoria del cierre de PartialCreditNoteReconciliation, " +
+                "pero el cierre YA quedo commiteado y es valido. PublicId={PublicId} ByUser={UserId} " +
+                "Bypass={Bypass} ClosedWithLiveReceipts={LiveReceipts}",
+                reconciliation.PublicId, currentUserId, bypassApplied, hasLiveReceipts);
+        }
 
         _logger.LogInformation(
             "PartialCreditNoteReconciliation resuelto. PublicId={PublicId} ByUser={UserId} " +

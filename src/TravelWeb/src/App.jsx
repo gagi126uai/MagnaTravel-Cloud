@@ -42,6 +42,8 @@ import AdminHubPage from "./pages/AdminHubPage";
 import ApprovalsInboxPage from "./features/approvals/pages/ApprovalsInboxPage";
 import MyApprovalRequestsPage from "./features/approvals/pages/MyApprovalRequestsPage";
 import MovementsPreviewPage from "./features/movements/pages/MovementsPreviewPage";
+// FC1.3 Fase 3: bandeja de reconciliacion de NC parciales con recibos vivos.
+import CreditNoteReconciliationInboxPage from "./features/creditNoteReconciliation/pages/CreditNoteReconciliationInboxPage";
 
 function FullScreenLoader() {
   return (
@@ -249,6 +251,11 @@ export default function App() {
                     <Route
                       path="/approvals/inbox"
                       element={hasPermission("approvals.review") ? <ApprovalsInboxPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    {/* FC1.3 Fase 3: bandeja de reconciliacion. Mismo permiso que inbox de aprobaciones. */}
+                    <Route
+                      path="/credit-note-reconciliation/inbox"
+                      element={hasPermission("approvals.review") ? <CreditNoteReconciliationInboxPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route
                       path="/approvals/my-requests"
