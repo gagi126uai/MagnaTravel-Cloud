@@ -105,8 +105,10 @@ public class InvoiceService : IInvoiceService
 
     public async Task<PagedResponse<InvoiceListDto>> GetAllAsync(InvoicesListQuery query, CancellationToken ct)
     {
+        _logger.LogWarning("DBG-INV {Metodo}: entrada", nameof(GetAllAsync));
         // B1.15 Fase 2a (FIX 6): filter mine via Reserva.ResponsibleUserId.
         var ownerScope = await GetOwnerScopeOrNullAsync(ct);
+        _logger.LogWarning("DBG-INV {Metodo}: scope ok", nameof(GetAllAsync));
 
         var invoicesQuery = ApplyInvoiceSearch(_context.Invoices.AsNoTracking(), query.Search);
         if (ownerScope is not null)
@@ -117,7 +119,8 @@ public class InvoiceService : IInvoiceService
         invoicesQuery = ApplyInvoiceStructuredFilters(invoicesQuery, query);
         invoicesQuery = ApplyInvoiceOrdering(invoicesQuery, query);
 
-        return await invoicesQuery
+        _logger.LogWarning("DBG-INV {Metodo}: por ejecutar query", nameof(GetAllAsync));
+        var result = await invoicesQuery
             .Select(invoice => new InvoiceListDto
             {
                 PublicId = invoice.PublicId,
@@ -151,16 +154,21 @@ public class InvoiceService : IInvoiceService
                 OriginalInvoicePuntoDeVenta = invoice.OriginalInvoice != null ? (int?)invoice.OriginalInvoice.PuntoDeVenta : null
             })
             .ToPagedResponseAsync(query, ct);
+        _logger.LogWarning("DBG-INV {Metodo}: query OK", nameof(GetAllAsync));
+        return result;
     }
 
     public async Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct)
     {
+        _logger.LogWarning("DBG-INV {Metodo}: entrada", nameof(GetInvoicingSummaryAsync));
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        _logger.LogWarning("DBG-INV {Metodo}: settings ok", nameof(GetInvoicingSummaryAsync));
         var allowsOverride = settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason;
 
         // B1.15 Fase 2a (FIX 6): filter mine para totales del summary.
         var ownerScope = await GetOwnerScopeOrNullAsync(ct);
+        _logger.LogWarning("DBG-INV {Metodo}: scope ok", nameof(GetInvoicingSummaryAsync));
 
         var approvedInvoices = _context.Invoices
             .AsNoTracking()
@@ -213,9 +221,11 @@ public class InvoiceService : IInvoiceService
             })
             .Where(item => item.PendingFiscalAmount > 0m);
 
+        _logger.LogWarning("DBG-INV {Metodo}: por ejecutar query", nameof(GetInvoicingSummaryAsync));
         var readyAmount = await pendingFiscalQuery
             .Where(item => item.Balance <= 0m)
             .SumAsync(item => (decimal?)item.PendingFiscalAmount, ct) ?? 0m;
+        _logger.LogWarning("DBG-INV {Metodo}: query OK", nameof(GetInvoicingSummaryAsync));
 
         var invoicedThisMonth = await approvedInvoices
             .Where(invoice => invoice.CreatedAt >= startOfMonth)
@@ -241,16 +251,22 @@ public class InvoiceService : IInvoiceService
 
     public async Task<PagedResponse<InvoicingWorkItemDto>> GetInvoicingWorklistAsync(InvoicingWorklistQuery query, CancellationToken ct)
     {
+        _logger.LogWarning("DBG-INV {Metodo}: entrada", nameof(GetInvoicingWorklistAsync));
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        _logger.LogWarning("DBG-INV {Metodo}: settings ok", nameof(GetInvoicingWorklistAsync));
         // B1.15 Fase 2a (FIX 6): filter mine via Reserva.ResponsibleUserId.
         var ownerScope = await GetOwnerScopeOrNullAsync(ct);
+        _logger.LogWarning("DBG-INV {Metodo}: scope ok", nameof(GetInvoicingWorklistAsync));
         var workItemsQuery = BuildInvoicingWorkItemsQuery(settings, ownerScope);
         workItemsQuery = ApplyInvoicingWorkItemSearch(workItemsQuery, query.Search);
         workItemsQuery = ApplyInvoicingWorkItemStructuredFilters(workItemsQuery, query);
         workItemsQuery = ApplyInvoicingWorkItemStatus(workItemsQuery, query.Status);
         workItemsQuery = ApplyInvoicingWorkItemOrdering(workItemsQuery, query);
 
-        return await workItemsQuery.ToPagedResponseAsync(query, ct);
+        _logger.LogWarning("DBG-INV {Metodo}: por ejecutar query", nameof(GetInvoicingWorklistAsync));
+        var result = await workItemsQuery.ToPagedResponseAsync(query, ct);
+        _logger.LogWarning("DBG-INV {Metodo}: query OK", nameof(GetInvoicingWorklistAsync));
+        return result;
     }
 
     public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct)
