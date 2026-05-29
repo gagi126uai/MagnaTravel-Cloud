@@ -333,6 +333,37 @@ public class OperationalFinanceSettings
     /// </summary>
     public int IdempotencyKeyStaleThresholdMinutes { get; set; } = 10;
 
+    // ============================================================
+    // ADR-012 MVP (facturar en dolares, 2026-05-29): facturacion multimoneda.
+    // Hoy la agencia factura SOLO en pesos. Este flag habilita facturar en una
+    // moneda extranjera (USD) con tipo de cambio cargado a mano. Defaults
+    // conservadores: arranca APAGADO, igual que todos los flags fiscales nuevos.
+    // ============================================================
+
+    /// <summary>
+    /// ADR-012 MVP (2026-05-29): feature flag MAESTRO de facturacion multimoneda.
+    ///
+    /// <para><b>Con OFF (default)</b>: la facturacion se comporta EXACTAMENTE como hoy.
+    /// El service ignora la moneda que venga en el request y la factura sale en pesos
+    /// (PES / cotizacion 1), byte-identica a la facturacion ya homologada con ARCA.
+    /// Cero riesgo de regresion fiscal mientras este flag siga apagado.</para>
+    ///
+    /// <para><b>Con ON</b>: si el request trae una moneda extranjera (MonId != "PES"),
+    /// el service exige tipo de cambio coherente + fuente + fecha + justificacion
+    /// (TC manual, MVP). Si falta cualquiera de esos datos, rechaza la emision con
+    /// una excepcion de validacion clara — NO emite un comprobante a medias.</para>
+    ///
+    /// <para><b>Por que es ortogonal al tipo de comprobante</b>: la moneda NO cambia
+    /// la decision A/B/C (esa la fija la condicion fiscal del cliente/agencia). Una
+    /// factura A puede ser en dolares igual que una C. Por eso este flag NO toca la
+    /// logica de TipoComprobante en AfipService.</para>
+    ///
+    /// <para>Default <c>false</c>. Se prende en staging para QA y en prod recien
+    /// despues del signoff del contador (TC fiscalmente correcto segun RG 5616) +
+    /// homologacion ARCA de un comprobante en moneda extranjera.</para>
+    /// </summary>
+    public bool EnableMultiCurrencyInvoicing { get; set; } = false;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

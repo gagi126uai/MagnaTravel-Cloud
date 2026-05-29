@@ -310,6 +310,12 @@ public class InvoiceService : IInvoiceService
             }
         }
 
+        // ADR-012 MVP (facturar en dolares, 2026-05-29): validacion de facturacion
+        // multimoneda. Corre ANTES de crear la Invoice PENDING para no dejar a medias
+        // un comprobante con moneda extranjera mal cargada. Si el flag esta OFF o la
+        // moneda es pesos, este metodo no toca nada (comportamiento byte-identico a hoy).
+        await ValidateMultiCurrencyInvoicingAsync(request, ct);
+
         // 1. Create Pending in DB
         //
         // B1.15 (2026-05-11, fiscal critico): el guard aplicativo de arriba (AnyAsync)
@@ -346,6 +352,104 @@ public class InvoiceService : IInvoiceService
         _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(invoice.Id));
 
         return _mapper.Map<InvoiceDto>(invoice);
+    }
+
+    /// <summary>
+    /// ADR-012 MVP (facturar en dolares, 2026-05-29): valida la facturacion multimoneda
+    /// en el boundary de creacion de factura. Es defensa server-side: la UI puede validar
+    /// lo mismo, pero esta es la barrera que no se puede saltear.
+    ///
+    /// <para><b>Comportamiento byte-identico con el flag OFF</b>: si
+    /// <c>EnableMultiCurrencyInvoicing</c> es <c>false</c>, este metodo retorna sin tocar
+    /// el request. La factura sale en pesos (PES/1) como hasta hoy. Tambien retorna sin
+    /// hacer nada si la moneda del request es pesos ("PES" o vacio), aun con el flag ON:
+    /// una factura en pesos no necesita TC ni justificacion.</para>
+    ///
+    /// <para><b>Con el flag ON y moneda extranjera</b> (MonId != "PES") exige, en este orden:
+    /// <list type="number">
+    /// <item>una sola moneda por factura (invariante "una factura = una moneda");</item>
+    /// <item>que el codigo de moneda sea uno que sepamos mandar al ARCA (ArcaCurrencyMapper);</item>
+    /// <item>cotizacion coherente: <c>MonCotiz &gt; 0</c> y <c>!= 1</c> (un dolar no vale 0 ni 1 peso) — mismo criterio que el guard de la NC parcial;</item>
+    /// <item>trazabilidad del TC manual completa: fuente (no <c>Unset</c>) + fecha + justificacion no vacia (patron INV-120).</item>
+    /// </list>
+    /// Si algo falla, tira <see cref="InvalidOperationException"/> con mensaje claro. El
+    /// controller la mapea a 409 con el texto preservado para la UI. NO se crea ninguna
+    /// Invoice: la validacion corre antes de <c>CreatePendingInvoice</c>.</para>
+    /// </summary>
+    private async Task ValidateMultiCurrencyInvoicingAsync(CreateInvoiceRequest request, CancellationToken ct)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+
+        // Flag OFF: comportamiento actual. El request puede traer cualquier MonId, pero
+        // no lo miramos: CreatePendingInvoice lo copia tal cual y, por contrato, los
+        // callers de pesos mandan los defaults PES/1. No imponemos nada nuevo aca para
+        // garantizar byte-identidad con la facturacion ya homologada.
+        if (!settings.EnableMultiCurrencyInvoicing)
+        {
+            return;
+        }
+
+        // Invariante "una factura = una moneda": si en el futuro la factura se arma desde
+        // items/reserva con monedas mezcladas, hay que rechazarla — ARCA emite UN MonId por
+        // comprobante. HOY el CreateInvoiceRequest tiene una sola moneda a nivel cabecera
+        // (MonId) y los InvoiceItemDto no llevan moneda propia, asi que el caso "items
+        // multi-moneda" no puede ocurrir todavia. Dejamos el guard igual como defensa para
+        // cuando el modelo de items incorpore moneda (no romper silenciosamente entonces).
+        // No hay nada que iterar hoy; cuando InvoiceItemDto tenga Currency, este es el lugar.
+
+        var currencyCode = request.MonId;
+
+        // Moneda pesos (o vacia = default PES): factura en pesos, no exige TC ni justificacion.
+        // Tratamos "PES" como pesos; cualquier vacio se considera pesos por back-compat.
+        bool isPesos = string.IsNullOrWhiteSpace(currencyCode)
+            || string.Equals(currencyCode, "PES", StringComparison.OrdinalIgnoreCase);
+        if (isPesos)
+        {
+            return;
+        }
+
+        // Moneda extranjera: el codigo tiene que ser uno que sepamos mapear/mandar al ARCA.
+        // ArcaCurrencyMapper es la fuente unica de verdad del catalogo soportado.
+        if (!ArcaCurrencyMapper.IsValidArcaCurrencyCode(currencyCode)
+            && !ArcaCurrencyMapper.IsSupported(currencyCode))
+        {
+            throw new InvalidOperationException(
+                $"La moneda '{currencyCode}' no esta soportada para facturacion. " +
+                "Solo se admiten pesos (PES) y dolares (DOL/USD) por ahora.");
+        }
+
+        // Cotizacion coherente: mismo criterio que el guard de la NC parcial (InvoiceService
+        // ~1884). Un dolar no vale 0 ni 1 peso; un TC <= 0 o == 1 para moneda extranjera es
+        // un dato corrupto y emitiriamos un comprobante mal valuado.
+        bool exchangeRateIncoherent = request.MonCotiz <= 0m || request.MonCotiz == 1m;
+        if (exchangeRateIncoherent)
+        {
+            throw new InvalidOperationException(
+                $"La cotizacion de la moneda '{currencyCode}' ({request.MonCotiz}) es incoherente " +
+                "(debe ser mayor a 0 y distinta de 1). No se puede valuar una moneda extranjera como pesos.");
+        }
+
+        // Trazabilidad del TC manual (patron INV-120): no se permite emitir en moneda
+        // extranjera sin registrar de donde salio el TC, cuando y por que. Es lo que el
+        // contador necesita para reconstruir la valuacion del comprobante.
+        if (request.ExchangeRateSource is null
+            || request.ExchangeRateSource == Domain.Entities.ExchangeRateSource.Unset)
+        {
+            throw new InvalidOperationException(
+                "Debe indicar la fuente del tipo de cambio para facturar en moneda extranjera.");
+        }
+
+        if (request.ExchangeRateFetchedAt is null)
+        {
+            throw new InvalidOperationException(
+                "Debe indicar la fecha/hora del tipo de cambio para facturar en moneda extranjera.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ExchangeRateJustification))
+        {
+            throw new InvalidOperationException(
+                "Debe indicar una justificacion del tipo de cambio para facturar en moneda extranjera.");
+        }
     }
 
     /// <summary>

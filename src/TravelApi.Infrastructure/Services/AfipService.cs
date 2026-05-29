@@ -736,6 +736,13 @@ public class AfipService : IAfipService
              // ("PES", 1) -> comportamiento identico a antes de F2.5.
              MonId = request.MonId,
              MonCotiz = request.MonCotiz,
+             // ADR-012 MVP (facturar en dolares, 2026-05-29): trazabilidad del TC. Los
+             // callers de pesos no setean estos campos -> quedan NULL (factura en pesos).
+             // Para moneda extranjera, InvoiceService.ValidateMultiCurrencyInvoicingAsync
+             // ya garantizo que vengan completos antes de llegar aca.
+             ExchangeRateSource = request.ExchangeRateSource,
+             ExchangeRateFetchedAt = request.ExchangeRateFetchedAt,
+             ExchangeRateJustification = request.ExchangeRateJustification,
              CreatedAt = DateTime.UtcNow,
              WasForced = request.ForceIssue,
              ForceReason = request.ForceReason,

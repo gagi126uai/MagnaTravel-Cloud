@@ -609,6 +609,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(i => i.IdempotencyKey)
                   .HasMaxLength(64);
 
+            // ADR-012 MVP (facturar en dolares, 2026-05-29): trazabilidad del TC para
+            // facturas en moneda extranjera. Las tres columnas son NULLABLE (las facturas
+            // en pesos las dejan en NULL). El enum Source se persiste como int igual que
+            // FiscalSnapshot.Source, para que la auditoria fiscal lea ambos del mismo modo.
+            entity.Property(i => i.ExchangeRateSource)
+                  .HasConversion<int>();
+            entity.Property(i => i.ExchangeRateJustification)
+                  .HasMaxLength(500);
+
             // B1.15 Fase 1: trazabilidad de quien emitio la factura.
             entity.Property(i => i.IssuedByUserId).HasMaxLength(450);
             entity.Property(i => i.IssuedByUserName).HasMaxLength(200);

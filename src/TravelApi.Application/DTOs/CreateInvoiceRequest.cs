@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Application.DTOs;
 
@@ -40,6 +42,30 @@ public class CreateInvoiceRequest
     /// es lo correcto para pesos. Sin cambios de comportamiento para esos flujos.</para>
     /// </summary>
     public decimal MonCotiz { get; set; } = 1m;
+
+    /// <summary>
+    /// ADR-012 MVP (facturar en dolares, 2026-05-29): origen del tipo de cambio cuando
+    /// la factura es en moneda extranjera (MVP = manual). Viaja hasta
+    /// <c>Invoice.ExchangeRateSource</c>. NULL para facturas en pesos.
+    ///
+    /// <para>Con el flag <c>EnableMultiCurrencyInvoicing</c> ON y moneda extranjera, el
+    /// service EXIGE este campo (no <c>Unset</c>). Con el flag OFF se ignora.</para>
+    /// </summary>
+    public ExchangeRateSource? ExchangeRateSource { get; set; }
+
+    /// <summary>
+    /// ADR-012 MVP: momento en que se tomo el TC. Viaja hasta
+    /// <c>Invoice.ExchangeRateFetchedAt</c>. NULL para facturas en pesos. Exigido con el
+    /// flag multimoneda ON + moneda extranjera.
+    /// </summary>
+    public DateTime? ExchangeRateFetchedAt { get; set; }
+
+    /// <summary>
+    /// ADR-012 MVP: justificacion escrita del TC manual (patron INV-120). Viaja hasta
+    /// <c>Invoice.ExchangeRateJustification</c>. NULL para facturas en pesos. Exigido (no
+    /// vacio) con el flag multimoneda ON + moneda extranjera.
+    /// </summary>
+    public string? ExchangeRateJustification { get; set; }
 
     /// <summary>
     /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): desglose de totales YA REDONDEADO que el

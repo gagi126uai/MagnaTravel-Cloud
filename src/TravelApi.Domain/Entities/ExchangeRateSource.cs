@@ -35,4 +35,21 @@ public enum ExchangeRateSource
 
     /// <summary>Cargado a mano por el cashier. Requiere <c>ManualJustification</c> + audit (INV-120).</summary>
     Manual = 5,
+
+    /// <summary>
+    /// ADR-012 MVP (facturar en dolares, 2026-05-29): dolar VENDEDOR DIVISA del Banco
+    /// Nacion del dia habil anterior. Es el tipo de cambio que —segun la lectura de la
+    /// RG 5616— corresponde aplicar para valuar una factura en dolares.
+    ///
+    /// <para><b>Numero explicito 6 a proposito</b>: se agrega AL FINAL del enum sin
+    /// renumerar los valores existentes (0..5 ya estan persistidos como int en la BD,
+    /// reordenarlos corromperia datos historicos). Cualquier valor nuevo va aca abajo.</para>
+    ///
+    /// <para><b>Confirmacion normativa pendiente del contador</b>: que ESTE TC (vendedor
+    /// divisa BNA dia habil anterior) sea el fiscalmente correcto para la factura en USD
+    /// es la lectura actual de la RG 5616, pero la validacion final es del contador
+    /// matriculado antes de prender el flag en produccion. El enum solo ofrece la opcion;
+    /// no afirma que sea obligatoria.</para>
+    /// </summary>
+    BNA_VendedorDivisa = 6,
 }

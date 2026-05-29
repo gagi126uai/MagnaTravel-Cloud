@@ -53,6 +53,44 @@ public class Invoice : IHasPublicId
     /// </summary>
     public decimal MonCotiz { get; set; } = 1m;
 
+    // ============================================================
+    // ADR-012 MVP (facturar en dolares, 2026-05-29): trazabilidad del tipo de
+    // cambio cuando la factura es en moneda extranjera. Las tres columnas son
+    // NULLABLE y aditivas: las facturas en pesos (todo lo que existe hoy + todo
+    // lo que sale con el flag EnableMultiCurrencyInvoicing OFF) las dejan en NULL.
+    //
+    // IMPORTANTE: el MVP es 100% MANUAL. El operador carga el TC a mano y escribe
+    // por que. NO hay FK a ninguna tabla de cotizaciones (eso es ADR-011, que NO
+    // existe todavia). El dia que ADR-011 traiga un resolver automatico, esta
+    // estructura sigue sirviendo (solo cambia quien rellena la justificacion).
+    // ============================================================
+
+    /// <summary>
+    /// ADR-012 MVP: de donde salio el tipo de cambio que se aplico a esta factura en
+    /// moneda extranjera (p. ej. <see cref="ExchangeRateSource.BNA_VendedorDivisa"/> o
+    /// <see cref="ExchangeRateSource.Manual"/>). NULL cuando la factura es en pesos.
+    ///
+    /// <para>Se persiste como <c>int</c> (mismo patron que <c>FiscalSnapshot.Source</c>,
+    /// que usa <c>HasConversion&lt;int&gt;()</c>) para que la auditoria fiscal pueda
+    /// reconstruir como se valuo el comprobante.</para>
+    /// </summary>
+    public ExchangeRateSource? ExchangeRateSource { get; set; }
+
+    /// <summary>
+    /// ADR-012 MVP: momento exacto en que se tomo/cargo el tipo de cambio. Sirve para
+    /// que el contador chequee que el TC corresponde al dia habil anterior (RG 5616).
+    /// NULL cuando la factura es en pesos.
+    /// </summary>
+    public DateTime? ExchangeRateFetchedAt { get; set; }
+
+    /// <summary>
+    /// ADR-012 MVP: razon escrita por el operador al cargar el TC a mano (patron INV-120,
+    /// mismo criterio que <c>FiscalSnapshot.ManualJustification</c>: no se permite un TC
+    /// manual sin justificacion). Maximo 500 chars. NULL cuando la factura es en pesos.
+    /// </summary>
+    [MaxLength(500)]
+    public string? ExchangeRateJustification { get; set; }
+
     public bool WasForced { get; set; }
     public string? ForceReason { get; set; }
     public string? ForcedByUserId { get; set; }
