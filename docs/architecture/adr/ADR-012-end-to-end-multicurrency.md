@@ -5,7 +5,7 @@
 - **Author(s)**: software-architect agent.
 - **Related**:
   - [ADR-011 Fuente confiable de tipo de cambio](ADR-011-authoritative-exchange-rate-source.md) — **capa POSTERIOR, NO prerequisito del MVP** (corregido en review 2026-05-29). ADR-011 automatiza y valida el TC contra fuente + politica de staleness + historico. El MVP de este ADR NO lo necesita: el operador carga el TC a mano con fuente + fecha + justificacion (patron `Manual`/INV-120 que ya existe). ADR-011 se enchufa despues para automatizar ese numero. **No esta implementado** (busque `IExchangeRateResolver`/`ExchangeRateQuotes` en `src/` -> 0 resultados).
-  - [ADR-009 NC parcial fiscal](ADR-009-partial-credit-note.md) — la NC **parcial** ya emite en moneda extranjera y congela el TC del origen + guard de incoherencia (`InvoiceService.cs:1884`). La NC/ND **TOTAL**, en cambio, HOY esta **bloqueada** si la factura no esta en pesos (`InvoiceService.cs:528-534` y `:650-663`): aborta con error. Generalizar a NC/ND total NO es cosmetico — es REEMPLAZAR ese guard de rechazo por un camino de emision nuevo (ver §3.3).
+  - [ADR-009 NC parcial fiscal](ADR-009-partial-credit-note.md) — la NC **parcial** ya emite en moneda extranjera y congela el TC del origen + guard de incoherencia (`InvoiceService.cs:1884`). La NC/ND **TOTAL**, en cambio, HOY esta **bloqueada** si la factura no esta en pesos (guard de moneda en `EnqueueAnnulmentAsync` y en `ProcessAnnulmentJob`, ambos en `InvoiceService.cs`): aborta con error. Generalizar a NC/ND total NO es cosmetico — es REEMPLAZAR ese guard de rechazo por un camino de emision nuevo (ver §3.3).
   - [ADR-002 Cancelacion / Refund](ADR-002-cancellation-refund.md) — de aca sale `FiscalSnapshot`, el enum `ExchangeRateSource` y el patron de congelar TC + fuente + fecha.
 
 ---
@@ -273,10 +273,11 @@ solo-lectura ("Esta nota sale en USD, dolar congelado de la factura: 1.050,00 �
 
 **ESTADO REAL HOY (corregido en review 2026-05-29) — la NC/ND TOTAL en USD esta BLOQUEADA, no "casi
 lista":** el codigo actual **ABORTA** si la factura no esta en pesos. Hay dos guards explicitos:
-- `InvoiceService.cs:528-534` — fail-fast **sincrono** antes de encolar: si `invoice.MonId != "PES"`,
-  lanza `InvalidOperationException` ("la anulacion total automatica solo emite NC en pesos...").
-- `InvoiceService.cs:650-663` — en el **job** (`ProcessAnnulmentJob`): si `original.MonId != "PES"`, marca
-  `AnnulmentStatus.Failed`, loguea warning y notifica, **sin emitir**.
+- Guard de moneda en `EnqueueAnnulmentAsync` (`InvoiceService.cs`) — fail-fast **sincrono** antes de
+  encolar: si `invoice.MonId != "PES"`, lanza `InvalidOperationException` ("la anulacion total automatica
+  solo emite NC en pesos...").
+- Guard de moneda en `ProcessAnnulmentJob` (`InvoiceService.cs`) — en el **job**: si `original.MonId != "PES"`,
+  marca `AnnulmentStatus.Failed`, loguea warning y notifica, **sin emitir**.
 
 O sea: la Fase de NC/ND total **NO es generalizar cosmeticamente lo que la parcial ya hace**. Es
 **REEMPLAZAR ese guard de rechazo por un camino de emision nuevo** que sepa emitir la NC/ND total en la
@@ -290,7 +291,7 @@ saliera en pesos (o en USD a otro TC), el ajuste no cerraria contra el original.
 **Orden de implementacion NO NEGOCIABLE (para no abrir una ventana de riesgo):**
 1. **Primero**: agregar el **guard de incoherencia** al path de NC/ND total (replicar el de la NC parcial,
    `:1884`): para moneda extranjera, `MonCotiz <= 0 || == 1` -> fallo controlado, nunca emitir.
-2. **Despues**: levantar el **fail-fast de rechazo** (`:528-534` y `:650-663`) y conectar el camino de
+2. **Despues**: levantar el **fail-fast de rechazo** (guard de moneda en `EnqueueAnnulmentAsync` y en `ProcessAnnulmentJob`) y conectar el camino de
    emision que hereda `MonId`/`MonCotiz` del `originalInvoice`. Si se levantara el fail-fast ANTES de tener
    el guard de incoherencia, una factura USD legacy con TC=1 podria emitir una NC con TC=1 espurio.
 3. **Test de no-regresion obligatorio**: con el flag **OFF**, una factura USD **sigue rechazando** la NC
@@ -417,7 +418,7 @@ Todo detras de `EnableMultiCurrencyInvoicing` OFF. Tests de equivalencia flag OF
   contra la fuente; el carga manual queda como fallback (stale/ausente). Setea `ExchangeRateQuoteId`.
   **No es prerequisito del MVP.**
 - **Herencia de moneda/TC en NC/ND TOTAL (§3.3):** **reemplazar** el guard de rechazo
-  (`InvoiceService.cs:528-534`, `:650-663`) por el camino de emision, respetando el **orden no negociable**
+  (guard de moneda en `EnqueueAnnulmentAsync` y en `ProcessAnnulmentJob`, `InvoiceService.cs`) por el camino de emision, respetando el **orden no negociable**
   (primero el guard de incoherencia replicando `:1884`, despues levantar el fail-fast, + test de
   no-regresion flag OFF). NO es cosmetico. (La NC **parcial** ya emite en USD; esto es la **total**.)
 - **Tarifario en USD propagado a la factura (§3.4, condicional):** **verificar antes el flujo
@@ -479,7 +480,7 @@ Todo detras de `EnableMultiCurrencyInvoicing` OFF. Tests de equivalencia flag OF
   - Guard incoherencia NC/ND total: origen DOL con MonCotiz<=1 -> revision manual, NO emite (replicar `:1884`).
 - **Integration (VPS)**:
   - Flag OFF: factura sin selector -> PES/1, envelope byte-identico (no-regresion).
-  - **Flag OFF + factura USD -> NC/ND total sigue RECHAZANDO** (no-regresion del guard `:528-534`/`:650-663`).
+  - **Flag OFF + factura USD -> NC/ND total sigue RECHAZANDO** (no-regresion del guard de moneda en `EnqueueAnnulmentAsync`/`ProcessAnnulmentJob`).
   - Flag ON (MVP): factura USD con TC manual + justificacion -> persiste Source/FetchedAt/Justification,
     queda auditada, emite DOL.
 - **Homologacion ARCA (manual, fuera de CI)**: A/B/C en DOL con `CanMisMonExt` + `CondicionIVAReceptorId`
@@ -494,7 +495,7 @@ Todo detras de `EnableMultiCurrencyInvoicing` OFF. Tests de equivalencia flag OF
 | R1 | Emitir USD en prod sin `CanMisMonExt` (RG 5616) -> rechazo/observacion ARCA | Alto | Parte del MVP: sumar el campo + homologacion obligatoria antes de prod (§3.6) |
 | R2 | TC tipeado mal congelado en comprobante con CAE (no se corrige, solo NC) | Alto | MVP: justificacion obligatoria + `MonCotiz > 1` + audit (§3.2). Capa posterior (ADR-011): validar contra fuente -> divergencia exige `Manual`+justificacion |
 | R3 | Typo en `AfipSettings.TaxCondition` -> tipo de comprobante equivocado | **Bajo** (corregido en review) | La UI ya es un `<select>` cerrado con los 3 valores validos (`AfipSettingsTab.jsx:174-183`): no se puede typear. Vector residual solo por edicion SQL directa / futuro RI -> hardening §3.5 opcional |
-| R4 | Levantar el fail-fast de NC/ND total ANTES del guard de incoherencia -> NC USD con TC=1 espurio | **Alto** | Orden NO negociable §3.3: primero guard de incoherencia (replicar `:1884`), DESPUES levantar fail-fast (`:528-534`/`:650-663`), + test no-regresion flag OFF |
+| R4 | Levantar el fail-fast de NC/ND total ANTES del guard de incoherencia -> NC USD con TC=1 espurio | **Alto** | Orden NO negociable §3.3: primero guard de incoherencia (replicar `:1884`), DESPUES levantar fail-fast (guard de moneda en `EnqueueAnnulmentAsync`/`ProcessAnnulmentJob`), + test no-regresion flag OFF |
 | R5 | Confundir TC fiscal (comprobante) con TC comercial (pricing tarifario) | Medio | §3.4: NO convertir auto; el operador define el monto. Separar pricing de fiscal |
 | R6 | Asumir que el MVP depende de ADR-011 y atar la entrega a una pieza no implementada | Medio | Corregido: MVP usa TC a mano (`Manual`/INV-120). ADR-011 es capa posterior, no prerequisito (§2, §4, §5.3) |
 | R7 | `Rate.Currency` resulta NO ser decorativo y ya fluye de forma oculta | Bajo | A VERIFICAR el flujo Rate->Invoice antes de la fase tarifario (§3.4); no asumir |

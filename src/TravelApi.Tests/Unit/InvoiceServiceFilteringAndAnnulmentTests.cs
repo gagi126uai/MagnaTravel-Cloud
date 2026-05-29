@@ -639,21 +639,20 @@ public class InvoiceServiceFilteringAndAnnulmentTests
     }
 
     /// <summary>
-    /// FIX B-1 capa 2 / B-2 (revision backend+contable, 2026-05-28): DEFENSE IN DEPTH del path de
-    /// NC TOTAL. Una factura en moneda extranjera (MonId != "PES") NUNCA debe emitir una NC total
-    /// en pesos. <c>EnqueueAnnulmentAsync</c> tiene que fallar SINCRONO (sin encolar el job, sin
-    /// dejar la factura en Pending) con un mensaje claro.
+    /// ADR-012 §3.3 (no-regresion, flag multimoneda OFF): con <c>EnableMultiCurrencyInvoicing</c>
+    /// apagado (default del mock de settings), una factura en moneda extranjera (MonId != "PES")
+    /// sigue RECHAZANDO la anulacion total EXACTAMENTE como antes de ADR-012. <c>EnqueueAnnulmentAsync</c>
+    /// falla SINCRONO (sin encolar el job, sin dejar la factura en Pending) con un mensaje claro.
     ///
     /// <para>Por que importa: este es el path al que cae una cancelacion auto-aprobable
-    /// (ConfirmAsync step 8) o el fallback FC1.2 con flag OFF (OnApprovedAsync). Antes de F2.5
-    /// el calculator forzaba manual review para toda moneda no-ARS, asi que nunca llegaba aca.
-    /// Con el flag ON, una factura USD podria llegar; este guard impide la NC total en PES.</para>
+    /// (ConfirmAsync step 8) o el fallback FC1.2 (OnApprovedAsync). Con el flag OFF nunca se emite
+    /// una NC total para una factura USD — se deriva a NC parcial F2.5 o resolucion manual.</para>
     /// </summary>
     [Theory]
     [InlineData("DOL")]   // dolar
     [InlineData("dol")]   // casing distinto: el guard usa OrdinalIgnoreCase para PES, igual lo rechaza
     [InlineData("EUR")]   // moneda no soportada todavia
-    public async Task EnqueueAnnulmentAsync_ForeignCurrencyInvoice_Throws_AndDoesNotEnqueue(string monId)
+    public async Task EnqueueAnnulmentAsync_ForeignCurrencyInvoice_FlagOff_Throws_AndDoesNotEnqueue(string monId)
     {
         await using var context = new AppDbContext(_dbOptions);
         await SeedAsync(context);
@@ -684,13 +683,14 @@ public class InvoiceServiceFilteringAndAnnulmentTests
     }
 
     /// <summary>
-    /// FIX B-1 capa 2 (defensa en profundidad EN EL JOB): aunque <c>EnqueueAnnulmentAsync</c> ya
-    /// bloquea moneda extranjera, <c>ProcessAnnulmentJob</c> es un punto de entrada independiente
-    /// (Hangfire retry, dato sucio, llamada interna). Si llega una factura en moneda extranjera
-    /// directo al job, debe marcar Failed + notificar SIN llamar a AFIP — nunca emite NC en PES.
+    /// ADR-012 §3.3 (no-regresion, flag multimoneda OFF, defensa en profundidad EN EL JOB): aunque
+    /// <c>EnqueueAnnulmentAsync</c> ya bloquea moneda extranjera con el flag OFF, <c>ProcessAnnulmentJob</c>
+    /// es un punto de entrada independiente (Hangfire retry, dato sucio, llamada interna). Con el flag
+    /// OFF, si llega una factura en moneda extranjera directo al job, debe marcar Failed + notificar
+    /// SIN llamar a AFIP — nunca emite NC en PES.
     /// </summary>
     [Fact]
-    public async Task ProcessAnnulmentJob_ForeignCurrencyInvoice_MarksFailed_AndDoesNotCallAfip()
+    public async Task ProcessAnnulmentJob_ForeignCurrencyInvoice_FlagOff_MarksFailed_AndDoesNotCallAfip()
     {
         await using var context = new AppDbContext(_dbOptions);
         await SeedAsync(context);
@@ -724,5 +724,275 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         Assert.NotNull(notif);
         Assert.Equal("Error", notif!.Type);
         Assert.Contains("DOL", notif.Message);
+    }
+
+    /// <summary>
+    /// ADR-012 §3.3: prende el flag multimoneda en el mock de settings. Lo usan los tests que
+    /// verifican la herencia de moneda/TC (camino nuevo del ADR). Por default el mock devuelve
+    /// el flag OFF (ver constructor), que cubre la no-regresion.
+    /// </summary>
+    private void EnableMultiCurrencyFlag()
+    {
+        _settingsServiceMock
+            .Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings { EnableMultiCurrencyInvoicing = true });
+    }
+
+    /// <summary>
+    /// ADR-012 §3.3 (caso b — herencia automatica): con el flag multimoneda ON, anular una factura
+    /// USD con TC coherente debe emitir la NC HEREDANDO MonId/MonCotiz de la factura ORIGINAL. El
+    /// operador no elige moneda: el request que se manda a ARCA lleva exactamente "DOL" + el TC
+    /// congelado del original. Verifica el requisito "inteligente" del dueno.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAnnulmentJob_FlagOn_ForeignCurrencyCoherentRate_InheritsCurrencyAndRate()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        EnableMultiCurrencyFlag();
+
+        // Factura B (tipo 6, soportado) en USD con TC coherente (congelado del comprobante origen).
+        const decimal originalRate = 1050.500000m;
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        inv.MonId = "DOL";
+        inv.MonCotiz = originalRate;
+        inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        // El job necesita una reserva con PublicId resoluble (el Include(Reserva) ya esta seedeado).
+        await context.SaveChangesAsync();
+
+        // Capturamos el request que el job arma para ARCA. Como CreatePendingInvoice devuelve una
+        // Invoice con Resultado != "A", el job no entra al bloque de exito (bridge/notif success);
+        // solo nos importa que el request herede la moneda correcta.
+        CreateInvoiceRequest? capturedRequest = null;
+        _afipMock
+            .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
+            .Callback<int, CreateInvoiceRequest>((_, req) => capturedRequest = req)
+            .ReturnsAsync(new Invoice
+            {
+                Id = 500,
+                ReservaId = 1,
+                TipoComprobante = 8, // NC B
+                Resultado = "PENDING",
+                MonId = "DOL",
+                MonCotiz = originalRate
+            });
+
+        var service = BuildService(context);
+        await service.ProcessAnnulmentJob(1, "user-X", approvalRequestId: null);
+
+        // El job NO se bloqueo por moneda (flag ON + TC coherente) y armo el request HEREDANDO
+        // la moneda y el TC del comprobante origen. Este es el corazon del requisito "inteligente".
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("DOL", capturedRequest!.MonId);
+        Assert.Equal(originalRate, capturedRequest.MonCotiz);
+
+        // Y efectivamente intento emitir la NC (no se freno en seco).
+        _afipMock.Verify(
+            a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// ADR-012 §3.3 (caso c — candado de incoherencia, vale incluso con flag ON): con el flag ON,
+    /// una factura USD cuyo TC es incoherente (MonCotiz == 1 o <= 0) NO debe emitir la NC. Va a
+    /// revision manual: <c>EnqueueAnnulmentAsync</c> rechaza sincrono y el job marca Failed sin
+    /// llamar a AFIP. Evita valuar un dolar como un peso en facturas USD legacy sin TC bien cargado.
+    /// </summary>
+    [Theory]
+    [InlineData(1d)]    // TC == 1: un dolar valdria un peso (dato corrupto)
+    [InlineData(0d)]    // TC == 0: sin cotizacion
+    [InlineData(-5d)]   // TC negativo: imposible
+    public async Task EnqueueAnnulmentAsync_FlagOn_ForeignCurrencyIncoherentRate_Throws(double rate)
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        EnableMultiCurrencyFlag();
+
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        var statusAntes = inv.AnnulmentStatus;
+        inv.MonId = "DOL";
+        inv.MonCotiz = (decimal)rate;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "cancelacion USD", requesterIsAdmin: true, CancellationToken.None));
+        Assert.Contains("incoherente", ex.Message);
+
+        // No se persistio la solicitud ni se encolo el job: el TC corrupto nunca llega a ARCA.
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(statusAntes, refreshed.AnnulmentStatus);
+        Assert.Null(refreshed.AnnulmentReason);
+        _jobClientMock.Verify(
+            j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// ADR-012 §3.3 (caso c en el JOB — punto de entrada independiente): con el flag ON, una factura
+    /// USD con TC incoherente que llega directo al job (Hangfire retry, dato sucio) debe marcar
+    /// Failed + notificar SIN llamar a AFIP. Mismo candado de incoherencia, defensa en profundidad.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAnnulmentJob_FlagOn_ForeignCurrencyIncoherentRate_MarksFailed_AndDoesNotCallAfip()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        EnableMultiCurrencyFlag();
+
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        inv.MonId = "DOL";
+        inv.MonCotiz = 1m; // incoherente
+        inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        await service.ProcessAnnulmentJob(1, "user-X", approvalRequestId: null);
+
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(AnnulmentStatus.Failed, refreshed.AnnulmentStatus);
+
+        _afipMock.Verify(
+            a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()),
+            Times.Never);
+        _afipMock.Verify(
+            a => a.ProcessInvoiceJob(It.IsAny<int>()),
+            Times.Never);
+
+        var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
+        Assert.NotNull(notif);
+        Assert.Equal("Error", notif!.Type);
+        Assert.Contains("incoherente", notif.Message);
+    }
+
+    /// <summary>
+    /// ADR-012 fix MENOR-1 (fail-fast moneda no soportada, capa SINCRONA): con el flag ON, una factura
+    /// en una moneda extranjera que el sistema NO sabe emitir al ARCA (ej "EUR") pero con TC COHERENTE
+    /// (MonCotiz > 0 y != 1) debe rechazarse TEMPRANO en <c>EnqueueAnnulmentAsync</c>, NO dejarse pasar
+    /// para que reviente recien el boundary de AfipService. Importante: el TC es coherente, asi que el
+    /// candado de incoherencia NO la atrapa — la atrapa el guard de moneda soportada (IsValidArcaCurrencyCode).
+    /// </summary>
+    [Fact]
+    public async Task EnqueueAnnulmentAsync_FlagOn_UnsupportedCurrencyCoherentRate_Throws()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        EnableMultiCurrencyFlag();
+
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        var statusAntes = inv.AnnulmentStatus;
+        // "EUR" no esta en el catalogo ARCA del mapper (solo PES/DOL). TC coherente a proposito:
+        // 1200 es > 0 y != 1, asi que NO lo frena el candado de incoherencia sino el de moneda soportada.
+        inv.MonId = "EUR";
+        inv.MonCotiz = 1200m;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "cancelacion EUR", requesterIsAdmin: true, CancellationToken.None));
+        // El mensaje debe ser el del guard de moneda soportada, no el de incoherencia (el TC es coherente).
+        Assert.Contains("EUR", ex.Message);
+        Assert.DoesNotContain("incoherente", ex.Message);
+
+        // No se persistio la solicitud ni se encolo el job: la moneda no soportada nunca llega a ARCA.
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(statusAntes, refreshed.AnnulmentStatus);
+        Assert.Null(refreshed.AnnulmentReason);
+        _jobClientMock.Verify(
+            j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// ADR-012 fix MENOR-1 (fail-fast moneda no soportada, capa JOB — punto de entrada independiente):
+    /// con el flag ON, una factura en moneda no soportada (ej "EUR") con TC coherente que llega directo
+    /// al job (Hangfire retry, dato sucio) debe marcar Failed + notificar SIN llamar a AFIP. Mismo
+    /// criterio que la capa sincrona, defensa en profundidad. El TC coherente descarta que la atrape
+    /// el candado de incoherencia: la frena el guard de moneda soportada.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAnnulmentJob_FlagOn_UnsupportedCurrencyCoherentRate_MarksFailed_AndDoesNotCallAfip()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        EnableMultiCurrencyFlag();
+
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        inv.MonId = "EUR"; // no soportada
+        inv.MonCotiz = 1200m; // coherente: descarta el candado de incoherencia
+        inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        await service.ProcessAnnulmentJob(1, "user-X", approvalRequestId: null);
+
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(AnnulmentStatus.Failed, refreshed.AnnulmentStatus);
+
+        _afipMock.Verify(
+            a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()),
+            Times.Never);
+        _afipMock.Verify(
+            a => a.ProcessInvoiceJob(It.IsAny<int>()),
+            Times.Never);
+
+        var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
+        Assert.NotNull(notif);
+        Assert.Equal("Error", notif!.Type);
+        Assert.Contains("EUR", notif.Message);
+        Assert.DoesNotContain("incoherente", notif.Message);
+    }
+
+    /// <summary>
+    /// ADR-012 §3.3 (caso d — pesos sigue igual): una factura en pesos hereda "PES"/1 (los defaults
+    /// del origen), byte-identico al comportamiento de siempre, con cualquier valor del flag. La
+    /// anulacion total en pesos no se ve afectada por el cambio multimoneda.
+    /// </summary>
+    [Theory]
+    [InlineData(false)] // flag OFF
+    [InlineData(true)]  // flag ON
+    public async Task ProcessAnnulmentJob_PesosInvoice_InheritsPesos_RegardlessOfFlag(bool flagOn)
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        if (flagOn) EnableMultiCurrencyFlag();
+
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        inv.MonId = "PES";
+        inv.MonCotiz = 1m;
+        inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        await context.SaveChangesAsync();
+
+        CreateInvoiceRequest? capturedRequest = null;
+        _afipMock
+            .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
+            .Callback<int, CreateInvoiceRequest>((_, req) => capturedRequest = req)
+            .ReturnsAsync(new Invoice
+            {
+                Id = 501,
+                ReservaId = 1,
+                TipoComprobante = 8,
+                Resultado = "PENDING",
+                MonId = "PES",
+                MonCotiz = 1m
+            });
+
+        var service = BuildService(context);
+        await service.ProcessAnnulmentJob(1, "user-X", approvalRequestId: null);
+
+        // El request a ARCA hereda los defaults de pesos del comprobante origen.
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("PES", capturedRequest!.MonId);
+        Assert.Equal(1m, capturedRequest.MonCotiz);
     }
 }
