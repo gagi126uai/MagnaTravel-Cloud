@@ -481,7 +481,7 @@ public class ArcaAnnulmentReconciliationJob {
 
 ### 2.7 Multimoneda (Tema 2 accounting)
 
-1. **NC se emite en misma moneda y MISMO TC que factura original** (T0). NO se usa TC del día de la NC. Regla AFIP coherencia fiscal (INV-118).
+1. **NC se emite en misma moneda y MISMO TC que factura original** (T0). NO se usa TC del día de la NC. CRITERIO INTERNO (no regla AFIP): la auditoría 2026-05-29 contra fuentes oficiales NO encontró norma ARCA citable que lo obligue; es criterio razonable PENDIENTE de validación de contador matriculado. (INV-118 refiere al CHECK de snapshot completo, no a la elección de TC.)
 2. **Diferencia AR$ T0 vs AR$ T2 = Diferencia de cambio** (cuenta "Resultados Financieros y por Tenencia"). RT 17/RT 54 FACPCE distingue realizada vs no realizada.
 3. **Modo Monotributista**: registra contable, no impacta cómputo régimen sustitutivo.
 4. **Modo RI**: impacta Ganancias (Art. 96 LIG) y a veces IIBB.

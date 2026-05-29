@@ -95,8 +95,14 @@ public class OperationalFinanceSettings
     /// FC1.2.0 v3 §10.1 — Ley 25.345 (FC4): umbral en ARS sobre el cual los
     /// retiros en efectivo (<c>WithdrawalKind.PhysicalCash</c>) requieren validacion
     /// adicional (CUIT, comprobante bancario, etc.). Default 1.000.000 ARS.
-    /// **Confirmar con contador** antes de prender en prod — el valor depende
-    /// de la resolucion AFIP vigente y se actualiza periodicamente.
+    ///
+    /// POR QUE es configurable y no una constante (auditoria fiscal 2026-05-29, fuentes
+    /// oficiales): la Ley 25.345 existe, pero el monto que figura en su texto original
+    /// ($1.000) esta congelado/desactualizado. El umbral OPERATIVO real lo fija ARCA por
+    /// resolucion y se actualiza periodicamente. Por eso el tope NO se hardcodea: el admin
+    /// lo ajusta desde el panel cuando ARCA emite una nueva resolucion, sin redeploy.
+    ///
+    /// **Confirmar el valor vigente con contador matriculado** antes de prender en prod.
     /// </summary>
     [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
     public decimal Ley25345ThresholdAmount { get; set; } = 1_000_000m;

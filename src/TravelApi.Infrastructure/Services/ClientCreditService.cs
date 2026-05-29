@@ -396,7 +396,9 @@ public class ClientCreditService : IClientCreditService
     {
         var settings = await _settings.GetEntityAsync(ct);
 
-        // INV-094 Ley 25.345 — bloqueo duro.
+        // INV-094 Ley 25.345 — bloqueo duro. El tope sale de settings (configurable por
+        // admin) porque el monto del texto original de la ley esta congelado: el umbral
+        // operativo real lo fija ARCA por resolucion (auditoria fiscal 2026-05-29).
         if (request.Amount > settings.Ley25345ThresholdAmount)
         {
             throw new BusinessInvariantViolationException(

@@ -1824,15 +1824,21 @@ public class InvoiceService : IInvoiceService
         // De donde sale el tipo de cambio (TRAMPA 3 del brief): el TC NO esta en el VO
         // FiscalLiquidation (solo tiene Currency). Vive en el FiscalSnapshot del
         // BookingCancellation (FiscalSnapshot.ExchangeRateAtOriginalInvoice = TC congelado
-        // de la factura original a T0, por regla AFIP de coherencia fiscal INV-118).
+        // de la factura original a T0).
         // Ese TC ya viajo hasta aca DENTRO del input: BookingCancellationService lo leyo del
         // snapshot y lo metio en PartialCreditNoteEmissionInput.ExchangeRateAtOriginalInvoice
         // al armar la liquidacion. Por eso NO necesitamos un query extra al snapshot: usamos
         // liquidation.ExchangeRateAtOriginalInvoice tal cual.
         //
-        // Regla: la NC se emite en la MISMA moneda y cotizacion que la factura origen (no con
-        // el TC del dia de la cancelacion). Para pesos: ("PES", 1). Para una moneda extranjera
-        // soportada: (codigo ARCA, TC del snapshot).
+        // Criterio (NO regla AFIP): la NC se emite en la MISMA moneda y cotizacion que la
+        // factura origen (no con el TC del dia de la cancelacion). Para pesos: ("PES", 1).
+        // Para una moneda extranjera soportada: (codigo ARCA, TC del snapshot).
+        //
+        // OJO (auditoria fiscal 2026-05-29): emitir la NC con el TC del original es un CRITERIO
+        // INTERNO razonable, PENDIENTE de validacion de contador matriculado. La auditoria contra
+        // fuentes oficiales NO encontro norma ARCA citable que lo obligue. Antes este comentario
+        // decia "por regla AFIP de coherencia fiscal INV-118"; era una atribucion falsa. INV-118
+        // es el CHECK de snapshot completo, no esta eleccion de TC.
         string monId;
         decimal monCotiz;
         if (string.Equals(liquidation.Currency, "ARS", StringComparison.OrdinalIgnoreCase))

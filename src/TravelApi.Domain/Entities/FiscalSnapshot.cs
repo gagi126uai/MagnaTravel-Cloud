@@ -71,9 +71,18 @@ public class FiscalSnapshot
     public string? CurrencyAtEvent { get; set; }
 
     /// <summary>
-    /// T0 — TC congelado de la factura original al emitir la NC.
-    /// Por regla AFIP de coherencia fiscal (INV-118), la NC se emite con el MISMO
-    /// TC que la factura original, no con el TC del dia de la NC.
+    /// T0 — TC congelado de la factura original al emitir la NC: la NC se emite con el
+    /// MISMO TC que la factura original, no con el TC del dia de la NC.
+    ///
+    /// IMPORTANTE (auditoria fiscal 2026-05-29): esto es un CRITERIO INTERNO, PENDIENTE de
+    /// validacion de contador matriculado. NO es una obligacion normativa AFIP/ARCA: la
+    /// auditoria contra fuentes oficiales NO encontro norma ARCA citable que obligue a emitir
+    /// la NC con el TC del original (solo aparece en blogs y en normativa peruana). Se mantiene
+    /// porque es razonable y conserva la coherencia contable T0/T2/T3, pero NO debe describirse
+    /// como "regla AFIP".
+    ///
+    /// El codigo INV-118 que aparece en otros comentarios refiere al CHECK de snapshot completo
+    /// (chk_BookingCancellations_fiscalsnapshot_consistent), no a esta eleccion de TC.
     /// </summary>
     public decimal ExchangeRateAtOriginalInvoice { get; set; }
 
