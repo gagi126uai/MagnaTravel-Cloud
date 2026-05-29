@@ -306,6 +306,9 @@ public class QuoteService : IQuoteService
                     NetCost = item.TotalCost,
                     SalePrice = item.TotalPrice,
                     Commission = item.TotalPrice - item.TotalCost,
+                    // Trazabilidad: moneda en que se cotizo (del tarifario, si el item tiene tarifa).
+                    // Null si no hay tarifa asociada; no afecta saldo/pagos/factura.
+                    Currency = rate?.Currency,
                     CreatedAt = DateTime.UtcNow
                 };
                 _db.Set<HotelBooking>().Add(hotel);
@@ -329,6 +332,9 @@ public class QuoteService : IQuoteService
                     Status = "HK",
                     NetCost = item.TotalCost,
                     SalePrice = item.TotalPrice,
+                    // Trazabilidad: moneda en que se cotizo (del tarifario, si el item tiene tarifa).
+                    // Null si no hay tarifa asociada; no afecta saldo/pagos/factura.
+                    Currency = rate?.Currency,
                     CreatedAt = DateTime.UtcNow
                 };
                 _db.Set<FlightSegment>().Add(flight);
@@ -350,6 +356,9 @@ public class QuoteService : IQuoteService
                     NetCost = item.TotalCost,
                     SalePrice = item.TotalPrice,
                     Commission = item.TotalPrice - item.TotalCost,
+                    // Trazabilidad: moneda en que se cotizo (del tarifario, si el item tiene tarifa).
+                    // Null si no hay tarifa asociada; no afecta saldo/pagos/factura.
+                    Currency = rate?.Currency,
                     CreatedAt = DateTime.UtcNow
                 };
                 _db.Set<TransferBooking>().Add(transfer);
@@ -370,6 +379,9 @@ public class QuoteService : IQuoteService
                     NetCost = item.TotalCost,
                     SalePrice = item.TotalPrice,
                     Commission = item.TotalPrice - item.TotalCost,
+                    // Trazabilidad: moneda en que se cotizo (del tarifario, si el item tiene tarifa).
+                    // Null si no hay tarifa asociada; no afecta saldo/pagos/factura.
+                    Currency = rate?.Currency,
                     Adults = quote.Adults > 0 ? quote.Adults : 2,
                     Children = quote.Children,
                     CreatedAt = DateTime.UtcNow

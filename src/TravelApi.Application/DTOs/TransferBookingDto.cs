@@ -17,6 +17,11 @@ public class TransferBookingDto
     public string? ConfirmationNumber { get; set; }
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
+    /// <summary>
+    /// Moneda en que se cotizo el servicio (trazabilidad, copiada del tarifario).
+    /// Null = legacy / no informado. NO se usa todavia en calculos de saldo.
+    /// </summary>
+    public string? Currency { get; set; }
     public bool IsPriceSynced { get; set; } = true;
     public string SourceKind { get; set; } = "Transfer";
     public string WorkflowStatus { get; set; } = "Solicitado";

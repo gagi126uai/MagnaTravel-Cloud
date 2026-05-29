@@ -92,6 +92,10 @@ public class BookingService : IBookingService
     {
         hotel.RateId = rate.Id;
 
+        // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
+        // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
+        hotel.Currency = rate.Currency;
+
         if (rate.SupplierId.HasValue)
         {
             hotel.SupplierId = rate.SupplierId.Value;
@@ -195,6 +199,9 @@ public class BookingService : IBookingService
             flight.SalePrice = rate.SalePrice;
             flight.Commission = rate.Commission;
             flight.Tax = rate.Tax;
+            // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
+            // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
+            flight.Currency = rate.Currency;
         }
 
         // En Presupuesto el status siempre es "Solicitado".
@@ -550,6 +557,9 @@ public class BookingService : IBookingService
             package.NetCost = rate.NetCost;
             package.SalePrice = rate.SalePrice;
             package.Commission = rate.Commission;
+            // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
+            // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
+            package.Currency = rate.Currency;
         }
 
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
@@ -700,6 +710,9 @@ public class BookingService : IBookingService
             transfer.NetCost = rate.NetCost;
             transfer.SalePrice = rate.SalePrice;
             transfer.Commission = rate.Commission;
+            // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
+            // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
+            transfer.Currency = rate.Currency;
         }
 
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))

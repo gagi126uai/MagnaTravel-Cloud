@@ -230,6 +230,166 @@ public class BookingServiceTests
         Assert.Equal(888m, storedHotel.SalePrice);
     }
 
+    // === Trazabilidad de moneda (metadato, no afecta saldo) ===
+    // Al crear un servicio desde una tarifa, copiamos rate.Currency al booking para
+    // dejar registro de en que moneda se cotizo. Si no hay tarifa, queda en null.
+
+    [Fact]
+    public async Task CreateHotelAsync_WithRate_CopiesRateCurrencyForTraceability()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Hotel Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0010", Name = "Reserva test" };
+        var rate = new Rate
+        {
+            Id = 1,
+            SupplierId = supplier.Id,
+            ServiceType = "Hotel",
+            ProductName = "Hotel tarifario",
+            HotelName = "Hotel tarifario",
+            City = "Bariloche",
+            RoomType = "Doble",
+            MealPlan = "Desayuno",
+            NetCost = 100m,
+            SalePrice = 150m,
+            Commission = 50m,
+            Currency = "USD",
+        };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        context.Rates.Add(rate);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new CreateHotelRequest(
+            supplier.PublicId.ToString(),
+            "Hotel elegido",
+            4,
+            "Bariloche",
+            "Argentina",
+            DateTime.UtcNow.Date.AddDays(10),
+            DateTime.UtcNow.Date.AddDays(13),
+            "Doble",
+            "Desayuno",
+            2,
+            0,
+            1,
+            null,
+            300m,
+            777m,
+            477m,
+            null,
+            null,
+            rate.PublicId.ToString(),
+            "Solicitado");
+
+        var created = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
+
+        // La moneda viaja al DTO y a la entidad persistida.
+        Assert.Equal("USD", created.Currency);
+        var storedHotel = await context.HotelBookings.SingleAsync();
+        Assert.Equal("USD", storedHotel.Currency);
+        // No tocamos los precios: el snapshot de precios sigue igual que antes.
+        Assert.Equal(777m, storedHotel.SalePrice);
+    }
+
+    [Fact]
+    public async Task CreateHotelAsync_WithoutRate_LeavesCurrencyNull()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Hotel Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0011", Name = "Reserva test" };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        // Sin RateId: es carga manual, no hay tarifa que defina la moneda.
+        var request = new CreateHotelRequest(
+            supplier.PublicId.ToString(),
+            "Hotel manual",
+            3,
+            "Cordoba",
+            "Argentina",
+            DateTime.UtcNow.Date.AddDays(5),
+            DateTime.UtcNow.Date.AddDays(7),
+            "Doble",
+            "Desayuno",
+            2,
+            0,
+            1,
+            null,
+            200m,
+            300m,
+            100m,
+            null,
+            null,
+            null,
+            "Solicitado");
+
+        var created = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
+
+        // No inventamos moneda: null = legacy / no informado.
+        Assert.Null(created.Currency);
+        var storedHotel = await context.HotelBookings.SingleAsync();
+        Assert.Null(storedHotel.Currency);
+    }
+
+    [Fact]
+    public async Task CreateTransferAsync_WithRate_CopiesRateCurrencyForTraceability()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Transfer Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0012", Name = "Reserva test" };
+        var rate = new Rate
+        {
+            Id = 1,
+            SupplierId = supplier.Id,
+            ServiceType = "Traslado",
+            ProductName = "Traslado tarifario",
+            NetCost = 50m,
+            SalePrice = 80m,
+            Commission = 30m,
+            Currency = "USD",
+        };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        context.Rates.Add(rate);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new CreateTransferRequest(
+            supplier.PublicId.ToString(),
+            "Aeropuerto",
+            "Hotel centro",
+            DateTime.UtcNow.Date.AddDays(10),
+            null,
+            "Sedan",
+            2,
+            false,
+            null,
+            50m,
+            80m,
+            30m,
+            null,
+            rate.PublicId.ToString(),
+            "Solicitado",
+            null);
+
+        var created = await service.CreateTransferAsync(reserva.Id, request, CancellationToken.None);
+
+        Assert.Equal("USD", created.Currency);
+        var storedTransfer = await context.TransferBookings.SingleAsync();
+        Assert.Equal("USD", storedTransfer.Currency);
+        Assert.Equal(80m, storedTransfer.SalePrice);
+    }
+
     [Fact]
     public void PassengerDtoMapping_IncludesEditableContactFields()
     {

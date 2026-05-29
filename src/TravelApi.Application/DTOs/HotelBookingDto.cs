@@ -20,6 +20,11 @@ public class HotelBookingDto
     public string? ConfirmationNumber { get; set; }
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
+    /// <summary>
+    /// Moneda en que se cotizo el servicio (trazabilidad, copiada del tarifario).
+    /// Null = legacy / no informado. NO se usa todavia en calculos de saldo.
+    /// </summary>
+    public string? Currency { get; set; }
     /// <summary>"TariffAtBookingTime" if a Rate was applied; "Manual" otherwise.</summary>
     public string SnapshotSource { get; set; } = "Manual";
     public string SourceKind { get; set; } = "Hotel";

@@ -68,10 +68,18 @@ public class HotelBooking : IHasPublicId
     
     [Column(TypeName = "decimal(18,2)")]
     public decimal Commission { get; set; }
-    
+
+    /// <summary>
+    /// Moneda en que se COTIZO el servicio (copiada del tarifario al crearlo).
+    /// Es metadato de TRAZABILIDAD: NO se usa todavia en calculos de saldo, pagos ni factura.
+    /// Null = legacy / no informado (se asume ARS por compatibilidad hacia atras).
+    /// </summary>
+    [MaxLength(3)]
+    public string? Currency { get; set; }
+
     [MaxLength(500)]
     public string? Notes { get; set; }
-    
+
     // Planner de habitaciones: JSON con asignación de pasajeros por habitación
     public string? RoomingAssignmentsJson { get; set; }
 
