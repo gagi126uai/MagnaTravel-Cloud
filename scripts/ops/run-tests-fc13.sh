@@ -24,6 +24,10 @@
 #   parcial vs total + Payment reversal con OriginalPaymentId=null).
 # - BookingCancellationServiceHelpersTests (2 tests unit, F2.3: GetDominantAlicuotaId
 #   tira en lista vacia + devuelve dominante con items).
+# - PartialCreditNoteReconciliationIntegrationTests (3 tests, Fase 3: integracion
+#   Postgres real de la bandeja de reconciliacion de NC parciales. Cubre el
+#   concurrency token xmin del caso + los dos CHECK SQL crudos chk_pcnr_status y
+#   chk_pcnr_resolved_consistency, que InMemory no ejercita).
 # Regresion FC1.2 (que el fix del cuadre no rompio la facturacion normal / NC total):
 # - InvoiceServiceFilteringAndAnnulmentTests, AfipServiceCascadeReceiptVoidTests,
 #   InvoiceServiceRetryIdempotencyTests.
@@ -47,7 +51,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 LOG_FILE="test-results-fc13.log"
-FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests|FullyQualifiedName~FiscalLiquidationBackfillIntegrationTests|FullyQualifiedName~InvoiceCurrencyAndArcaIdempotencyIntegrationTests|FullyQualifiedName~EnqueuePartialCreditNoteIntegrationTests|FullyQualifiedName~ProcessPartialCreditNoteJobIntegrationTests|FullyQualifiedName~AfipServiceTotalsOverrideTests|FullyQualifiedName~BookingCancellationServiceF2_3IntegrationTests|FullyQualifiedName~AfipServicePartialCreditNoteReversalTests|FullyQualifiedName~BookingCancellationServiceHelpersTests|FullyQualifiedName~InvoiceServiceFilteringAndAnnulmentTests|FullyQualifiedName~AfipServiceCascadeReceiptVoidTests|FullyQualifiedName~InvoiceServiceRetryIdempotencyTests|FullyQualifiedName~ArcaCurrencyMapperTests|FullyQualifiedName~AfipServiceMonedaSoapFormatTests|FullyQualifiedName~FiscalLiquidationCalculatorTests|FullyQualifiedName~PartialCreditNotePostingReconciliationJobTests'
+FILTER='FullyQualifiedName~BookingCancellationServicePartialCreditNoteIntegrationTests|FullyQualifiedName~ForceBridgeCallbackEndpointTests|FullyQualifiedName~PartialCreditNoteE2ETests|FullyQualifiedName~FiscalLiquidationBackfillIntegrationTests|FullyQualifiedName~InvoiceCurrencyAndArcaIdempotencyIntegrationTests|FullyQualifiedName~EnqueuePartialCreditNoteIntegrationTests|FullyQualifiedName~ProcessPartialCreditNoteJobIntegrationTests|FullyQualifiedName~AfipServiceTotalsOverrideTests|FullyQualifiedName~BookingCancellationServiceF2_3IntegrationTests|FullyQualifiedName~AfipServicePartialCreditNoteReversalTests|FullyQualifiedName~BookingCancellationServiceHelpersTests|FullyQualifiedName~InvoiceServiceFilteringAndAnnulmentTests|FullyQualifiedName~AfipServiceCascadeReceiptVoidTests|FullyQualifiedName~InvoiceServiceRetryIdempotencyTests|FullyQualifiedName~ArcaCurrencyMapperTests|FullyQualifiedName~AfipServiceMonedaSoapFormatTests|FullyQualifiedName~FiscalLiquidationCalculatorTests|FullyQualifiedName~PartialCreditNotePostingReconciliationJobTests|FullyQualifiedName~PartialCreditNoteReconciliationIntegrationTests'
 
 echo "== run-tests-fc13.sh =="
 echo "Fecha: $(date)"

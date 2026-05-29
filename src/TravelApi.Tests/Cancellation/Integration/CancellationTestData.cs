@@ -113,6 +113,35 @@ internal static class CancellationTestData
     }
 
     /// <summary>
+    /// FC1.3 Fase 3 (ADR-010, 2026-05-29): crea una segunda <see cref="Invoice"/> que
+    /// hace de NOTA DE CREDITO parcial y la persiste. Los tests de la bandeja de
+    /// reconciliacion necesitan DOS facturas distintas: la original (la que se
+    /// cancelo) y la NC parcial (la que disparo el caso). El indice UNICO de la
+    /// bandeja es solo sobre <c>CreditNoteInvoiceId</c>, asi que basta con que esta
+    /// NC tenga un Id propio distinto del original.
+    ///
+    /// <para>Minima: solo los campos requeridos, sin CAE real (los tests no llaman a
+    /// AFIP). TipoComprobante 3 = Nota de Credito A (la original usa 1 = Factura A).</para>
+    /// </summary>
+    public static async Task<int> SeedCreditNoteInvoiceAsync(AppDbContext ctx, int reservaId)
+    {
+        var creditNote = new Invoice
+        {
+            TipoComprobante = 3, // Nota de Credito A
+            PuntoDeVenta = 1,
+            NumeroComprobante = 99,
+            ImporteTotal = 750m,
+            ImporteNeto = 619.83m,
+            ImporteIva = 130.17m,
+            ReservaId = reservaId,
+            CreatedAt = DateTime.UtcNow,
+        };
+        ctx.Invoices.Add(creditNote);
+        await ctx.SaveChangesAsync();
+        return creditNote.Id;
+    }
+
+    /// <summary>
     /// FiscalSnapshot incompleto (Source=Unset, TC=0, Currency=null). Solo es
     /// legal en <see cref="BookingCancellationStatus.Drafted"/> o
     /// <see cref="BookingCancellationStatus.Aborted"/>.

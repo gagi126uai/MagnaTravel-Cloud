@@ -221,6 +221,34 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
                 OR "LiquidationComputedAt" = "FiscalLiquidation_ComputedAt"
               );
             """);
+
+        // (j) FC1.3 Fase 3 (ADR-010): CHECK chk_pcnr_status de la bandeja de
+        //     reconciliacion de NC parciales. Mismo SQL que la migracion
+        //     20260529081148_Fase3_M1_AddPartialCreditNoteReconciliation. EnsureCreated
+        //     NO crea estos CHECK porque son migrationBuilder.Sql, no fluent API —
+        //     sin esto, los tests de CHECK de Fase 3 no validarian nada.
+        //     Status (persistido como string) solo puede ser 'Pending' o 'Resolved'.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "PartialCreditNoteReconciliations"
+              DROP CONSTRAINT IF EXISTS chk_pcnr_status;
+            ALTER TABLE "PartialCreditNoteReconciliations"
+              ADD CONSTRAINT chk_pcnr_status
+              CHECK ("Status" IN ('Pending', 'Resolved'));
+            """);
+
+        // (k) FC1.3 Fase 3 (ADR-010): CHECK chk_pcnr_resolved_consistency. Un caso
+        //     marcado 'Resolved' DEBE tener trazabilidad de cierre (ResolvedAt +
+        //     ResolvedByUserId NOT NULL). Mismo SQL que la migracion Fase3_M1.
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "PartialCreditNoteReconciliations"
+              DROP CONSTRAINT IF EXISTS chk_pcnr_resolved_consistency;
+            ALTER TABLE "PartialCreditNoteReconciliations"
+              ADD CONSTRAINT chk_pcnr_resolved_consistency
+              CHECK (
+                "Status" <> 'Resolved'
+                OR ("ResolvedAt" IS NOT NULL AND "ResolvedByUserId" IS NOT NULL)
+              );
+            """);
     }
 
     public async Task DisposeAsync()
@@ -371,8 +399,16 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
         // seedean keys reales y necesitan la tabla limpia entre tests para no chocar
         // por el indice UNIQUE de un test previo. No tiene FKs hacia el resto del
         // modulo (es operacional), por eso el orden no importa.
+        // FC1.3 Fase 3 (ADR-010, 2026-05-29): se agregan las dos tablas de la bandeja
+        // de reconciliacion de NC parciales. La hija
+        // ("PartialCreditNoteReconciliationReceipts") va primero por prolijidad; el
+        // CASCADE igual la arrastraria al truncar el padre o las Invoices. Los tests
+        // de Fase 3 (xmin + CHECK) seedean casos reales y necesitan la tabla limpia
+        // entre tests para no chocar contra el indice UNIQUE de CreditNoteInvoiceId.
         await ctx.Database.ExecuteSqlRawAsync("""
             TRUNCATE TABLE
+                "PartialCreditNoteReconciliationReceipts",
+                "PartialCreditNoteReconciliations",
                 "ClientCreditWithdrawals",
                 "ClientCreditEntries",
                 "DeductionLines",
