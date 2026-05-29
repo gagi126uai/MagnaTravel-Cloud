@@ -743,6 +743,115 @@ public class FiscalLiquidationCalculatorTests
         Assert.Equal("USD", result.Currency);
     }
 
+    // ------------------------------------------------------------
+    // FC1.3.F2.5 (multimoneda, 2026-05-28): el flag maestro cambia el criterio
+    // de MultiCurrency. Estos dos tests blindan las dos ramas.
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// F2.5 path ON: con el flag maestro prendido, una factura en moneda extranjera
+    /// (USD) YA NO se manda a revision manual por la moneda. El pipeline sabe emitir la
+    /// NC en la moneda y cotizacion del comprobante origen, asi que MultiCurrency deja de
+    /// ser disparador automatico.
+    /// </summary>
+    [Fact]
+    public void Calculator_MultiCurrencyWithFase2On_DoesNotFlagReason()
+    {
+        var (invoice, items) = FacturaBC(total: 1_000m);
+
+        var input = new FiscalLiquidationInput(
+            OriginatingInvoice: invoice,
+            Items: items,
+            Supplier: DefaultSupplier(),
+            InvoicingModeAtEvent: SupplierInvoicingMode.TotalToCustomer,
+            OriginalInvoiceAmount: 1_000m,
+            CancellationAmount: 1_000m,
+            OperatorPenaltyAmount: 0m,
+            RetentionNatureChangedByUser: false,
+            OriginalInvoiceUnclearByUser: false,
+            Currency: "USD"); // moneda extranjera
+
+        // Settings con el flag maestro de Fase 2 PRENDIDO.
+        var settings = DefaultSettings();
+        settings.EnablePartialCreditNoteRealEmission = true;
+
+        var result = new FiscalLiquidationCalculator(SilentLogger).Calculate(input, settings);
+
+        // La moneda extranjera NO debe disparar revision manual cuando F2.5 esta ON.
+        Assert.False(result.ReviewRequiredReason.HasFlag(ReviewRequiredReason.MultiCurrency));
+        Assert.Equal("USD", result.Currency);
+    }
+
+    /// <summary>
+    /// F2.5 path OFF (back-compat Fase 1): con el flag maestro apagado (estado actual de
+    /// prod), una factura en USD SIGUE yendo a revision manual por la moneda. Garantiza
+    /// que el comportamiento de Fase 1 queda intacto mientras el flag este OFF.
+    /// </summary>
+    [Fact]
+    public void Calculator_MultiCurrencyWithFase2Off_StillFlagsReason()
+    {
+        var (invoice, items) = FacturaBC(total: 1_000m);
+
+        var input = new FiscalLiquidationInput(
+            OriginatingInvoice: invoice,
+            Items: items,
+            Supplier: DefaultSupplier(),
+            InvoicingModeAtEvent: SupplierInvoicingMode.TotalToCustomer,
+            OriginalInvoiceAmount: 1_000m,
+            CancellationAmount: 1_000m,
+            OperatorPenaltyAmount: 0m,
+            RetentionNatureChangedByUser: false,
+            OriginalInvoiceUnclearByUser: false,
+            Currency: "USD");
+
+        // Settings con el flag maestro de Fase 2 APAGADO (default).
+        var settings = DefaultSettings();
+        settings.EnablePartialCreditNoteRealEmission = false;
+
+        var result = new FiscalLiquidationCalculator(SilentLogger).Calculate(input, settings);
+
+        Assert.True(result.ReviewRequiredReason.HasFlag(ReviewRequiredReason.MultiCurrency));
+        Assert.Equal("USD", result.Currency);
+    }
+
+    /// <summary>
+    /// FIX B-1 (revision backend+contable, 2026-05-28): una moneda extranjera que el sistema NO
+    /// sabe mapear a un codigo ARCA (ej. EUR — solo soportamos ARS+USD) SIEMPRE va a revision
+    /// manual, incluso con el flag maestro PRENDIDO.
+    ///
+    /// <para>Por que este test es critico: antes del fix, el criterio era "isForeign &amp;&amp; !flag".
+    /// Con el flag ON, EUR dejaba de disparar MultiCurrency y la liquidacion quedaba auto-aprobable
+    /// — y mas adelante el path de NC total la emitia en PESOS por default (un EUR como un peso).
+    /// El fix alinea el calculator con el emisor (ArcaCurrencyMapper): moneda no soportada =
+    /// manual SIEMPRE, sin importar el flag. Nunca auto-emite ni rompe con throw a mitad de camino.</para>
+    /// </summary>
+    [Fact]
+    public void Calculator_UnsupportedCurrency_FlagsMultiCurrency_EvenWithFlagOn()
+    {
+        var (invoice, items) = FacturaBC(total: 1_000m);
+
+        var input = new FiscalLiquidationInput(
+            OriginatingInvoice: invoice,
+            Items: items,
+            Supplier: DefaultSupplier(),
+            InvoicingModeAtEvent: SupplierInvoicingMode.TotalToCustomer,
+            OriginalInvoiceAmount: 1_000m,
+            CancellationAmount: 1_000m,
+            OperatorPenaltyAmount: 0m,
+            RetentionNatureChangedByUser: false,
+            OriginalInvoiceUnclearByUser: false,
+            Currency: "EUR"); // moneda extranjera NO soportada por el mapeo ARCA
+
+        // Flag maestro de Fase 2 PRENDIDO: aun asi, EUR debe ir a revision manual.
+        var settings = DefaultSettings();
+        settings.EnablePartialCreditNoteRealEmission = true;
+
+        var result = new FiscalLiquidationCalculator(SilentLogger).Calculate(input, settings);
+
+        Assert.True(result.ReviewRequiredReason.HasFlag(ReviewRequiredReason.MultiCurrency));
+        Assert.Equal("EUR", result.Currency);
+    }
+
     // ============================================================
     // INV-FC1.3-005: tolerancia + violacion
     // ============================================================

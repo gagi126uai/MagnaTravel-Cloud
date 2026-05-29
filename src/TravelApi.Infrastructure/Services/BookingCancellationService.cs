@@ -2081,48 +2081,180 @@ public class BookingCancellationService
                 invariantCode: "INV-FC1.3-005");
         }
 
-        // 2.bis) FC1.3.F2.3 (review contador 2026-05-28, R1 ALTO): GUARD MULTIMONEDA.
+        // 2.bis) FC1.3.F2.5 (multimoneda, 2026-05-28): GUARD DE MONEDA SOPORTADA.
         //
-        // El snapshot fiscal guarda Currency (USD/ARS) pero el XML SOAP que arma
-        // AfipService al ARCA sigue hardcoded en MonId=PES, MonCotiz=1 (deuda
-        // pendiente que cierra F2.5). Si la factura origen es USD y prendemos el
-        // flag F2.3 antes de F2.5, la NC saldria en pesos al ARCA aunque
-        // internamente este marcada en USD => desfasaje fiscal grave.
+        // Historia: en F2.3 este guard rechazaba "todo lo que no sea ARS" porque el XML SOAP al
+        // ARCA estaba hardcoded en MonId=PES/MonCotiz=1. Eso ya se resolvio en F2.5: el envelope
+        // ahora interpola la moneda y cotizacion reales (ver AfipService.ProcessInvoiceJob +
+        // InvoiceService.EmitPartialCreditNoteAsync). Por eso el guard cambio de forma.
         //
-        // Mientras F2.5 (multimoneda real) no este desplegada, abortamos con
-        // BusinessInvariantViolationException + audit log. El BC queda en
-        // ManualReviewApproved (el audit del paso 6 ya gatillo SaveChanges via
-        // el side effect del AuditService) pero sin emision: tratamiento manual.
+        // Que valida AHORA: que la moneda del snapshot este en el catalogo de monedas que el
+        // sistema sabe mapear a un codigo ARCA (ARS->PES, USD->DOL). USD pasa y fluye a la
+        // emision; EUR/BRL/etc. (que todavia no homologamos) abortan ACA, temprano.
         //
-        // Cuando F2.5 quede online y el XML soporte MonId/MonCotiz reales, este
-        // guard se retira.
-        var currencyFromSnapshot = bc.FiscalSnapshot?.CurrencyAtEvent ?? "ARS";
-        if (!string.Equals(currencyFromSnapshot, "ARS", StringComparison.OrdinalIgnoreCase))
+        // Por que rechazar temprano (y no dejar que falle adentro del job de emision): el job
+        // del InvoiceService tambien valida la moneda (misma fuente de verdad, ArcaCurrencyMapper)
+        // y la marca Failed si no la soporta. Pero si abortamos antes de transicionar el estado
+        // del BC, el BC queda en ManualReviewApproved (tratamiento manual) en vez de viajar a
+        // AwaitingFiscalConfirmation y morir en background con una NC Failed. Mejor UX operativa:
+        // el operador ve el rechazo en el acto, no tiene que ir a buscar una NC fallida.
+        //
+        // FUENTE DE VERDAD UNICA: tanto este guard como InvoiceService usan ArcaCurrencyMapper.
+        // Sumar una moneda nueva (ej. EUR) es una linea en el helper + homologacion ARCA; ningun
+        // codigo de aca hay que tocar.
+        // FIX m-1 (revision 2026-05-28): UNA sola variable de moneda para todo el metodo.
+        // Antes el guard usaba (CurrencyAtEvent ?? "ARS") y el input mas abajo usaba
+        // (CurrencyAtEvent ?? fl.Currency). Si CurrencyAtEvent era null, el guard validaba "ARS"
+        // pero el input emitia con fl.Currency — podian divergir. Unificamos en currency para que
+        // lo que validamos sea EXACTAMENTE lo que emitimos.
+        var currency = bc.FiscalSnapshot?.CurrencyAtEvent ?? fl.Currency;
+        if (!ArcaCurrencyMapper.IsSupported(currency))
         {
             _logger.LogCritical(
-                "F2.3 ABORT - currency {Currency} no soportada hasta F2.5. bcId={BcId}, invoiceId={InvoiceId}",
-                currencyFromSnapshot, bc.Id, bc.OriginatingInvoiceId);
+                "F2.5 ABORT - currency {Currency} no soportada por el mapeo ARCA. bcId={BcId}, invoiceId={InvoiceId}",
+                currency, bc.Id, bc.OriginatingInvoiceId);
 
             await _auditService.LogBusinessEventAsync(
                 // Nombre acortado <=50 chars (columna AuditLogs.Action es varchar(50)).
-                action: "PartialNcEmissionAborted_Multicurrency",
+                // "PartialNcAborted_UnsupportedCurrency" = 36 chars.
+                action: "PartialNcAborted_UnsupportedCurrency",
                 entityName: AuditActions.BookingCancellationEntityName,
                 entityId: bc.Id.ToString(),
                 details: JsonSerializer.Serialize(new
                 {
                     bcPublicId = bc.PublicId,
                     originalInvoiceId = bc.OriginatingInvoiceId,
-                    currency = currencyFromSnapshot,
-                    reason = "F2.5 multimoneda no desplegada todavia. Flag F2.3 no debe operar facturas USD hasta entonces.",
+                    currency,
+                    reason = "Moneda no soportada por el mapeo ARCA (solo ARS y USD por ahora). " +
+                             "Agregar la moneda al ArcaCurrencyMapper + homologar ARCA antes de operarla.",
                 }),
                 userId: resolverUserId,
                 userName: resolverUserName,
                 ct: ct);
 
             throw new BusinessInvariantViolationException(
-                $"NC parcial real no soportada para moneda {currencyFromSnapshot} hasta F2.5. " +
-                $"BookingCancellation {bc.PublicId} queda en ManualReviewApproved sin emision. " +
-                $"Apagar flag o esperar F2.5.");
+                $"NC parcial real no soportada para moneda {currency}: no esta en el " +
+                $"mapeo de monedas ARCA (solo ARS y USD por ahora). BookingCancellation {bc.PublicId} " +
+                $"queda en ManualReviewApproved sin emision (tratamiento manual).");
+        }
+
+        // 2.ter) FC1.3.F2.5 (fix M-1, revision 2026-05-28): GUARD DE COTIZACION COHERENTE,
+        //        a la par del guard de moneda soportada y ANTES de transicionar el BC.
+        //
+        // Si la moneda es extranjera (no ARS), el tipo de cambio del snapshot tiene que ser un
+        // valor real (> 0 y != 1). Un TC en 0 (snapshot no poblado / dato por SQL crudo / backfill)
+        // o en 1 (incoherente: un dolar no vale un peso) significaria emitir una NC en DOL valuada
+        // como pesos. Frenamos ACA, temprano, asi el BC queda en ManualReviewApproved (tratamiento
+        // manual) en vez de viajar a AwaitingFiscalConfirmation y morir en background con una NC
+        // Failed. El InvoiceService tiene el mismo guard como ultima linea de defensa.
+        bool isForeignCurrency = !string.Equals(currency, "ARS", StringComparison.OrdinalIgnoreCase);
+        decimal snapshotExchangeRate = bc.FiscalSnapshot?.ExchangeRateAtOriginalInvoice ?? 0m;
+        if (isForeignCurrency && (snapshotExchangeRate <= 0m || snapshotExchangeRate == 1m))
+        {
+            _logger.LogCritical(
+                "F2.5 ABORT - moneda extranjera {Currency} con cotizacion incoherente {Rate} (<= 0 o = 1). " +
+                "bcId={BcId}, invoiceId={InvoiceId}",
+                currency, snapshotExchangeRate, bc.Id, bc.OriginatingInvoiceId);
+
+            await _auditService.LogBusinessEventAsync(
+                // Nombre acortado <=50 chars (columna AuditLogs.Action es varchar(50)).
+                action: "PartialNcAborted_IncoherentRate",
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bcPublicId = bc.PublicId,
+                    originalInvoiceId = bc.OriginatingInvoiceId,
+                    currency,
+                    exchangeRate = snapshotExchangeRate,
+                    reason = "Moneda extranjera con tipo de cambio incoherente (0 o 1). No se puede valuar " +
+                             "un dolar como un peso. Revisar el snapshot fiscal de la factura origen.",
+                }),
+                userId: resolverUserId,
+                userName: resolverUserName,
+                ct: ct);
+
+            throw new BusinessInvariantViolationException(
+                $"NC parcial real abortada para moneda {currency}: el tipo de cambio del snapshot es " +
+                $"{snapshotExchangeRate} (incoherente para moneda extranjera). BookingCancellation {bc.PublicId} " +
+                $"queda en ManualReviewApproved sin emision (tratamiento manual).");
+        }
+
+        // 2.quater) FC1.3.F2.5 (GAP-1, defense-in-depth, revision 2026-05-28):
+        //           GUARD DE MONEDA NC == MONEDA DEL COMPROBANTE ORIGEN.
+        //
+        // Que compara: el codigo ARCA con el que VAMOS a emitir la NC (derivado del snapshot,
+        // 'currency' -> ArcaCurrencyMapper) contra el codigo ARCA REAL con el que la factura madre
+        // quedo registrada en ARCA (bc.OriginatingInvoice.MonId, "PES" o "DOL").
+        //
+        // POR QUE EXISTE (el caso legacy): una factura en dolares emitida ANTES de F2.5 — cuando
+        // todo el sistema registraba en pesos — tiene OriginatingInvoice.MonId = "PES" aunque su
+        // snapshot fiscal diga CurrencyAtEvent = "USD". Sin este guard, con el flag prendido, el
+        // emisor armaria una NC en DOL asociada (via <CbtesAsoc>) a una factura que ARCA tiene
+        // registrada en PES: la nota de credito NO coincide en moneda con su comprobante origen.
+        // Eso es un desfasaje fiscal NC != origen que ninguna otra capa detecta hoy.
+        //
+        // POR QUE NO ROMPE EL CASO FELIZ: una factura USD emitida CORRECTAMENTE post-F2.5 tiene
+        // OriginatingInvoice.MonId = "DOL" y el snapshot "USD" -> ArcaCurrencyMapper -> "DOL".
+        // Coinciden -> el guard no dispara -> emite normal. Idem ARS (PES == PES). El guard SOLO
+        // frena el caso incoherente (snapshot dice una moneda, la factura madre quedo en otra).
+        //
+        // POR QUE ABORTAR A MANUAL (y no auto-corregir): no podemos asumir cual de los dos datos es
+        // el correcto. Una factura USD legacy en PES quizas haya que reemitirla, o el snapshot esta
+        // mal poblado. Es una decision fiscal humana — dejamos el BC en ManualReviewApproved (su
+        // estado actual, sin transicionar) para que un operador lo resuelva.
+        //
+        // 'currency' ya paso el guard de moneda soportada, asi que TryMap nunca devuelve null aca;
+        // igual usamos el resultado de TryMap para comparar EXACTAMENTE el codigo que emitiriamos.
+        var originatingInvoice = bc.OriginatingInvoice;
+        if (originatingInvoice is null)
+        {
+            // Defensive: el path desde OnApprovedAsync incluye OriginatingInvoice (Include en la
+            // query). Si llega null, algo cambio en el path de carga — explotamos antes de emitir
+            // una NC sin poder validar la moneda del origen.
+            throw new InvalidOperationException(
+                $"BC {bc.PublicId}: OriginatingInvoice no esta cargado. No se puede validar la " +
+                "moneda de la factura origen antes de emitir NC parcial.");
+        }
+
+        var ncArcaCurrencyCode = ArcaCurrencyMapper.TryMap(currency);
+        var originInvoiceArcaCurrencyCode = originatingInvoice.MonId;
+        if (!string.Equals(ncArcaCurrencyCode, originInvoiceArcaCurrencyCode, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogCritical(
+                "F2.5 ABORT - NC parcial en {NcMonId} pero factura origen {InvoicePublicId} registrada en " +
+                "ARCA como {OriginMonId}; no se emite para evitar desfasaje NC != origen (probable factura " +
+                "USD legacy pre-F2.5). bcId={BcId}, invoiceId={InvoiceId}.",
+                ncArcaCurrencyCode, originatingInvoice.PublicId, originInvoiceArcaCurrencyCode,
+                bc.Id, bc.OriginatingInvoiceId);
+
+            await _auditService.LogBusinessEventAsync(
+                // Nombre acortado <=50 chars (columna AuditLogs.Action es varchar(50)).
+                // "PartialNcAborted_CurrencyMismatchVsOrigin" = 41 chars.
+                action: "PartialNcAborted_CurrencyMismatchVsOrigin",
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bcPublicId = bc.PublicId,
+                    originalInvoiceId = bc.OriginatingInvoiceId,
+                    originalInvoicePublicId = originatingInvoice.PublicId,
+                    snapshotCurrency = currency,
+                    ncArcaCurrencyCode,
+                    originInvoiceArcaCurrencyCode,
+                    reason = "La moneda ARCA de la NC parcial no coincide con la moneda ARCA registrada " +
+                             "en la factura origen. Probable factura USD legacy pre-F2.5 (snapshot USD pero " +
+                             "factura madre registrada en PES). No se emite para evitar desfasaje NC != origen.",
+                }),
+                userId: resolverUserId,
+                userName: resolverUserName,
+                ct: ct);
+
+            throw new BusinessInvariantViolationException(
+                $"NC parcial real abortada: la moneda ARCA de la NC ({ncArcaCurrencyCode}) no coincide con " +
+                $"la de la factura origen ({originInvoiceArcaCurrencyCode}). BookingCancellation {bc.PublicId} " +
+                "queda en ManualReviewApproved sin emision (tratamiento manual). " +
+                "Probable factura USD legacy pre-F2.5.");
         }
 
         // 3) Cargar items de la factura origen para construir Lines.
@@ -2146,15 +2278,18 @@ public class BookingCancellationService
         var lines = BuildPartialCreditNoteLines(bc, invoiceItems, settings);
 
         // 5) Armar el input para el InvoiceService.
-        var originalInvoice = bc.OriginatingInvoice;
-        // Currency del comprobante: lo tomamos del snapshot fiscal (T0) si esta disponible,
-        // sino caemos al VO de la liquidacion (consistente con FiscalLiquidationDto.Currency).
-        var currency = bc.FiscalSnapshot?.CurrencyAtEvent ?? fl.Currency;
-        // Tipo de cambio: el snapshot lo persiste exactamente T0 (ExchangeRateAtOriginalInvoice).
-        // Para pesos vale 1.
-        var exchangeRate = bc.FiscalSnapshot?.ExchangeRateAtOriginalInvoice > 0m
-            ? bc.FiscalSnapshot.ExchangeRateAtOriginalInvoice
-            : 1m;
+        // 'originatingInvoice' ya fue resuelto y validado arriba (guard GAP-1: moneda NC == origen).
+        var originalInvoice = originatingInvoice;
+        // 'currency' ya fue resuelta y validada arriba (guard de moneda soportada + guard de
+        // cotizacion coherente). No la re-declaramos: lo que validamos es lo que emitimos (fix m-1).
+        //
+        // Tipo de cambio (fix M-1): para pesos vale 1. Para moneda extranjera ya garantizamos
+        // arriba que snapshotExchangeRate es > 0 y != 1 (sino abortamos terminal), asi que aca lo
+        // usamos directo SIN el viejo fallback "?? 1m" — ese fallback era justamente el bug que
+        // valuaba un dolar como un peso cuando el snapshot venia en 0.
+        var exchangeRate = string.Equals(currency, "ARS", StringComparison.OrdinalIgnoreCase)
+            ? 1m
+            : snapshotExchangeRate;
 
         var emissionInput = new PartialCreditNoteEmissionInput(
             OriginalNetAmount: originalInvoice.ImporteNeto,

@@ -341,7 +341,8 @@ public sealed class ProcessPartialCreditNoteJobIntegrationTests
         decimal fiscalAmountToCredit = 300_000m,
         decimal lineTotal = 300_000m,
         int alicuotaIvaId = 5,
-        string currency = "ARS")
+        string currency = "ARS",
+        decimal exchangeRateAtOriginalInvoice = 1m)
     {
         var input = new PartialCreditNoteEmissionInput(
             OriginalNetAmount: 826_446m,
@@ -349,7 +350,9 @@ public sealed class ProcessPartialCreditNoteJobIntegrationTests
             OriginalTotalAmount: 1_000_000m,
             FiscalAmountToCredit: fiscalAmountToCredit,
             Currency: currency,
-            ExchangeRateAtOriginalInvoice: 1m,
+            // F2.5: el TC viaja DENTRO del input (BookingCancellationService lo lee del
+            // FiscalSnapshot del BC y lo mete aca). Para pesos vale 1.
+            ExchangeRateAtOriginalInvoice: exchangeRateAtOriginalInvoice,
             Lines: new List<PartialCreditNoteLineDto>
             {
                 new(Description: "Hotel - parte cancelada", Quantity: 1m, UnitPrice: lineTotal, Total: lineTotal, AlicuotaIvaId: alicuotaIvaId),
@@ -404,6 +407,64 @@ public sealed class ProcessPartialCreditNoteJobIntegrationTests
 
         // Se emitio exactamente una vez.
         Assert.Equal(1, bundle.CreatePendingInvoiceCallCount);
+    }
+
+    // -------------------------------------------------------------------------
+    // FC1.3.F2.5 (multimoneda, 2026-05-28): el job mapea moneda + cotizacion al
+    // CreateInvoiceRequest. Estos dos tests blindan las dos ramas (ARS / USD).
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// F2.5: factura USD. El job arma el request con <c>MonId == "DOL"</c> (codigo ARCA del
+    /// dolar, NO el ISO "USD") y <c>MonCotiz</c> igual al tipo de cambio del snapshot que
+    /// viajo en el input (1234.56). NO usa el TC del dia de la cancelacion.
+    /// </summary>
+    [Fact]
+    public async Task PartialCreditNoteJob_UsdInvoice_UsesSnapshotExchangeRate()
+    {
+        var (originalId, _) = await SeedOriginalInvoiceAsync();
+        await SeedUserAsync("vendedor-USD");
+
+        await using var ctx = _fixture.CreateDbContext();
+        var bundle = BuildService(ctx);
+
+        await bundle.Service.ProcessPartialCreditNoteJob(
+            originalInvoiceId: originalId,
+            // Factura USD con TC congelado del comprobante origen = 1234.56.
+            liquidationJson: BuildLiquidationJson(currency: "USD", exchangeRateAtOriginalInvoice: 1234.56m),
+            userId: "vendedor-USD",
+            approvalRequestId: 0);
+
+        Assert.NotNull(bundle.CapturedRequest);
+        var req = bundle.CapturedRequest!;
+        Assert.Equal("DOL", req.MonId);          // "USD" (ISO) -> "DOL" (catalogo ARCA).
+        Assert.Equal(1234.56m, req.MonCotiz);    // TC del snapshot, no del dia de la NC.
+    }
+
+    /// <summary>
+    /// F2.5: factura ARS. El job arma el request con el mapeo de pesos por default:
+    /// <c>MonId == "PES"</c> + <c>MonCotiz == 1</c>. Es el comportamiento que ya tenia
+    /// FC1.2, ahora explicito en el request.
+    /// </summary>
+    [Fact]
+    public async Task PartialCreditNoteJob_ArsInvoice_KeepsDefaultPesoMapping()
+    {
+        var (originalId, _) = await SeedOriginalInvoiceAsync();
+        await SeedUserAsync("vendedor-ARS");
+
+        await using var ctx = _fixture.CreateDbContext();
+        var bundle = BuildService(ctx);
+
+        await bundle.Service.ProcessPartialCreditNoteJob(
+            originalInvoiceId: originalId,
+            liquidationJson: BuildLiquidationJson(currency: "ARS", exchangeRateAtOriginalInvoice: 1m),
+            userId: "vendedor-ARS",
+            approvalRequestId: 0);
+
+        Assert.NotNull(bundle.CapturedRequest);
+        var req = bundle.CapturedRequest!;
+        Assert.Equal("PES", req.MonId);
+        Assert.Equal(1m, req.MonCotiz);
     }
 
     /// <summary>

@@ -9,6 +9,7 @@ using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using AutoMapper;
@@ -516,6 +517,22 @@ public class InvoiceService : IInvoiceService
                 "Para Notas de Debito/Credito o Facturas M, emitir el ajuste manualmente.");
         }
 
+        // FC1.3.F2.5 (multimoneda) — DEFENSE IN DEPTH B-1 (revision backend+contable, 2026-05-28):
+        // Fail-fast SINCRONO antes de encolar. La anulacion total automatica solo sabe emitir NC
+        // en pesos (el request mas abajo no setea MonId, asi que la NC nace PES/1). Si la factura
+        // origen esta en moneda extranjera, encolar el job seria condenarlo: ProcessAnnulmentJob
+        // tiene el mismo guard y lo marcaria Failed en background. Frenando aca, el caller
+        // (ConfirmAsync auto-aprobable, OnApprovedAsync fallback flag-OFF, endpoint manual) recibe
+        // el error en el acto y el operador entiende que tiene que ir por NC parcial (F2.5) o
+        // resolver manual desde ARCA. NUNCA se emite una NC en pesos para una factura en dolares.
+        if (!string.Equals(invoice.MonId, "PES", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"La factura {invoice.NumeroComprobante} esta en moneda {invoice.MonId}: la anulacion total " +
+                "automatica solo emite Notas de Credito en pesos. Emitir la NC en moneda extranjera " +
+                "(NC parcial F2.5) o resolver manualmente desde ARCA.");
+        }
+
         // B1.15 Fase D (2026-05-11): si policy.RequiresApproval Y caller NO es
         // Admin, requiere ApprovalRequest aprobado. Admin bypassa el workflow.
         // B1.15 Fase B'' (2026-05-11): la decision se lee desde ApprovalPolicy
@@ -608,6 +625,43 @@ public class InvoiceService : IInvoiceService
             if (await _context.Invoices.AnyAsync(i => i.OriginalInvoiceId == invoiceId && i.Resultado == "A"))
             {
                 await CreateNotification(userId, $"El comprobante {original.NumeroComprobante} ya fue anulado.", "Warning", invoiceId);
+                return;
+            }
+
+            // FC1.3.F2.5 (multimoneda) — DEFENSE IN DEPTH B-1 (revision backend+contable, 2026-05-28):
+            //
+            // Este es el path de NC TOTAL (anulacion completa). Arma el CreateInvoiceRequest mas
+            // abajo SIN setear MonId/MonCotiz, asi que la NC nace con los defaults PES/1. Para una
+            // factura origen en pesos eso es correcto. PERO si la factura origen fue en moneda
+            // extranjera (ej. USD, MonId="DOL"), emitir su NC en PES seria un desfasaje fiscal
+            // grave: el ARCA tendria una NC en pesos asociada a una factura en dolares.
+            //
+            // Por que el guard vive ACA y no solo en el calculator: el calculator (fix B-1 capa 1)
+            // ya rutea las facturas USD a revision manual, pero este job es un punto de entrada
+            // INDEPENDIENTE — lo invocan el path auto-aprobable de ConfirmAsync (step 8), el
+            // fallback FC1.2 de OnApprovedAsync (flag OFF), reintentos de Hangfire y el endpoint
+            // legacy de anulacion manual. No podemos asumir que el calculator corrio antes.
+            //
+            // PRINCIPIO RECTOR: ninguna factura en moneda extranjera debe producir un comprobante
+            // ARCA cuyo MonId/MonCotiz NO coincida con el del comprobante original. Si por la
+            // moneda no se puede emitir una NC total coherente, frenamos en seco (Failed + aviso)
+            // — NUNCA emitimos en PES por default. La resolucion correcta es la NC PARCIAL F2.5
+            // (que SI lleva la moneda real), o tratamiento manual desde ARCA.
+            if (!string.Equals(original.MonId, "PES", StringComparison.OrdinalIgnoreCase))
+            {
+                original.AnnulmentStatus = AnnulmentStatus.Failed;
+                await _context.SaveChangesAsync();
+
+                var foreignReason =
+                    $"La factura {original.NumeroComprobante} esta en moneda {original.MonId} (cotizacion " +
+                    $"{original.MonCotiz.ToString("0.######", CultureInfo.InvariantCulture)}). La anulacion total " +
+                    "automatica solo emite Notas de Credito en pesos, asi que se bloqueo para no generar un " +
+                    "comprobante con moneda incorrecta. Emitir la NC en moneda extranjera (NC parcial F2.5) o " +
+                    "resolver manualmente desde ARCA.";
+                _logger.LogWarning(
+                    "Annulment job aborted for Invoice {InvoiceId}: moneda {MonId} != PES. No se emite NC total en pesos.",
+                    invoiceId, original.MonId);
+                await CreateNotification(userId, foreignReason, "Error", invoiceId);
                 return;
             }
 
@@ -1310,6 +1364,21 @@ public class InvoiceService : IInvoiceService
     }
 
     /// <summary>
+    /// FC1.3.F2.5 (multimoneda, 2026-05-28): traduce el codigo de moneda ISO 4217 que usa el
+    /// negocio ("USD", "ARS", ...) al codigo del catalogo de monedas de ARCA ("DOL", "PES", ...).
+    /// Devuelve <c>null</c> si la moneda no esta soportada todavia.
+    ///
+    /// <para><b>Por que delega en <see cref="ArcaCurrencyMapper"/></b>: el mapeo de monedas
+    /// soportadas es UNA sola fuente de verdad en todo el sistema. El guard multimoneda de
+    /// <c>BookingCancellationService</c> consume el MISMO helper para decidir si una NC parcial
+    /// puede emitirse. Centralizar evita que las dos listas se desincronicen (drift) y que el
+    /// guard aborte algo que este metodo si sabria emitir, o viceversa. Mantenemos este wrapper
+    /// <c>private static</c> para no tocar el call site interno (EmitPartialCreditNoteAsync).</para>
+    /// </summary>
+    private static string? TryMapToArcaCurrencyCode(string isoCurrency) =>
+        ArcaCurrencyMapper.TryMap(isoCurrency);
+
+    /// <summary>
     /// FC1.3.F2.2 (plan §F2.2 capa 1): intenta insertar la clave de idempotencia ANTES del
     /// POST a ARCA. Devuelve <c>true</c> si el INSERT entro, <c>false</c> si choco con el
     /// indice UNIQUE (ya existe una key con ese valor).
@@ -1644,6 +1713,79 @@ public class InvoiceService : IInvoiceService
             return;
         }
 
+        // --- FC1.3.F2.5 (multimoneda, 2026-05-28): moneda + cotizacion de la NC parcial ---
+        //
+        // De donde sale el tipo de cambio (TRAMPA 3 del brief): el TC NO esta en el VO
+        // FiscalLiquidation (solo tiene Currency). Vive en el FiscalSnapshot del
+        // BookingCancellation (FiscalSnapshot.ExchangeRateAtOriginalInvoice = TC congelado
+        // de la factura original a T0, por regla AFIP de coherencia fiscal INV-118).
+        // Ese TC ya viajo hasta aca DENTRO del input: BookingCancellationService lo leyo del
+        // snapshot y lo metio en PartialCreditNoteEmissionInput.ExchangeRateAtOriginalInvoice
+        // al armar la liquidacion. Por eso NO necesitamos un query extra al snapshot: usamos
+        // liquidation.ExchangeRateAtOriginalInvoice tal cual.
+        //
+        // Regla: la NC se emite en la MISMA moneda y cotizacion que la factura origen (no con
+        // el TC del dia de la cancelacion). Para pesos: ("PES", 1). Para una moneda extranjera
+        // soportada: (codigo ARCA, TC del snapshot).
+        string monId;
+        decimal monCotiz;
+        if (string.Equals(liquidation.Currency, "ARS", StringComparison.OrdinalIgnoreCase))
+        {
+            monId = "PES";
+            monCotiz = 1m;
+        }
+        else
+        {
+            // Si la moneda no esta en el mapeo soportado, TryMapToArcaCurrencyCode devuelve
+            // null. Tratamos eso como fallo terminal (igual que el cuadre/prorrateo): resolver
+            // la key + marcar Failed + return, SIN POSTear a ARCA. NO dejamos que reviente a
+            // mitad de camino con la key ya insertada.
+            string? mappedCode = TryMapToArcaCurrencyCode(liquidation.Currency);
+            if (mappedCode is null)
+            {
+                await ResolveIdempotencyKeyAsync(idemKey, ct);
+                await MarkPartialCreditNoteFailedAsync(
+                    originalInvoice, userId,
+                    $"Moneda '{liquidation.Currency}' no soportada para NC parcial multimoneda (F2.5). " +
+                    "Solo se mapea ARS y USD por ahora. No se emite el comprobante.", ct);
+                _logger.LogInformation(
+                    "metric:Fc13.PartialCreditNote.UnsupportedCurrency | originalInvoiceId={OriginalInvoiceId} currency={Currency}",
+                    originalInvoice.Id, liquidation.Currency);
+                return;
+            }
+
+            monId = mappedCode;
+            monCotiz = liquidation.ExchangeRateAtOriginalInvoice;
+
+            // FC1.3.F2.5 (fix M-1, revision 2026-05-28): GUARD DE COTIZACION COHERENTE.
+            //
+            // Problema que cierra: el TC viaja desde el FiscalSnapshot. Si por un dato cargado por
+            // SQL crudo, un backfill, o un path que no poblo el snapshot, el TC llega en 0 (o, peor,
+            // exactamente 1 para una moneda extranjera), emitiriamos una NC en DOL valuada como si
+            // un dolar fuera un peso. El CHECK chk_BookingCancellations_fiscalsnapshot_consistent
+            // protege la transicion del BC, pero el calculo de moneda corre ANTES y podria filtrarse.
+            //
+            // Regla: para una moneda extranjera (mappedCode != "PES"), un TC <= 0 o == 1 es
+            // INCOHERENTE — un dolar no vale 0 ni 1 peso. Lo tratamos como FALLO TERMINAL controlado
+            // (igual que moneda no soportada): resolver la idempotency key + marcar Failed + log
+            // critico + return. NUNCA dejamos que un DOL con cotizacion 1 llegue a ARCA.
+            bool exchangeRateIncoherent = monCotiz <= 0m || monCotiz == 1m;
+            if (exchangeRateIncoherent)
+            {
+                await ResolveIdempotencyKeyAsync(idemKey, ct);
+                await MarkPartialCreditNoteFailedAsync(
+                    originalInvoice, userId,
+                    $"NC parcial en moneda {liquidation.Currency} ({monId}) con cotizacion {monCotiz} incoherente " +
+                    "(<= 0 o = 1). No se puede valuar un dolar como un peso. No se emite el comprobante. " +
+                    "Verificar el tipo de cambio del snapshot fiscal de la factura origen.", ct);
+                _logger.LogCritical(
+                    "metric:Fc13.PartialCreditNote.IncoherentExchangeRate | originalInvoiceId={OriginalInvoiceId} " +
+                    "currency={Currency} monId={MonId} monCotiz={MonCotiz}",
+                    originalInvoice.Id, liquidation.Currency, monId, monCotiz);
+                return;
+            }
+        }
+
         var request = new CreateInvoiceRequest
         {
             // ReservaId no es null aca (el guard del inicio del metodo ya lo garantizo).
@@ -1668,11 +1810,10 @@ public class InvoiceService : IInvoiceService
             Tributes = new List<InvoiceTributeDto>(),
             // Cuadre exacto ya validado: el pipeline lo usa en vez de recalcular (fix B1).
             TotalsOverride = totalsOverride,
+            // F2.5: moneda + cotizacion calculadas arriba. Viajan hasta el XML SOAP.
+            MonId = monId,
+            MonCotiz = monCotiz,
         };
-
-        // NOTA multimoneda (F2.5, FUERA DE SCOPE): NO seteamos MonId/MonCotiz en el request.
-        // La NC nace con los defaults 'PES'/1. El XML SOAP de AfipService tambien sigue
-        // hardcoded en 'PES'/1. La factura en USD con NC en USD se conecta en F2.5.
 
         // Emitir via el pipeline existente. CreatePendingInvoice crea la NC en estado PENDING
         // + ProcessInvoiceJob la POSTea a ARCA y persiste el resultado (A / R / PENDING).

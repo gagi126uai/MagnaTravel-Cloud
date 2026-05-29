@@ -21,6 +21,27 @@ public class CreateInvoiceRequest
     public string? ForcedByUserName { get; set; }
 
     /// <summary>
+    /// FC1.3.F2.5 (multimoneda, 2026-05-28): codigo de moneda del catalogo de ARCA
+    /// ("PES" = pesos, "DOL" = dolar). Viaja hasta <c>Invoice.MonId</c> y termina en el
+    /// XML SOAP que se manda a ARCA.
+    ///
+    /// <para><b>Default "PES" a proposito</b>: la facturacion normal de FC1.2 y la NC total
+    /// NO setean este campo. Al quedar en "PES", el comportamiento es identico a antes de
+    /// F2.5 (todo se factura en pesos). Solo la emision de NC parcial multimoneda lo setea
+    /// a "DOL" cuando la factura origen fue en dolares.</para>
+    /// </summary>
+    public string MonId { get; set; } = "PES";
+
+    /// <summary>
+    /// FC1.3.F2.5 (multimoneda, 2026-05-28): cotizacion de la moneda contra el peso.
+    /// Para "PES" siempre vale 1. Para "DOL" es el tipo de cambio del comprobante origen (T0).
+    ///
+    /// <para><b>Default 1 a proposito</b>: los callers FC1.2 que no lo setean mandan 1, que
+    /// es lo correcto para pesos. Sin cambios de comportamiento para esos flujos.</para>
+    /// </summary>
+    public decimal MonCotiz { get; set; } = 1m;
+
+    /// <summary>
     /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): desglose de totales YA REDONDEADO que el
     /// caller calculo aparte (la NC parcial lo trae del <c>PartialCreditNoteIvaCalculator</c>).
     ///

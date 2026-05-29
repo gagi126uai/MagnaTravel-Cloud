@@ -1,10 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services;
 using TravelApi.Tests.Fixtures;
 using Xunit;
 
@@ -176,5 +182,137 @@ public sealed class InvoiceCurrencyAndArcaIdempotencyIntegrationTests
 
         var count = await ctx.ArcaIdempotencyKeys.CountAsync();
         Assert.Equal(2, count);
+    }
+
+    // =========================================================================
+    // FC1.3.F2.5 (multimoneda, 2026-05-28): el request lleva MonId/MonCotiz hasta
+    // la Invoice persistida. Ejercitamos el AfipService REAL (CreatePendingInvoice
+    // NO necesita certificado ni auth: solo BD). El SOAP a ARCA NO se manda aca
+    // (lo prueba el AfipServiceMonedaSoapFormatTests a nivel de formato del XML).
+    // =========================================================================
+
+    /// <summary>
+    /// Stub del protector de datos sensibles (passthrough). CreatePendingInvoice no lo usa
+    /// en este flujo, pero el ctor de AfipService lo exige.
+    /// </summary>
+    private sealed class NoopSensitiveDataProtector : ISensitiveDataProtector
+    {
+        public string? ProtectString(string? value) => value;
+        public string? UnprotectString(string? value) => value;
+        public byte[]? ProtectBytes(byte[]? value) => value;
+        public byte[]? UnprotectBytes(byte[]? value) => value;
+    }
+
+    /// <summary>
+    /// Seedea AfipSettings + un Customer + una Reserva (con Payer) y devuelve el ReservaId.
+    /// CreatePendingInvoice resuelve la reserva por Id para tomar el cliente/snapshot.
+    /// </summary>
+    private async Task<int> SeedReservaForPendingInvoiceAsync()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+
+        if (!await ctx.AfipSettings.AnyAsync())
+        {
+            ctx.AfipSettings.Add(new AfipSettings
+            {
+                PuntoDeVenta = 1,
+                TaxCondition = "Monotributo", // -> Factura C, simple, no exige datos de cliente RI
+            });
+        }
+
+        var customer = new Customer
+        {
+            FullName = "Cliente F2.5",
+            TaxCondition = "Consumidor Final",
+            IsActive = true,
+        };
+        ctx.Customers.Add(customer);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva
+        {
+            NumeroReserva = $"F-CUR-{Guid.NewGuid().ToString("N")[..8]}",
+            Name = "Reserva moneda test",
+            Status = EstadoReserva.Confirmed,
+            PayerId = customer.Id,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+        return reserva.Id;
+    }
+
+    private AfipService BuildRealAfipService(AppDbContext context)
+        => new(
+            context,
+            NullLogger<AfipService>.Instance,
+            new HttpClient(),
+            new NoopSensitiveDataProtector(),
+            auditService: null);
+
+    private static CreateInvoiceRequest BuildSingleLineRequest(string reservaId)
+        => new()
+        {
+            ReservaId = reservaId,
+            Items = new List<InvoiceItemDto>
+            {
+                new()
+                {
+                    Description = "Hotel",
+                    Quantity = 1m,
+                    UnitPrice = 1_000m,
+                    Total = 1_000m,
+                    AlicuotaIvaId = 5, // 21%
+                },
+            },
+        };
+
+    /// <summary>
+    /// Fc12NormalInvoice_StillEmitsWithPesos (regresion FC1.2): el caller NO setea
+    /// MonId/MonCotiz en el request -> la Invoice persistida nace en PES/1 (defaults).
+    /// El comportamiento de pesos de FC1.2 queda intacto.
+    /// </summary>
+    [Fact]
+    public async Task Fc12NormalInvoice_StillEmitsWithPesos()
+    {
+        var reservaId = await SeedReservaForPendingInvoiceAsync();
+
+        await using var ctx = _fixture.CreateDbContext();
+        var afip = BuildRealAfipService(ctx);
+
+        // Request estilo FC1.2: sin MonId/MonCotiz -> defaults del DTO ("PES", 1).
+        var request = BuildSingleLineRequest(reservaId.ToString());
+
+        var invoice = await afip.CreatePendingInvoice(reservaId, request);
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        var persisted = await verifyCtx.Invoices.AsNoTracking().FirstAsync(i => i.Id == invoice.Id);
+        Assert.Equal("PES", persisted.MonId);
+        Assert.Equal(1m, persisted.MonCotiz);
+    }
+
+    /// <summary>
+    /// PartialCreditNoteUsd_EmitsWithDolarAndSnapshotRate (a nivel persistencia): un request
+    /// con MonId="DOL" + MonCotiz=1234.56 (como lo arma EmitPartialCreditNoteAsync para una
+    /// factura USD) hace que la Invoice nazca con esos valores. De ahi ProcessInvoiceJob los
+    /// relee para el SOAP.
+    /// </summary>
+    [Fact]
+    public async Task PartialCreditNoteUsd_PersistsWithDolarAndSnapshotRate()
+    {
+        var reservaId = await SeedReservaForPendingInvoiceAsync();
+
+        await using var ctx = _fixture.CreateDbContext();
+        var afip = BuildRealAfipService(ctx);
+
+        var request = BuildSingleLineRequest(reservaId.ToString());
+        request.MonId = "DOL";
+        request.MonCotiz = 1234.56m;
+
+        var invoice = await afip.CreatePendingInvoice(reservaId, request);
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        var persisted = await verifyCtx.Invoices.AsNoTracking().FirstAsync(i => i.Id == invoice.Id);
+        Assert.Equal("DOL", persisted.MonId);
+        Assert.Equal(1234.56m, persisted.MonCotiz);
     }
 }

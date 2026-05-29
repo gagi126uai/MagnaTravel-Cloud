@@ -153,7 +153,12 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
             // F2.3 R1 contador: parametros opcionales para forzar moneda no-ARS en la
             // semilla. Default ARS / TC=1 mantiene compatible los tests anteriores.
             string currencyAtEvent = "ARS",
-            decimal exchangeRateAtEvent = 1m)
+            decimal exchangeRateAtEvent = 1m,
+            // GAP-1 (2026-05-28): codigo ARCA con el que la FACTURA ORIGEN quedo registrada
+            // ("PES" / "DOL"). Distinto del snapshot: el snapshot dice la moneda del evento
+            // (ISO "ARS"/"USD"), este es lo que ARCA tiene grabado en el comprobante madre.
+            // Default "PES" replica una factura registrada en pesos (caso historico).
+            string originInvoiceMonId = "PES")
     {
         // FIX 2026-05-28: auto-completar penalty para que el CHECK constraint
         // chk_BookingCancellations_fiscalliquidation_sum cuadre. El invariante exige
@@ -223,6 +228,9 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
             ImporteTotal = importeTotal,
             ImporteNeto = importeNeto,
             ImporteIva = importeIva,
+            // GAP-1: la factura origen queda registrada en ARCA con este codigo de moneda.
+            // El guard GAP-1 lo compara contra el codigo derivado del snapshot.
+            MonId = originInvoiceMonId,
             ReservaId = reserva.Id,
             AnnulmentStatus = AnnulmentStatus.None,
             CreatedAt = DateTime.UtcNow,
@@ -786,29 +794,98 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
     }
 
     /// <summary>
-    /// FC1.3.F2.3 (review contador 2026-05-28, R1 ALTO): guard multimoneda.
-    /// Si el snapshot fiscal dice que la factura origen es USD, F2.3 NO emite la NC
-    /// parcial real porque el XML SOAP al ARCA todavia esta hardcoded en pesos (MonId=PES,
-    /// MonCotiz=1; deuda que cierra F2.5). El service debe:
-    ///   - loguear critical;
-    ///   - persistir audit "PartialNcEmissionAborted_Multicurrency";
-    ///   - NO llamar a EnqueuePartialCreditNoteAsync;
-    ///   - tirar BusinessInvariantViolationException con mensaje que mencione "USD" y "F2.5";
-    ///   - dejar el BC en ManualReviewApproved (el audit del paso 6 ya gatillo SaveChanges
-    ///     por el side-effect del AuditService).
+    /// FC1.3.F2.5 (multimoneda, 2026-05-28): una factura origen en USD ahora SI emite NC parcial
+    /// real. Antes (F2.3) el guard abortaba todo lo que no fuera ARS porque el XML SOAP iba en
+    /// pesos hardcoded. F2.5 cerro ese gap: el envelope ya interpola moneda/cotizacion reales y
+    /// el guard solo rechaza monedas que el <c>ArcaCurrencyMapper</c> no sabe mapear. USD->DOL
+    /// esta soportado, asi que el flujo pasa el guard y llega a la emision.
+    ///
+    /// <para>El service debe:</para>
+    ///   - PASAR el guard de moneda (USD esta en el mapeo ARCA);
+    ///   - llamar a <c>EnqueuePartialCreditNoteAsync</c> con <c>Currency == "USD"</c> y el TC del
+    ///     snapshot (1000) tal cual (la NC va en la misma moneda/cotizacion que la factura origen);
+    ///   - transicionar el BC a AwaitingFiscalConfirmation;
+    ///   - NO persistir el audit de aborto por moneda.
     /// </summary>
     [Fact]
-    public async Task OnApprovedAsync_Fase2_PartialNc_CurrencyUsd_AbortsEmissionUntilF25()
+    public async Task OnApprovedAsync_Fase2_PartialNc_CurrencyUsd_EmitsRealPartialCreditNote()
     {
-        // ARRANGE: BC con FiscalSnapshot.CurrencyAtEvent = "USD" y un TC realista.
+        // ARRANGE: BC con FiscalSnapshot.CurrencyAtEvent = "USD" y un TC realista del snapshot.
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, invoiceId, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000m,
+                fiscalAmountToCredit: 700m,
+                currencyAtEvent: "USD",
+                exchangeRateAtEvent: 1000m,
+                // GAP-1: factura USD CORRECTA post-F2.5 => registrada en ARCA como "DOL".
+                // El snapshot "USD"->"DOL" coincide con el origen, asi que el guard GAP-1
+                // no dispara y el flujo llega normalmente a la emision.
+                originInvoiceMonId: "DOL");
+
+        // ACT: ya NO debe tirar — USD es una moneda soportada por el mapeo ARCA.
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado: factura USD ahora se emite con NC parcial multimoneda (F2.5 online)",
+            CancellationToken.None);
+
+        // ASSERT: la NC parcial real se encolo con la moneda y cotizacion del snapshot.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                invoiceId,
+                It.Is<PartialCreditNoteEmissionInput>(input =>
+                    input.FiscalAmountToCredit == 700m
+                    && input.OriginalTotalAmount == 1_000m
+                    && input.Currency == "USD"
+                    && input.ExchangeRateAtOriginalInvoice == 1000m
+                    && input.Lines.Count >= 1),
+                "admin-distinto",
+                "Admin",
+                It.IsAny<string?>(),
+                approvalId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // El BC transiciono a AwaitingFiscalConfirmation (path de emision, no dead-end manual).
+        var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
+            .FirstAsync(b => b.PublicId == bcPublicId);
+        Assert.Equal(BookingCancellationStatus.AwaitingFiscalConfirmation, bcAfter.Status);
+
+        // NO debe haberse persistido el audit de aborto por moneda no soportada.
+        var abortAudit = await bundle.Ctx.AuditLogs.AsNoTracking()
+            .Where(a => a.Action == "PartialNcAborted_UnsupportedCurrency")
+            .FirstOrDefaultAsync();
+        Assert.Null(abortAudit);
+    }
+
+    /// <summary>
+    /// FC1.3.F2.5 (multimoneda, 2026-05-28): una moneda que el <c>ArcaCurrencyMapper</c> NO sabe
+    /// mapear (ej. EUR, todavia no homologada contra ARCA) sigue abortando TEMPRANO, antes de
+    /// transicionar el estado del BC. Esto evita encolar una NC que el job de emision marcaria
+    /// Failed igual: mejor que el operador vea el rechazo en el acto y trate el caso a mano.
+    ///
+    /// <para>El service debe:</para>
+    ///   - loguear critical;
+    ///   - persistir audit "PartialNcAborted_UnsupportedCurrency";
+    ///   - NO llamar a EnqueuePartialCreditNoteAsync;
+    ///   - tirar BusinessInvariantViolationException con mensaje que mencione la moneda;
+    ///   - dejar el BC en ManualReviewApproved (el audit del paso previo gatillo SaveChanges).
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_Fase2_PartialNc_UnsupportedCurrency_AbortsEarly()
+    {
+        // ARRANGE: BC con una moneda NO soportada por el mapeo ARCA (EUR).
         var bundle = BuildService(enableF2RealEmission: true);
         var (_, _, _, _, bcPublicId, approvalId) =
             await SeedManualReviewPendingBcAsync(
                 ctx: bundle.Ctx,
                 importeTotal: 1_000m,
                 fiscalAmountToCredit: 700m,
-                currencyAtEvent: "USD",
-                exchangeRateAtEvent: 1000m);
+                currencyAtEvent: "EUR",
+                exchangeRateAtEvent: 1100m);
 
         // ACT + ASSERT: debe tirar BusinessInvariantViolationException por moneda no soportada.
         var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
@@ -816,15 +893,14 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
                 approvalId,
                 "admin-distinto",
                 "Admin",
-                "Aprobado: factura USD deberia bloquearse en F2.3 hasta que F2.5 cierre el envelope multimoneda",
+                "Aprobado: factura EUR deberia bloquearse porque no esta en el mapeo ARCA",
                 CancellationToken.None));
 
-        Assert.Contains("USD", ex.Message);
-        Assert.Contains("F2.5", ex.Message);
+        Assert.Contains("EUR", ex.Message);
 
-        // El audit nuevo debe estar persistido.
+        // El audit nuevo (renombrado en F2.5) debe estar persistido.
         var audit = await bundle.Ctx.AuditLogs.AsNoTracking()
-            .Where(a => a.Action == "PartialNcEmissionAborted_Multicurrency")
+            .Where(a => a.Action == "PartialNcAborted_UnsupportedCurrency")
             .FirstOrDefaultAsync();
         Assert.NotNull(audit);
 
@@ -836,9 +912,9 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
                 It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
-        // El BC queda en ManualReviewApproved (dead-end manual): el audit del paso 6
+        // El BC queda en ManualReviewApproved (dead-end manual): el audit del paso previo
         // de OnApprovedAsync gatillo SaveChanges, por eso la transicion quedo persistida
-        // aun cuando la emision real abortarse despues.
+        // aun cuando la emision real aborto despues.
         var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
             .FirstAsync(b => b.PublicId == bcPublicId);
         Assert.Equal(BookingCancellationStatus.ManualReviewApproved, bcAfter.Status);
@@ -849,6 +925,179 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
         var approval = await bundle.Ctx.ApprovalRequests.AsNoTracking()
             .FirstAsync(a => a.Id == approvalId);
         Assert.Null(approval.ConsumedAt);
+    }
+
+    /// <summary>
+    /// FIX M-1 (revision backend+contable, 2026-05-28): una moneda extranjera SOPORTADA (USD) pero
+    /// con tipo de cambio del snapshot INCOHERENTE (0, por dato cargado via SQL crudo / backfill /
+    /// path que no poblo el TC) debe abortar TERMINAL — nunca emitir una NC en DOL valuada como
+    /// pesos (un dolar a cotizacion 0 o 1).
+    ///
+    /// <para>El service debe: NO llamar a EnqueuePartialCreditNoteAsync, persistir audit
+    /// "PartialNcAborted_IncoherentRate", y tirar BusinessInvariantViolationException.</para>
+    /// </summary>
+    [Fact]
+    public async Task OnApprovedAsync_Fase2_PartialNc_ForeignCurrencyZeroRate_AbortsTerminal()
+    {
+        // ARRANGE: USD (moneda soportada) PERO con TC del snapshot en 0 (incoherente).
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, _, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000m,
+                fiscalAmountToCredit: 700m,
+                currencyAtEvent: "USD",
+                exchangeRateAtEvent: 0m); // TC incoherente para moneda extranjera
+
+        // ACT + ASSERT: aborta terminal por cotizacion incoherente.
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+                approvalId,
+                "admin-distinto",
+                "Admin",
+                "Aprobado: USD con TC 0 debe bloquearse para no valuar un dolar como un peso",
+                CancellationToken.None));
+
+        Assert.Contains("USD", ex.Message);
+
+        // Audit del aborto por cotizacion incoherente.
+        var audit = await bundle.Ctx.AuditLogs.AsNoTracking()
+            .Where(a => a.Action == "PartialNcAborted_IncoherentRate")
+            .FirstOrDefaultAsync();
+        Assert.NotNull(audit);
+
+        // NO se encolo ninguna NC.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(), It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// GAP-1 (defense-in-depth, revision 2026-05-28): el caso legacy. Una factura en USD emitida
+    /// ANTES de F2.5 quedo registrada en ARCA en PESOS (<c>OriginatingInvoice.MonId = "PES"</c>)
+    /// aunque su snapshot fiscal diga <c>CurrencyAtEvent = "USD"</c>. Con el flag prendido, sin el
+    /// guard GAP-1, el emisor armaria una NC en DOL asociada a una factura registrada en PES =
+    /// desfasaje fiscal NC != comprobante origen. El guard lo frena ANTES de emitir.
+    ///
+    /// <para>El service debe:</para>
+    ///   - PASAR el guard de moneda (USD soportada) y el de TC (1000 coherente);
+    ///   - ABORTAR en el guard GAP-1 con audit "PartialNcAborted_CurrencyMismatchVsOrigin";
+    ///   - NO llamar a EnqueuePartialCreditNoteAsync;
+    ///   - dejar el BC en ManualReviewApproved (tratamiento manual), no transicionar a emision.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task OnApprovedAsync_Fase2_PartialNc_CurrencyMismatchVsOrigin_AbortsManual()
+    {
+        // ARRANGE: snapshot USD (TC sano = 1000) pero factura origen registrada en ARCA como PES
+        // (caso factura USD legacy pre-F2.5).
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, _, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000m,
+                fiscalAmountToCredit: 700m,
+                currencyAtEvent: "USD",
+                exchangeRateAtEvent: 1000m,
+                originInvoiceMonId: "PES"); // <-- desfasaje: snapshot USD pero factura en PES
+
+        // ACT + ASSERT: debe abortar por mismatch de moneda NC vs origen.
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+                approvalId,
+                "admin-distinto",
+                "Admin",
+                "Aprobado: factura USD legacy registrada en PES debe bloquearse para no desfasar la NC",
+                CancellationToken.None));
+
+        // El mensaje menciona los dos codigos ARCA (DOL derivado del snapshot vs PES del origen).
+        Assert.Contains("DOL", ex.Message);
+        Assert.Contains("PES", ex.Message);
+
+        // Audit del aborto GAP-1.
+        var audit = await bundle.Ctx.AuditLogs.AsNoTracking()
+            .Where(a => a.Action == "PartialNcAborted_CurrencyMismatchVsOrigin")
+            .FirstOrDefaultAsync();
+        Assert.NotNull(audit);
+
+        // NO se encolo ninguna NC.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                It.IsAny<int>(), It.IsAny<PartialCreditNoteEmissionInput>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // El BC queda en ManualReviewApproved (dead-end manual): el audit del paso previo
+        // de OnApprovedAsync gatillo SaveChanges, por eso la transicion previa quedo persistida
+        // aun cuando la emision real aborto en el guard GAP-1.
+        var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
+            .FirstAsync(b => b.PublicId == bcPublicId);
+        Assert.Equal(BookingCancellationStatus.ManualReviewApproved, bcAfter.Status);
+
+        // Approval queda Approved pero NO Consumed (MarkConsumedAsync vive despues del throw).
+        var approval = await bundle.Ctx.ApprovalRequests.AsNoTracking()
+            .FirstAsync(a => a.Id == approvalId);
+        Assert.Null(approval.ConsumedAt);
+    }
+
+    /// <summary>
+    /// GAP-1 caso feliz: factura USD CORRECTA post-F2.5 (registrada en ARCA como "DOL") +
+    /// snapshot "USD" (-> "DOL"). Los dos codigos coinciden => el guard GAP-1 NO dispara y la NC
+    /// parcial real se emite normal. Garantiza que el guard SOLO frena el caso incoherente y no
+    /// rompe el flujo multimoneda legitimo.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task OnApprovedAsync_Fase2_PartialNc_CurrencyMatchesOrigin_EmitsNormally()
+    {
+        // ARRANGE: snapshot USD + factura origen "DOL" (post-F2.5, coherente).
+        var bundle = BuildService(enableF2RealEmission: true);
+        var (_, _, _, invoiceId, bcPublicId, approvalId) =
+            await SeedManualReviewPendingBcAsync(
+                ctx: bundle.Ctx,
+                importeTotal: 1_000m,
+                fiscalAmountToCredit: 700m,
+                currencyAtEvent: "USD",
+                exchangeRateAtEvent: 1000m,
+                originInvoiceMonId: "DOL"); // coincide con snapshot USD->DOL
+
+        // ACT: el guard GAP-1 no dispara; emite normal.
+        await ((IPartialCreditNoteApprovalBridge)bundle.Service).OnApprovedAsync(
+            approvalId,
+            "admin-distinto",
+            "Admin",
+            "Aprobado: factura USD post-F2.5 registrada en DOL coincide con el snapshot, emite normal",
+            CancellationToken.None);
+
+        // ASSERT: la NC parcial real se encolo con la moneda del snapshot.
+        bundle.InvoiceMock.Verify(
+            i => i.EnqueuePartialCreditNoteAsync(
+                invoiceId,
+                It.Is<PartialCreditNoteEmissionInput>(input =>
+                    input.FiscalAmountToCredit == 700m
+                    && input.Currency == "USD"
+                    && input.ExchangeRateAtOriginalInvoice == 1000m),
+                "admin-distinto",
+                "Admin",
+                It.IsAny<string?>(),
+                approvalId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // BC transiciono a emision (no dead-end manual).
+        var bcAfter = await bundle.Ctx.BookingCancellations.AsNoTracking()
+            .FirstAsync(b => b.PublicId == bcPublicId);
+        Assert.Equal(BookingCancellationStatus.AwaitingFiscalConfirmation, bcAfter.Status);
+
+        // NO se persistio el audit de aborto GAP-1.
+        var abortAudit = await bundle.Ctx.AuditLogs.AsNoTracking()
+            .Where(a => a.Action == "PartialNcAborted_CurrencyMismatchVsOrigin")
+            .FirstOrDefaultAsync();
+        Assert.Null(abortAudit);
     }
 
 }

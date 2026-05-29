@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Entities.Afip;
+using TravelApi.Domain.Helpers;
 using System.Text.Json;
 using TravelApi.Application.DTOs;
 using Hangfire;
@@ -729,6 +730,12 @@ public class AfipService : IAfipService
              ImporteTotal = total,
              ImporteNeto = net,
              ImporteIva = iva,
+             // FC1.3.F2.5 (multimoneda, 2026-05-28): persistimos la moneda/cotizacion del
+             // request en la Invoice. ProcessInvoiceJob las relee de esta misma fila para
+             // armar el XML SOAP. Los callers FC1.2 no setean estas props -> defaults
+             // ("PES", 1) -> comportamiento identico a antes de F2.5.
+             MonId = request.MonId,
+             MonCotiz = request.MonCotiz,
              CreatedAt = DateTime.UtcNow,
              WasForced = request.ForceIssue,
              ForceReason = request.ForceReason,
@@ -928,6 +935,47 @@ public class AfipService : IAfipService
         _ => 0m
     };
 
+    /// <summary>
+    /// FC1.3.F2.5 (multimoneda) — fuente UNICA del fragmento SOAP &lt;MonId&gt;/&lt;MonCotiz&gt; que
+    /// viaja en el envelope FECAESolicitar de <see cref="ProcessInvoiceJob"/>.
+    ///
+    /// <para><b>Por que existe este metodo</b> (fix M-2, revision 2026-05-28): antes la
+    /// interpolacion estaba inline en el SOAP y el test unit la replicaba en su propio helper —
+    /// un test tautologico que assertaba contra su propia copia, no contra el codigo real. Al
+    /// extraer el armado aca, el test de formato llama a ESTE metodo: si alguien cambia el formato,
+    /// el test rojo lo detecta (en vez de un comprobante rebotado por ARCA en produccion).</para>
+    ///
+    /// <para><b>Byte-identidad para PES</b> (de-riesgo homologacion): este metodo corre para TODOS
+    /// los comprobantes (es el path comun FC1.2, NO esta gateado por el flag de F2.5). Para no
+    /// arriesgar una regresion en la facturacion existente —que ya esta homologada con ARCA—,
+    /// cuando la moneda es "PES" emitimos el literal <c>&lt;MonCotiz&gt;1&lt;/MonCotiz&gt;</c>
+    /// EXACTAMENTE como el hardcoded historico. El formato de 6 decimales (1234.560000) se usa
+    /// SOLO para moneda extranjera, que se homologa por separado antes de prender el flag.</para>
+    ///
+    /// <para><b>Por que 6 decimales + InvariantCulture en extranjera</b>: ARCA exige el PUNTO como
+    /// separador decimal. Sin InvariantCulture, un server con locale es-AR escribiria una coma y
+    /// ARCA rebotaria el comprobante. Los 6 decimales dan precision suficiente para cualquier TC.</para>
+    /// </summary>
+    /// <param name="monId">Codigo de moneda ARCA ("PES", "DOL", ...).</param>
+    /// <param name="monCotiz">Cotizacion contra el peso (1 para pesos, TC del comprobante para extranjera).</param>
+    /// <returns>El fragmento XML <c>&lt;MonId&gt;...&lt;/MonId&gt;&lt;MonCotiz&gt;...&lt;/MonCotiz&gt;</c>.</returns>
+    internal static string BuildMonedaSoapFragment(string monId, decimal monCotiz)
+    {
+        // Pesos: byte-identico al hardcoded historico "<MonCotiz>1</MonCotiz>". Cero riesgo de
+        // regresion para la facturacion FC1.2 ya homologada. Usamos InvariantCulture igual por
+        // las dudas que monCotiz no sea exactamente 1 (defensivo), manteniendo el formato sin
+        // decimales para que coincida con lo que ARCA ya acepta hace tiempo.
+        if (string.Equals(monId, "PES", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"<MonId>{monId}</MonId>" +
+                   $"<MonCotiz>{monCotiz.ToString("0.######", CultureInfo.InvariantCulture)}</MonCotiz>";
+        }
+
+        // Moneda extranjera (F2.5): 6 decimales fijos para precision del TC.
+        return $"<MonId>{monId}</MonId>" +
+               $"<MonCotiz>{monCotiz.ToString("0.000000", CultureInfo.InvariantCulture)}</MonCotiz>";
+    }
+
     [AutomaticRetry(Attempts = 0)] // Don't auto-retry AFIP calls blindly
     public async Task ProcessInvoiceJob(int invoiceId)
     {
@@ -944,6 +992,22 @@ public class AfipService : IAfipService
         {
             var settings = await _context.AfipSettings.FirstOrDefaultAsync();
             if (settings == null) throw new Exception("AFIP Not Configured");
+
+            // FC1.3.F2.5 (fix m-2, 2026-05-28): validacion defensiva del boundary. MonId es una
+            // prop publica de CreateInvoiceRequest sin validacion; un caller equivocado podria
+            // dejar el ISO ("USD") en vez del codigo ARCA ("DOL"), y el SOAP lo mandaria literal.
+            // Fallar ACA con un mensaje claro es mejor que un rechazo opaco de ARCA. La validacion
+            // usa la fuente unica de codigos (ArcaCurrencyMapper) para no duplicar el catalogo.
+            if (!ArcaCurrencyMapper.IsValidArcaCurrencyCode(invoice.MonId))
+            {
+                _logger.LogError(
+                    "ProcessInvoiceJob abortado para Invoice {InvoiceId}: MonId '{MonId}' no es un codigo ARCA valido " +
+                    "(esperado PES o DOL). Posible ISO sin mapear. No se POSTea a ARCA.",
+                    invoiceId, invoice.MonId);
+                throw new InvalidOperationException(
+                    $"Invoice {invoiceId} tiene MonId '{invoice.MonId}', que no es un codigo de moneda ARCA valido " +
+                    "(esperado PES o DOL). El comprobante no se envia a ARCA. Revisar el caller que poblo MonId.");
+            }
 
             await EnsureAuth(settings);
 
@@ -1092,8 +1156,13 @@ public class AfipService : IAfipService
                     <FchServDesde>{today}</FchServDesde>
                     <FchServHasta>{today}</FchServHasta>
                     <FchVtoPago>{DateTime.Now.AddDays(10).ToString("yyyyMMdd")}</FchVtoPago>
-                    <MonId>PES</MonId>
-                    <MonCotiz>1</MonCotiz>
+                    <!-- FC1.3.F2.5 (multimoneda, 2026-05-28): MonId/MonCotiz salen de la Invoice
+                         (poblada en CreatePendingInvoice). El armado lo centraliza
+                         BuildMonedaSoapFragment para que el test unit blinde el MISMO codigo que
+                         corre en produccion (ver AfipServiceMonedaSoapFormatTests). Para pesos el
+                         fragmento es BYTE-IDENTICO al hardcoded historico; el formato de 6 decimales
+                         se usa SOLO para moneda extranjera (ver el metodo). -->
+                    {BuildMonedaSoapFragment(invoice.MonId, invoice.MonCotiz)}
                     <CondicionIVAReceptorId>{GetConditionIvaId(null, docTipo)}</CondicionIVAReceptorId>
                     {sbCbtesAsoc}
                     {sbTrib}

@@ -5,6 +5,7 @@ using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Domain.Helpers;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -148,9 +149,33 @@ public class FiscalLiquidationCalculator : IFiscalLiquidationCalculator
                 input.OriginatingInvoice.Id, input.OriginatingInvoice.Tributes.Count);
         }
 
-        // Moneda distinta de ARS — Fase 2 implementa prorrateo multimoneda.
-        // string.Equals con InvariantCulture evita falsos negativos por casing.
-        if (!string.Equals(input.Currency, "ARS", StringComparison.OrdinalIgnoreCase))
+        // Moneda distinta de ARS.
+        //
+        // FC1.3.F2.5 (multimoneda, 2026-05-28): este gate decide si una factura en moneda
+        // extranjera va a revision manual o si puede auto-emitirse como NC parcial.
+        //
+        // FIX B-1 (revision backend+contable, 2026-05-28): ANTES el criterio era
+        // "isForeign && !flag". Eso tenia DOS agujeros graves cuando el flag estaba ON:
+        //   1) Una moneda que el sistema NO sabe mapear a ARCA (ej. EUR, BRL) dejaba de
+        //      disparar MultiCurrency, asi que la liquidacion quedaba auto-aprobable. Mas
+        //      adelante, el emisor (que SI valida con ArcaCurrencyMapper) la rechazaba o
+        //      —en el path de NC total— la emitia en PESOS por default. Desfasaje fiscal.
+        //   2) El criterio del calculator ("!= ARS") y el del emisor ("IsSupported", que
+        //      hoy es solo ARS+USD) estaban DESALINEADOS. Si divergian, una moneda pasaba
+        //      el calculator pero moria en el emisor (o peor, se emitia mal).
+        //
+        // Criterio nuevo (alineado con el emisor, fuente unica ArcaCurrencyMapper):
+        //   - Moneda extranjera NO soportada por el mapeo ARCA  -> MANUAL SIEMPRE, sin
+        //     importar el flag. Nunca auto-emite (ni en PES ni con throw a mitad de camino).
+        //   - Moneda extranjera soportada (USD) con flag OFF     -> MANUAL (Fase 1 intacta:
+        //     el SOAP todavia no manda la moneda real con el flag apagado).
+        //   - Moneda extranjera soportada (USD) con flag ON      -> auto-emitible: el
+        //     pipeline F2.5 ya manda MonId/MonCotiz reales hasta el SOAP.
+        //   - ARS -> nunca dispara (no es extranjera).
+        // OrdinalIgnoreCase evita falsos negativos por casing ("usd"/"USD").
+        bool isForeignCurrency = !string.Equals(input.Currency, "ARS", StringComparison.OrdinalIgnoreCase);
+        bool currencySupportedByArca = ArcaCurrencyMapper.IsSupported(input.Currency);
+        if (isForeignCurrency && (!currencySupportedByArca || !settings.EnablePartialCreditNoteRealEmission))
         {
             reason |= ReviewRequiredReason.MultiCurrency;
         }

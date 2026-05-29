@@ -637,4 +637,92 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         Assert.Equal("Error", notif!.Type);
         Assert.Contains("no soporta anulacion automatica", notif.Message);
     }
+
+    /// <summary>
+    /// FIX B-1 capa 2 / B-2 (revision backend+contable, 2026-05-28): DEFENSE IN DEPTH del path de
+    /// NC TOTAL. Una factura en moneda extranjera (MonId != "PES") NUNCA debe emitir una NC total
+    /// en pesos. <c>EnqueueAnnulmentAsync</c> tiene que fallar SINCRONO (sin encolar el job, sin
+    /// dejar la factura en Pending) con un mensaje claro.
+    ///
+    /// <para>Por que importa: este es el path al que cae una cancelacion auto-aprobable
+    /// (ConfirmAsync step 8) o el fallback FC1.2 con flag OFF (OnApprovedAsync). Antes de F2.5
+    /// el calculator forzaba manual review para toda moneda no-ARS, asi que nunca llegaba aca.
+    /// Con el flag ON, una factura USD podria llegar; este guard impide la NC total en PES.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("DOL")]   // dolar
+    [InlineData("dol")]   // casing distinto: el guard usa OrdinalIgnoreCase para PES, igual lo rechaza
+    [InlineData("EUR")]   // moneda no soportada todavia
+    public async Task EnqueueAnnulmentAsync_ForeignCurrencyInvoice_Throws_AndDoesNotEnqueue(string monId)
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        // La factura 1 es Factura B (tipo soportado) pero en moneda extranjera.
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        var statusAntes = inv.AnnulmentStatus;
+        inv.MonId = monId;
+        inv.MonCotiz = 1234.56m;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.EnqueueAnnulmentAsync(1, "user-X", "Admin", "cancelacion USD", requesterIsAdmin: true, CancellationToken.None));
+        // El mensaje debe mencionar la moneda para que el operador entienda por que se bloqueo.
+        Assert.Contains(monId, ex.Message);
+
+        // No se persistio la solicitud (status sin cambios, sin razon).
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(statusAntes, refreshed.AnnulmentStatus);
+        Assert.Null(refreshed.AnnulmentReason);
+
+        // Y el job NO se encolo: jamas se emite una NC total en pesos para una factura en moneda extranjera.
+        _jobClientMock.Verify(
+            j => j.Create(It.IsAny<Job>(), It.IsAny<EnqueuedState>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// FIX B-1 capa 2 (defensa en profundidad EN EL JOB): aunque <c>EnqueueAnnulmentAsync</c> ya
+    /// bloquea moneda extranjera, <c>ProcessAnnulmentJob</c> es un punto de entrada independiente
+    /// (Hangfire retry, dato sucio, llamada interna). Si llega una factura en moneda extranjera
+    /// directo al job, debe marcar Failed + notificar SIN llamar a AFIP — nunca emite NC en PES.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAnnulmentJob_ForeignCurrencyInvoice_MarksFailed_AndDoesNotCallAfip()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        // Factura B (tipo soportado) en USD, en Pending (estado donde estaria si el guard de
+        // Enqueue no hubiera corrido — ej. dato insertado por SQL crudo + retry de Hangfire).
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        inv.MonId = "DOL";
+        inv.MonCotiz = 1000m;
+        inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        // Completa sin tirar (return temprano controlado).
+        await service.ProcessAnnulmentJob(1, "user-X", approvalRequestId: null);
+
+        var refreshed = await context.Invoices.AsNoTracking().FirstAsync(i => i.Id == 1);
+        Assert.Equal(AnnulmentStatus.Failed, refreshed.AnnulmentStatus);
+
+        // AFIP nunca se invoca: cero riesgo de NC en pesos.
+        _afipMock.Verify(
+            a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()),
+            Times.Never);
+        _afipMock.Verify(
+            a => a.ProcessInvoiceJob(It.IsAny<int>()),
+            Times.Never);
+
+        // Notificacion clara al operador.
+        var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
+        Assert.NotNull(notif);
+        Assert.Equal("Error", notif!.Type);
+        Assert.Contains("DOL", notif.Message);
+    }
 }
