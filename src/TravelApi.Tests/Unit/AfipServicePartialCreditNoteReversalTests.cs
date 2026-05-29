@@ -345,6 +345,95 @@ public class AfipServicePartialCreditNoteReversalTests
         Assert.Equal(-250m, auditDoc.RootElement.GetProperty("reversalAmount").GetDecimal());
     }
 
+    // =========================================================================
+    // FC1.3 Fase 3 (ADR-010, 2026-05-29): alta del caso de reconciliacion en el
+    // mismo path del reversal parcial. El caso nace junto al Payment reversal
+    // (B1: misma transaccion) y SOLO si hay recibos vivos.
+    // =========================================================================
+
+    [Fact]
+    public async Task ApplyPartialReversal_WithLiveReceipts_CreatesReconciliationCaseWithSnapshot()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+
+        // NC parcial con 3 recibos vivos (G-F2-D).
+        await SeedNcScenarioAsync(
+            ctx,
+            originalAmount: 1000m,
+            ncAmount: 250m,
+            bcCreditNoteKind: CreditNoteKind.PartialOnOriginal,
+            payments: new[] { (300m, true), (300m, true), (400m, true) });
+
+        var service = BuildAfipService(ctx, new Mock<IAuditService>().Object);
+
+        await service.ApplyCreditNoteEconomicReversalAsync(invoiceId: 801);
+
+        var reconciliation = await ctx.PartialCreditNoteReconciliations
+            .AsNoTracking()
+            .Include(r => r.Receipts)
+            .SingleOrDefaultAsync();
+
+        Assert.NotNull(reconciliation);
+        Assert.Equal(801, reconciliation!.CreditNoteInvoiceId);
+        Assert.Equal(800, reconciliation.OriginalInvoiceId);
+        Assert.Equal(PartialCreditNoteReconciliationStatus.Pending, reconciliation.Status);
+        // Monto fiscal acreditado = ImporteTotal de la NC parcial (en positivo).
+        Assert.Equal(250m, reconciliation.FiscalAmountCredited);
+        // OpenedBy sale del AnnulledByUserId de la factura original.
+        Assert.Equal("user-123", reconciliation.OpenedByUserId);
+        // Snapshot: una hija por cada recibo vivo.
+        Assert.Equal(3, reconciliation.Receipts.Count);
+        Assert.All(reconciliation.Receipts, c => Assert.Equal(PaymentReceiptStatuses.Issued, c.StatusAtOpen));
+    }
+
+    [Fact]
+    public async Task ApplyPartialReversal_NoLiveReceipts_DoesNotCreateCase()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+
+        // NC parcial pero SIN recibos emitidos (un payment sin receipt Issued).
+        await SeedNcScenarioAsync(
+            ctx,
+            originalAmount: 1000m,
+            ncAmount: 250m,
+            bcCreditNoteKind: CreditNoteKind.PartialOnOriginal,
+            payments: new[] { (1000m, false) });
+
+        var service = BuildAfipService(ctx, new Mock<IAuditService>().Object);
+
+        await service.ApplyCreditNoteEconomicReversalAsync(invoiceId: 801);
+
+        // Sin recibos vivos no hay nada que acomodar -> no se crea caso.
+        var anyCase = await ctx.PartialCreditNoteReconciliations.AsNoTracking().AnyAsync();
+        Assert.False(anyCase);
+    }
+
+    [Fact]
+    public async Task ApplyPartialReversal_RunTwice_DoesNotDuplicateCase()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+
+        await SeedNcScenarioAsync(
+            ctx,
+            originalAmount: 1000m,
+            ncAmount: 250m,
+            bcCreditNoteKind: CreditNoteKind.PartialOnOriginal,
+            payments: new[] { (300m, true), (400m, true) });
+
+        var service = BuildAfipService(ctx, new Mock<IAuditService>().Object);
+
+        // Primer pasada: crea el reversal + el caso.
+        await service.ApplyCreditNoteEconomicReversalAsync(invoiceId: 801);
+        // Segunda pasada (simula reintento de Hangfire): el guard del wrapper detecta
+        // que ya existe el reversal y hace return ANTES de tocar nada -> no duplica el
+        // caso. (B2: el indice unico en CreditNoteInvoiceId es la red de defensa, pero
+        // el guard primario ya lo evita.)
+        await service.ApplyCreditNoteEconomicReversalAsync(invoiceId: 801);
+
+        var caseCount = await ctx.PartialCreditNoteReconciliations.AsNoTracking().CountAsync();
+        Assert.Equal(1, caseCount);
+    }
+
     /// <summary>
     /// Stub minimal para satisfacer el ctor de AfipService.
     /// </summary>

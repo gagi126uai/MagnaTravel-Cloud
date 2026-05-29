@@ -318,6 +318,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // si Hangfire reintenta el job. Configuracion (indice UNIQUE) en OnModelCreating.
     public DbSet<ArcaIdempotencyKey> ArcaIdempotencyKeys => Set<ArcaIdempotencyKey>();
 
+    // FC1.3 Fase 3 (ADR-010, 2026-05-29): bandeja de reconciliacion de NC parciales
+    // con recibos vivos. El caso (padre) nace junto al Payment reversal en
+    // AfipService.ApplyPartialCreditNoteReversalAsync; las hijas son el snapshot de
+    // recibos vivos. Configuracion (FKs, indice unico, CHECK, xmin) en OnModelCreating.
+    public DbSet<PartialCreditNoteReconciliation> PartialCreditNoteReconciliations => Set<PartialCreditNoteReconciliation>();
+    public DbSet<PartialCreditNoteReconciliationReceipt> PartialCreditNoteReconciliationReceipts => Set<PartialCreditNoteReconciliationReceipt>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1184,6 +1191,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<ClientCreditEntry>(modelBuilder);
         ConfigurePublicEntity<ClientCreditWithdrawal>(modelBuilder);
 
+        // FC1.3 Fase 3 (ADR-010): el caso de reconciliacion tiene PublicId (la hija no).
+        ConfigurePublicEntity<PartialCreditNoteReconciliation>(modelBuilder);
+
         // ===== BookingCancellation (aggregate root) =====
         modelBuilder.Entity<BookingCancellation>(entity =>
         {
@@ -1322,6 +1332,92 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // Concurrency lock-free (ADR-002 §2.5 / B11). Pre-requisito FC1.1
             // verificado: Npgsql 8.x soporta xmin nativamente.
             entity.UseXminAsConcurrencyToken();
+        });
+
+        // ============================================================
+        // FC1.3 Fase 3 (ADR-010, 2026-05-29): bandeja de reconciliacion de
+        // NC parciales con recibos vivos.
+        // ============================================================
+
+        // ===== PartialCreditNoteReconciliation (el caso) =====
+        modelBuilder.Entity<PartialCreditNoteReconciliation>(entity =>
+        {
+            entity.ToTable("PartialCreditNoteReconciliations");
+
+            // Status como STRING (no int) para que el CHECK constraint de la migracion
+            // sea legible ('Pending'/'Resolved') y la columna se entienda leyendo la BD
+            // directo. Mismo criterio que el ADR-010 §3.2. EF traduce el enum <-> string.
+            entity.Property(r => r.Status)
+                  .HasConversion<string>()
+                  .HasMaxLength(20)
+                  .IsRequired();
+
+            entity.Property(r => r.FiscalAmountCredited).HasPrecision(18, 2);
+            entity.Property(r => r.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(r => r.OpenedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(r => r.OpenedByUserName).HasMaxLength(200);
+            entity.Property(r => r.ResolvedByUserId).HasMaxLength(450);
+            entity.Property(r => r.ResolvedByUserName).HasMaxLength(200);
+            entity.Property(r => r.ResolutionNotes).HasMaxLength(1000);
+
+            // Indice UNICO sobre CreditNoteInvoiceId (B2): un caso por NC parcial. Es la
+            // red de defensa de idempotencia — si el job de reversal reintenta, el segundo
+            // intento choca aca. (La idempotencia primaria la da el guard del wrapper
+            // ApplyCreditNoteEconomicReversalAsync, que no re-aplica el reversal.)
+            entity.HasIndex(r => r.CreditNoteInvoiceId)
+                  .IsUnique()
+                  .HasDatabaseName("IX_PartialCreditNoteReconciliations_CreditNoteInvoiceId");
+
+            // FK a la NC parcial. Restrict: la NC es evidencia fiscal, no se borra en cascada.
+            entity.HasOne(r => r.CreditNoteInvoice)
+                  .WithMany()
+                  .HasForeignKey(r => r.CreditNoteInvoiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // FK a la factura original. Restrict por la misma razon.
+            entity.HasOne(r => r.OriginalInvoice)
+                  .WithMany()
+                  .HasForeignKey(r => r.OriginalInvoiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // FK opcional a la reserva (contexto para el encargado). SetNull si la reserva
+            // desaparece (no deberia, pero no rompemos el caso por eso).
+            entity.HasOne(r => r.Reserva)
+                  .WithMany()
+                  .HasForeignKey(r => r.ReservaId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            // Hijas: snapshot de recibos vivos. CASCADE — si se borra el caso (solo en
+            // tests, nunca en prod) se borran sus snapshots. No arrastra los PaymentReceipt
+            // reales (esos cuelgan de otra FK, ver config de la hija).
+            entity.HasMany(r => r.Receipts)
+                  .WithOne(c => c.Reconciliation)
+                  .HasForeignKey(c => c.ReconciliationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // Concurrency: dos encargados cerrando el mismo caso -> uno recibe
+            // DbUpdateConcurrencyException -> el endpoint resolve devuelve 409.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== PartialCreditNoteReconciliationReceipt (snapshot de un recibo) =====
+        modelBuilder.Entity<PartialCreditNoteReconciliationReceipt>(entity =>
+        {
+            entity.ToTable("PartialCreditNoteReconciliationReceipts");
+            entity.Property(c => c.Amount).HasPrecision(18, 2);
+            entity.Property(c => c.StatusAtOpen).HasMaxLength(30).IsRequired();
+
+            // FK al PaymentReceipt real. Restrict: el recibo es comprobante con numeracion
+            // correlativa, jamas se borra; este snapshot solo apunta a el.
+            entity.HasOne(c => c.PaymentReceipt)
+                  .WithMany()
+                  .HasForeignKey(c => c.PaymentReceiptId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // PaymentId NO es FK declarada (es un denormalizado para que el DTO exponga el
+            // PublicId del Payment sin join extra). El PaymentReceipt ya garantiza la
+            // integridad con el Payment a traves de PaymentReceipt.PaymentId.
+            entity.HasIndex(c => c.ReconciliationId);
         });
 
         // ===== OperatorRefundReceived (aggregate root) =====

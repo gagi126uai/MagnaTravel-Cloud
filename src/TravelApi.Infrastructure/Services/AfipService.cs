@@ -1402,17 +1402,73 @@ public class AfipService : IAfipService
         // 2) Query de receipts vivos (RH2-006): los Issued cuyos Payments tienen
         //    RelatedInvoiceId == invoice.OriginalInvoiceId. Estos son los receipts que
         //    el admin podra anular manualmente en la UI Fase 3.
-        var liveReceiptIds = new List<int>();
+        //
+        //    Traemos los datos completos del recibo (no solo el Id) porque la bandeja de
+        //    reconciliacion (Fase 3) necesita un snapshot: PaymentReceiptId + PaymentId +
+        //    Amount + estado al abrir. El PaymentId es clave porque el endpoint de anular
+        //    recibo resuelve por Payment, no por receipt (ADR-010 N1).
+        var liveReceipts = new List<PaymentReceipt>();
         if (invoice.OriginalInvoiceId.HasValue)
         {
-            liveReceiptIds = await _context.PaymentReceipts
-                .Include(r => r.Payment)
+            liveReceipts = await _context.PaymentReceipts
                 .Where(r => r.Payment!.RelatedInvoiceId == invoice.OriginalInvoiceId
                             && r.Status == PaymentReceiptStatuses.Issued)
-                .Select(r => r.Id)
                 .ToListAsync();
         }
+        var liveReceiptIds = liveReceipts.Select(r => r.Id).ToList();
 
+        // 2.bis) FC1.3 Fase 3 (ADR-010, B1): crear el caso de reconciliacion DENTRO DEL
+        //        MISMO SaveChanges que el Payment reversal. Esto es deliberado y critico:
+        //        si lo creáramos despues del SaveChanges, se abriria una ventana donde el
+        //        reversal ya esta aplicado + los recibos siguen vivos + NO hay caso en la
+        //        bandeja = "plata invisible". Al agregar el caso al mismo ChangeTracker,
+        //        reversal + caso commitean juntos en una sola transaccion implicita de EF.
+        //
+        //        Solo creamos el caso si hay recibos vivos: sin recibos no hay nada que
+        //        acomodar (ej. factura sin recibos emitidos).
+        //
+        //        R3 (ADR-010): este metodo SOLO corre en el path CAE aprobado (Success).
+        //        Por eso nunca nace un caso huerfano de una NC que ARCA rechazo.
+        if (liveReceipts.Count > 0)
+        {
+            // El user de apertura sale del que disparo la cancelacion (AnnulledByUserId).
+            // Si fue un proceso automatico, queda "system" (ADR-010 N3): cualquier
+            // encargado podra cerrar el caso sin pedir bypass de 4-ojos, porque no hay
+            // una "persona que abrio" a la cual exigirsela.
+            var openedByUserId = invoice.OriginalInvoice?.AnnulledByUserId ?? "system";
+            var openedByUserName = invoice.OriginalInvoice?.AnnulledByUserName ?? "Sistema";
+
+            // Moneda del caso: la del FiscalLiquidation del BC si existe (fuente fiscal
+            // del monto acreditado), si no ARS por defecto (hoy todo se factura en pesos;
+            // multimoneda llega en F2.5). NO usamos invoice.MonId porque ese es el codigo
+            // ARCA ('PES'), no el ISO ('ARS') que maneja el resto del modulo.
+            var currency = bc?.FiscalLiquidation?.Currency ?? "ARS";
+
+            var reconciliation = new PartialCreditNoteReconciliation
+            {
+                CreditNoteInvoiceId = invoice.Id,
+                OriginalInvoiceId = invoice.OriginalInvoiceId!.Value,
+                ReservaId = invoice.ReservaId,
+                FiscalAmountCredited = invoice.ImporteTotal,
+                Currency = currency,
+                Status = PartialCreditNoteReconciliationStatus.Pending,
+                OpenedAt = DateTime.UtcNow,
+                OpenedByUserId = openedByUserId,
+                OpenedByUserName = openedByUserName,
+                Receipts = liveReceipts
+                    .Select(r => new PartialCreditNoteReconciliationReceipt
+                    {
+                        PaymentReceiptId = r.Id,
+                        PaymentId = r.PaymentId,
+                        Amount = r.Amount,
+                        StatusAtOpen = r.Status,
+                    })
+                    .ToList(),
+            };
+            _context.PartialCreditNoteReconciliations.Add(reconciliation);
+        }
+
+        // reversal + caso (si aplica) commitean juntos aca (B1).
         await _context.SaveChangesAsync();
 
         // 3) Audit nuevo (PartialCreditNoteEconomicReversalNoCascade) con detalle JSON.

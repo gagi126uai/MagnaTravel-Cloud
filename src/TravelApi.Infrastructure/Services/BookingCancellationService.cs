@@ -60,6 +60,15 @@ public class BookingCancellationService
     // entero en tests (su ctor pide 8+ dependencias).
     private readonly IAdminUserCountService _adminUserCount;
 
+    // FC1.3 Fase 3 (ADR-010 R1): evaluador compartido de la regla GR-005 (bypass
+    // 4-ojos single-admin). Antes esta logica vivia inline en TryApplyGr005BypassAsync;
+    // se extrajo a un servicio compartido para que la bandeja de reconciliacion (Fase 3)
+    // use exactamente la misma evaluacion. Opcional en el ctor (default null) para no
+    // romper los tests unit/integration existentes que construyen el service a mano: si
+    // no se inyecta, se arma uno con el IAdminUserCountService ya presente (mismo
+    // comportamiento, ya que el evaluator solo depende de ese servicio).
+    private readonly IFourEyesBypassEvaluator _fourEyesBypassEvaluator;
+
     public BookingCancellationService(
         AppDbContext db,
         IInvoiceService invoiceService,
@@ -68,7 +77,8 @@ public class BookingCancellationService
         ILogger<BookingCancellationService> logger,
         IOperationalFinanceSettingsService settings,
         IFiscalLiquidationCalculator calculator,
-        IAdminUserCountService adminUserCount)
+        IAdminUserCountService adminUserCount,
+        IFourEyesBypassEvaluator? fourEyesBypassEvaluator = null)
     {
         _db = db;
         _invoiceService = invoiceService;
@@ -78,6 +88,8 @@ public class BookingCancellationService
         _settings = settings;
         _calculator = calculator;
         _adminUserCount = adminUserCount;
+        _fourEyesBypassEvaluator = fourEyesBypassEvaluator
+            ?? new FourEyesBypassEvaluator(adminUserCount);
     }
 
     // =========================================================================
@@ -1906,14 +1918,12 @@ public class BookingCancellationService
         OperationalFinanceSettings settings,
         CancellationToken ct)
     {
-        if (!settings.Allow4EyesBypassWhenSingleAdmin)
-            return false;
-
-        if (string.IsNullOrWhiteSpace(comment) || comment.Trim().Length < 100)
-            return false;
-
-        var activeAdminCount = await _adminUserCount.CountActiveAdminsAsync(ct);
-        return activeAdminCount == 1;
+        // FC1.3 Fase 3 (ADR-010 R1): la regla GR-005 ahora vive en el servicio
+        // compartido IFourEyesBypassEvaluator (mismos chequeos, mismo orden, mismos
+        // umbrales). Este metodo se mantiene como punto de entrada de los call-sites
+        // existentes (EditLiquidation + OnApproved) para no cambiar su flujo, pero la
+        // evaluacion es la misma que usa la bandeja de reconciliacion.
+        return await _fourEyesBypassEvaluator.EvaluateAsync(comment, settings, ct);
     }
 
     /// <summary>

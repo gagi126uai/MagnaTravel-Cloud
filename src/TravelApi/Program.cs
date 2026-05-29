@@ -471,6 +471,17 @@ builder.Services.AddScoped<IFiscalLiquidationCalculator, FiscalLiquidationCalcul
 // inyectar UserManager directamente (mockearlo en tests requiere 8+ deps).
 builder.Services.AddScoped<IAdminUserCountService, AdminUserCountService>();
 
+// FC1.3 Fase 3 (ADR-010 R1, 2026-05-29) — evaluador compartido de la regla GR-005
+// (bypass de 4-ojos cuando hay un solo admin). Extraido del metodo privado que vivia
+// en BookingCancellationService para que el cierre de la bandeja de reconciliacion
+// use exactamente la misma evaluacion (DRY). Depende solo de IAdminUserCountService.
+builder.Services.AddScoped<IFourEyesBypassEvaluator, FourEyesBypassEvaluator>();
+
+// FC1.3 Fase 3 (ADR-010, 2026-05-29) — bandeja de reconciliacion de NC parciales con
+// recibos vivos. Lista + cierra casos. La creacion del caso vive en AfipService
+// (transaccional con el Payment reversal), no aca.
+builder.Services.AddScoped<IPartialCreditNoteReconciliationService, PartialCreditNoteReconciliationService>();
+
 builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
