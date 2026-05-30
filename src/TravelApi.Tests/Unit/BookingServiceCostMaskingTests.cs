@@ -67,6 +67,7 @@ public class BookingServiceCostMaskingTests
             new Repository<HotelBooking>(context),
             new Repository<PackageBooking>(context),
             new Repository<TransferBooking>(context),
+            new Repository<AssistanceBooking>(context),
             new Repository<Reserva>(context),
             new Repository<Supplier>(context),
             reservaService.Object,

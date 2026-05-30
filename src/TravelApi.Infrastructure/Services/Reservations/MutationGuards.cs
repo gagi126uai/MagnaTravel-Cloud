@@ -233,7 +233,10 @@ public static class MutationGuards
                 .Select(b => b.ReservaId))
             .Concat(db.FlightSegments.AsNoTracking()
                 .Where(s => s.SupplierId == supplierId)
-                .Select(s => s.ReservaId));
+                .Select(s => s.ReservaId))
+            .Concat(db.AssistanceBookings.AsNoTracking()
+                .Where(b => b.SupplierId == supplierId)
+                .Select(b => b.ReservaId));
 
         var hasLiveInvoice = await db.Invoices.AsNoTracking().AnyAsync(
             i => !string.IsNullOrEmpty(i.CAE)

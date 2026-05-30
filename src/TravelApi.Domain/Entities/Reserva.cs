@@ -116,6 +116,8 @@ public class Reserva : IHasPublicId
     public ICollection<HotelBooking> HotelBookings { get; set; } = new List<HotelBooking>();
     public ICollection<TransferBooking> TransferBookings { get; set; } = new List<TransferBooking>();
     public ICollection<PackageBooking> PackageBookings { get; set; } = new List<PackageBooking>();
+    // Asistencias al viajero (seguros). Tipo de servicio propio, espejo de los otros 4.
+    public ICollection<AssistanceBooking> AssistanceBookings { get; set; } = new List<AssistanceBooking>();
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
     public ICollection<FlightSegment> FlightSegments { get; set; } = new List<FlightSegment>();
     public ICollection<ReservaAttachment> Attachments { get; set; } = new List<ReservaAttachment>();

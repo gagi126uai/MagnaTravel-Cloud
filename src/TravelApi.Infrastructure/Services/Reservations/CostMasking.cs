@@ -116,4 +116,20 @@ public static class CostMasking
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
     }
+
+    /// <summary>
+    /// Enmascara <see cref="AssistanceBookingDto.NetCost"/> a 0 si el caller no puede
+    /// ver costos. Mismo criterio fail-closed que <see cref="MaskHotelAsync"/>. Asistencia
+    /// tampoco expone Commission en el DTO, asi que solo hay que ocultar NetCost.
+    /// </summary>
+    public static async Task MaskAssistanceAsync(
+        AssistanceBookingDto? dto,
+        IHttpContextAccessor? httpContextAccessor,
+        IUserPermissionResolver? permissionResolver,
+        CancellationToken ct)
+    {
+        if (dto is null) return;
+        if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
+        dto.NetCost = 0m;
+    }
 }

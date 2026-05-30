@@ -285,6 +285,10 @@ public class ReservaService : IReservaService
                     .Where(f => ids.Contains(f.Id))
                     .Select(f => new { f.Id, f.PublicId })
                     .ToDictionaryAsync(x => x.Id, x => x.PublicId, ct),
+                AssignmentServiceType.Assistance => await _context.AssistanceBookings.AsNoTracking()
+                    .Where(a => ids.Contains(a.Id))
+                    .Select(a => new { a.Id, a.PublicId })
+                    .ToDictionaryAsync(x => x.Id, x => x.PublicId, ct),
                 AssignmentServiceType.Generic => await _context.Servicios.AsNoTracking()
                     .Where(s => ids.Contains(s.Id))
                     .Select(s => new { s.Id, s.PublicId })
@@ -329,6 +333,7 @@ public class ReservaService : IReservaService
             AssignmentServiceType.Transfer => await ResolveRequiredIdAsync<TransferBooking>(request.ServicePublicIdOrLegacyId, ct),
             AssignmentServiceType.Package => await ResolveRequiredIdAsync<PackageBooking>(request.ServicePublicIdOrLegacyId, ct),
             AssignmentServiceType.Flight => await ResolveRequiredIdAsync<FlightSegment>(request.ServicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Assistance => await ResolveRequiredIdAsync<AssistanceBooking>(request.ServicePublicIdOrLegacyId, ct),
             AssignmentServiceType.Generic => await ResolveRequiredIdAsync<ServicioReserva>(request.ServicePublicIdOrLegacyId, ct),
             _ => throw new ArgumentException("ServiceType no soportado.")
         };
@@ -340,6 +345,7 @@ public class ReservaService : IReservaService
             AssignmentServiceType.Transfer => await _context.TransferBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
             AssignmentServiceType.Package => await _context.PackageBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
             AssignmentServiceType.Flight => await _context.FlightSegments.AnyAsync(f => f.Id == serviceId && f.ReservaId == reservaId, ct),
+            AssignmentServiceType.Assistance => await _context.AssistanceBookings.AnyAsync(a => a.Id == serviceId && a.ReservaId == reservaId, ct),
             AssignmentServiceType.Generic => await _context.Servicios.AnyAsync(s => s.Id == serviceId && s.ReservaId == reservaId, ct),
             _ => false
         };
@@ -399,6 +405,8 @@ public class ReservaService : IReservaService
                 .Where(b => b.Id == serviceId).Select(b => (Guid?)b.PublicId).FirstOrDefaultAsync(ct),
             AssignmentServiceType.Flight => await _context.FlightSegments.AsNoTracking()
                 .Where(f => f.Id == serviceId).Select(f => (Guid?)f.PublicId).FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Assistance => await _context.AssistanceBookings.AsNoTracking()
+                .Where(a => a.Id == serviceId).Select(a => (Guid?)a.PublicId).FirstOrDefaultAsync(ct),
             AssignmentServiceType.Generic => await _context.Servicios.AsNoTracking()
                 .Where(s => s.Id == serviceId).Select(s => (Guid?)s.PublicId).FirstOrDefaultAsync(ct),
             _ => null
@@ -422,6 +430,10 @@ public class ReservaService : IReservaService
                 .Where(b => b.Id == serviceId)
                 .Select(b => $"Paquete {b.PackageName ?? "sin nombre"}")
                 .FirstOrDefaultAsync(ct) ?? "Paquete",
+            AssignmentServiceType.Assistance => await _context.AssistanceBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => $"Asistencia {b.PlanType ?? "seguro"}")
+                .FirstOrDefaultAsync(ct) ?? "Asistencia",
             _ => serviceType
         };
     }
@@ -555,6 +567,7 @@ public class ReservaService : IReservaService
             .Include(r => r.TransferBookings)
             .Include(r => r.PackageBookings)
             .Include(r => r.FlightSegments)
+            .Include(r => r.AssistanceBookings)
             .FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
@@ -582,11 +595,12 @@ public class ReservaService : IReservaService
                 || (reserva.HotelBookings?.Any() ?? false)
                 || (reserva.TransferBookings?.Any() ?? false)
                 || (reserva.PackageBookings?.Any() ?? false)
-                || (reserva.FlightSegments?.Any() ?? false);
+                || (reserva.FlightSegments?.Any() ?? false)
+                || (reserva.AssistanceBookings?.Any() ?? false);
             if (!hasAnyService)
             {
                 dto.Allowed = false;
-                dto.BlockingReasons.Add("Cargá al menos un servicio (hotel, vuelo, transfer o paquete) antes de confirmar la reserva.");
+                dto.BlockingReasons.Add("Cargá al menos un servicio (hotel, vuelo, transfer, paquete o asistencia) antes de confirmar la reserva.");
             }
 
             if (dto.ExpectedPassengerCount > 0 && dto.CurrentPassengerCount < dto.ExpectedPassengerCount)
@@ -608,11 +622,11 @@ public class ReservaService : IReservaService
     /// pero distinta composicion, AmbiguousComposition=true (warning para el agente,
     /// no bloqueo).
     ///
-    /// Solo HotelBooking y PackageBooking declaran composicion explicita (Adults +
-    /// Children). TransferBooking solo tiene Passengers (total). FlightSegment no
-    /// declara nada. Por eso esos dos no se usan como "anchor" — solo extienden el
-    /// total minimo via fallback. Infants nunca viene de servicios; queda en 0 a
-    /// menos que el agente lo ajuste manualmente en el modal.
+    /// HotelBooking, PackageBooking y AssistanceBooking declaran composicion explicita
+    /// (Adults + Children) — los 3 sirven como "anchor". TransferBooking solo tiene
+    /// Passengers (total). FlightSegment no declara nada. Por eso esos dos no se usan como
+    /// "anchor" — solo extienden el total minimo via fallback. Infants nunca viene de
+    /// servicios; queda en 0 a menos que el agente lo ajuste manualmente en el modal.
     /// </summary>
     private static (int adults, int children, int infants, bool ambiguous) ComputePaxCompositionFromServices(Reserva reserva)
     {
@@ -625,6 +639,12 @@ public class ReservaService : IReservaService
         foreach (var p in reserva.PackageBookings ?? Enumerable.Empty<PackageBooking>())
         {
             candidates.Add((p.Adults, p.Children, p.Adults + p.Children));
+        }
+        // Asistencia declara Adults+Children (los pasajeros cubiertos por la poliza), igual
+        // que Hotel/Package, asi que tambien es un candidato a "anchor" de composicion.
+        foreach (var a in reserva.AssistanceBookings ?? Enumerable.Empty<AssistanceBooking>())
+        {
+            candidates.Add((a.Adults, a.Children, a.Adults + a.Children));
         }
 
         if (candidates.Count == 0)
@@ -1056,6 +1076,7 @@ public class ReservaService : IReservaService
             .Include(f => f.HotelBookings).ThenInclude(hb => hb.Supplier)
             .Include(f => f.TransferBookings).ThenInclude(tb => tb.Supplier)
             .Include(f => f.PackageBookings).ThenInclude(pb => pb.Supplier)
+            .Include(f => f.AssistanceBookings).ThenInclude(ab => ab.Supplier)
             .FirstOrDefaultAsync(f => f.Id == id);
 
         if (file == null) 
@@ -1125,6 +1146,10 @@ public class ReservaService : IReservaService
         if (dto.TransferBookings is not null)
         {
             foreach (var t in dto.TransferBookings) t.NetCost = 0m;
+        }
+        if (dto.AssistanceBookings is not null)
+        {
+            foreach (var a in dto.AssistanceBookings) a.NetCost = 0m;
         }
     }
 
@@ -1364,6 +1389,19 @@ public class ReservaService : IReservaService
             return;
         }
 
+        // 6. Try Assistance (Bloque 3): si no la contemplamos aca, borrar una asistencia por
+        // este path generico tiraria "no encontrado" sin tocar el saldo -> descuadre silencioso.
+        var assistance = await _context.AssistanceBookings.FindAsync(new object[] { serviceId }, ct);
+        if (assistance != null)
+        {
+            await EnsureCanRemoveServiceAsync(assistance.ReservaId, ct);
+            _context.AssistanceBookings.Remove(assistance);
+            var resId = assistance.ReservaId;
+            await _context.SaveChangesAsync(ct);
+            await UpdateBalanceAsync(resId);
+            return;
+        }
+
         throw new KeyNotFoundException("Servicio no encontrado en ninguna categoría.");
     }
 
@@ -1372,7 +1410,8 @@ public class ReservaService : IReservaService
         var hotel = reserva.HotelBookings?.Sum(h => h.GetExpectedPaxCount()) ?? 0;
         var transfer = reserva.TransferBookings?.Max(t => (int?)t.GetExpectedPaxCount()) ?? 0;
         var package = reserva.PackageBookings?.Sum(p => p.GetExpectedPaxCount()) ?? 0;
-        return Math.Max(hotel, Math.Max(transfer, package));
+        var assistance = reserva.AssistanceBookings?.Sum(a => a.GetExpectedPaxCount()) ?? 0;
+        return Math.Max(hotel, Math.Max(transfer, Math.Max(package, assistance)));
     }
 
     // La logica de capacidad pasajeros vs servicios vive en ReservaCapacityRules
@@ -1410,6 +1449,7 @@ public class ReservaService : IReservaService
             .Include(r => r.HotelBookings)
             .Include(r => r.TransferBookings)
             .Include(r => r.PackageBookings)
+            .Include(r => r.AssistanceBookings)
             .FirstOrDefaultAsync(r => r.Id == reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
@@ -1648,6 +1688,7 @@ public class ReservaService : IReservaService
                 .Include(r => r.HotelBookings)
                 .Include(r => r.PackageBookings)
                 .Include(r => r.TransferBookings)
+                .Include(r => r.AssistanceBookings)
                 .FirstAsync(r => r.Id == id);
             var (adA, adC, adI, _) = ComputePaxCompositionFromServices(fullForPax);
             var expectedPax = adA + adC + adI;
@@ -1683,6 +1724,7 @@ public class ReservaService : IReservaService
                 .Include(r => r.FlightSegments)
                 .Include(r => r.TransferBookings)
                 .Include(r => r.PackageBookings)
+                .Include(r => r.AssistanceBookings)
                 .FirstOrDefaultAsync(r => r.Id == id);
             if (fullReserva == null) throw new KeyNotFoundException("Reserva no encontrada");
 
@@ -1765,6 +1807,7 @@ public class ReservaService : IReservaService
                     .Include(f => f.HotelBookings)
                     .Include(f => f.TransferBookings)
                     .Include(f => f.PackageBookings)
+                    .Include(f => f.AssistanceBookings)
                     .FirstOrDefaultAsync(f => f.Id == id);
 
                 if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -1775,6 +1818,9 @@ public class ReservaService : IReservaService
                 if (file.HotelBookings.Any()) _context.HotelBookings.RemoveRange(file.HotelBookings);
                 if (file.TransferBookings.Any()) _context.TransferBookings.RemoveRange(file.TransferBookings);
                 if (file.PackageBookings.Any()) _context.PackageBookings.RemoveRange(file.PackageBookings);
+                // Bloque 3: borrar las asistencias junto con la reserva (cascade explicito, igual
+                // que los otros 4 tipos). El DeleteBehavior.Cascade en BD es la red de seguridad.
+                if (file.AssistanceBookings.Any()) _context.AssistanceBookings.RemoveRange(file.AssistanceBookings);
 
                 _context.Reservas.Remove(file);
 
@@ -1798,22 +1844,28 @@ public class ReservaService : IReservaService
             .Include(f => f.HotelBookings)
             .Include(f => f.TransferBookings)
             .Include(f => f.PackageBookings)
+            .Include(f => f.AssistanceBookings)
             .FirstOrDefaultAsync(f => f.Id == reservaId);
 
         if (file == null) return;
 
-        var totalSale = 
+        // CRITICO: el saldo del cliente suma las 5 colecciones tipadas + servicios genericos.
+        // Asistencia (seguro) es una venta mas que SUMA al saldo: si faltara aca, el Balance
+        // de la reserva quedaria por debajo del real y el cliente "deberia menos" en silencio.
+        var totalSale =
             (file.FlightSegments?.Where(f => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.SalePrice) ?? 0) +
             (file.HotelBookings?.Where(h => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.SalePrice) ?? 0) +
             (file.TransferBookings?.Where(t => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.SalePrice) ?? 0) +
             (file.PackageBookings?.Where(p => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.SalePrice) ?? 0) +
+            (file.AssistanceBookings?.Where(a => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(a.Status))).Sum(a => a.SalePrice) ?? 0) +
             (file.Servicios?.Where(r => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.SalePrice) ?? 0);
 
-        var totalCost = 
+        var totalCost =
             (file.FlightSegments?.Where(f => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.NetCost) ?? 0) +
             (file.HotelBookings?.Where(h => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.NetCost) ?? 0) +
             (file.TransferBookings?.Where(t => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.NetCost) ?? 0) +
             (file.PackageBookings?.Where(p => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.NetCost) ?? 0) +
+            (file.AssistanceBookings?.Where(a => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(a.Status))).Sum(a => a.NetCost) ?? 0) +
             (file.Servicios?.Where(r => TravelApi.Domain.Entities.WorkflowStatusHelper.CountsForReservaBalance(TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.NetCost) ?? 0);
 
         var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => p.Amount) ?? 0;
@@ -1936,7 +1988,8 @@ public class ReservaService : IReservaService
             || await _context.HotelBookings.AnyAsync(h => h.ReservaId == reservaId)
             || await _context.FlightSegments.AnyAsync(f => f.ReservaId == reservaId)
             || await _context.TransferBookings.AnyAsync(t => t.ReservaId == reservaId)
-            || await _context.PackageBookings.AnyAsync(p => p.ReservaId == reservaId);
+            || await _context.PackageBookings.AnyAsync(p => p.ReservaId == reservaId)
+            || await _context.AssistanceBookings.AnyAsync(a => a.ReservaId == reservaId);
     }
 
     /// <summary>
@@ -1959,6 +2012,9 @@ public class ReservaService : IReservaService
 
         var flights = await _context.FlightSegments.Where(f => f.ReservaId == reservaId && f.Status != "Solicitado").ToListAsync();
         foreach (var f in flights) f.Status = "Solicitado";
+
+        var assistances = await _context.AssistanceBookings.Where(a => a.ReservaId == reservaId && a.Status != "Solicitado").ToListAsync();
+        foreach (var a in assistances) a.Status = "Solicitado";
 
         var generics = await _context.Servicios.Where(s => s.ReservaId == reservaId && s.Status != "Solicitado").ToListAsync();
         foreach (var g in generics) g.Status = "Solicitado";

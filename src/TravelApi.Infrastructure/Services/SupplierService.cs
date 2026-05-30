@@ -187,10 +187,16 @@ public class SupplierService : ISupplierService
             .Where(segment => segment.SupplierId == supplierId)
             .Select(segment => segment.ReservaId);
 
+        var assistanceReservaIds = _dbContext.AssistanceBookings
+            .AsNoTracking()
+            .Where(booking => booking.SupplierId == supplierId)
+            .Select(booking => booking.ReservaId);
+
         var bookedReservaIds = hotelReservaIds
             .Concat(transferReservaIds)
             .Concat(packageReservaIds)
-            .Concat(flightReservaIds);
+            .Concat(flightReservaIds)
+            .Concat(assistanceReservaIds);
 
         return await _dbContext.Reservas
             .AsNoTracking()
@@ -253,6 +259,11 @@ public class SupplierService : ISupplierService
         if (await _dbContext.FlightSegments.AnyAsync(segment => segment.SupplierId == id, cancellationToken))
         {
             throw new InvalidOperationException("No se puede eliminar: el proveedor tiene segmentos de vuelo asociados");
+        }
+
+        if (await _dbContext.AssistanceBookings.AnyAsync(booking => booking.SupplierId == id, cancellationToken))
+        {
+            throw new InvalidOperationException("No se puede eliminar: el proveedor tiene asistencias asociadas");
         }
 
         _dbContext.Suppliers.Remove(supplier);
@@ -631,6 +642,24 @@ public class SupplierService : ISupplierService
                 ReservaPublicId = package.Reserva!.PublicId
             });
 
+        var assistances = _dbContext.AssistanceBookings
+            .AsNoTracking()
+            .Where(assistance => assistance.SupplierId == supplierId && ValidReservationStatuses.Contains(assistance.Reserva!.Status))
+            .Select(assistance => new SupplierAccountServiceListItemDto
+            {
+                PublicId = assistance.PublicId,
+                Type = "Asistencia",
+                Description = ((assistance.PlanType ?? "Seguro") + " (" + (assistance.CoverageZone ?? string.Empty) + ")").Trim(),
+                Confirmation = assistance.ConfirmationNumber ?? assistance.PolicyNumber,
+                NetCost = assistance.NetCost,
+                SalePrice = assistance.SalePrice,
+                Date = assistance.CreatedAt,
+                Status = assistance.Status,
+                NumeroReserva = assistance.Reserva!.NumeroReserva,
+                FileName = assistance.Reserva!.Name,
+                ReservaPublicId = assistance.Reserva!.PublicId
+            });
+
         var services = _dbContext.Servicios
             .AsNoTracking()
             .Where(service => service.SupplierId == supplierId && ValidReservationStatuses.Contains(service.Reserva!.Status))
@@ -653,6 +682,7 @@ public class SupplierService : ISupplierService
             .Concat(hotels)
             .Concat(transfers)
             .Concat(packages)
+            .Concat(assistances)
             .Concat(services);
     }
 

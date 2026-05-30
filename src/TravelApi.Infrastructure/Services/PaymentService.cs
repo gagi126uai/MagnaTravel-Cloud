@@ -783,6 +783,11 @@ public class PaymentService : IPaymentService
         return $"RCP-{DateTime.UtcNow:yyyy}-{next:D6}";
     }
 
+    // TODO: unificar las 3 copias del cálculo de saldo (PaymentService/AfipService/ReservaService).
+    // Esta copia y la de AfipService NO aplican el filtro CountsForReservaBalance que sí usa
+    // ReservaService.UpdateBalanceAsync (deuda pre-existente para los 4 tipos tipados + genéricos).
+    // Bloque 3: solo SUMAMOS Asistencia replicando el criterio LOCAL de esta copia (suma plana, sin
+    // filtro) para no descuadrar el saldo en silencio. NO se toca el tratamiento de los otros 4 tipos.
     private async Task RecalculateReservaBalanceAsync(int reservaId, CancellationToken cancellationToken)
     {
         var reserva = await _dbContext.Reservas
@@ -792,6 +797,7 @@ public class PaymentService : IPaymentService
             .Include(f => f.HotelBookings)
             .Include(f => f.TransferBookings)
             .Include(f => f.PackageBookings)
+            .Include(f => f.AssistanceBookings)
             .FirstOrDefaultAsync(f => f.Id == reservaId, cancellationToken);
 
         if (reserva == null)
@@ -802,6 +808,7 @@ public class PaymentService : IPaymentService
             (reserva.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
             (reserva.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
             (reserva.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
+            (reserva.AssistanceBookings?.Sum(a => a.SalePrice) ?? 0) +
             (reserva.Servicios?.Sum(r => r.SalePrice) ?? 0);
 
         reserva.TotalCost =
@@ -809,6 +816,7 @@ public class PaymentService : IPaymentService
             (reserva.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
             (reserva.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
             (reserva.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
+            (reserva.AssistanceBookings?.Sum(a => a.NetCost) ?? 0) +
             (reserva.Servicios?.Sum(r => r.NetCost) ?? 0);
 
         reserva.TotalPaid = reserva.Payments

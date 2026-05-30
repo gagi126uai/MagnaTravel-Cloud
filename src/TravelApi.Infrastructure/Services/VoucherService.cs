@@ -76,6 +76,7 @@ public class VoucherService : IVoucherService
         AppendFlights(reserva, html);
         AppendTransfers(reserva, html);
         AppendPackages(reserva, html);
+        AppendAssistances(reserva, html);
 
         html.AppendLine("<div class='footer'>");
         html.AppendLine($"<p>Voucher generado el {DateTime.UtcNow.AddHours(-3):dd/MM/yyyy HH:mm} hs (Argentina)</p>");
@@ -616,6 +617,7 @@ public class VoucherService : IVoucherService
             .Include(f => f.FlightSegments)
             .Include(f => f.TransferBookings).ThenInclude(t => t.Supplier)
             .Include(f => f.PackageBookings).ThenInclude(p => p.Supplier)
+            .Include(f => f.AssistanceBookings).ThenInclude(a => a.Supplier)
             .FirstOrDefaultAsync(f => f.Id == reservaId, cancellationToken)
             ?? throw new KeyNotFoundException($"Reserva {reservaId} no encontrada.");
 
@@ -1125,6 +1127,17 @@ public class VoucherService : IVoucherService
                         p.ConfirmationNumber ?? p.Status ?? "-"
                     })));
 
+            if (reserva.AssistanceBookings.Any())
+                column.Item().Element(x => ComposeSimpleTable(x, "Asistencia al viajero", new[] { "Plan", "Vigencia", "Cobertura", "Confirmacion" },
+                    reserva.AssistanceBookings.Select(a => new[]
+                    {
+                        $"{a.PlanType ?? "Seguro"} ({a.CoverageZone ?? "-"})",
+                        $"{FormatDate(a.ValidFrom)} - {FormatDate(a.ValidTo)}",
+                        a.CoverageLimit ?? "-",
+                        // Sin codigo => mostramos numero de poliza o el estado real del servicio.
+                        a.ConfirmationNumber ?? a.PolicyNumber ?? a.Status ?? "-"
+                    })));
+
             column.Item().PaddingTop(6).Text("Este documento no tiene validez como comprobante fiscal.")
                 .Italic().FontSize(9).FontColor(Colors.Grey.Darken1);
         });
@@ -1228,6 +1241,24 @@ public class VoucherService : IVoucherService
             var isConfirmed = p.Status == "Confirmed" || p.Status == "Confirmado";
             html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(p.PackageName)}</td><td>{EscapeHtml(p.Destination)}</td><td>{p.StartDate:dd/MM/yyyy} - {p.EndDate:dd/MM/yyyy}</td><td>{p.Nights}</td>");
             html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(p.Status ?? "-")}</span></td></tr>");
+        }
+        html.AppendLine("</tbody></table></div>");
+    }
+
+    private static void AppendAssistances(Reserva reserva, StringBuilder html)
+    {
+        if (!reserva.AssistanceBookings.Any()) return;
+
+        html.AppendLine("<h2>Asistencia al Viajero</h2><div class='table-container'><table><thead><tr><th>Plan</th><th>Vigencia</th><th>Cobertura</th><th>Zona</th><th>Estado</th></tr></thead><tbody>");
+        foreach (var a in reserva.AssistanceBookings)
+        {
+            var isConfirmed = a.Status == "Confirmed" || a.Status == "Confirmado";
+            // Mostramos numero de poliza si existe; sino el plan. Sin poliza, el estado del servicio.
+            var planLabel = a.PolicyNumber is not null
+                ? $"{a.PlanType ?? "Seguro"}<br/><span style='font-size:11px;color:#64748b;font-weight:400'>Poliza {EscapeHtml(a.PolicyNumber)}</span>"
+                : EscapeHtml(a.PlanType ?? "Seguro");
+            html.AppendLine($"<tr><td style='font-weight:600'>{planLabel}</td><td>{a.ValidFrom:dd/MM/yyyy} - {a.ValidTo:dd/MM/yyyy}</td><td>{EscapeHtml(a.CoverageLimit ?? "-")}</td><td>{EscapeHtml(a.CoverageZone ?? "-")}</td>");
+            html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(a.Status ?? "-")}</span></td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }

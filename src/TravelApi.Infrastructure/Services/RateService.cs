@@ -462,6 +462,9 @@ public class RateService : IRateService
             await _db.TransferBookings.AnyAsync(b => b.RateId == id, ct) ||
             await _db.PackageBookings.AnyAsync(b => b.RateId == id, ct) ||
             await _db.FlightSegments.AnyAsync(f => f.RateId == id, ct) ||
+            // Bloque 3: una asistencia tambien puede referenciar la tarifa; sin esto se podria
+            // borrar una tarifa en uso por un seguro y dejar el snapshot de precios huerfano.
+            await _db.AssistanceBookings.AnyAsync(b => b.RateId == id, ct) ||
             await _db.QuoteItems.AnyAsync(q => q.RateId == id, ct);
 
         if (inUse)

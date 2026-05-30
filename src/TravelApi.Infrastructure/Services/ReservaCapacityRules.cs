@@ -127,6 +127,7 @@ public static class ReservaCapacityRules
             .Include(r => r.HotelBookings)
             .Include(r => r.TransferBookings)
             .Include(r => r.PackageBookings)
+            .Include(r => r.AssistanceBookings)
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct);
         if (reserva == null) return null;
 
@@ -137,7 +138,8 @@ public static class ReservaCapacityRules
         var hotelCap = reserva.HotelBookings?.Sum(h => h.GetExpectedPaxCount()) ?? 0;
         var transferCap = reserva.TransferBookings?.Max(t => (int?)t.GetExpectedPaxCount()) ?? 0;
         var packageCap = reserva.PackageBookings?.Sum(p => p.GetExpectedPaxCount()) ?? 0;
-        var maxExpected = Math.Max(hotelCap, Math.Max(transferCap, packageCap));
+        var assistanceCap = reserva.AssistanceBookings?.Sum(a => a.GetExpectedPaxCount()) ?? 0;
+        var maxExpected = Math.Max(hotelCap, Math.Max(transferCap, Math.Max(packageCap, assistanceCap)));
 
         if (maxExpected > 0 && paxCount > maxExpected)
         {
@@ -201,6 +203,20 @@ public static class ReservaCapacityRules
             }
         }
 
+        foreach (var assistance in reserva.AssistanceBookings ?? Enumerable.Empty<AssistanceBooking>())
+        {
+            var key = new { ServiceType = AssignmentServiceType.Assistance, ServiceId = assistance.Id };
+            if (assignmentCounts.TryGetValue(key, out var count))
+            {
+                var cap = assistance.GetExpectedPaxCount();
+                if (cap > 0 && count > cap)
+                {
+                    return $"La asistencia '{assistance.PlanType ?? "seguro"}' tiene {count} pasajeros asignados pero su capacidad es {cap}. " +
+                           "Ajusta la capacidad o quita asignaciones antes de pasar a Operativo.";
+                }
+            }
+        }
+
         return null;
     }
 
@@ -237,6 +253,10 @@ public static class ReservaCapacityRules
                 .Select(b => (int?)b.Passengers)
                 .FirstOrDefaultAsync(ct),
             AssignmentServiceType.Package => await db.PackageBookings.AsNoTracking()
+                .Where(b => b.Id == serviceId)
+                .Select(b => (int?)(b.Adults + b.Children))
+                .FirstOrDefaultAsync(ct),
+            AssignmentServiceType.Assistance => await db.AssistanceBookings.AsNoTracking()
                 .Where(b => b.Id == serviceId)
                 .Select(b => (int?)(b.Adults + b.Children))
                 .FirstOrDefaultAsync(ct),
@@ -314,6 +334,13 @@ public static class ReservaCapacityRules
             .ToListAsync(ct);
         foreach (var f in flights)
             unconfirmed.Add($"Vuelo {f.AirlineCode}{f.FlightNumber} ({f.Status})");
+
+        var assistances = await db.AssistanceBookings.AsNoTracking()
+            .Where(b => b.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(b.Status))
+            .Select(b => new { b.PlanType, b.Status })
+            .ToListAsync(ct);
+        foreach (var a in assistances)
+            unconfirmed.Add($"Asistencia '{a.PlanType ?? "seguro"}' ({a.Status})");
 
         var generics = await db.Servicios.AsNoTracking()
             .Where(s => s.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(s.Status))

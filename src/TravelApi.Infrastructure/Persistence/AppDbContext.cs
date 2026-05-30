@@ -271,6 +271,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<HotelBooking> HotelBookings => Set<HotelBooking>();
     public DbSet<TransferBooking> TransferBookings => Set<TransferBooking>();
     public DbSet<PackageBooking> PackageBookings => Set<PackageBooking>();
+    // Bloque 3: Asistencia al viajero (seguro). Tipo de servicio propio, espejo de HotelBooking.
+    public DbSet<AssistanceBooking> AssistanceBookings => Set<AssistanceBooking>();
     public DbSet<Rate> Rates => Set<Rate>();
     public DbSet<CatalogPackage> CatalogPackages => Set<CatalogPackage>();
     public DbSet<CatalogPackageDeparture> CatalogPackageDepartures => Set<CatalogPackageDeparture>();
@@ -354,6 +356,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<CatalogPackage>(modelBuilder);
         ConfigurePublicEntity<CatalogPackageDeparture>(modelBuilder);
         ConfigurePublicEntity<TransferBooking>(modelBuilder);
+        ConfigurePublicEntity<AssistanceBooking>(modelBuilder);
         ConfigurePublicEntity<ReservaAttachment>(modelBuilder);
         ConfigurePublicEntity<Voucher>(modelBuilder);
         ConfigurePublicEntity<MessageDelivery>(modelBuilder);
@@ -746,6 +749,37 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             .HasOne(p => p.Rate)
             .WithMany()
             .HasForeignKey(p => p.RateId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        // AssistanceBooking (Bloque 3). Espejo de HotelBooking: ReservaId mapea a la columna
+        // legacy TravelFileId, FK al Supplier con Restrict (red de seguridad C24) y FK al Rate
+        // con SetNull. El cascade Reserva -> Asistencia se declara via la relacion (abajo).
+        modelBuilder.Entity<AssistanceBooking>(entity =>
+        {
+            entity.Property(a => a.ReservaId).HasColumnName("TravelFileId");
+
+            // C24: ver nota en FlightSegment. Bloquear borrado fisico de la aseguradora
+            // (Supplier) mientras tenga asistencias asociadas.
+            entity.HasOne(a => a.Supplier)
+                  .WithMany()
+                  .HasForeignKey(a => a.SupplierId)
+                  .IsRequired()
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // La relacion con Reserva se declara explicitamente para fijar el cascade igual
+            // que los otros bookings tipados (HotelBooking etc.): al borrar la Reserva se
+            // borran sus asistencias. ReservaService igual hace RemoveRange explicito.
+            entity.HasOne(a => a.Reserva)
+                  .WithMany(r => r.AssistanceBookings)
+                  .HasForeignKey(a => a.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AssistanceBooking -> Rate (Tarifario)
+        modelBuilder.Entity<AssistanceBooking>()
+            .HasOne(a => a.Rate)
+            .WithMany()
+            .HasForeignKey(a => a.RateId)
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<CatalogPackage>(entity =>

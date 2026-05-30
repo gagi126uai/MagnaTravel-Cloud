@@ -128,6 +128,26 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
 
+        // AssistanceBooking (Bloque 3). Espejo de HotelBooking: el DTO NO expone Commission
+        // (queda solo en la entidad). WorkflowStatus se deriva del Status crudo igual que Hotel.
+        CreateMap<AssistanceBooking, AssistanceBookingDto>()
+            .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
+            .ForMember(dest => dest.SupplierPublicId, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.PublicId : Guid.Empty))
+            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
+            .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
+            .ForMember(dest => dest.WorkflowStatus, opt => opt.MapFrom(src => TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(src.Status)))
+            .ForMember(dest => dest.SnapshotSource, opt => opt.MapFrom(src => src.RateId.HasValue ? "TariffAtBookingTime" : "Manual"));
+
+        CreateMap<CreateAssistanceRequest, AssistanceBooking>()
+            .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus));
+
+        CreateMap<UpdateAssistanceRequest, AssistanceBooking>()
+            .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus));
+
         // Customers
         CreateMap<Customer, CustomerDto>();
 
@@ -156,6 +176,7 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.FlightSegments, opt => opt.MapFrom(src => src.FlightSegments))
             .ForMember(dest => dest.TransferBookings, opt => opt.MapFrom(src => src.TransferBookings))
             .ForMember(dest => dest.PackageBookings, opt => opt.MapFrom(src => src.PackageBookings))
+            .ForMember(dest => dest.AssistanceBookings, opt => opt.MapFrom(src => src.AssistanceBookings))
             .ForMember(dest => dest.Invoices, opt => opt.MapFrom(src => src.Invoices))
             .ForMember(dest => dest.TotalPaid, opt => opt.MapFrom(src => src.TotalPaid));
 
@@ -164,20 +185,24 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Payer != null ? src.Payer.FullName : string.Empty))
             .ForMember(dest => dest.ResponsibleUserId, opt => opt.MapFrom(src => src.ResponsibleUserId))
             .ForMember(dest => dest.ResponsibleUserName, opt => opt.MapFrom(src => src.ResponsibleUserName))
-            .ForMember(dest => dest.TotalSale, opt => opt.MapFrom(src => 
+            // CRITICO: la venta de la reserva suma las 5 colecciones tipadas + servicios genericos.
+            // Si Asistencia faltara aca, el TotalSale/Balance del listado descuadraria en silencio.
+            .ForMember(dest => dest.TotalSale, opt => opt.MapFrom(src =>
                 (src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
                 (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +
                 (src.TransferBookings.Sum(t => (decimal?)t.SalePrice) ?? 0) +
                 (src.PackageBookings.Sum(p => (decimal?)p.SalePrice) ?? 0) +
+                (src.AssistanceBookings.Sum(a => (decimal?)a.SalePrice) ?? 0) +
                 (src.Servicios.Sum(r => (decimal?)r.SalePrice) ?? 0)
             ))
-            .ForMember(dest => dest.Balance, opt => opt.MapFrom(src => 
+            .ForMember(dest => dest.Balance, opt => opt.MapFrom(src =>
                 ((src.FlightSegments.Sum(f => (decimal?)f.SalePrice) ?? 0) +
                  (src.HotelBookings.Sum(h => (decimal?)h.SalePrice) ?? 0) +
                  (src.TransferBookings.Sum(t => (decimal?)t.SalePrice) ?? 0) +
                  (src.PackageBookings.Sum(p => (decimal?)p.SalePrice) ?? 0) +
-                 (src.Servicios.Sum(r => (decimal?)r.SalePrice) ?? 0)) 
-                - 
+                 (src.AssistanceBookings.Sum(a => (decimal?)a.SalePrice) ?? 0) +
+                 (src.Servicios.Sum(r => (decimal?)r.SalePrice) ?? 0))
+                -
                 (src.Payments.Where(p => p.Status != "Cancelled" &&  !p.IsDeleted).Sum(p => (decimal?)p.Amount) ?? 0)
             ))
             .ForMember(dest => dest.TotalPaid, opt => opt.MapFrom(src => src.TotalPaid));

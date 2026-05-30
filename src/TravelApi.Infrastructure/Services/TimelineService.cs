@@ -36,6 +36,7 @@ public class TimelineService : ITimelineService
         var hotelIds = await _context.HotelBookings.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
         var packageIds = await _context.PackageBookings.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
         var transferIds = await _context.TransferBookings.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
+        var assistanceIds = await _context.AssistanceBookings.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
         var serviceIds = await _context.Servicios.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
         var paymentIds = await _context.Payments.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
         var invoiceIds = await _context.Invoices.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
@@ -51,6 +52,7 @@ public class TimelineService : ITimelineService
                 (a.EntityName == "HotelBooking" && hotelIds.Contains(a.EntityId)) ||
                 (a.EntityName == "PackageBooking" && packageIds.Contains(a.EntityId)) ||
                 (a.EntityName == "TransferBooking" && transferIds.Contains(a.EntityId)) ||
+                (a.EntityName == "AssistanceBooking" && assistanceIds.Contains(a.EntityId)) ||
                 (a.EntityName == "ServicioReserva" && serviceIds.Contains(a.EntityId)) ||
                 (a.EntityName == "Payment" && paymentIds.Contains(a.EntityId)) ||
                 (a.EntityName == "Invoice" && invoiceIds.Contains(a.EntityId)) ||
@@ -174,6 +176,7 @@ public class TimelineService : ITimelineService
             "HotelBooking" => "un Hotel",
             "PackageBooking" => "un Paquete",
             "TransferBooking" => "un Traslado",
+            "AssistanceBooking" => "una Asistencia",
             "ServicioReserva" => "un Servicio",
             "Payment" => "un Pago",
             "Invoice" => "una Factura",

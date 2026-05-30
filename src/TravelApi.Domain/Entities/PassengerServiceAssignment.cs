@@ -12,9 +12,10 @@ public static class AssignmentServiceType
     public const string Transfer = "Transfer";
     public const string Package = "Package";
     public const string Flight = "Flight";
+    public const string Assistance = "Assistance"; // AssistanceBooking (seguro de viaje)
     public const string Generic = "Generic"; // ServicioReserva generico
 
-    public static readonly string[] All = { Hotel, Transfer, Package, Flight, Generic };
+    public static readonly string[] All = { Hotel, Transfer, Package, Flight, Assistance, Generic };
 }
 
 /// <summary>

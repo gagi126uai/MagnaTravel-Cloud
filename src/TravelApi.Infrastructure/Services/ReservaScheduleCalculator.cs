@@ -68,6 +68,19 @@ public static class ReservaScheduleCalculator
             .Select(p => p.EndDate)
             .ToListAsync(ct));
 
+        // Asistencia (seguro): su vigencia ValidFrom/ValidTo entra al min/max de fechas igual
+        // que el check-in/out de hotel. Si faltara aca, una reserva que SOLO tenga asistencia
+        // quedaria sin StartDate/EndDate y el lifecycle/los chips de fecha fallarian en silencio.
+        startDates.AddRange(await db.AssistanceBookings
+            .Where(a => a.ReservaId == reservaId)
+            .Select(a => a.ValidFrom)
+            .ToListAsync(ct));
+
+        endDates.AddRange(await db.AssistanceBookings
+            .Where(a => a.ReservaId == reservaId)
+            .Select(a => a.ValidTo)
+            .ToListAsync(ct));
+
         startDates.AddRange(await db.Servicios
             .Where(s => s.ReservaId == reservaId)
             .Select(s => s.DepartureDate)

@@ -28,6 +28,13 @@ public interface IBookingService
     Task<TransferBookingDto> UpdateTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateTransferRequest req, CancellationToken ct);
     Task DeleteTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct);
 
+    // Bloque 3: Asistencia al viajero (seguro). Mismo contrato que Hotel.
+    Task<IEnumerable<AssistanceBookingDto>> GetAssistancesAsync(string reservaPublicIdOrLegacyId, CancellationToken ct);
+    Task<AssistanceBookingDto> GetAssistanceByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct);
+    Task<AssistanceBookingDto> CreateAssistanceAsync(string reservaPublicIdOrLegacyId, CreateAssistanceRequest req, CancellationToken ct);
+    Task<AssistanceBookingDto> UpdateAssistanceAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateAssistanceRequest req, CancellationToken ct);
+    Task DeleteAssistanceAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct);
+
     // Updates de Status (y opcionalmente ConfirmationNumber/PNR) — usados desde la
     // cuenta corriente del proveedor para confirmar servicios sin entrar a cada reserva.
     // Aplican los mismos guards que los Update* completos via ReservaCapacityRules.
@@ -37,4 +44,5 @@ public interface IBookingService
     Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
     Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
     Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
+    Task<AssistanceBookingDto> UpdateAssistanceStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
 }

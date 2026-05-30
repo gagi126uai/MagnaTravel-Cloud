@@ -18,6 +18,7 @@ public class BookingService : IBookingService
     private readonly IRepository<HotelBooking> _hotelRepo;
     private readonly IRepository<PackageBooking> _packageRepo;
     private readonly IRepository<TransferBooking> _transferRepo;
+    private readonly IRepository<AssistanceBooking> _assistanceRepo;
     private readonly IRepository<Reserva> _fileRepo;
     private readonly IRepository<Supplier> _supplierRepo;
     private readonly IReservaService _reservaService;
@@ -36,6 +37,7 @@ public class BookingService : IBookingService
         IRepository<HotelBooking> hotelRepo,
         IRepository<PackageBooking> packageRepo,
         IRepository<TransferBooking> transferRepo,
+        IRepository<AssistanceBooking> assistanceRepo,
         IRepository<Reserva> fileRepo,
         IRepository<Supplier> supplierRepo,
         IReservaService reservaService,
@@ -50,6 +52,7 @@ public class BookingService : IBookingService
         _hotelRepo = hotelRepo;
         _packageRepo = packageRepo;
         _transferRepo = transferRepo;
+        _assistanceRepo = assistanceRepo;
         _fileRepo = fileRepo;
         _supplierRepo = supplierRepo;
         _reservaService = reservaService;
@@ -85,6 +88,37 @@ public class BookingService : IBookingService
         if (checkOut <= checkIn)
         {
             throw new ArgumentException("El check-out debe ser posterior al check-in.");
+        }
+    }
+
+    private static void ValidateAssistanceValidity(DateTime validFrom, DateTime validTo)
+    {
+        // La vigencia "hasta" no puede ser anterior a la vigencia "desde". Permitimos que sean
+        // iguales (poliza de un solo dia), a diferencia del hotel que exige checkout > checkin.
+        if (validTo < validFrom)
+        {
+            throw new ArgumentException("La vigencia 'hasta' no puede ser anterior a la vigencia 'desde'.");
+        }
+    }
+
+    /// <summary>
+    /// Aplica el snapshot del tarifario a una asistencia: congela precios (igual que Flight/Package)
+    /// y copia la moneda para trazabilidad. Si la tarifa define proveedor, lo usa.
+    /// </summary>
+    private static void ApplyAssistanceRateSnapshot(AssistanceBooking assistance, Rate rate)
+    {
+        assistance.RateId = rate.Id;
+        assistance.NetCost = rate.NetCost;
+        assistance.SalePrice = rate.SalePrice;
+        assistance.Commission = rate.Commission;
+
+        // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
+        // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
+        assistance.Currency = rate.Currency;
+
+        if (rate.SupplierId.HasValue)
+        {
+            assistance.SupplierId = rate.SupplierId.Value;
         }
     }
 
@@ -1026,6 +1060,196 @@ public class BookingService : IBookingService
 
     #endregion
 
+    #region Assistances
+
+    // Asistencia al viajero (seguro). Espejo EXACTO de la region Hotels: mismas validaciones,
+    // mismo snapshot de tarifario, mismos guards (Solicitado en Presupuesto, status block,
+    // downgrade block, mutation guard post-CAE/voucher) y mismo enmascarado de NetCost en TODOS
+    // los returns. La vigencia (ValidFrom/ValidTo) se trata como las fechas de Hotel: date-only.
+
+    public async Task<IEnumerable<AssistanceBookingDto>> GetAssistancesAsync(string reservaPublicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await GetAssistancesAsync(reservaId, ct);
+    }
+
+    public async Task<IEnumerable<AssistanceBookingDto>> GetAssistancesAsync(int reservaId, CancellationToken ct)
+    {
+        var dtos = await _assistanceRepo.Query()
+            .Where(a => a.ReservaId == reservaId)
+            .Include(a => a.Rate)
+            .OrderBy(a => a.ValidFrom)
+            .ProjectTo<AssistanceBookingDto>(_mapper.ConfigurationProvider)
+            .ToListAsync(ct);
+
+        // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            foreach (var dto in dtos) dto.NetCost = 0m;
+        }
+        return dtos;
+    }
+
+    public async Task<AssistanceBookingDto> GetAssistanceByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        return await GetAssistanceByIdAsync(reservaId, assistanceId, ct);
+    }
+
+    public async Task<AssistanceBookingDto> GetAssistanceByIdAsync(int reservaId, int id, CancellationToken ct)
+    {
+        var assistance = await _assistanceRepo.GetByIdAsync(id, ct);
+        // La asistencia debe pertenecer a la reserva del path (defensa contra ids ajenos).
+        if (assistance == null || assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada");
+
+        var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
+    }
+
+    public async Task<AssistanceBookingDto> CreateAssistanceAsync(string reservaPublicIdOrLegacyId, CreateAssistanceRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        return await CreateAssistanceAsync(reservaId, req, ct);
+    }
+
+    public async Task<AssistanceBookingDto> CreateAssistanceAsync(int reservaId, CreateAssistanceRequest req, CancellationToken ct)
+    {
+        ValidateAssistanceValidity(req.ValidFrom, req.ValidTo);
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
+        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+        var rate = await GetRateAsync(req.RateId, ct);
+        // Si la tarifa define proveedor lo usa; sino, el del request.
+        var supplierId = rate?.SupplierId ?? await ResolveSupplierIdAsync(req.SupplierId, ct);
+
+        var assistance = _mapper.Map<AssistanceBooking>(req);
+        assistance.ReservaId = reservaId;
+        assistance.SupplierId = supplierId;
+
+        if (rate != null)
+        {
+            ApplyAssistanceRateSnapshot(assistance, rate);
+        }
+
+        // En Presupuesto el status siempre es "Solicitado" — no es una reserva real.
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            assistance.Status = "Solicitado";
+
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
+            _db, reservaId, $"Asistencia {assistance.PlanType ?? "seguro"}", assistance.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+
+        await _assistanceRepo.AddAsync(assistance, ct);
+
+        if (assistance.SupplierId > 0)
+        {
+            await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
+        }
+
+        await RecalculateReservationScheduleAsync(reservaId, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
+
+        var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
+        await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
+    }
+
+    public async Task<AssistanceBookingDto> UpdateAssistanceAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateAssistanceRequest req, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        return await UpdateAssistanceAsync(reservaId, assistanceId, req, ct);
+    }
+
+    public async Task<AssistanceBookingDto> UpdateAssistanceAsync(int reservaId, int id, UpdateAssistanceRequest req, CancellationToken ct)
+    {
+        ValidateAssistanceValidity(req.ValidFrom, req.ValidTo);
+        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        var assistance = await _assistanceRepo.GetByIdAsync(id, ct);
+        if (assistance == null || assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada");
+
+        // B1.15 Fase 0' (CODE-04): inmutabilidad post-CAE / post-voucher. Asistencia entra
+        // al guard generico de bookings igual que los otros 4 tipos.
+        var blockReason = await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, "Assistance", ct);
+        if (blockReason != null)
+        {
+            _logger.LogWarning(
+                "UpdateAssistanceAsync rejected. AssistanceId={AssistanceId} ReservaId={ReservaId}. Reason={Reason}",
+                id, reservaId, blockReason);
+            throw new InvalidOperationException(blockReason);
+        }
+
+        var oldSupplierId = assistance.SupplierId;
+        var oldStatus = assistance.Status;
+
+        _mapper.Map(req, assistance);
+        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
+        assistance.SupplierId = supplierId;
+
+        // Si viene un RateId nuevo, re-aplicamos el snapshot (igual que Flight/Package).
+        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        if (rateId.HasValue)
+            assistance.RateId = rateId.Value;
+
+        // En Presupuesto el status siempre es "Solicitado".
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
+            assistance.Status = "Solicitado";
+
+        var label = $"Asistencia {assistance.PlanType ?? "seguro"}";
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, assistance.Status, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, assistance.Status, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        await _assistanceRepo.UpdateAsync(assistance, ct);
+        if (oldSupplierId > 0 && oldSupplierId == assistance.SupplierId)
+        {
+            await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
+        }
+        else if (oldSupplierId != assistance.SupplierId)
+        {
+            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
+            if (assistance.SupplierId > 0) await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
+        }
+
+        await RecalculateReservationScheduleAsync(reservaId, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
+
+        var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        // B1.15: enmascarar NetCost en el response de PUT (igual que Hotel).
+        await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
+    }
+
+    public async Task DeleteAssistanceAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        await DeleteAssistanceAsync(reservaId, assistanceId, ct);
+    }
+
+    public async Task DeleteAssistanceAsync(int reservaId, int id, CancellationToken ct)
+    {
+        var assistance = await _assistanceRepo.GetByIdAsync(id, ct);
+        if (assistance == null || assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada");
+
+        await EnsureCanRemoveServiceAsync(reservaId, ct);
+
+        await _assistanceRepo.DeleteAsync(assistance, ct);
+        if (assistance.SupplierId > 0)
+        {
+            await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
+        }
+
+        await RecalculateReservationScheduleAsync(reservaId, ct);
+        await _reservaService.UpdateBalanceAsync(reservaId);
+    }
+
+    #endregion
+
     // ==================== Status-only updates (cuenta corriente del proveedor) ====================
     // Permiten al operador confirmar/cambiar el status de un servicio sin entrar a la reserva,
     // desde el listado de servicios del proveedor. Reusan los guards existentes de
@@ -1146,6 +1370,34 @@ public class BookingService : IBookingService
         var dto = _mapper.Map<FlightSegmentDto>(flight);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
         await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
+    }
+
+    public async Task<AssistanceBookingDto> UpdateAssistanceStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(newStatus)) throw new ArgumentException("El estado es obligatorio.");
+        var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        var assistance = await _assistanceRepo.GetByIdAsync(assistanceId, ct)
+            ?? throw new KeyNotFoundException("Asistencia no encontrada");
+
+        var oldStatus = assistance.Status;
+        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, assistance.ReservaId, ct))
+            newStatus = "Solicitado";
+
+        var label = $"Asistencia {assistance.PlanType ?? "seguro"}";
+        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, assistance.ReservaId, label, newStatus, ct);
+        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
+        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, assistance.ReservaId, label, oldStatus, newStatus, ct);
+        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        assistance.Status = newStatus;
+        if (confirmationNumber != null)
+            assistance.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
+        await _assistanceRepo.UpdateAsync(assistance, ct);
+        if (assistance.SupplierId > 0) await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
+        var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        // Enmascarar NetCost igual que el resto de los endpoints de booking.
+        await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
     }
 }

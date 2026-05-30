@@ -74,6 +74,33 @@ public record UpdateTransferRequest(
     string WorkflowStatus = "Solicitado"
 );
 
+// Bloque 3: Asistencia al viajero (seguro). Espeja a CreateHotelRequest/UpdateHotelRequest:
+// SupplierId = aseguradora, vigencia date-only (ValidFrom/ValidTo, como CheckIn/CheckOut),
+// y campos financieros NetCost/SalePrice/Commission (Commission entra al request pero NO se
+// expone en el DTO de salida). Campos de negocio del seguro al final, todos opcionales.
+public record CreateAssistanceRequest(
+    string SupplierId,
+    DateTime ValidFrom, DateTime ValidTo,
+    int Adults, int Children,
+    decimal NetCost, decimal SalePrice, decimal Commission,
+    string? PolicyNumber = null, string? PlanType = null, string? CoverageLimit = null,
+    string? CoverageZone = null, string? ConfirmationNumber = null, string? Notes = null,
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado"
+);
+
+public record UpdateAssistanceRequest(
+    string SupplierId,
+    DateTime ValidFrom, DateTime ValidTo,
+    int Adults, int Children,
+    decimal NetCost, decimal SalePrice, decimal Commission,
+    string Status,
+    string? PolicyNumber = null, string? PlanType = null, string? CoverageLimit = null,
+    string? CoverageZone = null, string? ConfirmationNumber = null, string? Notes = null,
+    string? RateId = null,
+    string WorkflowStatus = "Solicitado"
+);
+
 public record CreatePackageRequest(
     string SupplierId, string PackageName, string Destination,
     DateTime StartDate, DateTime EndDate,

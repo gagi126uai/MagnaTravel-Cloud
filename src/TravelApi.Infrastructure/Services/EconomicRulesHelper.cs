@@ -65,7 +65,8 @@ internal static class EconomicRulesHelper
             || (reserva.HotelBookings?.Any() ?? false)
             || (reserva.FlightSegments?.Any() ?? false)
             || (reserva.TransferBookings?.Any() ?? false)
-            || (reserva.PackageBookings?.Any() ?? false);
+            || (reserva.PackageBookings?.Any() ?? false)
+            || (reserva.AssistanceBookings?.Any() ?? false);
 
         return hasServices ? null : "La reserva debe tener al menos un servicio cargado.";
     }
