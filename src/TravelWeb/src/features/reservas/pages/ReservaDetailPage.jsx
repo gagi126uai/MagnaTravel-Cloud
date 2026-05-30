@@ -34,6 +34,7 @@ import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
 import { useReservaDetail } from "../hooks/useReservaDetail";
+import { useOperationalFlags } from "../../../hooks/useOperationalFlags";
 
 // Mapa de TipoComprobante AFIP a etiqueta legible.
 //  Facturas: 1=A, 6=B, 11=C, 51=M.
@@ -348,13 +349,20 @@ export default function ReservaDetailPage() {
   const { publicId } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("services");
+
+  // Lee si el ciclo extendido de reservas esta habilitado.
+  // Con flag OFF: la pagina es identica a antes (Budget→Confirmed directo).
+  // Con flag ON: Budget→Sold (con modal de pasajeros) → Confirmed.
+  const { flags } = useOperationalFlags();
+  const isSoldToSettleEnabled = flags.enableSoldToSettleStates;
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [serviceToEdit, setServiceToEdit] = useState(null);
   const [showPassengerForm, setShowPassengerForm] = useState(false);
   const [editingPassenger, setEditingPassenger] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
-  const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null });
+  // targetStatus: "Confirmed" (ciclo base) o "Sold" (ciclo extendido con flag ON).
+  const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null, targetStatus: "Confirmed" });
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
   const [confirmConfig, setConfirmConfig] = useState({
@@ -464,19 +472,31 @@ export default function ReservaDetailPage() {
     }
   };
 
-  const handleConfirmReservation = async () => {
+  /**
+   * Flujo de "vender" o "confirmar" que abre el modal de pasajeros (readiness).
+   *
+   * Con ciclo base (flag OFF): se llama cuando el usuario hace click en
+   *   "Confirmar Reserva" (Budget → Confirmed).
+   * Con ciclo extendido (flag ON): se llama cuando el usuario hace click en
+   *   "Vender" (Budget → Sold). La transicion target cambia pero el modal es el mismo.
+   *
+   * El parametro `targetStatus` permite que la misma logica sirva para los dos casos.
+   */
+  const handleConfirmReservation = async (targetStatus = "Confirmed") => {
     try {
-      const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=Confirmed`);
+      // Consultamos readiness para saber si hay pasajeros faltantes o reglas no-pax.
+      const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=${targetStatus}`);
       const expected = readiness?.expectedPassengerCount || 0;
       const blockingNonPax = (readiness?.blockingReasons || []).filter(r => !r.toLowerCase().includes("pasajero"));
 
       if (readiness?.allowed && expected === 0 && blockingNonPax.length === 0) {
         // Camino directo: nada que cargar, transicion inmediata.
-        await handleStatusChange("Confirmed");
+        await handleStatusChange(targetStatus);
         return;
       }
-      // Modal forzado: hay pasajeros faltantes o reglas no-pax que mostrar
-      setConfirmReservaModal({ isOpen: true, readiness });
+      // Modal forzado: hay pasajeros faltantes o reglas no-pax que mostrar.
+      // Pasamos targetStatus para que el modal dispare la transicion correcta.
+      setConfirmReservaModal({ isOpen: true, readiness, targetStatus });
     } catch (error) {
       showError(getApiErrorMessage(error, "No se pudo verificar el estado de la reserva."));
     }
@@ -512,10 +532,17 @@ export default function ReservaDetailPage() {
     <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       <ReservaHeader
         reserva={reserva}
+        isSoldToSettleEnabled={isSoldToSettleEnabled}
         onBack={() => navigate("/reservas")}
         onStatusChange={(newStatus) => {
-          if (newStatus === "Confirmed" && reserva.status === "Budget") {
-            handleConfirmReservation();
+          // Con ciclo base (flag OFF): Budget → Confirmed abre el modal de pasajeros.
+          // Con ciclo extendido (flag ON): Budget → Sold abre el modal de pasajeros.
+          // Cualquier otra transicion va directo al PUT /status sin modal.
+          if (newStatus === "Confirmed" && reserva.status === "Budget" && !isSoldToSettleEnabled) {
+            handleConfirmReservation("Confirmed");
+          } else if (newStatus === "Sold" && reserva.status === "Budget" && isSoldToSettleEnabled) {
+            // Reapuntamos el flujo de pasajeros a la nueva transicion "Vender".
+            handleConfirmReservation("Sold");
           } else {
             handleStatusChange(newStatus);
           }
@@ -544,7 +571,29 @@ export default function ReservaDetailPage() {
 
       {isBudget ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-          <strong className="font-bold">Reserva en modo Presupuesto.</strong> Confirma la reserva para cargar pasajeros nominales y registrar pagos.
+          <strong className="font-bold">Reserva en modo Presupuesto.</strong>{" "}
+          {isSoldToSettleEnabled
+            ? "Vendé la reserva para cargar los pasajeros nominales y registrar pagos."
+            : "Confirma la reserva para cargar pasajeros nominales y registrar pagos."
+          }
+        </div>
+      ) : null}
+
+      {/* Banner informativo cuando la reserva esta Vendida (esperando confirmacion del operador).
+          Solo aparece con el ciclo extendido activo (flag ON). */}
+      {isSoldToSettleEnabled && reserva.status === "Sold" ? (
+        <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-200">
+          <strong className="font-bold">Reserva Vendida.</strong>{" "}
+          Esperando confirmacion del operador. Una vez confirmada, la reserva pasara a estado Confirmada.
+        </div>
+      ) : null}
+
+      {/* Banner informativo cuando la reserva esta A liquidar (viaje terminado, falta liquidar).
+          Solo aparece con el ciclo extendido activo (flag ON). */}
+      {isSoldToSettleEnabled && reserva.status === "ToSettle" ? (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-200">
+          <strong className="font-bold">Reserva A liquidar.</strong>{" "}
+          El viaje termino. Falta liquidar con el operador para finalizar la reserva.
         </div>
       ) : null}
 
@@ -911,9 +960,11 @@ export default function ReservaDetailPage() {
         <ConfirmReservaModal
           reserva={reserva}
           readiness={confirmReservaModal.readiness}
-          onClose={() => setConfirmReservaModal({ isOpen: false, readiness: null })}
+          // Con ciclo extendido (flag ON) el target es "Sold"; con ciclo base es "Confirmed".
+          targetStatus={confirmReservaModal.targetStatus || "Confirmed"}
+          onClose={() => setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "Confirmed" })}
           onConfirmed={() => {
-            setConfirmReservaModal({ isOpen: false, readiness: null });
+            setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "Confirmed" });
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
         />

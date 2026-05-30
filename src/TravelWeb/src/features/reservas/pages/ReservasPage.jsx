@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Plus, Search, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 
 import { useReservas } from "../hooks/useReservas";
+import { useOperationalFlags } from "../../../hooks/useOperationalFlags";
 import { Button } from "../../../components/ui/button";
 import CreateReservaModal from "../../../components/CreateReservaModal";
 import { FilesPageSkeleton } from "../../../components/ui/skeleton";
@@ -15,7 +16,8 @@ import { ReservaKPIs } from "../components/ReservaKPIs";
 import { ReservaTable } from "../components/ReservaTable";
 import { ReservaMobileList } from "../components/ReservaMobileList";
 
-const tabs = [
+// Pestanas del ciclo base (flag OFF o sin flag). Identicas a como estaban antes.
+const BASE_TABS = [
   { value: "budget", label: "Presupuestos" },
   { value: "active", label: "Activas" },
   { value: "reserved", label: "Confirmadas" },
@@ -24,9 +26,35 @@ const tabs = [
   { value: "archived", label: "Archivadas" },
 ];
 
+// Pestanas del ciclo extendido (flag EnableSoldToSettleStates ON).
+// Se insertan "Vendidas" despues de "Presupuestos" y "A liquidar" antes de "Finalizadas".
+const EXTENDED_TABS = [
+  { value: "budget", label: "Presupuestos" },
+  { value: "sold", label: "Vendidas" },
+  { value: "active", label: "Activas" },
+  { value: "reserved", label: "Confirmadas" },
+  { value: "operative", label: "En viaje" },
+  { value: "to-settle", label: "A liquidar" },
+  { value: "closed", label: "Finalizadas" },
+  { value: "archived", label: "Archivadas" },
+];
+
 export default function ReservasPage() {
   const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Lee si el ciclo extendido de reservas esta habilitado.
+  // Si el flag esta OFF (default) la pagina es identica a antes.
+  const { flags } = useOperationalFlags();
+  const tabs = flags.enableSoldToSettleStates ? EXTENDED_TABS : BASE_TABS;
+
+  // Mapping del valor de la tab al key de tabCounts del hook.
+  // Los valores "sold" y "to-settle" del tab coinciden con los keys del objeto
+  // tabCounts (con camelCase), por eso necesitamos el mapeo para "to-settle".
+  const tabCountKey = (tabValue) => {
+    if (tabValue === "to-settle") return "toSettle";
+    return tabValue;
+  };
 
   const {
     reservas,
@@ -110,7 +138,7 @@ export default function ReservasPage() {
                     : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
                 }`}
               >
-                {tabCounts[tab.value] || 0}
+                {tabCounts[tabCountKey(tab.value)] || 0}
               </span>
             </button>
           ))}

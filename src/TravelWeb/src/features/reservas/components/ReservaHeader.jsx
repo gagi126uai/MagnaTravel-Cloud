@@ -15,19 +15,36 @@ function formatTripDate(value) {
     }
 }
 
-export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert, onEditDates }) {
+/**
+ * Cabecera de la pagina de detalle de una Reserva.
+ * Muestra: nombre, numero, estado, chips derivados, fechas de viaje y botonera de acciones.
+ *
+ * Props:
+ * - reserva: objeto de la reserva cargada.
+ * - isSoldToSettleEnabled: si es true, usa el ciclo extendido de estados
+ *   (Budget→Sold→Confirmed→Traveling→ToSettle→Closed). Si es false (default),
+ *   la botonera es identica a la version anterior.
+ * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates
+ *   son manejados por el padre (ReservaDetailPage).
+ */
+export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert, onEditDates, isSoldToSettleEnabled = false }) {
     const isArchived = reserva.status === 'Archived';
     const canDelete = (reserva.status === 'Budget' || reserva.status === 'Confirmed');
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
-    // Estados desde los que se puede revertir hacia atras (con autorizacion si no es admin).
-    const canRevert = ['Confirmed', 'Traveling', 'Closed'].includes(reserva.status);
+
+    // Con el ciclo extendido (flag ON), se puede revertir desde mas estados.
+    // Sin el flag: identico a antes (Confirmed/Traveling/Closed).
+    const canRevert = isSoldToSettleEnabled
+        ? ['Sold', 'Confirmed', 'Traveling', 'ToSettle', 'Closed'].includes(reserva.status)
+        : ['Confirmed', 'Traveling', 'Closed'].includes(reserva.status);
+
     // Las fechas se pueden editar en estados activos (no archivada/cancelada).
     const canEditDates = !isArchived && reserva.status !== 'Cancelled';
     const startLabel = formatTripDate(reserva.startDate);
     const endLabel = formatTripDate(reserva.endDate);
 
-    // El boton "Cerrar reserva" solo se muestra cuando el viaje ya termino.
+    // El boton "Cerrar reserva" / "Finalizar" solo se muestra cuando el viaje ya termino.
     // Disabled si quedo saldo pendiente (regla unificada con el job auto).
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -103,30 +120,116 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                 </div>
             ) : (
                 <div className="flex flex-wrap gap-3">
-                    {/* STATUS ACTIONS */}
-                    {reserva.status === 'Budget' && (
-                        <button onClick={() => onStatusChange('Confirmed')} className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95">
-                            Confirmar Reserva
-                        </button>
-                    )}
-                    {reserva.status === 'Confirmed' && (
-                        <button
-                            onClick={() => onStatusChange('Traveling')}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95"
-                            title="Marcar como en viaje (la transicion automatica ocurre cuando llega la fecha de salida)"
-                        >
-                            Marcar en viaje
-                        </button>
-                    )}
-                    {reserva.status === 'Traveling' && endHasPast && (
-                        <button
-                            onClick={() => onStatusChange('Closed')}
-                            disabled={!canClose}
-                            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
-                            title={closeTooltip}
-                        >
-                            Cerrar reserva
-                        </button>
+                    {/* =====================================================
+                        BOTONES DE ACCION — dependen del flag del ciclo extendido.
+
+                        Ciclo base (flag OFF, identico a como siempre fue):
+                          Budget → Confirmar Reserva → Confirmed
+                          Confirmed → Marcar en viaje → Traveling
+                          Traveling (viaje vencido) → Cerrar reserva → Closed
+
+                        Ciclo extendido (flag ON):
+                          Budget → Vender → Sold           (abre modal de pasajeros)
+                          Sold → Confirmar con operador → Confirmed
+                          Confirmed → Marcar en viaje → Traveling  (igual que antes)
+                          Traveling → Marcar a liquidar → ToSettle  (manual; el job auto
+                                      tambien lo hace cuando vence la fecha de regreso)
+                          ToSettle → Finalizar / Marcar liquidada → Closed
+                    ===================================================== */}
+
+                    {isSoldToSettleEnabled ? (
+                        // --- Ciclo extendido ---
+                        <>
+                            {reserva.status === 'Budget' && (
+                                // "Vender" dispara el flujo de carga de pasajeros (readiness),
+                                // identico a lo que antes hacia "Confirmar Reserva".
+                                <button
+                                    onClick={() => onStatusChange('Sold')}
+                                    data-testid="reserva-action-sell"
+                                    className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-orange-200 dark:shadow-none transition-all active:scale-95"
+                                    title="Marcar como vendida y cargar pasajeros"
+                                >
+                                    Vender
+                                </button>
+                            )}
+                            {reserva.status === 'Sold' && (
+                                // El operador ya confirmo la reserva; no requiere modal de pasajeros.
+                                <button
+                                    onClick={() => onStatusChange('Confirmed')}
+                                    data-testid="reserva-action-confirm-operator"
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95"
+                                    title="Marcar como confirmada con el operador"
+                                >
+                                    Confirmar con operador
+                                </button>
+                            )}
+                            {reserva.status === 'Confirmed' && (
+                                <button
+                                    onClick={() => onStatusChange('Traveling')}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95"
+                                    title="Marcar como en viaje (la transicion automatica ocurre cuando llega la fecha de salida)"
+                                >
+                                    Marcar en viaje
+                                </button>
+                            )}
+                            {reserva.status === 'Traveling' && (
+                                // "A liquidar" es el paso intermedio antes de cerrar: el viaje termino
+                                // (o el operador lo da por terminado) y queda pendiente liquidar con el
+                                // operador. NO tiene gate de saldo (igual que el job auto: avanza aunque
+                                // quede saldo pendiente; el saldo recien se exige al pasar a Finalizada).
+                                // Existe como boton manual para que el operador no quede trabado si el
+                                // job todavia no corrio o el viaje vencio.
+                                <button
+                                    onClick={() => onStatusChange('ToSettle')}
+                                    data-testid="reserva-action-tosettle"
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95"
+                                    title="Marcar como a liquidar (paso previo a finalizar; tambien ocurre solo cuando vence la fecha de regreso)"
+                                >
+                                    Marcar a liquidar
+                                </button>
+                            )}
+                            {reserva.status === 'ToSettle' && (
+                                // El viaje termino y la reserva quedo en estado "A liquidar".
+                                // "Finalizar" la pasa a Closed. Mismo gate de saldo que el ciclo base.
+                                <button
+                                    onClick={() => onStatusChange('Closed')}
+                                    disabled={!canClose}
+                                    data-testid="reserva-action-finalize"
+                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
+                                    title={closeTooltip}
+                                >
+                                    Finalizar / Marcar liquidada
+                                </button>
+                            )}
+                        </>
+                    ) : (
+                        // --- Ciclo base (sin flag, identico a como estaba antes) ---
+                        <>
+                            {reserva.status === 'Budget' && (
+                                <button onClick={() => onStatusChange('Confirmed')} className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95">
+                                    Confirmar Reserva
+                                </button>
+                            )}
+                            {reserva.status === 'Confirmed' && (
+                                <button
+                                    onClick={() => onStatusChange('Traveling')}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95"
+                                    title="Marcar como en viaje (la transicion automatica ocurre cuando llega la fecha de salida)"
+                                >
+                                    Marcar en viaje
+                                </button>
+                            )}
+                            {reserva.status === 'Traveling' && endHasPast && (
+                                <button
+                                    onClick={() => onStatusChange('Closed')}
+                                    disabled={!canClose}
+                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
+                                    title={closeTooltip}
+                                >
+                                    Cerrar reserva
+                                </button>
+                            )}
+                        </>
                     )}
 
                     {/* ADMIN ACTIONS */}

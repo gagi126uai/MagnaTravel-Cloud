@@ -296,6 +296,20 @@ public class InvoiceService : IInvoiceService
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
+        // Rediseño Fase A+B (2026-05-30, guard fiscal C1): con el flag de estados nuevos ON, una
+        // reserva en "Sold" (Vendida) todavia NO fue confirmada por el operador. Aunque este
+        // economicamente saldada, facturarla seria emitir un comprobante con CAE antes de tener el
+        // servicio confirmado -> riesgo fiscal (factura por algo que el operador podria rechazar).
+        // Esta es la ultima linea de defensa server-side ante un POST directo; el frontend ademas
+        // no deberia ofrecer "Emitir" en Sold. Con el flag OFF, el estado Sold no existe y este
+        // guard nunca dispara (comportamiento byte-identico a hoy).
+        var soldToSettleSettings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        if (soldToSettleSettings.EnableSoldToSettleStates && reserva.Status == EstadoReserva.Sold)
+        {
+            throw new InvalidOperationException(
+                "No se puede facturar una reserva Vendida hasta que el operador la confirme.");
+        }
+
         // B1.15 (2026-05-11, fiscal critico): guard anti-doble-emision concurrente.
         //
         // Sin este guard, un doble click en Emitir o un usuario que duda durante la

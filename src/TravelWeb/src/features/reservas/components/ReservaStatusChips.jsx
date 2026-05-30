@@ -10,9 +10,12 @@ import React from 'react';
  * - "Saldo pendiente" (amarillo): reserva en Confirmed con Balance > 0.
  * - "En curso" (verde solido pulse): reserva en Traveling cuyas fechas
  *   indican que el viaje esta pasando AHORA.
- * - "Vencida con deuda" (rojo pulse): reserva en Traveling cuyo viaje ya
- *   termino pero tiene saldo pendiente. No se cierra automaticamente; alerta
- *   fuerte para que el operador la cobre o la dé de baja.
+ * - "Vencida con deuda" (rojo pulse): reserva en Traveling (o ToSettle con flag ON)
+ *   cuyo viaje ya termino pero tiene saldo pendiente. No se cierra automaticamente;
+ *   alerta fuerte para que el operador la cobre o la de de baja.
+ *   Con el ciclo extendido (flag ON), una reserva puede pasar de Traveling a ToSettle
+ *   aunque tenga deuda — el chip sigue apareciendo en ToSettle para que no se pierda
+ *   la alerta visual.
  *
  * Los flags `isFullyPaid`, `hasOverdueDebt`, `isInProgress` los provee el backend
  * en ReservaDto/ReservaListDto.

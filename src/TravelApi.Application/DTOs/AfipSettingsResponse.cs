@@ -21,4 +21,11 @@ public class AfipSettingsResponse
     // OperationalFinanceSettings, no en AfipSettings; se proyecta aca para no obligar
     // al frontend a pegarle a un segundo endpoint. No se setea desde POST /afip/settings.
     public bool EnableMultiCurrencyInvoicing { get; set; }
+
+    // Flag operativo SOLO LECTURA. La UI de Reservas lo usa para mostrar/ocultar
+    // las pestanas "Vendidas" y "A liquidar" y cambiar la botonera de acciones.
+    // Vive en OperationalFinanceSettings; se proyecta aca igual que EnableMultiCurrencyInvoicing
+    // para no obligar al frontend a pegarle a un segundo endpoint.
+    // Con OFF (default) la UI de reservas es identica a hoy.
+    public bool EnableSoldToSettleStates { get; set; }
 }

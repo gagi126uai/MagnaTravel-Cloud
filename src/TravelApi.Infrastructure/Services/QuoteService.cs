@@ -10,11 +10,16 @@ public class QuoteService : IQuoteService
 {
     private readonly AppDbContext _db;
     private readonly IEntityReferenceResolver _entityReferenceResolver;
+    private readonly IOperationalFinanceSettingsService _settingsService;
 
-    public QuoteService(AppDbContext db, IEntityReferenceResolver entityReferenceResolver)
+    public QuoteService(
+        AppDbContext db,
+        IEntityReferenceResolver entityReferenceResolver,
+        IOperationalFinanceSettingsService settingsService)
     {
         _db = db;
         _entityReferenceResolver = entityReferenceResolver;
+        _settingsService = settingsService;
     }
 
     public async Task<List<QuoteSummaryDto>> GetAllAsync(CancellationToken cancellationToken)
@@ -249,13 +254,22 @@ public class QuoteService : IQuoteService
         // Create Reserva from quote
         quote.CustomerId = await ResolveCustomerFromLeadAsync(quote.CustomerId, quote.LeadId, cancellationToken);
 
+        // Rediseño Fase A+B (2026-05-30): el estado de nacimiento depende del flag.
+        //  - flag OFF (default historico): nace en Confirmed (como hoy).
+        //  - flag ON: nace en Sold ("vendida", esperando confirmacion del operador), que es
+        //    el primer estado del ciclo nuevo despues de Presupuesto.
+        var settings = await _settingsService.GetEntityAsync(cancellationToken);
+        var initialStatus = settings.EnableSoldToSettleStates
+            ? EstadoReserva.Sold
+            : EstadoReserva.Confirmed;
+
         var fileCount = await _db.Reservas.CountAsync(cancellationToken);
         var file = new Reserva
         {
             NumeroReserva = $"RES-{(fileCount + 1).ToString().PadLeft(5, '0')}",
             Name = quote.Title,
             Description = quote.Description,
-            Status = EstadoReserva.Confirmed,
+            Status = initialStatus,
             PayerId = quote.CustomerId,
             SourceLeadId = quote.LeadId,
             SourceQuoteId = quote.Id,

@@ -146,7 +146,11 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
             """);
 
         // (e) INV-100: TravelFiles.Status restringido a la whitelist.
-        //     Incluye "Archived" (legacy soft-delete) + "PendingOperatorRefund" (FC1).
+        //     Incluye "Archived" (legacy soft-delete) + "PendingOperatorRefund" (FC1)
+        //     + "Sold"/"ToSettle" (rediseño maquina de estados Fase A+B, 2026-05-30).
+        //     Debe quedar alineado con la migracion ReservaSoldToSettleStates (9 valores):
+        //     el test EstadoReservaCoverageTests valida por reflexion que TODO const de
+        //     EstadoReserva pase este CHECK, asi que cualquier estado nuevo va aca tambien.
         await ctx.Database.ExecuteSqlRawAsync("""
             ALTER TABLE "TravelFiles"
               DROP CONSTRAINT IF EXISTS chk_TravelFiles_status_valid;
@@ -154,8 +158,10 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
               ADD CONSTRAINT chk_TravelFiles_status_valid
               CHECK ("Status" IN (
                 'Budget',
+                'Sold',
                 'Confirmed',
                 'Traveling',
+                'ToSettle',
                 'Closed',
                 'Cancelled',
                 'PendingOperatorRefund',

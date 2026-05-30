@@ -394,10 +394,19 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // Reserva (Master) - Mapeado a TravelFiles (Legacy)
         modelBuilder.Entity<Reserva>(entity =>
         {
-            entity.ToTable("TravelFiles"); 
+            entity.ToTable("TravelFiles");
             entity.Property(f => f.NumeroReserva).HasColumnName("FileNumber").HasMaxLength(50).IsRequired();
             entity.Property(f => f.Name).HasMaxLength(200).IsRequired();
             entity.Property(f => f.Status).HasMaxLength(50).IsRequired();
+
+            // Rediseño maquina de estados (Fase A+B, 2026-05-30): NO usamos concurrency token (xmin)
+            // en Reserva. Se evaluo en el review y se descarto: el token se activa SIEMPRE (no depende
+            // del flag EnableSoldToSettleStates), asi que expondria caminos viejos read-modify-write
+            // (cancelacion con llamadas largas a ARCA, recalculo de balance, etc.) a
+            // DbUpdateConcurrencyException que hoy NO ocurre. Eso seria una regresion que viaja con el
+            // flag apagado. La concurrencia job-vs-cajero es un problema preexistente de baja frecuencia
+            // y se maneja en el job con un re-chequeo defensivo del estado origen (ver
+            // ReservaLifecycleAutomationService). Mejora futura: locking optimista mas fino, fuera de scope.
             entity.Property(f => f.WhatsAppPhoneOverride).HasMaxLength(50);
             entity.HasIndex(f => f.NumeroReserva).IsUnique();
             entity.HasIndex(f => new { f.Status, f.StartDate, f.CreatedAt });

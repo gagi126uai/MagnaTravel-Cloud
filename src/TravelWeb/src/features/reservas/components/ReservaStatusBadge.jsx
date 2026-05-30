@@ -40,6 +40,27 @@ export const statusConfig = {
         color: 'bg-slate-100 text-slate-500 border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
         icon: '📦',
     },
+
+    // Estados nuevos del ciclo extendido (flag EnableSoldToSettleStates).
+    // Se agregan aca para que el badge y translateStatus funcionen en cualquier
+    // componente que los use, sin necesidad del flag. Si el flag esta OFF estos
+    // estados nunca aparecen, asi que agregar las entradas no rompe nada.
+
+    // Vendida: la reserva fue vendida al cliente, esperando confirmacion del operador.
+    // Color ambar/naranja — "gestion en curso", entre Presupuesto y Confirmada.
+    Sold: {
+        label: 'Vendida',
+        color: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-300 dark:border-orange-800',
+        icon: '🤝',
+    },
+
+    // A liquidar: el viaje termino, falta liquidar con el operador.
+    // Color violeta/indigo — estado "post-viaje pendiente", distinto del verde de "En viaje".
+    ToSettle: {
+        label: 'A liquidar',
+        color: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800',
+        icon: '📊',
+    },
 };
 
 /** Devuelve el label en espanol para mostrar; si el status no existe en el config devuelve el string crudo. */

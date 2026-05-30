@@ -45,7 +45,7 @@ public class AfipController : ControllerBase
         if (settings == null) return NotFound();
 
         var financeSettings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
-        return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing));
+        return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing, financeSettings.EnableSoldToSettleStates));
     }
 
     public class AfipSettingsRequest
@@ -107,10 +107,10 @@ public class AfipController : ControllerBase
                 request.ProdPassword
             );
 
-            // El flag multimoneda no se toca desde este endpoint (es solo lectura), pero lo
+            // Los flags operativos no se tocan desde este endpoint (son solo lectura), pero los
             // proyectamos en la respuesta para que el shape sea identico al del GET /afip/settings.
             var financeSettings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
-            return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing));
+            return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing, financeSettings.EnableSoldToSettleStates));
         }
         catch (ArgumentException ex)
         {
@@ -122,11 +122,12 @@ public class AfipController : ControllerBase
         }
     }
 
-    private static AfipSettingsResponse MapResponse(AfipSettings settings, bool enableMultiCurrencyInvoicing)
+    private static AfipSettingsResponse MapResponse(AfipSettings settings, bool enableMultiCurrencyInvoicing, bool enableSoldToSettleStates)
     {
         return new AfipSettingsResponse
         {
             EnableMultiCurrencyInvoicing = enableMultiCurrencyInvoicing,
+            EnableSoldToSettleStates = enableSoldToSettleStates,
 
             Cuit = settings.Cuit,
             PuntoDeVenta = settings.PuntoDeVenta,

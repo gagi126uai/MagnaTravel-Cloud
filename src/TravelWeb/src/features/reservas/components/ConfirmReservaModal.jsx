@@ -19,7 +19,23 @@ function buildSlots(adults, children, infants) {
     return slots;
 }
 
-export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed }) {
+/**
+ * Modal de carga de pasajeros antes de una transicion de estado.
+ *
+ * Con ciclo base (flag OFF): se usa para Budget → Confirmed ("Confirmar reserva").
+ * Con ciclo extendido (flag ON): se usa para Budget → Sold ("Vender reserva").
+ *   El comportamiento interno es identico — lo que cambia es el titulo y el
+ *   texto del boton de submit, y el estado al que se transiciona al final.
+ *
+ * Props:
+ * - targetStatus: "Confirmed" o "Sold". Controla el titulo y la transicion.
+ * - readiness: objeto devuelto por GET /reservas/{id}/transition-readiness.
+ */
+export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, targetStatus = "Confirmed" }) {
+    // Determina si estamos en modo "Vender" (ciclo extendido) o "Confirmar" (ciclo base).
+    // Esto cambia el titulo y el copy del modal, pero no la logica de pasajeros.
+    const isSellMode = targetStatus === "Sold";
+
     // Composicion derivada de los servicios (backend la calcula). Si difieren entre
     // servicios, AmbiguousComposition=true y mostramos warning.
     const detectedAdults = readiness?.expectedAdults ?? 0;
@@ -73,9 +89,11 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed }
                     notes: null,
                 });
             }
-            // 2) Disparar la transicion
-            await api.put(`/reservas/${reserva.publicId}/status`, { status: "Confirmed" });
-            showSuccess("Reserva confirmada");
+            // 2) Disparar la transicion al estado correcto segun el ciclo activo.
+            // Con ciclo base: targetStatus = "Confirmed".
+            // Con ciclo extendido: targetStatus = "Sold".
+            await api.put(`/reservas/${reserva.publicId}/status`, { status: targetStatus });
+            showSuccess(isSellMode ? "Reserva vendida" : "Reserva confirmada");
             onConfirmed();
         } catch (error) {
             showError(getApiErrorMessage(error, "No se pudo confirmar la reserva."));
@@ -95,7 +113,10 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed }
                     <div className="flex items-center gap-2">
                         <Users className="h-5 w-5 text-indigo-600" />
                         <div>
-                            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Confirmar reserva</h3>
+                            {/* Titulo dinamico: "Vender reserva" en modo Sold, "Confirmar reserva" en modo base */}
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                                {isSellMode ? "Vender reserva" : "Confirmar reserva"}
+                            </h3>
                             <p className="text-xs text-muted-foreground">{reserva.numeroReserva} - {reserva.customerName}</p>
                         </div>
                     </div>
@@ -167,12 +188,18 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed }
 
                     {slotsToFill.length === 0 ? (
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-200">
-                            Todos los pasajeros ya estan cargados. Confirmando se cambia el estado a Reservado.
+                            {isSellMode
+                                ? "Todos los pasajeros ya estan cargados. Al vender se marca la reserva como Vendida."
+                                : "Todos los pasajeros ya estan cargados. Confirmando se cambia el estado a Reservado."
+                            }
                         </div>
                     ) : (
                         <>
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
-                                Carga los <strong>{slotsToFill.length}</strong> pasajero(s) faltantes con nombre y documento.
+                                {isSellMode
+                                    ? <>Carga los <strong>{slotsToFill.length}</strong> pasajero(s) faltantes para poder vender la reserva.</>
+                                    : <>Carga los <strong>{slotsToFill.length}</strong> pasajero(s) faltantes con nombre y documento.</>
+                                }
                             </div>
 
                             <div className="space-y-3">
@@ -227,7 +254,11 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed }
                         className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                     >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        {slotsToFill.length === 0 ? "Confirmar reserva" : `Cargar y confirmar (${slotsToFill.length})`}
+                        {/* Texto del boton depende del modo y si hay pasajeros para cargar */}
+                        {isSellMode
+                            ? (slotsToFill.length === 0 ? "Vender reserva" : `Cargar y vender (${slotsToFill.length})`)
+                            : (slotsToFill.length === 0 ? "Confirmar reserva" : `Cargar y confirmar (${slotsToFill.length})`)
+                        }
                     </button>
                 </div>
             </div>
