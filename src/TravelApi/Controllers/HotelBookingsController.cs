@@ -20,13 +20,18 @@ public class HotelBookingsController : ControllerBase
         _bookingService = bookingService;
     }
 
+    // Lectura de sub-coleccion: solo el dueño de la reserva (o reservas.view_all /
+    // Admin). Antes el GET solo tenia [Authorize] heredado, asi que cualquier
+    // usuario logueado veia servicios (con NetCost) de reservas ajenas.
     [HttpGet]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
         return Ok(await _bookingService.GetHotelsAsync(reservaId, ct));
     }
 
     [HttpGet("{id}")]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> GetById(string reservaId, string id, CancellationToken ct)
     {
         try
@@ -99,9 +104,17 @@ public class HotelBookingsController : ControllerBase
     /// PATCH absoluto (sin reservaId) para cambiar SOLO el Status del hotel desde
     /// la cuenta corriente del proveedor. Aplica los mismos guards que Update completo.
     /// </summary>
+    // Autorizacion: hasta ahora este PATCH tenia solo [Authorize] (cualquier
+    // usuario logueado podia cambiar el status de un hotel de una reserva ajena y
+    // recibir el NetCost real). Se exige reservas.edit como minimo.
+    // TODO (follow-up ownership): la ruta identifica el HotelBooking por su id, no
+    // por reservaId, asi que RequireOwnership(OwnedEntity.Reserva, "reservaId") no
+    // aplica. Falta un OwnedEntity.HotelBooking + branch en OwnershipResolver
+    // (HotelBooking -> Reserva.ResponsibleUserId) para cerrar ownership fino.
     [HttpPatch]
     [Route("/api/hotel-bookings/{publicIdOrLegacyId}/status")]
     [Authorize]
+    [RequirePermission(Permissions.ReservasEdit)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try

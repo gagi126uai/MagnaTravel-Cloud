@@ -66,4 +66,54 @@ public static class CostMasking
         // HotelBookingDto no expone Commission al frontend (verificado 2026-05-09).
         // Si en el futuro se agrega, enmascarar aca tambien.
     }
+
+    // Los DTOs de Flight/Package/Transfer exponen NetCost (no Commission), igual
+    // que Hotel (verificado 2026-05-29 leyendo los DTOs). Por eso cada Mask*
+    // enmascara solo NetCost. Si manana se agrega Commission al DTO, hay que
+    // sumar el enmascarado aca tambien.
+
+    /// <summary>
+    /// Enmascara <see cref="FlightSegmentDto.NetCost"/> a 0 si el caller no puede
+    /// ver costos. Mismo criterio fail-closed que <see cref="MaskHotelAsync"/>.
+    /// </summary>
+    public static async Task MaskFlightAsync(
+        FlightSegmentDto? dto,
+        IHttpContextAccessor? httpContextAccessor,
+        IUserPermissionResolver? permissionResolver,
+        CancellationToken ct)
+    {
+        if (dto is null) return;
+        if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
+        dto.NetCost = 0m;
+    }
+
+    /// <summary>
+    /// Enmascara <see cref="PackageBookingDto.NetCost"/> a 0 si el caller no puede
+    /// ver costos. Mismo criterio fail-closed que <see cref="MaskHotelAsync"/>.
+    /// </summary>
+    public static async Task MaskPackageAsync(
+        PackageBookingDto? dto,
+        IHttpContextAccessor? httpContextAccessor,
+        IUserPermissionResolver? permissionResolver,
+        CancellationToken ct)
+    {
+        if (dto is null) return;
+        if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
+        dto.NetCost = 0m;
+    }
+
+    /// <summary>
+    /// Enmascara <see cref="TransferBookingDto.NetCost"/> a 0 si el caller no puede
+    /// ver costos. Mismo criterio fail-closed que <see cref="MaskHotelAsync"/>.
+    /// </summary>
+    public static async Task MaskTransferAsync(
+        TransferBookingDto? dto,
+        IHttpContextAccessor? httpContextAccessor,
+        IUserPermissionResolver? permissionResolver,
+        CancellationToken ct)
+    {
+        if (dto is null) return;
+        if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
+        dto.NetCost = 0m;
+    }
 }

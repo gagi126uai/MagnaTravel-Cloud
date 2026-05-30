@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -18,14 +20,35 @@ public class TransferBookingsController : ControllerBase
         _bookingService = bookingService;
     }
 
+    // Lectura de sub-coleccion: solo el dueño de la reserva (o reservas.view_all /
+    // Admin). Antes cualquier usuario logueado veia servicios (con NetCost) de
+    // reservas ajenas.
     [HttpGet]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
         return Ok(await _bookingService.GetTransfersAsync(reservaId, ct));
     }
 
+    [HttpGet("{id}")]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> GetById(string reservaId, string id, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _bookingService.GetTransferByIdAsync(reservaId, id, ct));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    // POST/PUT/DELETE: mismo patron que Hotel. Antes [Authorize(Roles="Admin")]
+    // hardcodeado bloqueaba a vendedores no-admin. Ahora reservas.edit + ownership.
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Create(string reservaId, [FromBody] CreateTransferRequest req, CancellationToken ct)
     {
         try
@@ -51,7 +74,8 @@ public class TransferBookingsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Update(string reservaId, string id, [FromBody] UpdateTransferRequest req, CancellationToken ct)
     {
         try
@@ -77,9 +101,15 @@ public class TransferBookingsController : ControllerBase
         }
     }
 
+    // Autorizacion: antes solo [Authorize] (cualquier logueado tocaba el status de
+    // un traslado ajeno y veia NetCost). Se exige reservas.edit como minimo.
+    // TODO (follow-up ownership): la ruta identifica el TransferBooking por su id, no
+    // por reservaId. Falta OwnedEntity.TransferBooking + branch en OwnershipResolver
+    // (TransferBooking -> Reserva.ResponsibleUserId) para cerrar ownership fino.
     [HttpPatch]
     [Route("/api/transfer-bookings/{publicIdOrLegacyId}/status")]
     [Authorize]
+    [RequirePermission(Permissions.ReservasEdit)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try
@@ -92,7 +122,8 @@ public class TransferBookingsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasDelete)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Delete(string reservaId, string id, CancellationToken ct)
     {
         try

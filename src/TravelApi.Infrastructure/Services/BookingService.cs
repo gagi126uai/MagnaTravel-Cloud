@@ -165,12 +165,42 @@ public class BookingService : IBookingService
 
     public async Task<IEnumerable<FlightSegmentDto>> GetFlightsAsync(int reservaId, CancellationToken ct)
     {
-        return await _flightRepo.Query()
+        var dtos = await _flightRepo.Query()
             .Where(f => f.ReservaId == reservaId)
             .Include(f => f.Rate)
             .OrderBy(f => f.DepartureTime)
             .ProjectTo<FlightSegmentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+
+        // Seguridad B1.15: este endpoint de sub-coleccion devolvia NetCost (lo que
+        // le cuesta a la agencia) a CUALQUIER usuario logueado. Enmascaramos el costo
+        // para quien no tiene cobranzas.see_cost (Admin/ver-costos lo siguen viendo).
+        // CanSeeCost se evalua una sola vez (mismo caller para toda la lista).
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            foreach (var dto in dtos) dto.NetCost = 0m;
+        }
+        return dtos;
+    }
+
+    public async Task<FlightSegmentDto> GetFlightByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        return await GetFlightByIdAsync(reservaId, flightId, ct);
+    }
+
+    public async Task<FlightSegmentDto> GetFlightByIdAsync(int reservaId, int id, CancellationToken ct)
+    {
+        var flight = await _flightRepo.GetByIdAsync(id, ct);
+        // Validamos que el vuelo pertenezca a la reserva del path: evita que alguien
+        // lea un servicio de otra reserva pasando un id ajeno (defensa ademas del
+        // RequireOwnership del controller).
+        if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
+
+        var dto = _mapper.Map<FlightSegmentDto>(flight);
+        await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<FlightSegmentDto> CreateFlightAsync(string reservaPublicIdOrLegacyId, CreateFlightRequest req, CancellationToken ct)
@@ -222,7 +252,12 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<FlightSegmentDto>(flight);
+
+        var dto = _mapper.Map<FlightSegmentDto>(flight);
+        // B1.15: el response de POST exponia el costo del proveedor a usuarios sin
+        // permiso. Enmascaramos NetCost igual que Hotel.
+        await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<FlightSegmentDto> UpdateFlightAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateFlightRequest req, CancellationToken ct)
@@ -285,7 +320,12 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<FlightSegmentDto>(flight);
+
+        var dto = _mapper.Map<FlightSegmentDto>(flight);
+        // B1.15: el response de PUT exponia el costo del proveedor a usuarios sin
+        // permiso. Enmascaramos NetCost igual que Hotel.
+        await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task DeleteFlightAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
@@ -324,12 +364,20 @@ public class BookingService : IBookingService
 
     public async Task<IEnumerable<HotelBookingDto>> GetHotelsAsync(int reservaId, CancellationToken ct)
     {
-        return await _hotelRepo.Query()
+        var dtos = await _hotelRepo.Query()
             .Where(h => h.ReservaId == reservaId)
             .Include(h => h.Rate)
             .OrderBy(h => h.CheckIn)
             .ProjectTo<HotelBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+
+        // Seguridad B1.15: el GET de sub-coleccion devolvia NetCost a cualquier
+        // usuario logueado. Enmascaramos para quien no tiene cobranzas.see_cost.
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            foreach (var dto in dtos) dto.NetCost = 0m;
+        }
+        return dtos;
     }
 
     public async Task<HotelBookingDto> GetHotelByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
@@ -343,7 +391,12 @@ public class BookingService : IBookingService
     {
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
-        return _mapper.Map<HotelBookingDto>(hotel);
+
+        var dto = _mapper.Map<HotelBookingDto>(hotel);
+        // B1.15: el byId tambien exponia NetCost sin enmascarar. Lo alineamos con
+        // Create/Update que ya enmascaraban.
+        await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<HotelBookingDto> CreateHotelAsync(string reservaPublicIdOrLegacyId, CreateHotelRequest req, CancellationToken ct)
@@ -524,12 +577,37 @@ public class BookingService : IBookingService
 
     public async Task<IEnumerable<PackageBookingDto>> GetPackagesAsync(int reservaId, CancellationToken ct)
     {
-        return await _packageRepo.Query()
+        var dtos = await _packageRepo.Query()
             .Where(p => p.ReservaId == reservaId)
             .Include(p => p.Rate)
             .OrderBy(p => p.CreatedAt)
             .ProjectTo<PackageBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+
+        // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            foreach (var dto in dtos) dto.NetCost = 0m;
+        }
+        return dtos;
+    }
+
+    public async Task<PackageBookingDto> GetPackageByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        return await GetPackageByIdAsync(reservaId, packageId, ct);
+    }
+
+    public async Task<PackageBookingDto> GetPackageByIdAsync(int reservaId, int id, CancellationToken ct)
+    {
+        var package = await _packageRepo.GetByIdAsync(id, ct);
+        // El paquete debe pertenecer a la reserva del path (defensa contra ids ajenos).
+        if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
+
+        var dto = _mapper.Map<PackageBookingDto>(package);
+        await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<PackageBookingDto> CreatePackageAsync(string reservaPublicIdOrLegacyId, CreatePackageRequest req, CancellationToken ct)
@@ -578,7 +656,11 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<PackageBookingDto>(package);
+
+        var dto = _mapper.Map<PackageBookingDto>(package);
+        // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
+        await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<PackageBookingDto> UpdatePackageAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdatePackageRequest req, CancellationToken ct)
@@ -638,7 +720,11 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<PackageBookingDto>(package);
+
+        var dto = _mapper.Map<PackageBookingDto>(package);
+        // B1.15: enmascarar NetCost en el response de PUT (igual que Hotel).
+        await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task DeletePackageAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
@@ -677,12 +763,37 @@ public class BookingService : IBookingService
 
     public async Task<IEnumerable<TransferBookingDto>> GetTransfersAsync(int reservaId, CancellationToken ct)
     {
-        return await _transferRepo.Query()
+        var dtos = await _transferRepo.Query()
             .Where(t => t.ReservaId == reservaId)
             .Include(t => t.Rate)
             .OrderBy(t => t.PickupDateTime)
             .ProjectTo<TransferBookingDto>(_mapper.ConfigurationProvider)
             .ToListAsync(ct);
+
+        // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            foreach (var dto in dtos) dto.NetCost = 0m;
+        }
+        return dtos;
+    }
+
+    public async Task<TransferBookingDto> GetTransferByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        return await GetTransferByIdAsync(reservaId, transferId, ct);
+    }
+
+    public async Task<TransferBookingDto> GetTransferByIdAsync(int reservaId, int id, CancellationToken ct)
+    {
+        var transfer = await _transferRepo.GetByIdAsync(id, ct);
+        // El traslado debe pertenecer a la reserva del path (defensa contra ids ajenos).
+        if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
+
+        var dto = _mapper.Map<TransferBookingDto>(transfer);
+        await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<TransferBookingDto> CreateTransferAsync(string reservaPublicIdOrLegacyId, CreateTransferRequest req, CancellationToken ct)
@@ -731,7 +842,11 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<TransferBookingDto>(transfer);
+
+        var dto = _mapper.Map<TransferBookingDto>(transfer);
+        // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
+        await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<TransferBookingDto> UpdateTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateTransferRequest req, CancellationToken ct)
@@ -791,7 +906,11 @@ public class BookingService : IBookingService
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         await _reservaService.UpdateBalanceAsync(reservaId);
-        return _mapper.Map<TransferBookingDto>(transfer);
+
+        var dto = _mapper.Map<TransferBookingDto>(transfer);
+        // B1.15: enmascarar NetCost en el response de PUT (igual que Hotel).
+        await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task DeleteTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
@@ -877,7 +996,13 @@ public class BookingService : IBookingService
             hotel.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _hotelRepo.UpdateAsync(hotel, ct);
         if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
-        return _mapper.Map<HotelBookingDto>(hotel);
+        var dto = _mapper.Map<HotelBookingDto>(hotel);
+        // Mismo enmascarado de NetCost que Create/Update: si el caller no es Admin
+        // y no tiene cobranzas.see_cost, el costo neto vuelve en 0. El PATCH /status
+        // lo consume la cuenta corriente del proveedor, donde un vendedor sin permiso
+        // de costos no debe ver el neto.
+        await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<TransferBookingDto> UpdateTransferStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
@@ -902,7 +1027,10 @@ public class BookingService : IBookingService
             transfer.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _transferRepo.UpdateAsync(transfer, ct);
         if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
-        return _mapper.Map<TransferBookingDto>(transfer);
+        var dto = _mapper.Map<TransferBookingDto>(transfer);
+        // Enmascarar NetCost igual que el resto de los endpoints de booking.
+        await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
@@ -927,7 +1055,10 @@ public class BookingService : IBookingService
             package.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _packageRepo.UpdateAsync(package, ct);
         if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
-        return _mapper.Map<PackageBookingDto>(package);
+        var dto = _mapper.Map<PackageBookingDto>(package);
+        // Enmascarar NetCost igual que el resto de los endpoints de booking.
+        await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 
     public async Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
@@ -954,6 +1085,9 @@ public class BookingService : IBookingService
             flight.PNR = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _flightRepo.UpdateAsync(flight, ct);
         if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
-        return _mapper.Map<FlightSegmentDto>(flight);
+        var dto = _mapper.Map<FlightSegmentDto>(flight);
+        // Enmascarar NetCost igual que el resto de los endpoints de booking.
+        await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
     }
 }

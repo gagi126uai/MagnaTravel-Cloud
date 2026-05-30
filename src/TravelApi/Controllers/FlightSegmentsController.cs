@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -18,14 +20,36 @@ public class FlightSegmentsController : ControllerBase
         _bookingService = bookingService;
     }
 
+    // Lectura de sub-coleccion: solo el dueño de la reserva (o quien tenga
+    // reservas.view_all / Admin) puede listar los servicios. Antes cualquier
+    // usuario logueado veia (y con NetCost) servicios de reservas ajenas.
     [HttpGet]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> GetAll(string reservaId, CancellationToken ct)
     {
         return Ok(await _bookingService.GetFlightsAsync(reservaId, ct));
     }
 
+    [HttpGet("{id}")]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> GetById(string reservaId, string id, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _bookingService.GetFlightByIdAsync(reservaId, id, ct));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    // POST/PUT/DELETE: mismo patron que Hotel. Antes estaba [Authorize(Roles="Admin")]
+    // hardcodeado, lo que impedia que un vendedor no-admin cargara vuelos (Hotel si
+    // lo permitia). Ahora requiere reservas.edit + ownership de la reserva.
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Create(string reservaId, [FromBody] CreateFlightRequest req, CancellationToken ct)
     {
         try
@@ -51,7 +75,8 @@ public class FlightSegmentsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Update(string reservaId, string id, [FromBody] UpdateFlightRequest req, CancellationToken ct)
     {
         try
@@ -77,9 +102,15 @@ public class FlightSegmentsController : ControllerBase
         }
     }
 
+    // Autorizacion: antes solo [Authorize] (cualquier logueado tocaba el status de
+    // un vuelo ajeno y veia NetCost). Se exige reservas.edit como minimo.
+    // TODO (follow-up ownership): la ruta identifica el FlightSegment por su id, no
+    // por reservaId. Falta OwnedEntity.FlightSegment + branch en OwnershipResolver
+    // (FlightSegment -> Reserva.ResponsibleUserId) para cerrar ownership fino.
     [HttpPatch]
     [Route("/api/flight-segments/{publicIdOrLegacyId}/status")]
     [Authorize]
+    [RequirePermission(Permissions.ReservasEdit)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try
@@ -92,7 +123,8 @@ public class FlightSegmentsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReservasDelete)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> Delete(string reservaId, string id, CancellationToken ct)
     {
         try
