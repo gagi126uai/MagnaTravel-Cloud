@@ -3,6 +3,8 @@ export const SERVICE_RECORD_KIND = Object.freeze({
   HOTEL: "hotel",
   TRANSFER: "transfer",
   PACKAGE: "package",
+  // "assistance" = seguro de viaje / asistencia al viajero
+  ASSISTANCE: "assistance",
   GENERIC: "generic",
 });
 
@@ -14,6 +16,8 @@ const SPECIFIC_CREATE_ENDPOINTS = Object.freeze({
   Transfer: "transfers",
   Paquete: "packages",
   Package: "packages",
+  Asistencia: "assistances",
+  Assistance: "assistances",
 });
 
 const RECORD_KIND_ENDPOINTS = Object.freeze({
@@ -21,6 +25,7 @@ const RECORD_KIND_ENDPOINTS = Object.freeze({
   [SERVICE_RECORD_KIND.HOTEL]: "hotels",
   [SERVICE_RECORD_KIND.TRANSFER]: "transfers",
   [SERVICE_RECORD_KIND.PACKAGE]: "packages",
+  [SERVICE_RECORD_KIND.ASSISTANCE]: "assistances",
 });
 
 const RECORD_KIND_COLLECTION_KEYS = Object.freeze({
@@ -28,6 +33,8 @@ const RECORD_KIND_COLLECTION_KEYS = Object.freeze({
   [SERVICE_RECORD_KIND.HOTEL]: "hotelBookings",
   [SERVICE_RECORD_KIND.TRANSFER]: "transferBookings",
   [SERVICE_RECORD_KIND.PACKAGE]: "packageBookings",
+  // La key coincide con el campo que viene en el ReservaDto del backend
+  [SERVICE_RECORD_KIND.ASSISTANCE]: "assistanceBookings",
   [SERVICE_RECORD_KIND.GENERIC]: "servicios",
 });
 
@@ -39,6 +46,8 @@ const SERVICE_TYPE_RECORD_KINDS = Object.freeze({
   Transfer: SERVICE_RECORD_KIND.TRANSFER,
   Paquete: SERVICE_RECORD_KIND.PACKAGE,
   Package: SERVICE_RECORD_KIND.PACKAGE,
+  Asistencia: SERVICE_RECORD_KIND.ASSISTANCE,
+  Assistance: SERVICE_RECORD_KIND.ASSISTANCE,
 });
 
 export const RECORD_KIND_DISPLAY_TYPE = Object.freeze({
@@ -46,6 +55,7 @@ export const RECORD_KIND_DISPLAY_TYPE = Object.freeze({
   [SERVICE_RECORD_KIND.HOTEL]: "Hotel",
   [SERVICE_RECORD_KIND.TRANSFER]: "Traslado",
   [SERVICE_RECORD_KIND.PACKAGE]: "Paquete",
+  [SERVICE_RECORD_KIND.ASSISTANCE]: "Asistencia",
   [SERVICE_RECORD_KIND.GENERIC]: "Generico",
 });
 
@@ -54,6 +64,7 @@ export const RESERVA_COLLECTION_LABELS = Object.freeze({
   hotelBookings: "hoteles",
   transferBookings: "traslados",
   packageBookings: "paquetes",
+  assistanceBookings: "asistencias",
   servicios: "servicios",
 });
 
@@ -156,6 +167,19 @@ export function normalizeReservaServices(reserva) {
     })
   );
 
+  // Asistencias/seguros: el nombre se arma con la aseguradora + nro de poliza si existe
+  const assistanceBookings = (reserva.assistanceBookings || []).map((assistance) =>
+    normalizeService(assistance, SERVICE_RECORD_KIND.ASSISTANCE, {
+      // La "fecha" representativa de la asistencia es el inicio de vigencia
+      date: assistance.validFrom,
+      name: firstNonEmpty(
+        assistance.supplierName,
+        assistance.policyNumber ? `Poliza ${assistance.policyNumber}` : "",
+        "Asistencia"
+      ),
+    })
+  );
+
   const genericServices = (reserva.servicios || []).map((service) =>
     normalizeService(service, SERVICE_RECORD_KIND.GENERIC, {
       date: service.departureDate,
@@ -168,6 +192,7 @@ export function normalizeReservaServices(reserva) {
     ...hotelBookings,
     ...transferBookings,
     ...packageBookings,
+    ...assistanceBookings,
     ...genericServices,
   ].sort((left, right) => toTimestamp(left.date) - toTimestamp(right.date));
 }

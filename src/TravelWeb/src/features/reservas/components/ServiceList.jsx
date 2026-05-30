@@ -1,11 +1,15 @@
 import React from 'react';
-import { AlertTriangle, Plus, Plane, Hotel, Car, Package, Edit2, Trash2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2 } from "lucide-react";
 import { isAdmin } from "../../../auth";
 import {
     SERVICE_RECORD_KIND,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
 
+/**
+ * Icono representativo del tipo de servicio en la lista.
+ * Cada tipo tiene su color canonico para diferenciarlos visualmente de un vistazo.
+ */
 function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
     if (service.recordKind === SERVICE_RECORD_KIND.FLIGHT) {
         return <Plane className={`${className} text-sky-500`} />;
@@ -15,6 +19,10 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
     }
     if (service.recordKind === SERVICE_RECORD_KIND.TRANSFER) {
         return <Car className={`${className} text-emerald-500`} />;
+    }
+    // Asistencia / seguro de viaje: escudo de proteccion en azul (color "confianza")
+    if (service.recordKind === SERVICE_RECORD_KIND.ASSISTANCE) {
+        return <ShieldCheck className={`${className} text-blue-500`} />;
     }
 
     return <Package className={`${className} text-violet-500`} />;
@@ -108,6 +116,16 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                                     {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && svc.pickupLocation && (
                                                         <span className="text-[10px] text-slate-400">{svc.pickupLocation} ➔ {svc.dropoffLocation}</span>
                                                     )}
+                                                    {/* Datos clave de la asistencia: poliza, plan y zona */}
+                                                    {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE && svc.policyNumber && (
+                                                        <span className="text-[10px] bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded font-mono font-bold">Poliza: {svc.policyNumber}</span>
+                                                    )}
+                                                    {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE && svc.planType && (
+                                                        <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded">{svc.planType}</span>
+                                                    )}
+                                                    {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE && svc.coverageZone && (
+                                                        <span className="text-[10px] text-slate-400">{svc.coverageZone}</span>
+                                                    )}
                                                 </div>
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
@@ -115,6 +133,14 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                                     <div className="flex flex-col">
                                                         <span>{new Date(svc.date || svc.startDate || svc.checkIn).toLocaleDateString('es-AR')}</span>
                                                         <span className="text-[10px] opacity-60">al {new Date(svc.endDate || svc.checkOut).toLocaleDateString('es-AR')}</span>
+                                                    </div>
+                                                ) : svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE ? (
+                                                    // Asistencia: muestra vigencia desde/hasta (fechas date-only)
+                                                    <div className="flex flex-col">
+                                                        <span>{svc.validFrom ? new Date(svc.validFrom).toLocaleDateString('es-AR') : '-'}</span>
+                                                        {svc.validTo && (
+                                                            <span className="text-[10px] opacity-60">al {new Date(svc.validTo).toLocaleDateString('es-AR')}</span>
+                                                        )}
                                                     </div>
                                                 ) : (
                                                     svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'
@@ -186,9 +212,13 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                     <div className="flex justify-between items-end">
                                         <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
                                             <span>
-                                                {svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'}
-                                                {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE) && 
+                                                {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE
+                                                    ? (svc.validFrom ? `Vigencia: ${new Date(svc.validFrom).toLocaleDateString('es-AR')}` : '-')
+                                                    : (svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-')}
+                                                {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE) &&
                                                     ` al ${new Date(svc.endDate || svc.checkOut).toLocaleDateString('es-AR')}`}
+                                                {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE && svc.validTo &&
+                                                    ` al ${new Date(svc.validTo).toLocaleDateString('es-AR')}`}
                                             </span>
                                             <div className="flex gap-2 items-center mt-1">
                                                 <span className="font-bold text-slate-900 dark:text-white">Venta: ${(svc.salePrice || 0).toLocaleString()}</span>

@@ -9,6 +9,8 @@ const SERVICE_TYPE_LABELS = {
     Transfer: "Transfer",
     Package: "Paquete",
     Flight: "Vuelo",
+    // "Assistance" es el valor que espera el backend en serviceType del POST /assignments
+    Assistance: "Asistencia",
     Generic: "Servicio",
 };
 
@@ -52,6 +54,18 @@ function buildServiceList(reserva) {
             label: `${f.airlineCode || ""} ${f.flightNumber || ""}`.trim() || "Vuelo",
             sublabel: [f.origin, f.destination].filter(Boolean).join(" → "),
             expectedPax: 0, // no se sabe sin tabla de pax-flight
+        });
+    });
+    // Asistencias: pax cubiertos = adultos + menores declarados en la poliza.
+    // El dueño decidio que los pax cubiertos se asignan nominalmente (igual que hotel/transfer).
+    (reserva.assistanceBookings || []).forEach((a) => {
+        const policyLabel = a.policyNumber ? `Poliza ${a.policyNumber}` : "";
+        list.push({
+            serviceType: "Assistance",
+            publicId: a.publicId,
+            label: a.supplierName || policyLabel || "Asistencia",
+            sublabel: [policyLabel, a.planType, a.coverageZone].filter(Boolean).join(" • "),
+            expectedPax: (a.adults || 0) + (a.children || 0),
         });
     });
     return list;

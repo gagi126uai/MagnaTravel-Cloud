@@ -8,6 +8,7 @@ import {
     Hotel,
     Bus,
     Package,
+    ShieldCheck,
     Search,
     Calculator,
     DollarSign,
@@ -36,7 +37,9 @@ const SERVICE_TYPES = [
     { value: "Aereo", label: "Aereo", icon: Plane, color: "sky" },
     { value: "Hotel", label: "Hotel", icon: Hotel, color: "amber" },
     { value: "Traslado", label: "Traslado", icon: Bus, color: "emerald" },
-    { value: "Paquete", label: "Paquete", icon: Package, color: "violet" }
+    { value: "Paquete", label: "Paquete", icon: Package, color: "violet" },
+    // Asistencia al viajero / seguro de viaje
+    { value: "Asistencia", label: "Asistencia", icon: ShieldCheck, color: "blue" },
 ];
 
 const inputClass = "w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white dark:focus:border-indigo-400";
@@ -1058,6 +1061,209 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
     );
 }
 
+/**
+ * Formulario de servicio Asistencia al viajero (seguro de viaje).
+ * Carga los datos de la poliza: aseguradora, plan, cobertura, vigencia y pasajeros cubiertos.
+ * La comision NO se muestra — regla de negocio del dueño, igual que los otros tipos.
+ * validFrom/validTo se tratan como fechas date-only (sin hora), igual que checkIn/checkOut en Hotel.
+ */
+function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
+    return (
+        <div className="space-y-4">
+            {/* Aseguradora/proveedor y estado de la asistencia */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Aseguradora / Proveedor *</label>
+                    <select
+                        className={inputClass}
+                        value={form.supplierId || ""}
+                        onChange={(event) => setForm({ ...form, supplierId: event.target.value })}
+                        required
+                        disabled={disabled}
+                    >
+                        <option value="">Seleccionar aseguradora...</option>
+                        {suppliers.map((supplier) => (
+                            <option
+                                key={supplier.id || supplier.publicId || supplier.PublicId}
+                                value={supplier.publicId || supplier.PublicId}
+                            >
+                                {supplier.name} {!supplier.isActive ? "(Inactivo)" : ""}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                {/* El estado de la asistencia no se muestra en presupuesto (regla igual que Hotel/Traslado) */}
+                {!isBudget && (
+                    <div>
+                        <label className={labelClass}>Estado *</label>
+                        <select
+                            className={inputClass}
+                            value={form.workflowStatus || "Solicitado"}
+                            onChange={(event) => setForm({ ...form, workflowStatus: event.target.value })}
+                            required
+                            disabled={disabled}
+                        >
+                            <option value="Solicitado">Solicitado</option>
+                            <option value="Confirmado">Confirmado</option>
+                            <option value="Cancelado">Cancelado</option>
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            {/* Selector de tarifa del tarifario de asistencias */}
+            <RateSelector
+                serviceType={form.serviceType || "Asistencia"}
+                supplierId={form.supplierId}
+                onSelect={onRateSelect}
+                disabled={disabled}
+            />
+
+            {/* Datos identificatorios de la poliza */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Nro. de Poliza</label>
+                    <input
+                        className={inputClass}
+                        placeholder="POL-00001"
+                        value={form.policyNumber || ""}
+                        onChange={(event) => setForm({ ...form, policyNumber: event.target.value })}
+                        disabled={disabled}
+                        data-testid="assistance-policy-number"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Tipo de Plan</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Basic, Plus, Premium..."
+                        value={form.planType || ""}
+                        onChange={(event) => setForm({ ...form, planType: event.target.value })}
+                        disabled={disabled}
+                        data-testid="assistance-plan-type"
+                    />
+                </div>
+            </div>
+
+            {/* Cobertura (TEXTO libre, ej: "USD 30.000") y zona cubierta */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Cobertura / Limite</label>
+                    {/* coverageLimit es texto segun el contrato del backend, no un numero */}
+                    <input
+                        className={inputClass}
+                        placeholder="USD 30.000, EUR 20.000..."
+                        value={form.coverageLimit || ""}
+                        onChange={(event) => setForm({ ...form, coverageLimit: event.target.value })}
+                        disabled={disabled}
+                        data-testid="assistance-coverage-limit"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Zona / Destinos Cubiertos</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Mundo excepto USA y Canada..."
+                        value={form.coverageZone || ""}
+                        onChange={(event) => setForm({ ...form, coverageZone: event.target.value })}
+                        disabled={disabled}
+                        data-testid="assistance-coverage-zone"
+                    />
+                </div>
+            </div>
+
+            {/* Vigencia: date-only. Igual que checkIn/checkOut en Hotel — NO incluye hora. */}
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className={labelClass}>Vigencia Desde *</label>
+                    <div className="relative">
+                        <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input
+                            type="date"
+                            className={`${inputClass} pl-10`}
+                            value={form.validFrom || ""}
+                            onChange={(event) => setForm({ ...form, validFrom: event.target.value })}
+                            required
+                            disabled={disabled}
+                            data-testid="assistance-valid-from"
+                        />
+                    </div>
+                </div>
+                <div>
+                    <label className={labelClass}>Vigencia Hasta *</label>
+                    <div className="relative">
+                        <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input
+                            type="date"
+                            className={`${inputClass} pl-10`}
+                            value={form.validTo || ""}
+                            onChange={(event) => setForm({ ...form, validTo: event.target.value })}
+                            required
+                            disabled={disabled}
+                            data-testid="assistance-valid-to"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Cantidad de pasajeros cubiertos por la poliza */}
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className={labelClass}>Adultos</label>
+                    <input
+                        type="number"
+                        min="0"
+                        className={inputClass}
+                        value={form.adults ?? ""}
+                        onChange={(event) => setForm({ ...form, adults: parseInt(event.target.value, 10) || 0 })}
+                        disabled={disabled}
+                        data-testid="assistance-adults"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Menores</label>
+                    <input
+                        type="number"
+                        min="0"
+                        className={inputClass}
+                        value={form.children ?? ""}
+                        onChange={(event) => setForm({ ...form, children: parseInt(event.target.value, 10) || 0 })}
+                        disabled={disabled}
+                        data-testid="assistance-children"
+                    />
+                </div>
+            </div>
+
+            {/* Numero de confirmacion del operador/aseguradora */}
+            <div>
+                <label className={labelClass}>Nro. Confirmacion</label>
+                <input
+                    className={inputClass}
+                    placeholder="CF-00001"
+                    value={form.confirmationNumber || ""}
+                    onChange={(event) => setForm({ ...form, confirmationNumber: event.target.value })}
+                    disabled={disabled}
+                    data-testid="assistance-confirmation"
+                />
+            </div>
+
+            {/* Notas internas de la asistencia */}
+            <div>
+                <label className={labelClass}>Notas</label>
+                <textarea
+                    className={`${inputClass} resize-none`}
+                    rows={2}
+                    placeholder="Observaciones de la asistencia..."
+                    value={form.notes || ""}
+                    onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                    disabled={disabled}
+                    data-testid="assistance-notes"
+                />
+            </div>
+        </div>
+    );
+}
+
 function GenericServiceForm({ form, setForm, suppliers, disabled }) {
     const baseTypeOptions = [
         ...SERVICE_TYPES.map(({ value, label }) => ({ value, label })),
@@ -1233,6 +1439,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         amber: "border-amber-500 text-amber-600 bg-white dark:bg-slate-900",
         emerald: "border-emerald-500 text-emerald-600 bg-white dark:bg-slate-900",
         violet: "border-violet-500 text-violet-600 bg-white dark:bg-slate-900",
+        blue: "border-blue-500 text-blue-600 bg-white dark:bg-slate-900",
     };
 
     const sortedSuppliers = useMemo(() => {
@@ -1338,7 +1545,16 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 // Hora del traslado de retorno, misma logica.
                 returnTime: extractTimeFromLocalString(serviceToEdit.returnDateTime),
                 roomingAssignments: serviceToEdit.roomingAssignmentsJson || serviceToEdit.roomingAssignments || "",
-                workflowStatus: serviceToEdit.workflowStatus || "Solicitado"
+                workflowStatus: serviceToEdit.workflowStatus || "Solicitado",
+                // Asistencia: validFrom/validTo son date-only, el mismo tratamiento que checkIn/checkOut.
+                // formatDateForInput toma solo la parte "YYYY-MM-DD" antes de la "T".
+                validFrom: formatDateForInput(serviceToEdit.validFrom),
+                validTo: formatDateForInput(serviceToEdit.validTo),
+                // Campos opcionales de la poliza — null viene del backend como string vacio para no romper inputs
+                policyNumber: serviceToEdit.policyNumber || "",
+                planType: serviceToEdit.planType || "",
+                coverageLimit: serviceToEdit.coverageLimit || "",
+                coverageZone: serviceToEdit.coverageZone || "",
             };
 
             if (nextServiceType === "Hotel") {
@@ -1528,6 +1744,24 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 payload.includesTransfer = !!form.includesTransfer;
                 payload.includesExcursions = !!form.includesExcursions;
                 payload.includesMeals = !!form.includesMeals;
+
+            } else if (!isGenericEdit && serviceType === "Asistencia") {
+                // validFrom/validTo son date-only — igual tratamiento que checkIn/checkOut en Hotel.
+                // toIsoDate() los convierte a ISO string ("2025-06-01T00:00:00.000Z").
+                // El backend los parsea como DateOnly/date (solo toma la parte de fecha).
+                payload.validFrom = toIsoDate(form.validFrom, "vigencia desde");
+                payload.validTo = toIsoDate(form.validTo, "vigencia hasta");
+
+                // Campos opcionales de la poliza — se mandan null si estan vacios
+                payload.policyNumber = form.policyNumber || null;
+                payload.planType = form.planType || null;
+                // coverageLimit es TEXTO libre segun el contrato del backend (no un numero)
+                payload.coverageLimit = form.coverageLimit || null;
+                payload.coverageZone = form.coverageZone || null;
+                payload.adults = form.adults != null ? Number(form.adults) : null;
+                payload.children = form.children != null ? Number(form.children) : null;
+                payload.confirmationNumber = form.confirmationNumber || null;
+                payload.notes = form.notes || null;
             }
 
             const savedService = method === "put"
@@ -1633,6 +1867,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     ) : null}
                     {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
                     {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
+                    {!isGenericEdit && serviceType === "Asistencia" ? <AssistanceForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
 
                     {showPricingForm ? (
                         <PricingForm

@@ -19,6 +19,8 @@ const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
     hotelBookings: (reservaId) => `/reservas/${reservaId}/hotels`,
     transferBookings: (reservaId) => `/reservas/${reservaId}/transfers`,
     packageBookings: (reservaId) => `/reservas/${reservaId}/packages`,
+    // Asistencias: endpoint dedicado igual que los otros 4 tipos
+    assistanceBookings: (reservaId) => `/reservas/${reservaId}/assistances`,
 });
 
 function removeServiceFromReservaSnapshot(reserva, service) {
@@ -449,12 +451,15 @@ export function useReservaDetail(reservaId, navigate) {
 
         const transfer = (reserva.transferBookings || []).reduce((max, t) => Math.max(max, t.passengers || 0), 0);
         const pkg = (reserva.packageBookings || []).reduce((sum, p) => sum + ((p.adults || 0) + (p.children || 0)), 0);
+        // La asistencia tiene adultos + menores cubiertos por la poliza
+        const assistance = (reserva.assistanceBookings || []).reduce((sum, a) => sum + ((a.adults || 0) + (a.children || 0)), 0);
 
         return {
             hotel,
             transfer,
             package: pkg,
-            total: Math.max(hotel, Math.max(transfer, pkg))
+            assistance,
+            total: Math.max(hotel, Math.max(transfer, Math.max(pkg, assistance)))
         };
     }, [reserva]);
 
