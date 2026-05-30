@@ -72,4 +72,20 @@ public class OperationalFinanceSettingsDto
     /// </summary>
     [Range(1, 60, ErrorMessage = "IdempotencyKeyStaleThresholdMinutes debe estar entre 1 y 60.")]
     public int? IdempotencyKeyStaleThresholdMinutes { get; set; }
+
+    /// <summary>
+    /// ADR-012 MVP (facturar en USD, 2026-05-29): feature flag maestro de facturacion
+    /// multimoneda. Hasta hoy solo se prendia por SQL; ahora el admin lo puede prender/apagar
+    /// desde Configuracion -> Facturacion. Con OFF (default) la facturacion sale en pesos
+    /// exactamente como hoy; con ON el modal de emision habilita el selector de moneda.
+    ///
+    /// <para>Nullable y patch-like (mismo criterio B-002 que los 3 settings de arriba): enviar
+    /// null u omitir el campo en el PUT = no se modifica el valor actual. Asi un cliente legacy
+    /// o un PUT que olvide el campo no lo apaga silenciosamente. Solo se persiste si viene valor.</para>
+    ///
+    /// <para>OJO: el mismo valor se expone read-only en GET /afip/settings para que el modal de
+    /// emision decida si muestra el selector de moneda. Ese endpoint NO se toca: sigue leyendo
+    /// la entidad, asi que refleja automaticamente lo que se guarde por aca.</para>
+    /// </summary>
+    public bool? EnableMultiCurrencyInvoicing { get; set; }
 }

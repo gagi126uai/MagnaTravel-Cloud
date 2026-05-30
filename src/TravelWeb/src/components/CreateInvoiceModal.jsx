@@ -688,6 +688,28 @@ export default function CreateInvoiceModal({
                 <span className="text-2xl font-bold text-gray-900 dark:text-white">
                   {formatCurrency(totals.total, activeCurrency)}
                 </span>
+
+                {/* Equivalente en pesos: se muestra solo cuando la moneda es USD
+                    y el operador ya cargó un TC válido (mayor a 0 y distinto de 1).
+                    El cálculo es: total en USD × tipo de cambio ingresado.
+                    Si el TC todavía no fue cargado, mostramos un guión para no confundir. */}
+                {isUSD && (
+                  <div
+                    data-testid="equivalente-pesos"
+                    className="mt-1 text-xs text-indigo-600 dark:text-indigo-400 font-medium"
+                  >
+                    {Number(exchangeRate) > 1
+                      ? `≈ ${(totals.total * Number(exchangeRate)).toLocaleString("es-AR", {
+                          style: "currency",
+                          currency: "ARS",
+                          minimumFractionDigits: 2,
+                        })} (TC $${Number(exchangeRate).toLocaleString("es-AR", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })})`
+                      : "Equivalente en pesos: — (ingresá el TC)"}
+                  </div>
+                )}
               </div>
             </div>
           </div>

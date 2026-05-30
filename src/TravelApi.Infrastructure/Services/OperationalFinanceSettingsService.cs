@@ -65,6 +65,15 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.IdempotencyKeyStaleThresholdMinutes = request.IdempotencyKeyStaleThresholdMinutes.Value;
         }
 
+        // ADR-012 MVP (facturar en USD, 2026-05-29): persistimos el flag maestro de
+        // multimoneda. Update CONDICIONAL (patch-like, mismo criterio B-002): solo se aplica
+        // si el request trae valor; si viene null u omitido, dejamos el valor actual intacto.
+        // Asi un PUT legacy que no conozca este campo no lo apaga sin querer.
+        if (request.EnableMultiCurrencyInvoicing.HasValue)
+        {
+            entity.EnableMultiCurrencyInvoicing = request.EnableMultiCurrencyInvoicing.Value;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -168,6 +177,9 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             IvaProrrateoMode = entity.IvaProrrateoMode,
             PartialCreditNoteRoundingTolerance = entity.PartialCreditNoteRoundingTolerance,
             IdempotencyKeyStaleThresholdMinutes = entity.IdempotencyKeyStaleThresholdMinutes,
+            // ADR-012 MVP: el GET devuelve el estado actual del flag de multimoneda para que la
+            // pantalla de Configuracion -> Facturacion lo muestre como un toggle.
+            EnableMultiCurrencyInvoicing = entity.EnableMultiCurrencyInvoicing,
         };
     }
 }

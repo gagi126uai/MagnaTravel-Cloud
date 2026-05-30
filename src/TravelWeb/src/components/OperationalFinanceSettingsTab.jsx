@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Settings2, ShieldAlert } from "lucide-react";
+import { AlertTriangle, DollarSign, Settings2, ShieldAlert } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { Button } from "./ui/button";
@@ -10,6 +10,9 @@ const defaultSettings = {
   afipInvoiceControlMode: "AllowAgentOverrideWithReason",
   enableUpcomingUnpaidReservationNotifications: true,
   upcomingUnpaidReservationAlertDays: 7,
+  // OFF por defecto: el sistema factura solo en pesos hasta que el dueño lo active manualmente.
+  // Ver: CreateInvoiceModal.jsx — el selector ARS/USD solo aparece cuando este flag es true.
+  enableMultiCurrencyInvoicing: false,
 };
 
 export default function OperationalFinanceSettingsTab() {
@@ -97,6 +100,37 @@ export default function OperationalFinanceSettingsTab() {
                 <div className="text-sm font-semibold text-slate-900 dark:text-white">Exigir pago total para emitir voucher</div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   Afecta tanto el PDF como el envío del voucher por WhatsApp.
+                </div>
+              </div>
+            </label>
+          </div>
+
+          {/* Bloque de facturación en moneda extranjera.
+              Solo afecta el modal CreateInvoice (muestra/oculta el selector ARS/USD).
+              Antes de prender esto en producción hay que tener homologación ARCA aprobada
+              y confirmación del contador. El backend también valida con su propio flag. */}
+          <div className="grid gap-6 md:grid-cols-2">
+            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={form.enableMultiCurrencyInvoicing}
+                onChange={(event) => updateField("enableMultiCurrencyInvoicing", event.target.checked)}
+                className="mt-1 rounded border-slate-300"
+                disabled={loading}
+                data-testid="toggle-multicurrency"
+              />
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                  <DollarSign className="w-4 h-4 text-emerald-500" />
+                  Habilitar facturación en moneda extranjera (dólares)
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Al activarlo, aparece el selector Pesos/Dólares al crear facturas y se habilita
+                  el campo de tipo de cambio manual.{" "}
+                  <span className="font-semibold text-amber-600 dark:text-amber-400">
+                    Activá esto solo cuando hayas probado en homologación y tu contador lo confirme.
+                    Mientras esté apagado, el sistema factura solo en pesos como siempre.
+                  </span>
                 </div>
               </div>
             </label>

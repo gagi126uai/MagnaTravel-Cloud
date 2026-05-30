@@ -2,6 +2,7 @@ using QRCoder;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TravelApi.Domain.Entities;
@@ -267,8 +268,95 @@ public class InvoicePdfService : IInvoicePdfService
                     r.RelativeItem().Text("TOTAL:").Bold().FontSize(14).AlignRight();
                     r.ConstantItem(100).Text($"$ {invoice.ImporteTotal:N2}").Bold().FontSize(14).AlignRight();
                 });
+
+                // ADR-012 MVP (facturar en USD, RG ARCA 5616/2024): cuando la factura es en
+                // moneda extranjera tenemos que MOSTRAR la moneda, el tipo de cambio y el
+                // equivalente en pesos. Sin esto, una factura en dolares "se ve igual" que una
+                // en pesos = comprobante fiscalmente incompleto.
+                //
+                // Por que con Monotributo se factura en USD con la MISMA Factura C: el tipo de
+                // comprobante (A/B/C) lo fija la condicion fiscal, NO la moneda. Lo unico que
+                // cambia es que el cuerpo debe exhibir TC + conversion a pesos.
+                //
+                // Para facturas en pesos (MonId == "PES") este bloque NO se ejecuta, asi que el
+                // PDF queda byte-identico a hoy.
+                ComposeForeignCurrencyDetails(c, invoice);
             });
         });
+    }
+
+    /// <summary>
+    /// Muestra moneda, tipo de cambio y equivalente en pesos cuando la factura es en moneda
+    /// extranjera (MonId distinto de "PES"). Existe para que el comprobante en dolares sea
+    /// fiscalmente legible (RG ARCA 5616/2024): el cliente tiene que ver con que TC se valuo y
+    /// cuanto representa en pesos. Para facturas en pesos no agrega nada (retorna sin escribir).
+    /// </summary>
+    private void ComposeForeignCurrencyDetails(ColumnDescriptor column, Invoice invoice)
+    {
+        // Regla fiscal: solo las facturas en moneda extranjera exhiben el bloque de conversion.
+        // Las facturas en pesos (MonId == "PES") salen exactamente como hasta hoy.
+        if (string.Equals(invoice.MonId, "PES", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // Cultura es-AR para que los montos usen el formato local (punto de miles, coma decimal).
+        var argentinaCulture = CultureInfo.GetCultureInfo("es-AR");
+
+        // Etiqueta legible de la moneda. Hoy el MVP solo habilita dolar ("DOL" en el catalogo
+        // de ARCA), pero dejamos un fallback generico para no romper si manana se agrega otra.
+        var currencyLabel = GetCurrencyLabel(invoice.MonId);
+
+        // Equivalente en pesos = total en la moneda de la factura * cotizacion del comprobante.
+        // No re-calculamos nada fiscal: el ImporteTotal ya esta en la moneda de la factura y el
+        // MonCotiz es el TC que se mando a ARCA. Solo lo multiplicamos para mostrarlo.
+        var totalInPesos = invoice.ImporteTotal * invoice.MonCotiz;
+
+        var labelStyle = TextStyle.Default.FontSize(9).FontColor(Colors.Grey.Darken2);
+
+        column.Item().PaddingTop(8).Column(currencyBlock =>
+        {
+            // Separador visual para diferenciar el bloque de moneda extranjera del total.
+            currencyBlock.Item().PaddingBottom(3).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten2);
+
+            currencyBlock.Item().Text($"Moneda: {currencyLabel}").Style(labelStyle);
+
+            // TC del comprobante. "por unidad" = cuantos pesos vale una unidad de la moneda.
+            currencyBlock.Item().Text(
+                $"Tipo de cambio: $ {invoice.MonCotiz.ToString("N2", argentinaCulture)} por {GetCurrencyShortCode(invoice.MonId)}")
+                .Style(labelStyle);
+
+            currencyBlock.Item().Text(
+                $"Equivalente en pesos: $ {totalInPesos.ToString("N2", argentinaCulture)}")
+                .Style(labelStyle);
+        });
+    }
+
+    /// <summary>
+    /// Traduce el codigo de moneda de ARCA a una etiqueta legible para el cliente. Hoy el MVP
+    /// solo factura en dolares; el resto cae a un fallback que muestra el codigo crudo para no
+    /// ocultar informacion si en el futuro se habilita otra moneda.
+    /// </summary>
+    private string GetCurrencyLabel(string monId)
+    {
+        return monId?.ToUpperInvariant() switch
+        {
+            "DOL" => "Dolar estadounidense (USD)",
+            "PES" => "Pesos argentinos (ARS)",
+            _ => monId ?? "-"
+        };
+    }
+
+    /// <summary>
+    /// Devuelve el codigo corto/comercial de la moneda para mostrar junto al tipo de cambio
+    /// (ej. "USD"). El catalogo de ARCA usa "DOL"; comercialmente se conoce como "USD".
+    /// </summary>
+    private string GetCurrencyShortCode(string monId)
+    {
+        return monId?.ToUpperInvariant() switch
+        {
+            "DOL" => "USD",
+            "PES" => "ARS",
+            _ => monId ?? "-"
+        };
     }
 
     void ComposeFooter(IContainer container, Invoice invoice, AfipSettings settings)
@@ -385,9 +473,16 @@ public class InvoicePdfService : IInvoicePdfService
             tipoCmp = invoice.TipoComprobante,
             nroCmp = invoice.NumeroComprobante,
             importe = invoice.ImporteTotal,
-            moneda = "PES",
-            ctz = 1,
-            tipoDocRec = tipoDocRec, 
+            // ADR-012 MVP (facturar en USD, RG ARCA 5616/2024): el QR de AFIP debe reflejar la
+            // moneda REAL del comprobante, no un "PES" fijo. Antes esto estaba hardcoded en
+            // "PES"/1, asi que una factura en dolares mostraba un QR mentiroso (decia pesos).
+            //
+            // invoice.MonId ya viene en el formato del catalogo de ARCA ("PES" / "DOL"), porque
+            // InvoiceService normaliza ISO->ARCA antes de persistir. Para facturas en pesos
+            // sigue siendo MonId="PES" y MonCotiz=1, asi que el QR queda byte-identico a hoy.
+            moneda = invoice.MonId,
+            ctz = invoice.MonCotiz,
+            tipoDocRec = tipoDocRec,
             nroDocRec = nroDocRec, 
             tipoCodAut = "E",
             codAut = cae
