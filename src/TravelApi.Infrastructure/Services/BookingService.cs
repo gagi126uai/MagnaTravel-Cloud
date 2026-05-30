@@ -209,6 +209,40 @@ public class BookingService : IBookingService
         return await CreateFlightAsync(reservaId, req, ct);
     }
 
+    /// <summary>
+    /// Normaliza una hora de vuelo/traslado para guardarla SIN corrimiento de zona horaria.
+    ///
+    /// POR QUE existe: las horas de vuelo y traslado son "hora local del aeropuerto/lugar"
+    /// (lo que figura en el ticket y en el voucher), NO un instante universal (UTC). El front
+    /// hacia <c>new Date("2025-06-15T14:30").toISOString()</c>, que interpretaba el texto como
+    /// hora LOCAL del navegador y lo convertia a UTC: una salida "14:30" cargada en Argentina
+    /// (UTC-3) se guardaba corrida ("17:30Z") y el pasajero veia mal el itinerario. Hotel no
+    /// sufre esto porque usa fechas sin hora (date-only).
+    ///
+    /// QUE hace: toma los componentes de fecha/hora tal cual (14:30 sigue siendo 14:30) y los
+    /// marca como Kind=Utc SIN convertir. Esto es necesario porque las columnas
+    /// DepartureTime/ArrivalTime/PickupDateTime/ReturnDateTime son
+    /// <c>timestamp with time zone</c> en Postgres y Npgsql (sin EnableLegacyTimestampBehavior)
+    /// EXIGE Kind=Utc al escribir; con Local/Unspecified tira InvalidOperationException -> 500.
+    ///
+    /// Resultado: lo que el usuario carga (14:30) es lo que se guarda y lo que el VoucherService
+    /// imprime (hace <c>ToString("dd/MM/yyyy HH:mm")</c> sin conversion). Consistente con el resto
+    /// del sistema, que tambien usa <c>SpecifyKind(..., Utc)</c> para campos sin instante real
+    /// (ver ReservaScheduleCalculator, DestinationService, CatalogPackageService).
+    ///
+    /// CONTRATO con el front: debe mandar la hora local SIN sufijo "Z" ni offset
+    /// (ej. <c>"2025-06-15T14:30:00"</c>). Asi llega como Kind=Unspecified y se guarda tal cual.
+    /// Si un cliente viejo todavia manda con "Z" (Kind=Utc), el valor YA viene corrido por el
+    /// navegador y no se puede des-corregir aca de forma confiable: lo dejamos verbatim hasta que
+    /// ese cliente se actualice (no introducimos una segunda conversion encima).
+    /// </summary>
+    private static DateTime NormalizeAirportWallClock(DateTime wallClock)
+    {
+        // Tomamos los componentes de pared tal cual (Year/Month/Day/Hour/Minute...) y solo
+        // cambiamos el Kind a Utc. NO usamos ToUniversalTime(): eso volveria a correr la hora.
+        return DateTime.SpecifyKind(wallClock, DateTimeKind.Utc);
+    }
+
     public async Task<FlightSegmentDto> CreateFlightAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
     {
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
@@ -219,6 +253,12 @@ public class BookingService : IBookingService
         var flight = _mapper.Map<FlightSegment>(req);
         flight.ReservaId = reservaId;
         flight.SupplierId = supplierId;
+
+        // B1 (zona horaria): la hora de vuelo es "hora local del aeropuerto" (la que figura
+        // en el ticket), NO un instante UTC. La guardamos tal cual la cargo el usuario para
+        // que el voucher la muestre sin corrimiento. Ver NormalizeAirportWallClock.
+        flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
+        flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
 
         // Snapshot desde tarifario: si viene RateId, congelamos precios del tarifario
         var rate = await GetRateAsync(req.RateId, ct);
@@ -289,6 +329,11 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, flight);
         flight.SupplierId = supplierId;
+
+        // B1 (zona horaria): misma normalizacion que en el alta. La hora de vuelo se guarda
+        // como hora local del aeropuerto, sin convertir a UTC. Ver NormalizeAirportWallClock.
+        flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
+        flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
 
         // Si viene un RateId nuevo, actualizar snapshot
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
@@ -813,6 +858,13 @@ public class BookingService : IBookingService
         transfer.ReservaId = reservaId;
         transfer.SupplierId = supplierId;
 
+        // B1 (zona horaria): la hora del traslado es hora local (la que ve el pasajero en el
+        // itinerario), NO un instante UTC. Se guarda tal cual, sin corrimiento. ReturnDateTime
+        // es opcional (solo round-trip). Ver NormalizeAirportWallClock.
+        transfer.PickupDateTime = NormalizeAirportWallClock(transfer.PickupDateTime);
+        if (transfer.ReturnDateTime.HasValue)
+            transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
+
         // Snapshot desde tarifario
         var rate = await GetRateAsync(req.RateId, ct);
         if (rate != null)
@@ -879,6 +931,12 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, transfer);
         transfer.SupplierId = supplierId;
+
+        // B1 (zona horaria): misma normalizacion que en el alta. Hora local del traslado,
+        // sin convertir a UTC. Ver NormalizeAirportWallClock.
+        transfer.PickupDateTime = NormalizeAirportWallClock(transfer.PickupDateTime);
+        if (transfer.ReturnDateTime.HasValue)
+            transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
 
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)

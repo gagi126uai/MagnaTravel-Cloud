@@ -390,6 +390,274 @@ public class BookingServiceTests
         Assert.Equal(80m, storedTransfer.SalePrice);
     }
 
+    // === Bloque 2: campos nuevos de Vuelo (confirmacion + pasajeros del segmento) ===
+    // Verifican el viaje completo request -> entidad -> DTO de los 2 campos que se
+    // sumaron a FlightSegment, sin romper el snapshot de precios ni el masking.
+
+    [Fact]
+    public async Task CreateFlightAsync_PersistsConfirmationNumberAndPassengerCount()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Aerolinea Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0020", Name = "Reserva test" };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new CreateFlightRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            AirlineCode: "AR",
+            AirlineName: "Aerolineas Argentinas",
+            FlightNumber: "1234",
+            Origin: "EZE",
+            OriginCity: "Buenos Aires",
+            Destination: "MIA",
+            DestinationCity: "Miami",
+            DepartureTime: DateTime.UtcNow.Date.AddDays(10),
+            ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(9),
+            CabinClass: "Economy",
+            Baggage: "23kg",
+            PNR: "ABC123",
+            NetCost: 500m,
+            SalePrice: 800m,
+            Commission: 300m,
+            Tax: 120m,
+            Notes: null,
+            RateId: null,
+            WorkflowStatus: "Solicitado",
+            ConfirmationNumber: "CONF-9988",
+            PassengerCount: 3);
+
+        var created = await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
+
+        // El DTO de salida expone los campos nuevos.
+        Assert.Equal("CONF-9988", created.ConfirmationNumber);
+        Assert.Equal(3, created.PassengerCount);
+        // Y quedan persistidos en la entidad.
+        var stored = await context.FlightSegments.SingleAsync();
+        Assert.Equal("CONF-9988", stored.ConfirmationNumber);
+        Assert.Equal(3, stored.PassengerCount);
+    }
+
+    [Fact]
+    public async Task CreateFlightAsync_PersistsTicketNumber()
+    {
+        // B2: antes CreateFlightRequest no tenia TicketNumber, asi que el ticket que mandaba
+        // el front en el ALTA se descartaba silenciosamente (solo se guardaba en la edicion).
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Aerolinea Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0030", Name = "Reserva test" };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new CreateFlightRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            AirlineCode: "AR",
+            AirlineName: "Aerolineas Argentinas",
+            FlightNumber: "1234",
+            Origin: "EZE",
+            OriginCity: "Buenos Aires",
+            Destination: "MIA",
+            DestinationCity: "Miami",
+            DepartureTime: DateTime.UtcNow.Date.AddDays(10),
+            ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(9),
+            CabinClass: "Economy",
+            Baggage: "23kg",
+            PNR: "ABC123",
+            NetCost: 500m,
+            SalePrice: 800m,
+            Commission: 300m,
+            Tax: 120m,
+            Notes: null,
+            RateId: null,
+            WorkflowStatus: "Solicitado",
+            ConfirmationNumber: null,
+            PassengerCount: null,
+            TicketNumber: "045-1234567890");
+
+        var created = await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
+
+        // El DTO de salida expone el ticket...
+        Assert.Equal("045-1234567890", created.TicketNumber);
+        // ...y queda persistido en la entidad (antes se perdia).
+        var stored = await context.FlightSegments.SingleAsync();
+        Assert.Equal("045-1234567890", stored.TicketNumber);
+    }
+
+    [Fact]
+    public async Task CreateFlightAsync_KeepsWallClockTimesWithoutTimezoneShift()
+    {
+        // B1: la hora de vuelo es hora local del aeropuerto (la del ticket), no un instante UTC.
+        // Debe guardarse SIN corrimiento: 14:30 cargado -> 14:30 guardado, y con Kind=Utc para
+        // que Npgsql la acepte en la columna timestamptz (en prod; aca usamos InMemory).
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Aerolinea Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0031", Name = "Reserva test" };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+
+        // El front (corregido) manda la hora SIN "Z": llega como Kind=Unspecified.
+        var departureWallClock = new DateTime(2026, 6, 15, 14, 30, 0, DateTimeKind.Unspecified);
+        var arrivalWallClock = new DateTime(2026, 6, 15, 23, 45, 0, DateTimeKind.Unspecified);
+
+        var request = new CreateFlightRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            AirlineCode: "AR",
+            AirlineName: "Aerolineas Argentinas",
+            FlightNumber: "1234",
+            Origin: "EZE",
+            OriginCity: "Buenos Aires",
+            Destination: "MIA",
+            DestinationCity: "Miami",
+            DepartureTime: departureWallClock,
+            ArrivalTime: arrivalWallClock,
+            CabinClass: "Economy",
+            Baggage: "23kg",
+            PNR: "ABC123",
+            NetCost: 500m,
+            SalePrice: 800m,
+            Commission: 300m,
+            Tax: 120m,
+            Notes: null);
+
+        await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
+
+        var stored = await context.FlightSegments.SingleAsync();
+        // La hora de pared no se movio: 14:30 sigue siendo 14:30 (no se convirtio a 17:30).
+        Assert.Equal(new DateTime(2026, 6, 15, 14, 30, 0), stored.DepartureTime);
+        Assert.Equal(new DateTime(2026, 6, 15, 23, 45, 0), stored.ArrivalTime);
+        // Y queda marcada como Utc para que la columna timestamptz la acepte en Postgres.
+        Assert.Equal(DateTimeKind.Utc, stored.DepartureTime.Kind);
+        Assert.Equal(DateTimeKind.Utc, stored.ArrivalTime.Kind);
+    }
+
+    [Fact]
+    public async Task CreateFlightAsync_WithoutNewFields_LeavesThemNull()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Aerolinea Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0021", Name = "Reserva test" };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        // Llamada "legacy": no manda ConfirmationNumber ni PassengerCount.
+        var request = new CreateFlightRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            AirlineCode: "LA",
+            AirlineName: null,
+            FlightNumber: "900",
+            Origin: "EZE",
+            OriginCity: null,
+            Destination: "SCL",
+            DestinationCity: null,
+            DepartureTime: DateTime.UtcNow.Date.AddDays(5),
+            ArrivalTime: DateTime.UtcNow.Date.AddDays(5).AddHours(2),
+            CabinClass: "Economy",
+            Baggage: null,
+            PNR: null,
+            NetCost: 100m,
+            SalePrice: 200m,
+            Commission: 100m,
+            Tax: 0m,
+            Notes: null);
+
+        var created = await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
+
+        // No inventamos valores: campos no informados quedan en null.
+        Assert.Null(created.ConfirmationNumber);
+        Assert.Null(created.PassengerCount);
+        var stored = await context.FlightSegments.SingleAsync();
+        Assert.Null(stored.ConfirmationNumber);
+        Assert.Null(stored.PassengerCount);
+    }
+
+    [Fact]
+    public async Task UpdateFlightAsync_UpdatesConfirmationNumberAndPassengerCount()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Aerolinea Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0022", Name = "Reserva test" };
+        var flight = new FlightSegment
+        {
+            Id = 1,
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            AirlineCode = "AR",
+            FlightNumber = "1234",
+            Origin = "EZE",
+            Destination = "MIA",
+            DepartureTime = DateTime.UtcNow.Date.AddDays(10),
+            ArrivalTime = DateTime.UtcNow.Date.AddDays(10).AddHours(9),
+            CabinClass = "Economy",
+            Status = "HK",
+            NetCost = 500m,
+            SalePrice = 800m,
+            Commission = 300m,
+            Tax = 120m,
+            // Arranca sin estos campos para verificar que la edicion los completa.
+            ConfirmationNumber = null,
+            PassengerCount = null,
+        };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        context.FlightSegments.Add(flight);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new UpdateFlightRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            AirlineCode: "AR",
+            AirlineName: "Aerolineas Argentinas",
+            FlightNumber: "1234",
+            Origin: "EZE",
+            OriginCity: "Buenos Aires",
+            Destination: "MIA",
+            DestinationCity: "Miami",
+            DepartureTime: flight.DepartureTime,
+            ArrivalTime: flight.ArrivalTime,
+            CabinClass: "Business",
+            Baggage: "2PC",
+            TicketNumber: "044-1234567890",
+            PNR: "ABC123",
+            NetCost: 500m,
+            SalePrice: 800m,
+            Commission: 300m,
+            Tax: 120m,
+            Status: "HK",
+            Notes: null,
+            RateId: null,
+            WorkflowStatus: "Confirmado",
+            ConfirmationNumber: "CONF-7777",
+            PassengerCount: 2);
+
+        var updated = await service.UpdateFlightAsync(reserva.Id, flight.Id, request, CancellationToken.None);
+
+        Assert.Equal("CONF-7777", updated.ConfirmationNumber);
+        Assert.Equal(2, updated.PassengerCount);
+        Assert.Equal("044-1234567890", updated.TicketNumber);
+        var stored = await context.FlightSegments.SingleAsync();
+        Assert.Equal("CONF-7777", stored.ConfirmationNumber);
+        Assert.Equal(2, stored.PassengerCount);
+    }
+
     [Fact]
     public void PassengerDtoMapping_IncludesEditableContactFields()
     {

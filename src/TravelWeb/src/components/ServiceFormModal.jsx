@@ -221,9 +221,15 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
     );
 }
 
+/**
+ * Formulario de servicio Aereo.
+ * Carga todos los datos operativos del vuelo: rutas, fechas+hora, PNR, tickets, equipaje.
+ * La comision NO se muestra — va oculta en el payload (regla de negocio del dueño).
+ */
 function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
     return (
         <div className="space-y-4">
+            {/* Proveedor y estado */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -250,23 +256,208 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
 
             <RateSelector serviceType={form.serviceType || "Aereo"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
 
+            {/* Aerolinea: codigo IATA (ej. "AR") y nombre (ej. "Aerolineas Argentinas") */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Codigo Aerolinea</label>
+                    <input
+                        className={inputClass}
+                        placeholder="AR, LA, AA..."
+                        value={form.airlineCode || ""}
+                        onChange={(event) => setForm({ ...form, airlineCode: event.target.value.toUpperCase() })}
+                        disabled={disabled}
+                        data-testid="flight-airline-code"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Nombre Aerolinea</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Aerolineas Argentinas..."
+                        value={form.airlineName || ""}
+                        onChange={(event) => setForm({ ...form, airlineName: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-airline-name"
+                    />
+                </div>
+            </div>
+
+            {/* Numero de vuelo y clase de cabina */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Numero de Vuelo</label>
+                    <input
+                        className={inputClass}
+                        placeholder="AR1234"
+                        value={form.flightNumber || ""}
+                        onChange={(event) => setForm({ ...form, flightNumber: event.target.value.toUpperCase() })}
+                        disabled={disabled}
+                        data-testid="flight-number"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Clase de Cabina</label>
+                    {/* Economy es la clase mas comun; Business y First para vuelos premium */}
+                    <select
+                        className={inputClass}
+                        value={form.cabinClass || ""}
+                        onChange={(event) => setForm({ ...form, cabinClass: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-cabin-class"
+                    >
+                        <option value="">Sin especificar</option>
+                        <option value="Economy">Economy</option>
+                        <option value="Premium">Premium Economy</option>
+                        <option value="Business">Business</option>
+                        <option value="First">Primera Clase</option>
+                    </select>
+                </div>
+            </div>
+
+            {/* Rutas: aeropuerto IATA (3 letras) + ciudad de cada tramo */}
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <div>
-                    <label className={labelClass}>Origen</label>
+                    <label className={labelClass}>Origen (IATA)</label>
                     <input className={inputClass} placeholder="BUE" value={form.origin || ""} onChange={(event) => setForm({ ...form, origin: event.target.value.toUpperCase() })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Destino</label>
+                    <label className={labelClass}>Ciudad Origen</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Buenos Aires"
+                        value={form.originCity || ""}
+                        onChange={(event) => setForm({ ...form, originCity: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-origin-city"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Destino (IATA)</label>
                     <input className={inputClass} placeholder="MIA" value={form.destination || ""} onChange={(event) => setForm({ ...form, destination: event.target.value.toUpperCase() })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Salida</label>
+                    <label className={labelClass}>Ciudad Destino</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Miami"
+                        value={form.destinationCity || ""}
+                        onChange={(event) => setForm({ ...form, destinationCity: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-destination-city"
+                    />
+                </div>
+            </div>
+
+            {/* Fechas y horas de salida/llegada */}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div>
+                    <label className={labelClass}>Fecha Salida</label>
                     <input type="date" className={inputClass} value={form.departureDate || ""} onChange={(event) => setForm({ ...form, departureDate: event.target.value })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Regreso</label>
+                    <label className={labelClass}>Hora Salida</label>
+                    <input
+                        type="time"
+                        className={inputClass}
+                        value={form.departureTime || ""}
+                        onChange={(event) => setForm({ ...form, departureTime: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-departure-time"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Fecha Llegada</label>
                     <input type="date" className={inputClass} value={form.arrivalDate || ""} onChange={(event) => setForm({ ...form, arrivalDate: event.target.value })} disabled={disabled} />
                 </div>
+                <div>
+                    <label className={labelClass}>Hora Llegada</label>
+                    <input
+                        type="time"
+                        className={inputClass}
+                        value={form.arrivalTime || ""}
+                        onChange={(event) => setForm({ ...form, arrivalTime: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-arrival-time"
+                    />
+                </div>
+            </div>
+
+            {/* Datos de reserva aerea: PNR, confirmacion, ticket */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                    <label className={labelClass}>PNR</label>
+                    <input
+                        className={inputClass}
+                        placeholder="ABC123"
+                        value={form.pnr || ""}
+                        onChange={(event) => setForm({ ...form, pnr: event.target.value.toUpperCase() })}
+                        disabled={disabled}
+                        data-testid="flight-pnr"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Numero Confirmacion</label>
+                    <input
+                        className={inputClass}
+                        placeholder="CF-00001"
+                        value={form.confirmationNumber || ""}
+                        onChange={(event) => setForm({ ...form, confirmationNumber: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-confirmation"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Numero Ticket</label>
+                    <input
+                        className={inputClass}
+                        placeholder="TK-00001"
+                        value={form.ticketNumber || ""}
+                        onChange={(event) => setForm({ ...form, ticketNumber: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-ticket-number"
+                    />
+                </div>
+            </div>
+
+            {/* Equipaje y cantidad de pasajeros */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Equipaje Incluido</label>
+                    <input
+                        className={inputClass}
+                        placeholder="1 maleta 23kg + carry-on"
+                        value={form.baggage || ""}
+                        onChange={(event) => setForm({ ...form, baggage: event.target.value })}
+                        disabled={disabled}
+                        data-testid="flight-baggage"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Cantidad Pasajeros</label>
+                    <input
+                        type="number"
+                        min="1"
+                        className={inputClass}
+                        value={form.passengerCount || ""}
+                        onChange={(event) => setForm({ ...form, passengerCount: parseInt(event.target.value, 10) || null })}
+                        disabled={disabled}
+                        data-testid="flight-passenger-count"
+                    />
+                </div>
+            </div>
+
+            {/* Notas internas del operador sobre el vuelo */}
+            <div>
+                <label className={labelClass}>Notas</label>
+                <textarea
+                    className={`${inputClass} resize-none`}
+                    rows={2}
+                    placeholder="Observaciones del vuelo..."
+                    value={form.notes || ""}
+                    onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                    disabled={disabled}
+                    data-testid="flight-notes"
+                />
             </div>
         </div>
     );
@@ -528,9 +719,15 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
     );
 }
 
+/**
+ * Formulario de servicio Traslado.
+ * Cubre in/out aeropuerto, ciudad a ciudad, etc.
+ * Si es ida y vuelta, se habilita el campo de fecha/hora de retorno.
+ */
 function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
     return (
         <div className="space-y-4">
+            {/* Proveedor y estado */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -557,31 +754,153 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
 
             <RateSelector serviceType={form.serviceType || "Traslado"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
 
+            {/* Puntos de recogida y entrega */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className={labelClass}>Pick-up</label>
-                    <input className={inputClass} value={form.pickupLocation || ""} onChange={(event) => setForm({ ...form, pickupLocation: event.target.value })} disabled={disabled} />
+                    <label className={labelClass}>Pick-up (origen)</label>
+                    <input className={inputClass} placeholder="Aeropuerto EZE, terminal 1" value={form.pickupLocation || ""} onChange={(event) => setForm({ ...form, pickupLocation: event.target.value })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Drop-off</label>
-                    <input className={inputClass} value={form.dropoffLocation || ""} onChange={(event) => setForm({ ...form, dropoffLocation: event.target.value })} disabled={disabled} />
+                    <label className={labelClass}>Drop-off (destino)</label>
+                    <input className={inputClass} placeholder="Hotel Sheraton, Retiro" value={form.dropoffLocation || ""} onChange={(event) => setForm({ ...form, dropoffLocation: event.target.value })} disabled={disabled} />
                 </div>
+            </div>
+
+            {/* Fecha y hora del traslado de ida */}
+            <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className={labelClass}>Fecha</label>
+                    <label className={labelClass}>Fecha Pick-up</label>
                     <input type="date" className={inputClass} value={form.pickupDate || ""} onChange={(event) => setForm({ ...form, pickupDate: event.target.value })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Hora</label>
+                    <label className={labelClass}>Hora Pick-up</label>
                     <input type="time" className={inputClass} value={form.pickupTime || ""} onChange={(event) => setForm({ ...form, pickupTime: event.target.value })} disabled={disabled} />
                 </div>
+            </div>
+
+            {/* Tipo de vehiculo y cantidad de pasajeros */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Tipo de Vehiculo</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Van, sedan, microbus..."
+                        value={form.vehicleType || ""}
+                        onChange={(event) => setForm({ ...form, vehicleType: event.target.value })}
+                        disabled={disabled}
+                        data-testid="transfer-vehicle-type"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Cantidad Pasajeros</label>
+                    <input
+                        type="number"
+                        min="1"
+                        className={inputClass}
+                        value={form.passengers || ""}
+                        onChange={(event) => setForm({ ...form, passengers: parseInt(event.target.value, 10) || null })}
+                        disabled={disabled}
+                        data-testid="transfer-passengers"
+                    />
+                </div>
+            </div>
+
+            {/* Vuelo asociado (util para in-out aeropuerto) y numero de confirmacion */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Vuelo Asociado</label>
+                    <input
+                        className={inputClass}
+                        placeholder="AR1234 (vuelo que se recibe)"
+                        value={form.flightNumber || ""}
+                        onChange={(event) => setForm({ ...form, flightNumber: event.target.value.toUpperCase() })}
+                        disabled={disabled}
+                        data-testid="transfer-flight-number"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Numero Confirmacion</label>
+                    <input
+                        className={inputClass}
+                        placeholder="CF-00001"
+                        value={form.confirmationNumber || ""}
+                        onChange={(event) => setForm({ ...form, confirmationNumber: event.target.value })}
+                        disabled={disabled}
+                        data-testid="transfer-confirmation"
+                    />
+                </div>
+            </div>
+
+            {/* Checkbox ida y vuelta: si esta activo, se muestra la fecha/hora de retorno */}
+            <div className="flex items-center gap-2">
+                <input
+                    type="checkbox"
+                    id="transfer-round-trip"
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                    checked={!!form.isRoundTrip}
+                    onChange={(event) => setForm({ ...form, isRoundTrip: event.target.checked })}
+                    disabled={disabled}
+                    data-testid="transfer-is-round-trip"
+                />
+                <label htmlFor="transfer-round-trip" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Ida y vuelta
+                </label>
+            </div>
+
+            {/* Fecha/hora de retorno — solo visible si es ida y vuelta */}
+            {form.isRoundTrip && (
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className={labelClass}>Fecha Retorno</label>
+                        <input
+                            type="date"
+                            className={inputClass}
+                            value={form.returnDate || ""}
+                            onChange={(event) => setForm({ ...form, returnDate: event.target.value })}
+                            disabled={disabled}
+                            data-testid="transfer-return-date"
+                        />
+                    </div>
+                    <div>
+                        <label className={labelClass}>Hora Retorno</label>
+                        <input
+                            type="time"
+                            className={inputClass}
+                            value={form.returnTime || ""}
+                            onChange={(event) => setForm({ ...form, returnTime: event.target.value })}
+                            disabled={disabled}
+                            data-testid="transfer-return-time"
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* Notas internas del traslado */}
+            <div>
+                <label className={labelClass}>Notas</label>
+                <textarea
+                    className={`${inputClass} resize-none`}
+                    rows={2}
+                    placeholder="Observaciones del traslado..."
+                    value={form.notes || ""}
+                    onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                    disabled={disabled}
+                    data-testid="transfer-notes"
+                />
             </div>
         </div>
     );
 }
 
+/**
+ * Formulario de servicio Paquete turistico.
+ * Incluye: nombre, destino, fechas, adultos/menores, que servicios incluye el paquete,
+ * itinerario (texto libre) y numero de confirmacion.
+ */
 function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
     return (
         <div className="space-y-4">
+            {/* Proveedor y estado */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -608,21 +927,132 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
 
             <RateSelector serviceType={form.serviceType || "Paquete"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
 
-            <div className="grid grid-cols-1 gap-4">
+            {/* Nombre del paquete y destino */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Nombre del Paquete</label>
-                    <input className={inputClass} value={form.packageName || ""} onChange={(event) => setForm({ ...form, packageName: event.target.value })} disabled={disabled} />
+                    <input className={inputClass} placeholder="Caribe All Inclusive 7N" value={form.packageName || ""} onChange={(event) => setForm({ ...form, packageName: event.target.value })} disabled={disabled} />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className={labelClass}>Inicio</label>
-                        <input type="date" className={inputClass} value={form.startDate || ""} onChange={(event) => setForm({ ...form, startDate: event.target.value })} disabled={disabled} />
-                    </div>
-                    <div>
-                        <label className={labelClass}>Fin</label>
-                        <input type="date" className={inputClass} value={form.endDate || ""} onChange={(event) => setForm({ ...form, endDate: event.target.value })} disabled={disabled} />
-                    </div>
+                <div>
+                    <label className={labelClass}>Destino</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Cancun, Mexico"
+                        value={form.destination || ""}
+                        onChange={(event) => setForm({ ...form, destination: event.target.value })}
+                        disabled={disabled}
+                        data-testid="package-destination"
+                    />
                 </div>
+            </div>
+
+            {/* Fechas de inicio y fin del paquete */}
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className={labelClass}>Inicio</label>
+                    <input type="date" className={inputClass} value={form.startDate || ""} onChange={(event) => setForm({ ...form, startDate: event.target.value })} disabled={disabled} />
+                </div>
+                <div>
+                    <label className={labelClass}>Fin</label>
+                    <input type="date" className={inputClass} value={form.endDate || ""} onChange={(event) => setForm({ ...form, endDate: event.target.value })} disabled={disabled} />
+                </div>
+            </div>
+
+            {/* Adultos y menores del paquete */}
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className={labelClass}>Adultos</label>
+                    <input
+                        type="number"
+                        min="0"
+                        className={inputClass}
+                        value={form.adults ?? ""}
+                        onChange={(event) => setForm({ ...form, adults: parseInt(event.target.value, 10) || 0 })}
+                        disabled={disabled}
+                        data-testid="package-adults"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Menores</label>
+                    <input
+                        type="number"
+                        min="0"
+                        className={inputClass}
+                        value={form.children ?? ""}
+                        onChange={(event) => setForm({ ...form, children: parseInt(event.target.value, 10) || 0 })}
+                        disabled={disabled}
+                        data-testid="package-children"
+                    />
+                </div>
+            </div>
+
+            {/* Numero de confirmacion del operador */}
+            <div>
+                <label className={labelClass}>Numero Confirmacion</label>
+                <input
+                    className={inputClass}
+                    placeholder="CF-00001"
+                    value={form.confirmationNumber || ""}
+                    onChange={(event) => setForm({ ...form, confirmationNumber: event.target.value })}
+                    disabled={disabled}
+                    data-testid="package-confirmation"
+                />
+            </div>
+
+            {/* Checkboxes: que servicios incluye el paquete */}
+            <div className={panelClass}>
+                <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Servicios Incluidos en el Paquete
+                </p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {[
+                        { field: "includesHotel",      label: "Hotel",      testId: "package-includes-hotel" },
+                        { field: "includesFlight",     label: "Vuelo",      testId: "package-includes-flight" },
+                        { field: "includesTransfer",   label: "Traslado",   testId: "package-includes-transfer" },
+                        { field: "includesExcursions", label: "Excursiones",testId: "package-includes-excursions" },
+                        { field: "includesMeals",      label: "Comidas",    testId: "package-includes-meals" },
+                    ].map(({ field, label, testId }) => (
+                        <label key={field} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                            <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                                checked={!!form[field]}
+                                onChange={(event) => setForm({ ...form, [field]: event.target.checked })}
+                                disabled={disabled}
+                                data-testid={testId}
+                            />
+                            {label}
+                        </label>
+                    ))}
+                </div>
+            </div>
+
+            {/* Itinerario: descripcion detallada del programa dia por dia */}
+            <div>
+                <label className={labelClass}>Itinerario / Descripcion</label>
+                <textarea
+                    className={`${inputClass} resize-none`}
+                    rows={4}
+                    placeholder="Dia 1: Llegada y traslado al hotel. Dia 2: Tour por la ciudad..."
+                    value={form.itinerary || ""}
+                    onChange={(event) => setForm({ ...form, itinerary: event.target.value })}
+                    disabled={disabled}
+                    data-testid="package-itinerary"
+                />
+            </div>
+
+            {/* Notas internas del paquete */}
+            <div>
+                <label className={labelClass}>Notas</label>
+                <textarea
+                    className={`${inputClass} resize-none`}
+                    rows={2}
+                    placeholder="Observaciones del paquete..."
+                    value={form.notes || ""}
+                    onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                    disabled={disabled}
+                    data-testid="package-notes"
+                />
             </div>
         </div>
     );
@@ -864,21 +1294,49 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 : serviceToEdit.displayType || serviceToEdit._type || serviceType;
 
             setServiceType(nextServiceType);
+
+            // Extrae solo "HH:MM" de un string datetime LOCAL guardado por el backend
+            // (formato "2025-06-15T14:30:00", SIN Z ni offset).
+            //
+            // POR QUE no usamos new Date(...).toLocaleTimeString():
+            //   - Si el string tiene Z (UTC), el browser lo convierte a hora local al parsearlo,
+            //     corriendo la hora (ej. "14:30Z" -> "11:30" en Argentina UTC-3).
+            //   - Con el nuevo contrato el backend guarda la hora de pared sin Z,
+            //     pero parsear por string es mas seguro y no depende del timezone del browser.
+            const extractTimeFromLocalString = (localDatetimeString) => {
+                if (!localDatetimeString) return "";
+                // Tomamos los caracteres despues de la "T": "2025-06-15T14:30:00" -> "14:30:00"
+                // y nos quedamos solo con HH:MM (primeros 5 caracteres).
+                const separatorIndex = localDatetimeString.indexOf("T");
+                if (separatorIndex === -1) return "";
+                return localDatetimeString.slice(separatorIndex + 1, separatorIndex + 6);
+            };
+
             const formattedForm = {
                 ...serviceToEdit,
                 serviceType: nextServiceType,
                 rateId: serviceToEdit.ratePublicId?.toString() || serviceToEdit.rateId?.toString() || "",
                 supplierId: serviceToEdit.supplierPublicId?.toString() || serviceToEdit.supplierId?.toString() || "",
+                // Fecha de salida del vuelo (solo "YYYY-MM-DD", sin hora).
+                // formatDateForInput toma el fragmento antes de la "T", seguro para strings locales.
                 departureDate: formatDateForInput(isGenericEdit ? serviceToEdit.departureDate || serviceToEdit.date : serviceToEdit.departureTime),
+                // Hora de salida del vuelo (solo "HH:MM"), extraida SIN pasar por new Date() para
+                // no re-correr la hora local a UTC ni al reves.
+                departureTime: isGenericEdit ? "" : extractTimeFromLocalString(serviceToEdit.departureTime),
+                // Fecha de llegada del vuelo (solo "YYYY-MM-DD")
                 arrivalDate: formatDateForInput(serviceToEdit.arrivalTime),
+                // Hora de llegada del vuelo (solo "HH:MM"), misma logica que departureTime.
+                arrivalTime: isGenericEdit ? "" : extractTimeFromLocalString(serviceToEdit.arrivalTime),
                 checkIn: formatDateForInput(serviceToEdit.checkIn),
                 checkOut: formatDateForInput(serviceToEdit.checkOut),
                 startDate: formatDateForInput(serviceToEdit.startDate),
                 endDate: formatDateForInput(serviceToEdit.endDate),
                 pickupDate: formatDateForInput(serviceToEdit.pickupDateTime),
-                pickupTime: serviceToEdit.pickupDateTime ? new Date(serviceToEdit.pickupDateTime).toLocaleTimeString("en-GB").slice(0, 5) : "",
+                // Hora del traslado de ida, extraida por string para no correr la hora.
+                pickupTime: extractTimeFromLocalString(serviceToEdit.pickupDateTime),
                 returnDate: formatDateForInput(isGenericEdit ? serviceToEdit.returnDate : serviceToEdit.returnDateTime),
-                returnTime: serviceToEdit.returnDateTime ? new Date(serviceToEdit.returnDateTime).toLocaleTimeString("en-GB").slice(0, 5) : "",
+                // Hora del traslado de retorno, misma logica.
+                returnTime: extractTimeFromLocalString(serviceToEdit.returnDateTime),
                 roomingAssignments: serviceToEdit.roomingAssignmentsJson || serviceToEdit.roomingAssignments || "",
                 workflowStatus: serviceToEdit.workflowStatus || "Solicitado"
             };
@@ -998,20 +1456,78 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             const payload = isGenericEdit ? buildGenericServicePayload(form, serviceToEdit) : { ...form };
 
             if (!isGenericEdit && serviceType === "Aereo") {
-                payload.departureTime = toIsoDate(form.departureDate, "salida");
-                payload.arrivalTime = toIsoDate(form.arrivalDate, "regreso");
+                // POR QUE NO usamos toIsoDate() / toISOString() acá:
+                //   La hora de un vuelo es la "hora de pared" del aeropuerto (hora local),
+                //   NO un instante UTC. Si convertimos a UTC, un vuelo que sale a las 14:30 en
+                //   Argentina (UTC-3) se mandaria como "17:30Z" y el voucher del pasajero
+                //   mostraria la hora equivocada.
+                //   El contrato con el backend es: mandar "YYYY-MM-DDTHH:mm:00" SIN sufijo Z.
+                if (!form.departureDate) throw new Error("Completa la fecha de salida.");
+                if (!form.arrivalDate) throw new Error("Completa la fecha de llegada.");
+                payload.departureTime = `${form.departureDate}T${form.departureTime || "00:00"}:00`;
+                payload.arrivalTime = `${form.arrivalDate}T${form.arrivalTime || "00:00"}:00`;
+
+                // Campos operativos del vuelo — todos opcionales salvo los de fecha
+                payload.flightNumber = form.flightNumber || null;
+                payload.airlineCode = form.airlineCode || null;
+                payload.airlineName = form.airlineName || null;
+                payload.originCity = form.originCity || null;
+                payload.destinationCity = form.destinationCity || null;
+                payload.cabinClass = form.cabinClass || null;
+                payload.pnr = form.pnr || null;
+                payload.confirmationNumber = form.confirmationNumber || null;
+                payload.ticketNumber = form.ticketNumber || null;
+                payload.baggage = form.baggage || null;
+                payload.passengerCount = form.passengerCount ? Number(form.passengerCount) : null;
+                payload.notes = form.notes || null;
+
             } else if (!isGenericEdit && serviceType === "Hotel") {
                 if (!form.rateId && !isLegacyHotelEdit) {
                     throw new Error("Selecciona un hotel y una variante antes de guardar.");
                 }
                 payload.checkIn = toIsoDate(form.checkIn, "check-in");
                 payload.checkOut = toIsoDate(form.checkOut, "check-out");
+
             } else if (!isGenericEdit && serviceType === "Traslado") {
-                const pickupDateTime = form.pickupTime ? `${form.pickupDate}T${form.pickupTime}` : form.pickupDate;
-                payload.pickupDateTime = toIsoDate(pickupDateTime, "pick-up");
+                // POR QUE NO usamos toIsoDate() / toISOString() acá:
+                //   La hora del traslado es la "hora de pared" en el lugar del servicio.
+                //   Convertir a UTC correria la hora y el pasajero recibiria el voucher con
+                //   horario equivocado (mismo problema que con el vuelo).
+                //   Mandamos "YYYY-MM-DDTHH:mm:00" SIN sufijo Z.
+                if (!form.pickupDate) throw new Error("Completa la fecha de pick-up.");
+                payload.pickupDateTime = `${form.pickupDate}T${form.pickupTime || "00:00"}:00`;
+
+                // returnDateTime: solo se manda si es ida y vuelta; null si no lo es.
+                if (form.isRoundTrip && form.returnDate) {
+                    payload.returnDateTime = `${form.returnDate}T${form.returnTime || "00:00"}:00`;
+                } else {
+                    payload.returnDateTime = null;
+                }
+
+                // Campos operativos del traslado — todos opcionales
+                payload.isRoundTrip = !!form.isRoundTrip;
+                payload.vehicleType = form.vehicleType || null;
+                payload.passengers = form.passengers ? Number(form.passengers) : null;
+                payload.flightNumber = form.flightNumber || null;
+                payload.confirmationNumber = form.confirmationNumber || null;
+                payload.notes = form.notes || null;
+
             } else if (!isGenericEdit && serviceType === "Paquete") {
                 payload.startDate = toIsoDate(form.startDate, "inicio");
                 payload.endDate = toIsoDate(form.endDate, "fin");
+
+                // Campos operativos del paquete — todos opcionales
+                payload.destination = form.destination || null;
+                payload.adults = form.adults != null ? Number(form.adults) : null;
+                payload.children = form.children != null ? Number(form.children) : null;
+                payload.confirmationNumber = form.confirmationNumber || null;
+                payload.itinerary = form.itinerary || null;
+                payload.notes = form.notes || null;
+                payload.includesHotel = !!form.includesHotel;
+                payload.includesFlight = !!form.includesFlight;
+                payload.includesTransfer = !!form.includesTransfer;
+                payload.includesExcursions = !!form.includesExcursions;
+                payload.includesMeals = !!form.includesMeals;
             }
 
             const savedService = method === "put"

@@ -63,7 +63,20 @@ public class FlightSegment : IHasPublicId
     
     [MaxLength(2)]
     public string Status { get; set; } = "HK"; // HK, HL, UC, UN
-    
+
+    // Numero de confirmacion que devuelve la aerolinea/operador para este segmento.
+    // Es distinto del PNR/localizador (que sirve para gestionar la reserva en la GDS):
+    // este campo guarda el comprobante de confirmacion que entrega el proveedor.
+    // Nullable porque hay segmentos todavia "Solicitados" sin confirmar.
+    [MaxLength(100)]
+    public string? ConfirmationNumber { get; set; }
+
+    // Cantidad de pasajeros que viajan EN ESTE segmento concreto.
+    // No siempre coincide con el total de pasajeros de la reserva: en un mismo file
+    // puede haber tramos con distinta cantidad de gente (ej. uno viaja solo la ida).
+    // Nullable: los segmentos cargados antes de este campo quedan en null (no informado).
+    public int? PassengerCount { get; set; }
+
     // Financiero (copiado del tarifario - inmutable)
     [Column(TypeName = "decimal(18,2)")]
     public decimal NetCost { get; set; }

@@ -10,12 +10,31 @@ public class FlightSegmentDto
     public string? AirlineName { get; set; }
     public string FlightNumber { get; set; } = string.Empty;
     public string Origin { get; set; } = string.Empty;
+    // Ciudad legible del origen/destino (ej. "Miami") ademas del codigo IATA (ej. "MIA").
+    public string? OriginCity { get; set; }
     public string Destination { get; set; } = string.Empty;
+    public string? DestinationCity { get; set; }
     public DateTime DepartureTime { get; set; }
     public DateTime ArrivalTime { get; set; }
     public string CabinClass { get; set; } = "Economy";
     public string Status { get; set; } = "HK";
+    // PNR / localizador para gestionar la reserva en la aerolinea.
     public string? PNR { get; set; }
+    // Numero de confirmacion que entrega el proveedor (distinto del PNR).
+    public string? ConfirmationNumber { get; set; }
+    // Numero de ticket emitido (si ya se emitio el billete).
+    public string? TicketNumber { get; set; }
+    // Equipaje incluido (ej. "23kg" o "2PC").
+    public string? Baggage { get; set; }
+    // Base tarifaria del segmento (ej. clase de reserva/fare basis).
+    public string? FareBase { get; set; }
+    // Cantidad de pasajeros de este segmento. Null = no informado (segmentos legacy).
+    public int? PassengerCount { get; set; }
+    // Impuestos del segmento (ya existian en la entidad; los exponemos para el detalle).
+    public decimal Tax { get; set; }
+    // Observaciones libres del segmento.
+    public string? Notes { get; set; }
+    public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
     /// <summary>
     /// Moneda en que se cotizo el servicio (trazabilidad, copiada del tarifario).

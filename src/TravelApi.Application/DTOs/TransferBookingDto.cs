@@ -13,6 +13,10 @@ public class TransferBookingDto
     public int Passengers { get; set; } = 1;
     public bool IsRoundTrip { get; set; }
     public DateTime? ReturnDateTime { get; set; }
+    // Vuelo que se recibe / asociado al traslado (ej. el avion del que se baja el pasajero).
+    public string? FlightNumber { get; set; }
+    // Info / notas operativas del traslado (texto libre).
+    public string? Notes { get; set; }
     public string Status { get; set; } = "Pendiente";
     public string? ConfirmationNumber { get; set; }
     public decimal SalePrice { get; set; }
