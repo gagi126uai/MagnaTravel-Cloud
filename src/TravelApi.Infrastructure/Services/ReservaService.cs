@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Data;
+using System.Linq;
 using System.Security.Claims;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Contracts.Reservations;
@@ -27,6 +28,16 @@ public class ReservaService : IReservaService
     private readonly ILogger<ReservaService> _logger;
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+
+    /// <summary>
+    /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Se usa para
+    /// EXCLUIR las NC del guard fiscal de cancelacion: una NC no es una "factura viva".
+    ///
+    /// Espejo del mismo conjunto en <c>MutationGuards.LiveInvoiceCreditNoteTypes</c> y
+    /// en <c>InvoiceComprobanteHelpers.IsCreditNote</c>. Se replica inline porque EF Core
+    /// no traduce el helper a SQL. Mantener los tres sincronizados si cambia la lista.
+    /// </summary>
+    private static readonly int[] CreditNoteComprobanteTypes = { 3, 8, 13, 53 };
 
     public ReservaService(
         AppDbContext context,
@@ -510,10 +521,19 @@ public class ReservaService : IReservaService
         // debe ejecutar primero <c>POST /api/invoices/{id}/annul</c> y esperar
         // a que <c>AnnulmentStatus = Succeeded</c>. El controller traduce
         // InvalidOperationException a 400/409 segun camino actual.
+        //
+        // FIX 2026-05-30 (mismo criterio que MutationGuards): EXCLUIMOS las Notas de
+        // Credito del conteo. Una NC tambien es una fila Invoice con su propio CAE y
+        // AnnulmentStatus=None, pero NACE para anular/corregir una factura — nunca se
+        // anula a si misma. Si la contaramos, tras emitir una NC TOTAL la reserva
+        // quedaria bloqueada para siempre aunque la factura original ya este Succeeded.
+        // Solo bloquea que quede una FACTURA viva; en NC parcial la factura original
+        // sigue viva por el resto, asi que igual bloquea (decision del dueño).
         if (status == EstadoReserva.Cancelled)
         {
             var hasLiveCae = await _context.Invoices.AnyAsync(
                 i => i.ReservaId == id
+                    && !CreditNoteComprobanteTypes.Contains(i.TipoComprobante) // excluye NC
                     && !string.IsNullOrEmpty(i.CAE)
                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
                 ct);

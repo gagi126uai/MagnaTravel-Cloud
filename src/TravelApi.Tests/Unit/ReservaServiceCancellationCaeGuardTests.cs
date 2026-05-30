@@ -206,4 +206,107 @@ public class ReservaServiceCancellationCaeGuardTests
 
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
     }
+
+    // ===== Fix NC 2026-05-30: las Notas de Credito NO cuentan como "factura viva" =====
+    // El guard de cancelacion debe comportarse igual que MutationGuards: una NC nace
+    // para anular/corregir, nunca se anula a si misma; contarla bloqueaba la reserva
+    // para siempre tras una NC TOTAL.
+
+    private static void AddReserva(AppDbContext ctx)
+    {
+        ctx.Reservas.Add(new Reserva
+        {
+            Id = 1,
+            NumeroReserva = "F-NC-0001",
+            Name = "Reserva con NC",
+            Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedor-1"
+        });
+    }
+
+    private static Invoice MakeInvoice(int id, int tipoComprobante, string? cae, AnnulmentStatus status)
+        => new()
+        {
+            Id = id,
+            ReservaId = 1,
+            ImporteTotal = 100m,
+            CAE = cae,
+            AnnulmentStatus = status,
+            TipoComprobante = tipoComprobante,
+            PublicId = Guid.NewGuid()
+        };
+
+    [Fact]
+    public async Task Cancel_Reserva_AnnulledInvoicePlusTotalCreditNote_Succeeds()
+    {
+        // EL FIX: factura original anulada (Succeeded) + NC TOTAL viva (tipo 8, CAE,
+        // None). La NC se excluye -> LIBERA (antes quedaba bloqueada para siempre).
+        await using var ctx = new AppDbContext(_dbOptions);
+        AddReserva(ctx);
+        ctx.Invoices.Add(MakeInvoice(1, tipoComprobante: 6, cae: "11111111111111", status: AnnulmentStatus.Succeeded));
+        ctx.Invoices.Add(MakeInvoice(2, tipoComprobante: 8, cae: "22222222222222", status: AnnulmentStatus.None));
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var publicId = (await ctx.Reservas.AsNoTracking().FirstAsync()).PublicId;
+
+        var dto = await service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None);
+
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+    }
+
+    [Fact]
+    public async Task Cancel_Reserva_LiveInvoicePlusPartialCreditNote_Throws()
+    {
+        // NC PARCIAL: la factura original sigue viva (None) -> BLOQUEA. La NC excluida
+        // no cambia el resultado (decision del dueño: bloqueo total en parcial).
+        await using var ctx = new AppDbContext(_dbOptions);
+        AddReserva(ctx);
+        ctx.Invoices.Add(MakeInvoice(1, tipoComprobante: 6, cae: "11111111111111", status: AnnulmentStatus.None));
+        ctx.Invoices.Add(MakeInvoice(2, tipoComprobante: 8, cae: "22222222222222", status: AnnulmentStatus.None));
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var publicId = (await ctx.Reservas.AsNoTracking().FirstAsync()).PublicId;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None));
+        Assert.Contains("CAE", ex.Message);
+    }
+
+    [Fact]
+    public async Task Cancel_Reserva_OnlyCreditNoteNoLiveInvoice_Succeeds()
+    {
+        // Solo una NC con CAE y ninguna factura viva -> LIBERA.
+        await using var ctx = new AppDbContext(_dbOptions);
+        AddReserva(ctx);
+        ctx.Invoices.Add(MakeInvoice(1, tipoComprobante: 8, cae: "22222222222222", status: AnnulmentStatus.None));
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var publicId = (await ctx.Reservas.AsNoTracking().FirstAsync()).PublicId;
+
+        var dto = await service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None);
+
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+    }
+
+    [Fact]
+    public async Task Cancel_Reserva_NewInvoiceAfterCreditNote_Throws()
+    {
+        // Falso negativo a evitar: una FACTURA nueva emitida DESPUES de una NC sigue
+        // siendo factura y DEBE bloquear. No se excluye por convivir con una NC.
+        await using var ctx = new AppDbContext(_dbOptions);
+        AddReserva(ctx);
+        ctx.Invoices.Add(MakeInvoice(1, tipoComprobante: 6, cae: "11111111111111", status: AnnulmentStatus.Succeeded)); // 1a factura anulada
+        ctx.Invoices.Add(MakeInvoice(2, tipoComprobante: 8, cae: "22222222222222", status: AnnulmentStatus.None));      // NC
+        ctx.Invoices.Add(MakeInvoice(3, tipoComprobante: 6, cae: "33333333333333", status: AnnulmentStatus.None));      // factura NUEVA viva
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var publicId = (await ctx.Reservas.AsNoTracking().FirstAsync()).PublicId;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None));
+    }
 }

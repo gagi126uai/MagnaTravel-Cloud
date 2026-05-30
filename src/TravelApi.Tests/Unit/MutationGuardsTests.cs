@@ -54,13 +54,35 @@ public class MutationGuardsTests
         return ctx;
     }
 
-    private static Invoice MakeInvoice(int id, int reservaId, string? cae = "012345", AnnulmentStatus status = AnnulmentStatus.None)
+    private static Invoice MakeInvoice(
+        int id,
+        int reservaId,
+        string? cae = "012345",
+        AnnulmentStatus status = AnnulmentStatus.None,
+        int tipoComprobante = 6) // 6 = Factura B (default: una factura comun)
         => new()
         {
             Id = id,
             ReservaId = reservaId,
             CAE = cae,
             AnnulmentStatus = status,
+            TipoComprobante = tipoComprobante,
+            ImporteTotal = 100m,
+            ImporteNeto = 82.64m,
+            ImporteIva = 17.36m
+        };
+
+    // Atajo para armar una Nota de Credito B (tipo 8) con CAE propio y sin anularse
+    // a si misma (AnnulmentStatus=None) — el caso que ANTES bloqueaba para siempre.
+    private static Invoice MakeCreditNote(int id, int reservaId, int? originalInvoiceId = null, string? cae = "099999")
+        => new()
+        {
+            Id = id,
+            ReservaId = reservaId,
+            CAE = cae,
+            AnnulmentStatus = AnnulmentStatus.None,
+            TipoComprobante = 8, // NC B
+            OriginalInvoiceId = originalInvoiceId,
             ImporteTotal = 100m,
             ImporteNeto = 82.64m,
             ImporteIva = 17.36m
@@ -208,6 +230,130 @@ public class MutationGuardsTests
 
         var reason = await MutationGuards.GetServiceMutationBlockReasonAsync(ctx, 102);
         Assert.Null(reason);
+    }
+
+    // ===== Fix NC 2026-05-30: las NC NO cuentan como "factura viva" (4 escenarios) =====
+
+    private static ServicioReserva MakeServicio(int id, int reservaId)
+        => new()
+        {
+            Id = id, ReservaId = reservaId, ServiceType = "Hotel", ProductType = "Hotel",
+            Description = "S", ConfirmationNumber = "ABC", Status = "Confirmado",
+            DepartureDate = DateTime.UtcNow.AddDays(15), SalePrice = 1000m, NetCost = 0m
+        };
+
+    [Fact]
+    public async Task ServiceMutation_LiveInvoiceNoCreditNote_Blocks()
+    {
+        // Escenario 1: factura viva (CAE, no anulada), sin NC -> BLOQUEA (igual que hoy).
+        await using var ctx = await SeedReservaAsync();
+        ctx.Servicios.Add(MakeServicio(200, 1));
+        ctx.Invoices.Add(MakeInvoice(200, 1)); // Factura B viva
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetServiceMutationBlockReasonAsync(ctx, 200);
+        Assert.NotNull(reason);
+        Assert.Contains("factura", reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ServiceMutation_AnnulledInvoicePlusTotalCreditNote_Allows()
+    {
+        // Escenario 2 (EL FIX): la factura original quedo Succeeded por una NC TOTAL.
+        // Antes la propia NC se contaba a si misma como "factura viva" y la reserva
+        // quedaba bloqueada para siempre. Ahora: factura no cuenta (Succeeded) + NC
+        // excluida -> LIBERA.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Servicios.Add(MakeServicio(201, 1));
+        ctx.Invoices.Add(MakeInvoice(201, 1, status: AnnulmentStatus.Succeeded)); // factura anulada
+        ctx.Invoices.Add(MakeCreditNote(202, 1, originalInvoiceId: 201));         // NC total viva
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetServiceMutationBlockReasonAsync(ctx, 201);
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public async Task ServiceMutation_LiveInvoicePlusPartialCreditNote_Blocks()
+    {
+        // Escenario 3: NC PARCIAL. La factura original NO esta Succeeded (sigue viva
+        // por el resto). La factura cuenta -> BLOQUEA (decision del dueño: bloqueo total
+        // en parcial). La NC excluida no cambia el resultado.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Servicios.Add(MakeServicio(203, 1));
+        ctx.Invoices.Add(MakeInvoice(203, 1, status: AnnulmentStatus.None)); // factura sigue viva
+        ctx.Invoices.Add(MakeCreditNote(204, 1, originalInvoiceId: 203));    // NC parcial
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetServiceMutationBlockReasonAsync(ctx, 203);
+        Assert.NotNull(reason);
+        Assert.Contains("factura", reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ServiceMutation_OnlyCreditNoteNoLiveInvoice_Allows()
+    {
+        // Escenario 4: solo una NC con CAE y ninguna factura viva -> LIBERA.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Servicios.Add(MakeServicio(205, 1));
+        ctx.Invoices.Add(MakeCreditNote(206, 1)); // NC suelta (sin factura origen viva)
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetServiceMutationBlockReasonAsync(ctx, 205);
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public async Task ServiceMutation_NewInvoiceAfterCreditNote_Blocks()
+    {
+        // Guarda contra un falso negativo: una FACTURA nueva emitida DESPUES de una NC
+        // (OriginalInvoiceId null) sigue siendo factura y DEBE contar. No la excluimos.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Servicios.Add(MakeServicio(207, 1));
+        ctx.Invoices.Add(MakeInvoice(208, 1, status: AnnulmentStatus.Succeeded)); // 1a factura anulada
+        ctx.Invoices.Add(MakeCreditNote(209, 1, originalInvoiceId: 208));         // NC de esa anulacion
+        ctx.Invoices.Add(MakeInvoice(210, 1, status: AnnulmentStatus.None));      // factura NUEVA viva
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetServiceMutationBlockReasonAsync(ctx, 207);
+        Assert.NotNull(reason);
+        Assert.Contains("factura", reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ===== Mismos 4 escenarios sobre el guard de PAGO (CODE-01) =====
+
+    private static Payment MakePaymentLinkedToInvoice(int paymentId, int invoiceId)
+        => new()
+        {
+            Id = paymentId, ReservaId = 1, Amount = 100m, Method = "Cash", Status = "Paid",
+            RelatedInvoiceId = invoiceId
+        };
+
+    [Fact]
+    public async Task PaymentMutation_RelatedTotalCreditNote_Allows()
+    {
+        // El pago quedo re-vinculado a una NC (no a una factura viva): NO bloquea.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Invoices.Add(MakeCreditNote(300, 1));
+        ctx.Payments.Add(MakePaymentLinkedToInvoice(40, 300));
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetPaymentMutationBlockReasonAsync(ctx, 40);
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public async Task PaymentMutation_RelatedLiveInvoice_Blocks()
+    {
+        // El pago esta vinculado a una factura viva (no NC) -> BLOQUEA (igual que hoy).
+        await using var ctx = await SeedReservaAsync();
+        ctx.Invoices.Add(MakeInvoice(301, 1));
+        ctx.Payments.Add(MakePaymentLinkedToInvoice(41, 301));
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetPaymentMutationBlockReasonAsync(ctx, 41);
+        Assert.NotNull(reason);
+        Assert.Contains("factura", reason, StringComparison.OrdinalIgnoreCase);
     }
 
     // ============= GetReservaDatesMutationBlockReasonAsync =============

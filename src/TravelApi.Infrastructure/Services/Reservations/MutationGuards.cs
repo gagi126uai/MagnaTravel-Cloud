@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Domain.Entities;
@@ -24,22 +25,65 @@ namespace TravelApi.Infrastructure.Services.Reservations;
 ///  - TaxId/TaxCondition Supplier con booking en reserva con CAE viva (CODE-13).
 ///  - Datos personales Pasajero con voucher Issued o reserva con CAE viva (CODE-14).
 ///
-/// "Invoice CAE no anulada" = <c>!string.IsNullOrEmpty(i.CAE) &amp;&amp;
-/// i.AnnulmentStatus != AnnulmentStatus.Succeeded</c>. Estados Pending y Failed
-/// del flow de anulacion NO levantan el bloqueo — la NC todavia no fue aprobada
-/// por AFIP, asi que la factura sigue viva fiscalmente.
+/// "FACTURA viva" = <c>InvoiceComprobanteHelpers.IsCreditNote(i.TipoComprobante) == false
+/// &amp;&amp; !string.IsNullOrEmpty(i.CAE) &amp;&amp; i.AnnulmentStatus != AnnulmentStatus.Succeeded</c>.
+/// Estados Pending y Failed del flow de anulacion NO levantan el bloqueo — la NC
+/// todavia no fue aprobada por AFIP, asi que la factura sigue viva fiscalmente.
+///
+/// POR QUE SE EXCLUYEN LAS NOTAS DE CREDITO (fix 2026-05-30, validado por contador
+/// + dominio con fuentes ARCA): una Nota de Credito tambien es una fila
+/// <see cref="Invoice"/> con su propio CAE y, salvo que la anulen a ella misma,
+/// con <c>AnnulmentStatus = None</c>. La NC NACE para corregir/anular una factura,
+/// no para bloquear: nunca se anula a si misma. Si la contaramos como "factura viva",
+/// emitir una NC TOTAL dejaria la reserva bloqueada PARA SIEMPRE (la factura original
+/// queda Succeeded, pero la propia NC se cuenta a si misma y reactiva el bloqueo).
+/// Fiscalmente la NC RESTA, no SUMA: lo que bloquea es que quede una FACTURA viva,
+/// no que exista un CAE cualquiera.
+///
+/// Esto resuelve los 4 escenarios de forma automatica:
+///  - Factura viva sin NC -> cuenta -> BLOQUEA (correcto, igual que antes).
+///  - Factura + NC TOTAL (factura original quedo Succeeded) -> factura no cuenta
+///    (Succeeded) + NC excluida -> LIBERA (este era el bug a resolver).
+///  - Factura + NC PARCIAL (la factura sigue viva por el resto) -> factura cuenta
+///    -> BLOQUEA (decision del dueño: en parcial el bloqueo es total).
+///  - Solo NC sin factura viva -> nada cuenta -> LIBERA.
+///
+/// NOTA TECNICA (EF Core): el helper <c>InvoiceComprobanteHelpers.IsCreditNote</c>
+/// NO se puede invocar dentro de estas queries porque EF no lo traduce a SQL. Por
+/// eso la exclusion se expande inline con <see cref="LiveInvoiceCreditNoteTypes"/>
+/// (los cbteTipo de NC: 3=A, 8=B, 13=C, 53=M). Si algun dia se agrega un tipo de NC
+/// nuevo, hay que actualizar esa constante Y el helper a la par.
 /// </summary>
 public static class MutationGuards
 {
     /// <summary>
-    /// Devuelve true si existe alguna factura con CAE asignado y AnnulmentStatus
-    /// distinto a Succeeded apuntando a la reserva. Helper privado, reusado por
-    /// los guards de servicio/booking/fechas/passenger.
+    /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Se usa para
+    /// EXCLUIR las NC del conteo de "facturas vivas" en las queries de los guards.
+    ///
+    /// Es el mismo conjunto que <c>InvoiceComprobanteHelpers.IsCreditNote</c>, pero
+    /// como array literal porque EF Core no traduce ese helper a SQL (ver nota tecnica
+    /// en el doc de la clase). Mantener ambos sincronizados si cambia la lista.
+    ///
+    /// IMPORTANTE: solo se excluyen las NC. Las Facturas (1/6/11/51) y las Notas de
+    /// Debito (2/7/12/52) SI cuentan como comprobante vivo. Tambien cuenta un Invoice
+    /// con TipoComprobante sin clasificar (p. ej. 0 en datos viejos): preferimos
+    /// bloquear de mas que liberar de mas frente a un dato fiscal ambiguo.
+    /// </summary>
+    private static readonly int[] LiveInvoiceCreditNoteTypes = { 3, 8, 13, 53 };
+
+    /// <summary>
+    /// Devuelve true si existe alguna FACTURA viva (no NC) con CAE asignado y
+    /// AnnulmentStatus distinto a Succeeded apuntando a la reserva. Helper privado,
+    /// reusado por los guards de servicio/booking/fechas/passenger.
+    ///
+    /// Las Notas de Credito se EXCLUYEN del conteo (ver doc de la clase): una NC
+    /// resta, no suma, y no debe mantener viva la reserva por si misma.
     /// </summary>
     private static Task<bool> HasLiveCaeForReservaAsync(AppDbContext db, int reservaId, CancellationToken ct)
     {
         return db.Invoices.AsNoTracking().AnyAsync(
             i => i.ReservaId == reservaId
+                 && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC
                  && !string.IsNullOrEmpty(i.CAE)
                  && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
             ct);
@@ -97,10 +141,12 @@ public static class MutationGuards
 
         // Vinculado a factura: si la factura esta viva (CAE no anulado), el pago
         // forma parte del comprobante AFIP y no se toca.
+        // Excluimos las NC (ver doc de la clase): una NC no mantiene vivo al pago.
         if (payment.RelatedInvoiceId.HasValue)
         {
             var invoiceLive = await db.Invoices.AsNoTracking().AnyAsync(
                 i => i.Id == payment.RelatedInvoiceId.Value
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC
                      && !string.IsNullOrEmpty(i.CAE)
                      && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
                 ct);
@@ -191,10 +237,12 @@ public static class MutationGuards
         int customerId,
         CancellationToken ct = default)
     {
-        // Buscar facturas con CAE viva en cualquier reserva del cliente.
+        // Buscar FACTURAS vivas (no NC) con CAE en cualquier reserva del cliente.
         // Reserva.PayerId es el FK al Customer.
+        // Excluimos las NC (ver doc de la clase): una NC resta, no bloquea por si sola.
         var hasLiveInvoice = await db.Invoices.AsNoTracking().AnyAsync(
-            i => !string.IsNullOrEmpty(i.CAE)
+            i => !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC
+                 && !string.IsNullOrEmpty(i.CAE)
                  && i.AnnulmentStatus != AnnulmentStatus.Succeeded
                  && i.Reserva != null
                  && i.Reserva.PayerId == customerId,
@@ -238,8 +286,10 @@ public static class MutationGuards
                 .Where(b => b.SupplierId == supplierId)
                 .Select(b => b.ReservaId));
 
+        // Excluimos las NC (ver doc de la clase): solo una FACTURA viva bloquea.
         var hasLiveInvoice = await db.Invoices.AsNoTracking().AnyAsync(
-            i => !string.IsNullOrEmpty(i.CAE)
+            i => !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC
+                 && !string.IsNullOrEmpty(i.CAE)
                  && i.AnnulmentStatus != AnnulmentStatus.Succeeded
                  && i.ReservaId.HasValue
                  && supplierReservaIds.Contains(i.ReservaId.Value),
