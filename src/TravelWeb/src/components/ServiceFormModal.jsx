@@ -466,6 +466,15 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
     );
 }
 
+/**
+ * Formulario de servicio Hotel.
+ * Permite cargar un hotel DE DOS FORMAS:
+ *   1. A mano: el usuario tipea nombre, ciudad, habitacion, regimen y precio directamente.
+ *   2. Desde el tarifario (ATAJO OPCIONAL): al elegir una tarifa, los campos se autocompletan
+ *      pero el usuario puede seguir editandolos sin restricciones.
+ *
+ * El tarifario NUNCA es obligatorio. hotelName y city son los unicos campos requeridos.
+ */
 function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPax, isBudget }) {
     const [searchQuery, setSearchQuery] = useState(form.hotelName || "");
     const [hotelGroups, setHotelGroups] = useState([]);
@@ -488,8 +497,8 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 supplierId: form.supplierId || "",
             });
             const data = await api.get(`/rates/search?${params}`);
-            
-            // Agrupar por hotel + ciudad
+
+            // Agrupar las tarifas por hotel + ciudad para mostrar un accordion por hotel
             const groups = {};
             data.forEach((rate) => {
                 const key = `${rate.hotelName || rate.productName}|${rate.city || ""}`;
@@ -515,6 +524,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
         }
     }, [form.supplierId]);
 
+    // Busqueda con debounce: espera 500ms despues del ultimo tecleo antes de disparar la API
     useEffect(() => {
         const timer = setTimeout(() => {
             if (searchQuery && searchQuery !== form.hotelName) searchHotels(searchQuery);
@@ -522,6 +532,9 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
         return () => clearTimeout(timer);
     }, [searchQuery, searchHotels, form.hotelName]);
 
+    // Al seleccionar una tarifa del buscador, se pasan los datos al padre via onRateSelect.
+    // handleRateSelect en el padre autocompleta hotelName, city, roomType, mealPlan y precios.
+    // Los campos quedan editables — la tarifa es un punto de partida, no un candado.
     const handleSelectRate = (rate) => {
         onRateSelect(rate);
         setSearchQuery(rate.hotelName || rate.productName);
@@ -531,16 +544,17 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
 
     return (
         <div className="space-y-4">
+            {/* Proveedor y estado del servicio */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Proveedor (Opcional para busqueda)</label>
-                    <select 
-                        className={inputClass} 
-                        value={form.supplierId || ""} 
-                        onChange={(event) => setForm({ ...form, supplierId: event.target.value })} 
+                    <label className={labelClass}>Proveedor (opcional)</label>
+                    <select
+                        className={inputClass}
+                        value={form.supplierId || ""}
+                        onChange={(event) => setForm({ ...form, supplierId: event.target.value })}
                         disabled={disabled}
                     >
-                        <option value="">Cualquier proveedor...</option>
+                        <option value="">Sin proveedor vinculado</option>
                         {suppliers.map((supplier) => (
                             <option key={supplier.publicId || supplier.PublicId} value={supplier.publicId || supplier.PublicId}>
                                 {supplier.name}
@@ -566,21 +580,37 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 )}
             </div>
 
-            <div className="relative">
-                <label className={labelClass}>Buscar Hotel o Ciudad</label>
+            {/* === BUSCADOR DE TARIFARIO (ATAJO OPCIONAL) ===
+                No es obligatorio. Sirve para autocompletar los campos de abajo a partir
+                de una tarifa existente. El usuario puede ignorarlo y tipear todo a mano. */}
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/20 p-3 dark:border-indigo-900/30 dark:bg-indigo-950/10">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-indigo-500 dark:text-indigo-400">
+                    Autocompletar desde tarifario (opcional)
+                </p>
                 <div className="relative">
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                     <input
                         type="text"
-                        className={`${inputClass} pl-10 border-indigo-200 bg-indigo-50/20 focus:bg-white`}
-                        placeholder="Escribe el nombre del hotel o destino..."
+                        className={`${inputClass} pl-10`}
+                        placeholder="Busca por nombre de hotel o destino..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onFocus={() => searchQuery.length >= 3 && setShowResults(true)}
                         disabled={disabled}
+                        data-testid="hotel-rate-search"
                     />
                     {loading && <RefreshCw className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-indigo-500" />}
                 </div>
+
+                {/* Banner informativo cuando hay una tarifa seleccionada */}
+                {form.rateId && (
+                    <div className="mt-2 flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                        <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                            Datos autocomplete desde tarifario. Podes editar cualquier campo.
+                        </p>
+                    </div>
+                )}
 
                 {showResults && hotelGroups.length > 0 && (
                     <div className="absolute z-50 mt-1 max-h-[300px] w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
@@ -612,7 +642,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                                     </div>
                                     {expandedHotel === group.key ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
                                 </button>
-                                
+
                                 {expandedHotel === group.key && (
                                     <div className="divide-y divide-slate-100 bg-white dark:divide-slate-700 dark:bg-slate-800">
                                         {group.rates.map((rate) => (
@@ -640,28 +670,119 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 )}
             </div>
 
-            {form.rateId && (
-                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-4 dark:border-indigo-900/30 dark:bg-indigo-950/10">
-                    <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="rounded-xl bg-indigo-500 p-2.5 text-white shadow-lg shadow-indigo-200 dark:shadow-none">
-                                <CheckCircle2 className="h-5 w-5" />
-                            </div>
-                            <div>
-                                <h4 className="text-sm font-bold text-slate-900 dark:text-white">{form.hotelName}</h4>
-                                <p className="text-xs text-slate-500">
-                                    {form.roomType} • {form.mealPlan} • {calculateNights(form.checkIn, form.checkOut)} noches
-                                </p>
-                            </div>
-                        </div>
-                        <div className="text-right">
-                            <div className="text-sm font-black text-indigo-600 dark:text-indigo-400">{formatMoney(form.unitSalePrice)}</div>
-                            <div className="text-[10px] uppercase tracking-tighter text-slate-400">Precio Ref.</div>
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* === DATOS DEL HOTEL (CAMPOS MANUALES) ===
+                Siempre visibles. Se pueden completar a mano o vienen autocomplete desde la tarifa. */}
 
+            {/* Nombre y ciudad son OBLIGATORIOS — el backend los requiere en HotelBooking */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Nombre del Hotel *</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Sheraton Buenos Aires..."
+                        value={form.hotelName || ""}
+                        onChange={(event) => setForm({ ...form, hotelName: event.target.value })}
+                        disabled={disabled}
+                        data-testid="hotel-name"
+                        required
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Ciudad *</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Buenos Aires, Cancun..."
+                        value={form.city || ""}
+                        onChange={(event) => setForm({ ...form, city: event.target.value })}
+                        disabled={disabled}
+                        data-testid="hotel-city"
+                        required
+                    />
+                </div>
+            </div>
+
+            {/* Pais y direccion — opcionales, util para el voucher del pasajero */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Pais</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Argentina, Mexico..."
+                        value={form.country || ""}
+                        onChange={(event) => setForm({ ...form, country: event.target.value })}
+                        disabled={disabled}
+                        data-testid="hotel-country"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Direccion</label>
+                    <input
+                        className={inputClass}
+                        placeholder="Av. Libertador 1234..."
+                        value={form.address || ""}
+                        onChange={(event) => setForm({ ...form, address: event.target.value })}
+                        disabled={disabled}
+                        data-testid="hotel-address"
+                    />
+                </div>
+            </div>
+
+            {/* Categoria, tipo de habitacion y regimen de comidas */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                    <label className={labelClass}>Estrellas</label>
+                    {/* Numero entre 1 y 5, o vacio si no se sabe */}
+                    <input
+                        type="number"
+                        min="1"
+                        max="5"
+                        className={inputClass}
+                        placeholder="3"
+                        value={form.starRating || ""}
+                        onChange={(event) => {
+                            const value = parseInt(event.target.value, 10);
+                            setForm({ ...form, starRating: Number.isNaN(value) ? null : Math.min(Math.max(value, 1), 5) });
+                        }}
+                        disabled={disabled}
+                        data-testid="hotel-star-rating"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Tipo de Habitacion</label>
+                    <select
+                        className={inputClass}
+                        value={form.roomType || "Doble"}
+                        onChange={(event) => setForm({ ...form, roomType: event.target.value })}
+                        disabled={disabled}
+                        data-testid="hotel-room-type"
+                    >
+                        <option value="Single">Single</option>
+                        <option value="Doble">Doble</option>
+                        <option value="Triple">Triple</option>
+                        <option value="Cuadruple">Cuadruple</option>
+                        <option value="Familiar">Familiar</option>
+                    </select>
+                </div>
+                <div>
+                    <label className={labelClass}>Regimen</label>
+                    {/* Regimen = que comidas incluye la estadía */}
+                    <select
+                        className={inputClass}
+                        value={form.mealPlan || "Desayuno"}
+                        onChange={(event) => setForm({ ...form, mealPlan: event.target.value })}
+                        disabled={disabled}
+                        data-testid="hotel-meal-plan"
+                    >
+                        <option value="Solo Alojamiento">Solo Alojamiento</option>
+                        <option value="Desayuno">Desayuno</option>
+                        <option value="Media Pension">Media Pension</option>
+                        <option value="Pension Completa">Pension Completa</option>
+                        <option value="All Inclusive">All Inclusive</option>
+                    </select>
+                </div>
+            </div>
+
+            {/* Check-in/out y ocupacion de la habitacion */}
             <div className="grid grid-cols-2 gap-4">
                 <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -695,6 +816,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 </div>
             </div>
 
+            {/* Resumen de noches/dias calculados automaticamente */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Noches</div>
@@ -1415,8 +1537,14 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         rooms: 1,
         adults: 2,
         children: 0,
-        roomType: "",
-        mealPlan: "",
+        // Campos manuales de hotel — defaults razonables para un alta nueva
+        hotelName: "",
+        city: "",
+        country: "",
+        address: "",
+        starRating: null,
+        roomType: "Doble",
+        mealPlan: "Desayuno",
         checkIn: "",
         checkOut: "",
         roomingAssignments: "",
@@ -1563,6 +1691,16 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 formattedForm.unitNetCost = qty > 0 ? (Number(serviceToEdit.netCost) || 0) / qty : 0;
                 formattedForm.unitSalePrice = qty > 0 ? (Number(serviceToEdit.salePrice) || 0) / qty : 0;
                 formattedForm.unitCommission = qty > 0 ? (Number(serviceToEdit.commission) || 0) / qty : 0;
+                // Normaliza los campos string de hotel: null/undefined -> "" para evitar
+                // el warning de React "changing uncontrolled input to controlled".
+                formattedForm.hotelName = serviceToEdit.hotelName || "";
+                formattedForm.city = serviceToEdit.city || "";
+                formattedForm.country = serviceToEdit.country || "";
+                formattedForm.address = serviceToEdit.address || "";
+                formattedForm.starRating = serviceToEdit.starRating ?? null;
+                // roomType y mealPlan: si el backend manda null, defaulteamos al primer valor del select
+                formattedForm.roomType = serviceToEdit.roomType || "Doble";
+                formattedForm.mealPlan = serviceToEdit.mealPlan || "Desayuno";
             }
 
             setManualHotelPricing({ netCost: false, salePrice: false });
@@ -1584,8 +1722,14 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             rooms: 1,
             adults: 2,
             children: 0,
-            roomType: "",
-            mealPlan: "",
+            // Campos manuales de hotel con defaults razonables para alta nueva
+            hotelName: "",
+            city: "",
+            country: "",
+            address: "",
+            starRating: null,
+            roomType: "Doble",
+            mealPlan: "Desayuno",
             checkIn: "",
             checkOut: "",
             roomingAssignments: "",
@@ -1614,8 +1758,14 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             }
 
             if (serviceType === "Hotel") {
-                newForm.hotelName = rate.hotelName || rate.productName;
+                // Autocompleta los campos manuales con los datos de la tarifa elegida.
+                // El usuario puede sobreescribir cualquier campo despues — la tarifa es un punto de partida.
+                newForm.hotelName = rate.hotelName || rate.productName || prev.hotelName;
                 newForm.city = rate.city || prev.city;
+                // country, address y starRating solo se sobreescriben si la tarifa los trae
+                if (rate.country) newForm.country = rate.country;
+                if (rate.address) newForm.address = rate.address;
+                if (rate.starRating) newForm.starRating = rate.starRating;
                 if (rate.roomType) newForm.roomType = rate.roomType;
                 if (rate.mealPlan) newForm.mealPlan = rate.mealPlan;
                 newForm.netCost = roundMoney((rate.netCost || 0) * hotelQuantity);
@@ -1661,8 +1811,6 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         if (e) e.preventDefault();
         setLoading(true);
 
-        const isLegacyHotelEdit = serviceToEdit && serviceType === "Hotel" && !serviceToEdit.rateId;
-
         try {
             const method = serviceToEdit ? "put" : "post";
             const endpoint = serviceToEdit
@@ -1698,11 +1846,35 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 payload.notes = form.notes || null;
 
             } else if (!isGenericEdit && serviceType === "Hotel") {
-                if (!form.rateId && !isLegacyHotelEdit) {
-                    throw new Error("Selecciona un hotel y una variante antes de guardar.");
+                // Validacion minima de hotel: nombre y ciudad son los campos propios de HotelBooking en el backend.
+                // El tarifario (rateId) ya NO es obligatorio — el backend acepta hotel sin tarifa.
+                if (!form.hotelName || !form.hotelName.trim()) {
+                    throw new Error("Ingresa el nombre del hotel.");
+                }
+                if (!form.city || !form.city.trim()) {
+                    throw new Error("Ingresa la ciudad del hotel.");
+                }
+                // El backend exige proveedor (ResolveSupplierIdAsync tira si va vacio).
+                // Como ahora el hotel se carga a mano, pedimos el proveedor con un mensaje
+                // claro en vez de dejar que el backend devuelva un error generico.
+                if (!form.supplierId) {
+                    throw new Error("Elegi un proveedor para el hotel.");
                 }
                 payload.checkIn = toIsoDate(form.checkIn, "check-in");
                 payload.checkOut = toIsoDate(form.checkOut, "check-out");
+                // Campos propios del hotel — se mandan null si estan vacios para que el backend los trate como opcionales
+                payload.hotelName = form.hotelName.trim();
+                payload.city = form.city.trim();
+                payload.country = form.country?.trim() || null;
+                payload.address = form.address?.trim() || null;
+                payload.starRating = form.starRating ? Number(form.starRating) : null;
+                payload.roomType = form.roomType || null;
+                payload.mealPlan = form.mealPlan || null;
+                payload.rooms = Number(form.rooms) || 1;
+                payload.adults = Number(form.adults) || 1;
+                payload.children = Number(form.children) || 0;
+                // rateId: si se eligio tarifa se manda, si no se mando a mano va null
+                payload.rateId = form.rateId || null;
 
             } else if (!isGenericEdit && serviceType === "Traslado") {
                 // POR QUE NO usamos toIsoDate() / toISOString() acá:
@@ -1782,8 +1954,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             } else {
                 showSuccess(`Habitacion "${form.roomType || "Estandar"}" agregada correctamente.`);
                 setManualHotelPricing({ netCost: false, salePrice: false });
-                // Reset variant-specific fields but keep hotel, dates and supplier
-                setForm(prev => ({
+                // Limpia solo los campos de la VARIANTE (tarifa, precios, habitacion, asignacion).
+                // Conserva los datos del hotel en si (nombre, ciudad, pais, direccion, estrellas,
+                // check-in/out, adultos, ninos) para que el usuario solo cambie lo que difiere.
+                setForm((prev) => ({
                     ...prev,
                     rateId: "",
                     unitNetCost: 0,
@@ -1792,10 +1966,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     netCost: 0,
                     salePrice: 0,
                     commission: 0,
-                    roomType: "",
-                    mealPlan: "",
+                    roomType: "Doble",
+                    mealPlan: "Desayuno",
                     roomingAssignments: "",
-                    rooms: 1
+                    rooms: 1,
                 }));
             }
         } catch (error) {
@@ -1885,10 +2059,12 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     ) : null}
 
                     <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
-                        {!serviceToEdit && serviceType === "Hotel" && form.rateId && (
-                            <button 
-                                type="button" 
-                                onClick={() => handleSubmit(null, false)} 
+                        {/* El boton de agregar otra habitacion aparece cuando estamos creando (no editando)
+                            un hotel y ya hay nombre cargado — sin exigir que venga del tarifario */}
+                        {!serviceToEdit && serviceType === "Hotel" && form.hotelName?.trim() && (
+                            <button
+                                type="button"
+                                onClick={() => handleSubmit(null, false)}
                                 disabled={loading}
                                 className="rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400"
                             >
