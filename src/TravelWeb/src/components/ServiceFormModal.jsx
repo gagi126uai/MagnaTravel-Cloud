@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
-import { hasPermission } from "../auth";
+import { hasPermission, isAdmin } from "../auth";
+import { useLearnedRateFlow } from "../hooks/useLearnedRateFlow";
+import RateDuplicateModal from "./RateDuplicateModal";
 import {
     X,
     Plane,
@@ -23,6 +25,7 @@ import {
     Star,
     ChevronDown,
     ChevronUp,
+    BookmarkPlus,
 } from "lucide-react";
 import {
     SERVICE_RECORD_KIND,
@@ -1525,6 +1528,15 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
 
 export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaStatus, suppliers, onSuccess, initialServiceType, serviceToEdit, reservaPax }) {
     const [serviceType, setServiceType] = useState(initialServiceType || "Aereo");
+
+    // Tilde "Guardar esta tarifa para reusar" — solo visible para admins, default desmarcado.
+    // Se resetea cada vez que se abre el modal para no "pegarse" entre servicios distintos.
+    const [saveAsRate, setSaveAsRate] = useState(false);
+
+    // Hook que maneja el flujo de tarifa aprendida (duplicate-check → modal o crear directo).
+    // Se desacopla del submit para que un error en el tarifario NO revierta el servicio.
+    const { duplicateModalProps, runLearnedRateFlow } = useLearnedRateFlow();
+
     const [form, setForm] = useState({
         supplierId: "",
         rateId: "",
@@ -1619,6 +1631,12 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             }
         }
     }, [form.checkIn, form.checkOut, form.rooms, form.unitNetCost, form.unitSalePrice, form.unitCommission, manualHotelPricing.netCost, manualHotelPricing.salePrice, serviceType]);
+
+    // Cada vez que el modal se abre (isOpen cambia a true), reseteamos el tilde
+    // para que no quede marcado de la apertura anterior.
+    useEffect(() => {
+        if (isOpen) setSaveAsRate(false);
+    }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -1940,13 +1958,22 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 ? await api.put(endpoint, payload)
                 : await api.post(endpoint, payload);
             const persistedService = unwrapSavedService(savedService);
-            
+
             await onSuccess?.({
                 service: persistedService,
                 serviceType,
                 action: method,
                 showLoading: false,
             });
+
+            // Flujo "tarifa aprendida" (BEST-EFFORT):
+            // Solo se ejecuta al CREAR (no editar), si el admin marco el tilde.
+            // Si este flujo falla, el servicio ya fue creado — el error es no bloqueante.
+            // No se ejecuta en "Guardar y agregar otra hab." (shouldClose=false) para
+            // no spamear el tarifario con una tarifa por cada habitacion del mismo hotel.
+            if (shouldClose && !serviceToEdit && saveAsRate && isAdmin()) {
+                await runLearnedRateFlow({ serviceType, form });
+            }
 
             if (shouldClose) {
                 showSuccess("Servicio guardado");
@@ -1979,15 +2006,20 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         }
     };
 
-    if (!isOpen) return null;
-
     const currentType = isGenericEdit
         ? { icon: Package }
         : SERVICE_TYPES.find((type) => type.value === serviceType);
 
-
+    // El RateDuplicateModal se renderiza SIEMPRE (no condicionado por isOpen del ServiceFormModal)
+    // porque puede necesitar aparecer despues de que el ServiceFormModal se cerro
+    // (el flujo es: admin guarda servicio -> ServiceFormModal se cierra -> duplicate-check corre
+    // -> si hay duplicados, RateDuplicateModal se abre en pantalla limpia).
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+        <>
+        <RateDuplicateModal {...duplicateModalProps} />
+
+        {/* El guard isOpen aplica SOLO al modal de servicio, no al de duplicados */}
+        {isOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
             <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
                 <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-indigo-500 to-sky-600 p-4 text-white dark:border-slate-700">
                     <h2 className="flex items-center gap-2 text-lg font-semibold">
@@ -2059,6 +2091,29 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     ) : null}
 
                     <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+                        {/* Tilde "Guardar esta tarifa para reusar":
+                            Visible SOLO para admins y SOLO al crear un servicio nuevo (no al editar).
+                            Default desmarcado. Se resetea cada vez que se abre el modal.
+                            Al marcar y guardar, se dispara el flujo de tarifa aprendida DESPUES
+                            de que el servicio fue persistido — nunca bloquea ni revierte el servicio. */}
+                        {!serviceToEdit && !isLocked && isAdmin() && (
+                            <label
+                                htmlFor="save-as-rate-checkbox"
+                                className="mr-auto flex cursor-pointer items-center gap-2 text-sm text-slate-600 dark:text-slate-400"
+                            >
+                                <input
+                                    type="checkbox"
+                                    id="save-as-rate-checkbox"
+                                    data-testid="save-as-rate"
+                                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                    checked={saveAsRate}
+                                    onChange={(event) => setSaveAsRate(event.target.checked)}
+                                />
+                                <BookmarkPlus className="h-4 w-4 text-indigo-400" />
+                                Guardar esta tarifa para reusar
+                            </label>
+                        )}
+
                         {/* El boton de agregar otra habitacion aparece cuando estamos creando (no editando)
                             un hotel y ya hay nombre cargado — sin exigir que venga del tarifario */}
                         {!serviceToEdit && serviceType === "Hotel" && form.hotelName?.trim() && (
@@ -2080,6 +2135,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     </div>
                 </form>
             </div>
-        </div>
+        </div>}
+        </>
     );
 }

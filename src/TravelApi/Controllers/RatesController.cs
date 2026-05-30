@@ -96,6 +96,29 @@ public class RatesController : ControllerBase
         return Ok(rates);
     }
 
+    /// <summary>
+    /// Pieza C "tarifario que se llena solo": antes de crear una tarifa, avisa si
+    /// ya existe una identica o muy parecida (para no cargar duplicados).
+    /// Mismo gate que crear/editar tarifas (Admin): expone precios netos/venta.
+    /// </summary>
+    [HttpPost("duplicate-check")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<RateDuplicateCheckResponse>> DuplicateCheck(
+        [FromBody] RateDuplicateCheckRequest req,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await _rateService.FindDuplicateCandidatesAsync(req, ct);
+            return Ok(result);
+        }
+        catch (ArgumentException)
+        {
+            // El service tira ArgumentException si el SupplierId no resuelve.
+            return NotFound("Proveedor no encontrado.");
+        }
+    }
+
     [HttpPost]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Create([FromBody] RateDto req, CancellationToken ct)

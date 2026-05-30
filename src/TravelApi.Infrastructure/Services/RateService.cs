@@ -1,7 +1,11 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Npgsql;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -9,10 +13,29 @@ namespace TravelApi.Infrastructure.Services;
 public class RateService : IRateService
 {
     private readonly AppDbContext _db;
+    private readonly ILogger<RateService> _logger;
 
-    public RateService(AppDbContext db)
+    // ===================================================================
+    // Pieza C "tarifario que se llena solo": umbral de similitud difusa.
+    //
+    // pg_trgm.similarity() devuelve un numero entre 0 (nada que ver) y 1
+    // (identico). 0.4 es un punto medio razonable: agarra "Sheraton" vs
+    // "Sheratton" (typo) sin inundar con coincidencias casuales.
+    //
+    // TODO: mover a OperationalFinanceSettings (o un settings de tarifario)
+    // cuando exista un lugar natural para configurarlo desde la UI de admin.
+    // Por ahora es una constante para NO dispersar el numero magico por el
+    // codigo: si hay que tocarlo, se toca aca y en un solo lugar.
+    // ===================================================================
+    private const double FuzzyMatchSimilarityThreshold = 0.4;
+
+    // Cuantos candidatos difusos como maximo devolvemos (los mas parecidos).
+    private const int FuzzyMatchLimit = 5;
+
+    public RateService(AppDbContext db, ILogger<RateService> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     public async Task<PagedResponse<RateListItemDto>> GetAllAsync(RateListQuery query, CancellationToken ct)
@@ -501,6 +524,349 @@ public class RateService : IRateService
         rate.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return await GetByIdAsync(id, ct);
+    }
+
+    // ===================================================================
+    // Pieza C "tarifario que se llena solo": deteccion de duplicados.
+    // ===================================================================
+
+    /// <summary>
+    /// Detecta tarifas existentes parecidas a la que el usuario esta por crear.
+    ///
+    /// Devuelve dos cosas:
+    ///   - <c>ExactMatch</c>: una tarifa con la MISMA huella (mismo proveedor +
+    ///     mismos campos clave segun el tipo). Si existe, casi seguro es un
+    ///     duplicado real.
+    ///   - <c>FuzzyMatches</c>: hasta 5 tarifas del mismo proveedor y tipo cuyo
+    ///     NOMBRE se parece (no es identico). Sirve para detectar typos o
+    ///     variantes de escritura ("Sheraton" vs "Sheratton").
+    ///
+    /// La busqueda difusa usa pg_trgm (Postgres). Si la extension no estuviera
+    /// instalada, degradamos a una busqueda por substring (ILIKE) sin score real.
+    /// </summary>
+    public async Task<RateDuplicateCheckResponse> FindDuplicateCandidatesAsync(
+        RateDuplicateCheckRequest request,
+        CancellationToken ct)
+    {
+        // El SupplierId es obligatorio para detectar duplicados: una tarifa
+        // "parecida" solo tiene sentido dentro del MISMO proveedor. Dos hoteles
+        // homonimos de proveedores distintos NO son duplicados.
+        var supplierId = await ResolveOptionalSupplierIdAsync(request.SupplierId, ct);
+        if (!supplierId.HasValue)
+        {
+            // Sin proveedor no comparamos nada: devolvemos vacio en vez de tirar
+            // error, asi el frontend simplemente no muestra advertencias.
+            return new RateDuplicateCheckResponse();
+        }
+
+        var serviceType = request.ServiceType?.Trim() ?? string.Empty;
+
+        // El nombre a comparar depende del tipo: Hotel compara por HotelName,
+        // el resto por ProductName. El usuario lo manda ya resuelto en Name.
+        var nameToMatch = request.Name ?? string.Empty;
+
+        var exactMatch = await FindExactMatchAsync(supplierId.Value, serviceType, request, ct);
+        var fuzzyMatches = await FindFuzzyMatchesAsync(
+            supplierId.Value,
+            serviceType,
+            nameToMatch,
+            excludePublicId: exactMatch?.PublicId,
+            ct);
+
+        return new RateDuplicateCheckResponse
+        {
+            ExactMatch = exactMatch,
+            FuzzyMatches = fuzzyMatches
+        };
+    }
+
+    /// <summary>
+    /// Busca una tarifa con la huella EXACTA (todos los componentes clave iguales,
+    /// comparados ya normalizados). La comparacion de strings normalizados
+    /// (sacar tildes, minusculas, espacios) no se puede traducir a SQL, asi que
+    /// traemos los candidatos del proveedor+tipo (un set chico) y comparamos en
+    /// memoria con <see cref="TextNormalizer"/>.
+    /// </summary>
+    private async Task<RateDuplicateExactDto?> FindExactMatchAsync(
+        int supplierId,
+        string serviceType,
+        RateDuplicateCheckRequest request,
+        CancellationToken ct)
+    {
+        // Traemos solo las tarifas activas del mismo proveedor y tipo. Este set
+        // es chico (un proveedor no tiene miles de tarifas del mismo tipo), por
+        // eso es seguro materializarlo y comparar en memoria.
+        var candidates = await _db.Rates
+            .AsNoTracking()
+            .Where(rate => rate.SupplierId == supplierId
+                && rate.ServiceType == serviceType
+                && rate.IsActive)
+            .ToListAsync(ct);
+
+        var fingerprint = request.Fingerprint;
+
+        // Componentes esperados de la huella, ya normalizados, segun el tipo.
+        // Comparamos cada candidato contra estos.
+        foreach (var candidate in candidates)
+        {
+            if (IsExactHuellaMatch(candidate, serviceType, request.Name, fingerprint))
+            {
+                return new RateDuplicateExactDto
+                {
+                    PublicId = candidate.PublicId,
+                    ProductName = candidate.ProductName,
+                    HotelName = candidate.HotelName,
+                    SalePrice = candidate.SalePrice,
+                    NetCost = candidate.NetCost,
+                    Currency = candidate.Currency
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Decide si una tarifa candidata tiene la MISMA huella que lo que el usuario
+    /// esta por crear. La huella cambia segun el tipo de servicio (un hotel se
+    /// identifica por habitacion+pension, un vuelo por origen+destino+aerolinea).
+    /// Todos los componentes se comparan ya normalizados.
+    /// </summary>
+    private static bool IsExactHuellaMatch(
+        Rate candidate,
+        string serviceType,
+        string? name,
+        RateDuplicateFingerprint fingerprint)
+    {
+        // Normalizamos el tipo para que "hotel" y "Hotel" caigan en la misma rama.
+        var typeKey = TextNormalizer.NormalizeForMatch(serviceType);
+
+        return typeKey switch
+        {
+            // Hotel: proveedor (ya filtrado) + nombre del hotel + habitacion +
+            // pension + categoria de habitacion. OJO: dos cuartos distintos del
+            // mismo hotel (distinto RoomType) NO son duplicado.
+            "hotel" =>
+                Matches(candidate.HotelName, name)
+                && Matches(candidate.RoomType, fingerprint.RoomType)
+                && Matches(candidate.MealPlan, fingerprint.MealPlan)
+                && Matches(candidate.RoomCategory, fingerprint.RoomCategory),
+
+            // Traslado: origen + destino + tipo de vehiculo + ida-y-vuelta.
+            "traslado" =>
+                Matches(candidate.PickupLocation, fingerprint.PickupLocation)
+                && Matches(candidate.DropoffLocation, fingerprint.DropoffLocation)
+                && Matches(candidate.VehicleType, fingerprint.VehicleType)
+                && candidate.IsRoundTrip == fingerprint.IsRoundTrip,
+
+            // Vuelo: origen + destino + aerolinea.
+            "aereo" =>
+                Matches(candidate.Origin, fingerprint.Origin)
+                && Matches(candidate.Destination, fingerprint.Destination)
+                && Matches(candidate.Airline, fingerprint.Airline),
+
+            // Asistencia, Paquete y cualquier otro tipo: alcanza con el nombre del
+            // producto (mismo proveedor ya filtrado). Es el caso mas simple.
+            _ => Matches(candidate.ProductName, name)
+        };
+    }
+
+    /// <summary>Compara dos textos normalizandolos a ambos (regla de oro del matching).</summary>
+    private static bool Matches(string? left, string? right)
+    {
+        return string.Equals(
+            TextNormalizer.NormalizeForMatch(left),
+            TextNormalizer.NormalizeForMatch(right),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Busca tarifas con NOMBRE parecido (no identico) dentro del mismo proveedor
+    /// y tipo. Usa el operador <c>%</c> de pg_trgm (que aprovecha el indice GIN
+    /// trigram) y devuelve el score de <c>similarity()</c> ordenado de mayor a
+    /// menor. Si pg_trgm no esta instalada, cae al fallback ILIKE.
+    /// </summary>
+    private async Task<IReadOnlyList<RateDuplicateFuzzyDto>> FindFuzzyMatchesAsync(
+        int supplierId,
+        string serviceType,
+        string nameToMatch,
+        Guid? excludePublicId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(nameToMatch))
+        {
+            return Array.Empty<RateDuplicateFuzzyDto>();
+        }
+
+        // El campo sobre el que comparamos depende del tipo: Hotel mira HotelName,
+        // el resto ProductName. Como el nombre de columna no se puede parametrizar
+        // (es identificador, no valor), lo elegimos de una lista BLANCA fija; nunca
+        // viene del usuario, asi que no hay riesgo de inyeccion.
+        var isHotel = string.Equals(
+            TextNormalizer.NormalizeForMatch(serviceType), "hotel", StringComparison.Ordinal);
+        var matchColumn = isHotel ? "HotelName" : "ProductName";
+
+        try
+        {
+            return await RunTrigramFuzzyQueryAsync(
+                supplierId, serviceType, nameToMatch, matchColumn, excludePublicId, ct);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction)
+        {
+            // pg_trgm no esta instalada: el operador % y similarity() no existen,
+            // Postgres tira 42883 (undefined_function). Degradamos a una busqueda
+            // por substring (ILIKE) para no dejar al usuario sin ninguna ayuda.
+            // El score se reporta 0 porque ILIKE no mide cuan parecido es.
+            _logger.LogWarning(
+                "pg_trgm no disponible al detectar duplicados de tarifas; usando fallback ILIKE. " +
+                "Verificar la extension en el servidor (SELECT * FROM pg_available_extensions WHERE name='pg_trgm').");
+
+            return await RunIlikeFallbackQueryAsync(
+                supplierId, serviceType, nameToMatch, matchColumn, excludePublicId, ct);
+        }
+    }
+
+    /// <summary>
+    /// Query difusa real con pg_trgm. Usa SQL crudo PARAMETRIZADO (los valores van
+    /// como parametros de Npgsql, nunca interpolados en el string) para evitar
+    /// inyeccion. El nombre de columna sale de una lista blanca fija, no del usuario.
+    /// </summary>
+    private async Task<IReadOnlyList<RateDuplicateFuzzyDto>> RunTrigramFuzzyQueryAsync(
+        int supplierId,
+        string serviceType,
+        string nameToMatch,
+        string matchColumn,
+        Guid? excludePublicId,
+        CancellationToken ct)
+    {
+        // El WHERE usa `lower(col) % lower(@name)` para que pegue contra el indice
+        // GIN trigram, y `similarity(...) >= @threshold` para cortar por umbral.
+        // Excluimos el match exacto (si lo hubo) para no listarlo dos veces.
+        var sql = $@"
+            SELECT ""PublicId"", ""ProductName"", ""HotelName"", ""SalePrice"", ""NetCost"", ""Currency"",
+                   similarity(lower(""{matchColumn}""), lower(@name)) AS score
+            FROM ""Rates""
+            WHERE ""SupplierId"" = @supplierId
+              AND ""ServiceType"" = @serviceType
+              AND ""IsActive"" = TRUE
+              AND ""{matchColumn}"" IS NOT NULL
+              AND lower(""{matchColumn}"") % lower(@name)
+              AND similarity(lower(""{matchColumn}""), lower(@name)) >= @threshold
+              AND (@excludePublicId IS NULL OR ""PublicId"" <> @excludePublicId)
+            ORDER BY score DESC
+            LIMIT @limit;";
+
+        await using var command = CreateRatesCommand(sql);
+        command.Parameters.Add(new NpgsqlParameter("name", nameToMatch));
+        command.Parameters.Add(new NpgsqlParameter("supplierId", supplierId));
+        command.Parameters.Add(new NpgsqlParameter("serviceType", serviceType));
+        command.Parameters.Add(new NpgsqlParameter("threshold", FuzzyMatchSimilarityThreshold));
+        command.Parameters.Add(new NpgsqlParameter("limit", FuzzyMatchLimit));
+        command.Parameters.Add(new NpgsqlParameter("excludePublicId", (object?)excludePublicId ?? DBNull.Value)
+        {
+            NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid
+        });
+
+        return await ReadFuzzyMatchesAsync(command, hasRealScore: true, ct);
+    }
+
+    /// <summary>
+    /// Fallback cuando pg_trgm no esta: busca por substring case-insensitive
+    /// (ILIKE '%...%'), igual que el patron de busqueda de
+    /// <see cref="BuildFilteredRatesQuery"/>. No hay score real, asi que devolvemos 0.
+    /// </summary>
+    private async Task<IReadOnlyList<RateDuplicateFuzzyDto>> RunIlikeFallbackQueryAsync(
+        int supplierId,
+        string serviceType,
+        string nameToMatch,
+        string matchColumn,
+        Guid? excludePublicId,
+        CancellationToken ct)
+    {
+        var sql = $@"
+            SELECT ""PublicId"", ""ProductName"", ""HotelName"", ""SalePrice"", ""NetCost"", ""Currency"",
+                   0.0 AS score
+            FROM ""Rates""
+            WHERE ""SupplierId"" = @supplierId
+              AND ""ServiceType"" = @serviceType
+              AND ""IsActive"" = TRUE
+              AND ""{matchColumn}"" IS NOT NULL
+              AND ""{matchColumn}"" ILIKE @pattern
+              AND (@excludePublicId IS NULL OR ""PublicId"" <> @excludePublicId)
+            ORDER BY ""{matchColumn}""
+            LIMIT @limit;";
+
+        await using var command = CreateRatesCommand(sql);
+        // El % del LIKE se arma como VALOR del parametro, no se concatena en el SQL.
+        command.Parameters.Add(new NpgsqlParameter("pattern", $"%{nameToMatch}%"));
+        command.Parameters.Add(new NpgsqlParameter("supplierId", supplierId));
+        command.Parameters.Add(new NpgsqlParameter("serviceType", serviceType));
+        command.Parameters.Add(new NpgsqlParameter("limit", FuzzyMatchLimit));
+        command.Parameters.Add(new NpgsqlParameter("excludePublicId", (object?)excludePublicId ?? DBNull.Value)
+        {
+            NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid
+        });
+
+        return await ReadFuzzyMatchesAsync(command, hasRealScore: false, ct);
+    }
+
+    /// <summary>
+    /// Crea un comando sobre la conexion del DbContext, abriendola si hace falta.
+    /// Reutiliza la conexion de EF para respetar la misma transaccion/config.
+    /// </summary>
+    private NpgsqlCommand CreateRatesCommand(string sql)
+    {
+        var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
+        var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return command;
+    }
+
+    /// <summary>
+    /// Ejecuta el comando y mapea cada fila a <see cref="RateDuplicateFuzzyDto"/>.
+    /// Abre la conexion si estaba cerrada y la deja como estaba al terminar.
+    /// </summary>
+    private static async Task<IReadOnlyList<RateDuplicateFuzzyDto>> ReadFuzzyMatchesAsync(
+        NpgsqlCommand command,
+        bool hasRealScore,
+        CancellationToken ct)
+    {
+        var connection = command.Connection!;
+        var connectionWasClosed = connection.State == ConnectionState.Closed;
+        if (connectionWasClosed)
+        {
+            await connection.OpenAsync(ct);
+        }
+
+        try
+        {
+            var results = new List<RateDuplicateFuzzyDto>();
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                results.Add(new RateDuplicateFuzzyDto
+                {
+                    PublicId = reader.GetGuid(0),
+                    ProductName = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    HotelName = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    SalePrice = reader.GetDecimal(3),
+                    NetCost = reader.GetDecimal(4),
+                    Currency = reader.IsDBNull(5) ? null : reader.GetString(5),
+                    // En el fallback ILIKE el score es 0 (no hay medida real).
+                    Score = hasRealScore ? Convert.ToDouble(reader.GetValue(6)) : 0d
+                });
+            }
+
+            return results;
+        }
+        finally
+        {
+            if (connectionWasClosed)
+            {
+                await connection.CloseAsync();
+            }
+        }
     }
 
     private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicId, CancellationToken ct)

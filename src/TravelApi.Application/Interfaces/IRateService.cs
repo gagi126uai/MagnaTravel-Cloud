@@ -17,6 +17,14 @@ public interface IRateService
     Task<bool> DeleteAsync(int id, CancellationToken ct);
     Task<RateListItemDto?> DeactivateAsync(int id, CancellationToken ct);
     Task<RateListItemDto?> ReactivateAsync(int id, CancellationToken ct);
+
+    /// <summary>
+    /// Pieza C "tarifario que se llena solo": detecta tarifas existentes parecidas
+    /// ANTES de crear una nueva, para evitar duplicados. Devuelve un match exacto
+    /// (misma huella) si lo hay, mas hasta 5 candidatos con nombre similar.
+    /// El <paramref name="request"/>.SupplierId se resuelve a id interno aca dentro.
+    /// </summary>
+    Task<RateDuplicateCheckResponse> FindDuplicateCandidatesAsync(RateDuplicateCheckRequest request, CancellationToken ct);
 }
 
 // Moving RateDto from controllers namespace to application layer
