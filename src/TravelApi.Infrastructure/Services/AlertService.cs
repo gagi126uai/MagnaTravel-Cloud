@@ -22,10 +22,18 @@ public class AlertService : IAlertService
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
+        // Fase D (rediseño Sold/ToSettle): "viajes urgentes" = reservas activas con viaje
+        // inminente y saldo pendiente. Sumamos Sold (vendida pero el operador todavia no
+        // confirmo): una venta con viaje a la vuelta de la esquina TIENE que alertar, porque
+        // falta confirmar al operador Y cobrar. NO sumamos ToSettle: es post-viaje (el viaje
+        // ya termino), no es un viaje "proximo". Con el flag EnableSoldToSettleStates OFF
+        // nunca hay filas en Sold, asi que el resultado es identico al historico.
         var urgentTrips = await _context.Reservas
-            .Where(f => (f.Status == EstadoReserva.Confirmed || f.Status == EstadoReserva.Traveling) &&
-                        f.StartDate >= today && 
-                        f.StartDate <= threshold && 
+            .Where(f => (f.Status == EstadoReserva.Sold ||
+                         f.Status == EstadoReserva.Confirmed ||
+                         f.Status == EstadoReserva.Traveling) &&
+                        f.StartDate >= today &&
+                        f.StartDate <= threshold &&
                         f.Balance > 0)
             .Select(f => new
             {

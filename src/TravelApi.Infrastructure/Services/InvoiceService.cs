@@ -52,10 +52,21 @@ public class InvoiceService : IInvoiceService
     // y cacheado en el scope: cuando el bridge pide IInvoiceService recibe la instancia
     // ya existente y no hay recursion. Ver GetBcBridge() mas abajo.
     private readonly IServiceProvider _serviceProvider;
+    // Estados de Reserva que se consideran "facturables" en la bandeja/summary de facturacion.
+    // Fase D (rediseño Sold/ToSettle):
+    //  - ToSettle (A liquidar): SE INCLUYE. Es post-viaje y el operador YA confirmo, asi que
+    //    puede quedar algo pendiente de facturar y debe seguir visible. Facturar post-viaje no
+    //    tiene problema fiscal (consistente con Payment/Treasury/Supplier, que ya la tratan como file vivo).
+    //  - Sold (Vendida): SE EXCLUYE a proposito. Es pre-confirmacion del operador; facturar ahi seria
+    //    emitir CAE por un servicio que el operador podria rechazar (riesgo fiscal). Ademas ya hay
+    //    un guard server-side en CreateAsync que lo bloquea aunque alguien la metiera en este conjunto.
+    // Con el flag EnableSoldToSettleStates OFF no existen filas en Sold/ToSettle, asi que agregar
+    // ToSettle es inerte y el comportamiento queda byte-identico al historico (Confirmed + Traveling).
     private static readonly string[] ActiveInvoicingStatuses =
     {
         EstadoReserva.Confirmed,
-        EstadoReserva.Traveling
+        EstadoReserva.Traveling,
+        EstadoReserva.ToSettle
     };
 
     public InvoiceService(

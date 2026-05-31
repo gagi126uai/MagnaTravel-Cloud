@@ -1055,6 +1055,11 @@ public class ReservaService : IReservaService
                 r.Status == EstadoReserva.Cancelled ||
                 r.Status == "Archived",
                 cancellationToken),
+            // Totales "activos" via patron NEGATIVO (todo lo que NO esta cerrado/cancelado/archivado).
+            // Fase D (rediseño Sold/ToSettle): este patron YA incluye Sold y ToSettle a proposito.
+            // Una reserva Sold cuenta como venta igual que la vieja Confirmed, y una ToSettle es
+            // pre-cierre (todavia activa). NO se reescribe a un conjunto positivo (evita regresiones).
+            // Con el flag OFF no hay filas en esos estados -> resultado identico al historico.
             TotalSaleActive = await summaryBaseQuery
                 .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != "Archived")
                 .SumAsync(r => (decimal?)r.TotalSale, cancellationToken) ?? 0m,

@@ -32,10 +32,18 @@ public class PaymentService : IPaymentService
     private readonly IApprovalPolicyService? _approvalPolicyService;
     private readonly IAuditService? _auditService;
 
+    // Estados de Reserva considerados "cobrables" (tienen saldo que se le puede pedir al cliente).
+    // Fase D (rediseño Sold/ToSettle): sumamos Sold y ToSettle. En Sold ya se cobra la seña / parte
+    // del precio (la reserva esta vendida aunque el operador no confirmo todavia), y una reserva
+    // ToSettle (post-viaje) con saldo pendiente sigue siendo cobrable. Con el flag
+    // EnableSoldToSettleStates OFF nunca hay filas en esos estados, asi que el conjunto efectivo
+    // es identico al historico (Confirmed, Traveling).
     private static readonly string[] ActiveCollectionStatuses =
     {
+        EstadoReserva.Sold,
         EstadoReserva.Confirmed,
-        EstadoReserva.Traveling
+        EstadoReserva.Traveling,
+        EstadoReserva.ToSettle
     };
 
     public PaymentService(

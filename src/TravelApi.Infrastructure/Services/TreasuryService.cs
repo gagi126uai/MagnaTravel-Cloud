@@ -20,7 +20,22 @@ public class TreasuryService : ITreasuryService
     public async Task<TreasurySummaryDto> GetSummaryAsync(CancellationToken cancellationToken)
     {
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var activeStatuses = new[] { EstadoReserva.Confirmed, EstadoReserva.Traveling };
+        // Estados de Reserva que cuentan para tesoreria / cuentas por cobrar (AR).
+        // Fase D (rediseño Sold/ToSettle): sumamos Sold y ToSettle. Sold = la vieja Confirmed
+        // (vendida, con AR vivo); ToSettle = file abierto post-viaje pendiente de liquidar, su
+        // saldo sigue siendo cuenta por cobrar. Con el flag EnableSoldToSettleStates OFF nunca hay
+        // filas en esos estados -> resultado identico al historico (Confirmed, Traveling).
+        //
+        // NOTA Q3 (contador): la inclusion de Sold/ToSettle en AR es la decision por defecto y
+        // debe quedar confirmada por el contador ANTES de prender el flag en produccion. Si el
+        // criterio cambiara, ajustar aca. Mientras el flag este OFF no hay impacto fiscal/contable.
+        var activeStatuses = new[]
+        {
+            EstadoReserva.Sold,
+            EstadoReserva.Confirmed,
+            EstadoReserva.Traveling,
+            EstadoReserva.ToSettle
+        };
 
         var accountsReceivable = await _dbContext.Reservas
             .Where(r => activeStatuses.Contains(r.Status) && r.Balance > 0)

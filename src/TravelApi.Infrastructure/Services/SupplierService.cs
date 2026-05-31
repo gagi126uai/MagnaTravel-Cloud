@@ -10,10 +10,18 @@ namespace TravelApi.Infrastructure.Services;
 
 public class SupplierService : ISupplierService
 {
+    // Estados de Reserva en los que un servicio "cuenta" para la cuenta corriente del proveedor.
+    // Fase D (rediseño Sold/ToSettle): sumamos Sold y ToSettle. Ambos son reservas reales ligadas
+    // al proveedor: Sold ya esta vendida (el operador tiene la solicitud), y ToSettle es justamente
+    // la etapa de "liquidar con el operador". Con el flag EnableSoldToSettleStates OFF nunca hay
+    // filas en esos estados, asi que el conjunto efectivo es identico al historico
+    // (Confirmed, Traveling, Closed).
     private static readonly string[] ValidReservationStatuses =
     {
+        EstadoReserva.Sold,
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
+        EstadoReserva.ToSettle,
         EstadoReserva.Closed
     };
 
@@ -160,7 +168,9 @@ public class SupplierService : ISupplierService
     /// Cuenta cuantas RESERVAS DISTINTAS tienen al menos un booking tipado
     /// (HotelBooking/TransferBooking/PackageBooking/FlightSegment) referenciando
     /// al supplier indicado, filtrando por reservas en estado "activo" segun la
-    /// regla de C29 (Budget, Confirmed, Traveling). Closed/Cancelled NO cuentan.
+    /// regla de C29 (Budget, Confirmed, Traveling) + Fase D (Sold, ToSettle).
+    /// Closed/Cancelled NO cuentan. Con el flag EnableSoldToSettleStates OFF nunca
+    /// hay filas Sold/ToSettle, asi que el conjunto efectivo es identico al historico.
     ///
     /// El servicio legacy ServicioReserva queda fuera a proposito (SupplierId
     /// nullable, esta deprecado).
@@ -198,12 +208,19 @@ public class SupplierService : ISupplierService
             .Concat(flightReservaIds)
             .Concat(assistanceReservaIds);
 
+        // OJO: este conjunto NO es el mismo que ValidReservationStatuses (incluye Budget y NO
+        // incluye Closed). Es el conteo de reservas "vivas" asociadas al proveedor. Fase D
+        // (rediseño Sold/ToSettle): sumamos Sold y ToSettle in-place (no unificamos con el otro
+        // conjunto porque la membresia historica difiere). Con el flag OFF nunca hay filas en
+        // esos estados, asi que el resultado es identico al historico (Budget, Confirmed, Traveling).
         return await _dbContext.Reservas
             .AsNoTracking()
             .Where(reserva =>
                 (reserva.Status == EstadoReserva.Budget
+                    || reserva.Status == EstadoReserva.Sold
                     || reserva.Status == EstadoReserva.Confirmed
-                    || reserva.Status == EstadoReserva.Traveling)
+                    || reserva.Status == EstadoReserva.Traveling
+                    || reserva.Status == EstadoReserva.ToSettle)
                 && bookedReservaIds.Contains(reserva.Id))
             .Select(reserva => reserva.Id)
             .Distinct()
