@@ -22,7 +22,7 @@ Presupuesto → Vendida → Confirmada → En viaje → A liquidar → Finalizad
 
 - **Vendida** (NUEVO): el cliente compró, esperás que el operador confirme.
 - **Confirmada**: ahora significa solo "el operador confirmó".
-- **A liquidar** (NUEVO): el viaje terminó, falta liquidar con el operador.
+- **A liquidar** (NUEVO, **OPCIONAL**): un desvío a mano para las reservas que necesitás cerrar cuentas con el operador *después* del viaje. **No es obligatorio**: por default el viaje termina y la reserva va directo a Finalizada. Solo apartás a "A liquidar" la que vos quieras (porque con ese operador arreglás la plata después). El robot automático nunca mete a nadie ahí. (Ajuste 2026-05-31: el dueño aclaró que el momento de pagar al operador depende de cada uno, así que esta etapa quedó opcional, no fija.)
 
 También movimos dos controles a donde tienen sentido:
 - La **carga de pasajeros** ahora se pide al **Vender** (antes al Confirmar).

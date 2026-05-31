@@ -19,11 +19,11 @@ namespace TravelApi.Infrastructure.Services;
 /// <para>CICLO NUEVO (flag ON):</para>
 /// - Confirmed -&gt; Traveling: cuando StartDate &lt;= today. Solo chequea capacidad (los
 ///   servicios sin confirmar ya se garantizaron en Sold-&gt;Confirmed).
-/// - Traveling -&gt; ToSettle: cuando EndDate &lt; today, SIN condicion de balance. El viaje
-///   termino, falta liquidar con el operador.
-/// - ToSettle -&gt; Closed: NO es automatico por regla general (es manual). Como fallback
-///   para no dejar reservas trabadas, si una reserva en ToSettle ya tiene Balance == 0 el
-///   job la cierra sola.
+/// - Traveling -&gt; Closed: cuando EndDate &lt; today AND Balance == 0 (IGUAL que el clasico).
+///   El cierre por fin de viaje es DIRECTO por default.
+/// - ToSettle ("a liquidar") quedo FUERA del job: es un DESVIO MANUAL OPCIONAL. El job NUNCA
+///   mete a nadie en ToSettle ni lo auto-cierra; entra y sale de ToSettle solo a mano (el
+///   usuario aparca la reserva ahi a proposito y la cierra cuando arregla cuentas con el operador).
 ///
 /// <para>Concurrencia: el review descarto el concurrency token xmin en Reserva (se activaba con
 /// el flag apagado y exponia caminos viejos a DbUpdateConcurrencyException). Como defensa minima,
@@ -67,9 +67,9 @@ public class ReservaLifecycleAutomationService
     /// Orden importante: primero reparar EndDate desde servicios (sino el
     /// auto-cierre no las puede tocar), despues promote, despues close.
     ///
-    /// El campo Closed del resultado representa "cuantas avanzaron al estado de fin de viaje":
-    /// con el flag OFF son las Traveling-&gt;Closed; con el flag ON son las Traveling-&gt;ToSettle
-    /// mas las ToSettle-&gt;Closed por fallback de balance.
+    /// El campo Closed del resultado representa "cuantas cerraron por fin de viaje": en ambos
+    /// ciclos son las Traveling-&gt;Closed (EndDate pasada + Balance == 0). ToSettle NO participa
+    /// del job: es un desvio manual opcional.
     /// </summary>
     public async Task<LifecycleRunResult> RunDailyDetailedAsync(CancellationToken ct = default)
     {
@@ -79,19 +79,11 @@ public class ReservaLifecycleAutomationService
         var repaired = await AutoRepairTravelingDatesAsync(ct);
         var promoted = await AutoTransitionConfirmedToTravelingAsync(soldToSettleEnabled, ct);
 
-        int closed;
-        if (soldToSettleEnabled)
-        {
-            // Ciclo nuevo: Traveling -> ToSettle por fecha + fallback ToSettle -> Closed si Balance==0.
-            var movedToSettle = await AutoTransitionTravelingToSettleAsync(ct);
-            var autoClosed = await AutoCloseSettledWithZeroBalanceAsync(ct);
-            closed = movedToSettle + autoClosed;
-        }
-        else
-        {
-            // Ciclo clasico: Traveling -> Closed por fecha + Balance==0.
-            closed = await AutoTransitionTravelingToClosedAsync(ct);
-        }
+        // Cierre por fin de viaje: Traveling -> Closed (EndDate pasada + Balance == 0) en AMBOS
+        // ciclos. ToSettle ("a liquidar") es un desvio MANUAL OPCIONAL: el job nunca lo crea ni lo
+        // cierra. La unica diferencia entre ciclos es que el ciclo nuevo (flag ON) deja rastro
+        // auditable (ReservaStatusChangeLog), igual que el resto de las transiciones de la cadena nueva.
+        var closed = await AutoTransitionTravelingToClosedAsync(soldToSettleEnabled, ct);
 
         _logger.LogInformation(
             "Lifecycle automation finished (soldToSettle={Flag}). Repaired: {Repaired}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
@@ -205,11 +197,16 @@ public class ReservaLifecycleAutomationService
     }
 
     /// <summary>
-    /// CICLO CLASICO (flag OFF): cierra Traveling -&gt; Closed cuando el viaje ya termino
-    /// (EndDate &lt; hoy) Y NO hay saldo pendiente (Balance == 0). Las reservas con EndDate
-    /// vencido pero saldo pendiente quedan en Traveling y se ven con chip "Vencida con deuda".
+    /// AMBOS CICLOS: cierra Traveling -&gt; Closed cuando el viaje ya termino (EndDate &lt; hoy) Y
+    /// NO hay saldo pendiente (Balance == 0). Las reservas con EndDate vencido pero saldo
+    /// pendiente quedan en Traveling y se ven con chip "Vencida con deuda".
+    ///
+    /// <para>Este es el cierre por DEFAULT en el ciclo nuevo: ToSettle ("a liquidar") es un desvio
+    /// manual opcional, asi que el fin de viaje cierra directo igual que en el clasico. La unica
+    /// diferencia es el rastro auditable: con flag ON se escribe ReservaStatusChangeLog (como el
+    /// resto de la cadena nueva); con flag OFF no (deuda preexistente, fuera de scope del FIX 5).</para>
     /// </summary>
-    public async Task<int> AutoTransitionTravelingToClosedAsync(CancellationToken ct = default)
+    public async Task<int> AutoTransitionTravelingToClosedAsync(bool soldToSettleEnabled, CancellationToken ct = default)
     {
         var today = DateTime.UtcNow.Date;
         var candidates = await _db.Reservas
@@ -219,75 +216,18 @@ public class ReservaLifecycleAutomationService
                 && r.Balance == 0)
             .ToListAsync(ct);
 
-        // Ciclo clasico (flag OFF): NO se escribe ReservaStatusChangeLog (deuda preexistente,
-        // fuera de scope del FIX 5). WriteForwardLog=false.
+        // WriteForwardLog depende del flag: ON = cadena nueva (deja rastro), OFF = clasico (no).
         var planned = candidates.Select(reserva => new PlannedTransition(
             Reserva: reserva,
             FromStatus: EstadoReserva.Traveling,
             ToStatus: EstadoReserva.Closed,
             StampClosedAt: true,
-            WriteForwardLog: false,
-            Reason: null)).ToList();
+            WriteForwardLog: soldToSettleEnabled,
+            Reason: soldToSettleEnabled ? "Fin de viaje (EndDate pasada) con saldo cero: cierre directo" : null)).ToList();
 
         var saved = await ApplyTransitionsAsync(planned, "AutoTransitionTravelingToClosed", ct);
         if (saved > 0)
             _logger.LogInformation("Auto-closed {Count} Reserva(s) Traveling->Closed.", saved);
-        return saved;
-    }
-
-    /// <summary>
-    /// CICLO NUEVO (flag ON): pasa Traveling -&gt; ToSettle cuando el viaje termino (EndDate &lt; hoy),
-    /// SIN condicion de balance. ToSettle ("a liquidar") es la parada previa al cierre: el viaje
-    /// ya paso, ahora hay que cerrar cuentas con el operador. El cierre real (ToSettle-&gt;Closed)
-    /// es manual salvo el fallback de balance cero (ver AutoCloseSettledWithZeroBalanceAsync).
-    /// </summary>
-    public async Task<int> AutoTransitionTravelingToSettleAsync(CancellationToken ct = default)
-    {
-        var today = DateTime.UtcNow.Date;
-        var candidates = await _db.Reservas
-            .Where(r => r.Status == EstadoReserva.Traveling
-                && r.EndDate.HasValue
-                && r.EndDate.Value.Date < today)
-            .ToListAsync(ct);
-
-        // Cadena nueva (flag ON): SI se escribe ReservaStatusChangeLog (FIX 5).
-        var planned = candidates.Select(reserva => new PlannedTransition(
-            Reserva: reserva,
-            FromStatus: EstadoReserva.Traveling,
-            ToStatus: EstadoReserva.ToSettle,
-            StampClosedAt: false,
-            WriteForwardLog: true,
-            Reason: "Fin de viaje (EndDate pasada): pasa a liquidar")).ToList();
-
-        var saved = await ApplyTransitionsAsync(planned, "AutoTransitionTravelingToSettle", ct);
-        if (saved > 0)
-            _logger.LogInformation("Auto-moved {Count} Reserva(s) Traveling->ToSettle (viaje terminado, a liquidar).", saved);
-        return saved;
-    }
-
-    /// <summary>
-    /// CICLO NUEVO (flag ON) — fallback de cierre: cierra ToSettle -&gt; Closed cuando ya no
-    /// queda saldo pendiente (Balance == 0). El cierre normal es manual, pero si la liquidacion
-    /// ya esta saldada no tiene sentido dejar la reserva trabada en "a liquidar". Estampa ClosedAt.
-    /// </summary>
-    public async Task<int> AutoCloseSettledWithZeroBalanceAsync(CancellationToken ct = default)
-    {
-        var candidates = await _db.Reservas
-            .Where(r => r.Status == EstadoReserva.ToSettle && r.Balance == 0)
-            .ToListAsync(ct);
-
-        // Cadena nueva (flag ON): SI se escribe ReservaStatusChangeLog (FIX 5). Estampa ClosedAt.
-        var planned = candidates.Select(reserva => new PlannedTransition(
-            Reserva: reserva,
-            FromStatus: EstadoReserva.ToSettle,
-            ToStatus: EstadoReserva.Closed,
-            StampClosedAt: true,
-            WriteForwardLog: true,
-            Reason: "Cierre automatico: liquidacion saldada (Balance==0)")).ToList();
-
-        var saved = await ApplyTransitionsAsync(planned, "AutoCloseSettledWithZeroBalance", ct);
-        if (saved > 0)
-            _logger.LogInformation("Auto-closed {Count} Reserva(s) ToSettle->Closed por Balance==0 (fallback).", saved);
         return saved;
     }
 
@@ -386,7 +326,7 @@ public class ReservaLifecycleAutomationService
 /// Repaired = cantidad de reservas Operativas con EndDate=null cuyas fechas
 ///            se reconstruyeron desde los servicios cargados.
 /// Promoted = cantidad de reservas que pasaron Confirmed -> Traveling.
-/// Closed = cantidad que avanzaron al tramo de fin de viaje (ciclo clasico: Traveling->Closed;
-///          ciclo nuevo: Traveling->ToSettle + ToSettle->Closed por balance cero).
+/// Closed = cantidad que el job cerro Traveling->Closed (EndDate vencido + Balance cero), en AMBOS
+///          ciclos. El job NO mueve a ToSettle (es un desvio manual opcional, fuera del automatico).
 /// </summary>
 public record LifecycleRunResult(int Promoted, int Closed, int Repaired);

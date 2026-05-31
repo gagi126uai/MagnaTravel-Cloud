@@ -262,16 +262,57 @@ public class ReservaSoldToSettleStatesTests
     }
 
     [Fact]
-    public async Task FlagOn_TravelingToClosedDirect_IsForbidden()
+    public async Task FlagOn_TravelingToClosedDirect_Works_WhenBalanceZero()
     {
+        // Rediseño 2026-05-31: ToSettle pasa a ser un desvio MANUAL OPCIONAL, asi que el cierre
+        // por DEFAULT ahora es Traveling -> Closed directo (igual que el clasico), con el mismo
+        // gate de balance.
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Traveling, Balance = 0m });
         await context.SaveChangesAsync();
 
         var service = BuildService(context, soldToSettleEnabled: true);
 
-        // El cierre debe pasar por ToSettle: Traveling->Closed directo esta prohibido.
+        var result = await service.UpdateStatusAsync(1, EstadoReserva.Closed, actorUserId: "user-1");
+
+        Assert.Equal(EstadoReserva.Closed, result.Status);
+        Assert.NotNull(result.ClosedAt);
+
+        // Deja rastro auditable como cualquier transicion forward de la cadena nueva.
+        var log = await context.ReservaStatusChangeLogs.SingleAsync();
+        Assert.Equal(EstadoReserva.Traveling, log.FromStatus);
+        Assert.Equal(EstadoReserva.Closed, log.ToStatus);
+        Assert.Equal("Forward", log.Direction);
+        Assert.Equal("user-1", log.ByUserId);
+    }
+
+    [Fact]
+    public async Task FlagOn_TravelingToClosedDirect_BlockedWhenBalancePositive()
+    {
+        // El cierre directo Traveling->Closed comparte el gate de balance del cierre clasico.
+        using var context = new AppDbContext(NewDbOptions());
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Traveling, Balance = 500m });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context, soldToSettleEnabled: true);
+
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateStatusAsync(1, EstadoReserva.Closed));
+    }
+
+    [Fact]
+    public async Task FlagOn_TravelingToToSettle_StillAllowed_ManualDetour()
+    {
+        // ToSettle sigue siendo un destino forward valido desde Traveling: es el desvio manual
+        // opcional para apartar la reserva a liquidar. Sin gate de balance.
+        using var context = new AppDbContext(NewDbOptions());
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Traveling, Balance = 333m });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context, soldToSettleEnabled: true);
+
+        var result = await service.UpdateStatusAsync(1, EstadoReserva.ToSettle);
+
+        Assert.Equal(EstadoReserva.ToSettle, result.Status);
     }
 
     [Fact]
@@ -367,8 +408,10 @@ public class ReservaSoldToSettleStatesTests
     }
 
     [Fact]
-    public async Task Lifecycle_FlagOn_MovesTravelingToSettleWhenEnded_IgnoringBalance()
+    public async Task Lifecycle_FlagOn_ClosesTravelingDirectlyWhenEndedAndZeroBalance()
     {
+        // Rediseño 2026-05-31: con flag ON el job cierra Traveling -> Closed directo (EndDate
+        // pasada + Balance == 0), IGUAL que el clasico. Ya NO mete a nadie en ToSettle.
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(new Reserva
         {
@@ -376,26 +419,6 @@ public class ReservaSoldToSettleStatesTests
             Name = "Test",
             Status = EstadoReserva.Traveling,
             EndDate = DateTime.UtcNow.AddDays(-2),
-            Balance = 1234m // con saldo: en el ciclo nuevo igual avanza a ToSettle
-        });
-        await context.SaveChangesAsync();
-
-        var job = BuildLifecycle(context, soldToSettleEnabled: true);
-        await job.RunDailyDetailedAsync();
-
-        var reserva = await context.Reservas.FindAsync(1);
-        Assert.Equal(EstadoReserva.ToSettle, reserva!.Status);
-    }
-
-    [Fact]
-    public async Task Lifecycle_FlagOn_AutoClosesToSettleWhenBalanceZero()
-    {
-        using var context = new AppDbContext(NewDbOptions());
-        context.Reservas.Add(new Reserva
-        {
-            Id = 1,
-            Name = "Test",
-            Status = EstadoReserva.ToSettle,
             Balance = 0m
         });
         await context.SaveChangesAsync();
@@ -406,18 +429,24 @@ public class ReservaSoldToSettleStatesTests
         var reserva = await context.Reservas.FindAsync(1);
         Assert.Equal(EstadoReserva.Closed, reserva!.Status);
         Assert.NotNull(reserva.ClosedAt);
+
+        // El job NO crea ninguna fila en ToSettle.
+        Assert.False(await context.Reservas.AnyAsync(r => r.Status == EstadoReserva.ToSettle));
     }
 
     [Fact]
-    public async Task Lifecycle_FlagOn_DoesNotAutoCloseToSettleWhenBalancePositive()
+    public async Task Lifecycle_FlagOn_LeavesTravelingWithDebtUntouched()
     {
+        // Con saldo pendiente, el viaje terminado NO cierra (mismo gate que el clasico) y tampoco
+        // se desvia a ToSettle: el job no toca ToSettle en absoluto.
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(new Reserva
         {
             Id = 1,
             Name = "Test",
-            Status = EstadoReserva.ToSettle,
-            Balance = 10m
+            Status = EstadoReserva.Traveling,
+            EndDate = DateTime.UtcNow.AddDays(-2),
+            Balance = 1234m
         });
         await context.SaveChangesAsync();
 
@@ -425,17 +454,43 @@ public class ReservaSoldToSettleStatesTests
         await job.RunDailyDetailedAsync();
 
         var reserva = await context.Reservas.FindAsync(1);
-        // Queda en ToSettle (cierre manual): el fallback solo cierra si Balance == 0.
+        Assert.Equal(EstadoReserva.Traveling, reserva!.Status);
+    }
+
+    [Fact]
+    public async Task Lifecycle_FlagOn_DoesNotTouchToSettleReservas()
+    {
+        // ToSettle es un desvio manual: el job NUNCA lo auto-cierra, ni siquiera con Balance == 0.
+        // Cerrar una reserva apartada a liquidar es decision manual del usuario.
+        using var context = new AppDbContext(NewDbOptions());
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1,
+            Name = "Test",
+            Status = EstadoReserva.ToSettle,
+            EndDate = DateTime.UtcNow.AddDays(-5),
+            Balance = 0m
+        });
+        await context.SaveChangesAsync();
+
+        var job = BuildLifecycle(context, soldToSettleEnabled: true);
+        await job.RunDailyDetailedAsync();
+
+        var reserva = await context.Reservas.FindAsync(1);
         Assert.Equal(EstadoReserva.ToSettle, reserva!.Status);
+        Assert.Null(reserva.ClosedAt);
     }
 
     // =====================================================================
-    // FIX 3 (R1) — revert Closed -> ToSettle limpia ClosedAt
+    // Revert Closed -> Traveling limpia ClosedAt
     // =====================================================================
 
     [Fact]
-    public async Task FlagOn_RevertClosedToToSettle_ClearsClosedAt()
+    public async Task FlagOn_RevertClosedToTraveling_ClearsClosedAt()
     {
+        // Rediseño 2026-05-31: como ToSettle es opcional, el revert de Closed vuelve a Traveling
+        // (el estado anterior real garantizado), NO a ToSettle. Una reserva pudo cerrar directo
+        // Traveling->Closed sin pasar nunca por ToSettle.
         using var context = new AppDbContext(NewDbOptions());
         var closedAt = DateTime.UtcNow.AddDays(-1);
         context.Reservas.Add(new Reserva
@@ -456,17 +511,42 @@ public class ReservaSoldToSettleStatesTests
 
         var service = BuildService(context, soldToSettleEnabled: true);
 
-        // En el ciclo nuevo, el revert de Closed va a ToSettle (no a Traveling). Admin bypassa
-        // la autorizacion de supervisor.
+        // En el ciclo nuevo, el revert de Closed va a Traveling. Admin bypassa la autorizacion.
         var request = new TravelApi.Application.DTOs.RevertStatusRequest(
-            TargetStatus: EstadoReserva.ToSettle,
+            TargetStatus: EstadoReserva.Traveling,
             AuthorizedBySuperiorUserId: null,
             Reason: null);
         await service.RevertStatusAsync("1", request, actorUserId: "admin-1", actorUserName: "Admin", actorIsAdmin: true, CancellationToken.None);
 
         var reserva = await context.Reservas.FindAsync(1);
-        Assert.Equal(EstadoReserva.ToSettle, reserva!.Status);
+        Assert.Equal(EstadoReserva.Traveling, reserva!.Status);
         Assert.Null(reserva.ClosedAt); // re-abrir borra el ClosedAt
+    }
+
+    [Fact]
+    public async Task FlagOn_RevertClosedToToSettle_IsForbidden()
+    {
+        // El revert de Closed ya NO va a ToSettle (es destino invalido en la matriz nueva).
+        using var context = new AppDbContext(NewDbOptions());
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1,
+            Name = "Test",
+            Status = EstadoReserva.Closed,
+            Balance = 0m,
+            ClosedAt = DateTime.UtcNow.AddDays(-1)
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context, soldToSettleEnabled: true);
+
+        var request = new TravelApi.Application.DTOs.RevertStatusRequest(
+            TargetStatus: EstadoReserva.ToSettle,
+            AuthorizedBySuperiorUserId: null,
+            Reason: null);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RevertStatusAsync("1", request, actorUserId: "admin-1", actorUserName: "Admin", actorIsAdmin: true, CancellationToken.None));
     }
 
     // =====================================================================
@@ -537,8 +617,10 @@ public class ReservaSoldToSettleStatesTests
     }
 
     [Fact]
-    public async Task Lifecycle_FlagOn_TravelingToSettle_WritesChangeLogWithSystemActor()
+    public async Task Lifecycle_FlagOn_TravelingToClosed_WritesChangeLogWithSystemActor()
     {
+        // Rediseño 2026-05-31: el job cierra Traveling -> Closed (no a ToSettle), pero igual deja
+        // rastro auditable con actor "sistema" porque es una transicion de la cadena nueva.
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(new Reserva
         {
@@ -546,14 +628,15 @@ public class ReservaSoldToSettleStatesTests
             Name = "Test",
             Status = EstadoReserva.Traveling,
             EndDate = DateTime.UtcNow.AddDays(-2),
-            Balance = 500m
+            Balance = 0m
         });
         await context.SaveChangesAsync();
 
         var job = BuildLifecycle(context, soldToSettleEnabled: true);
         await job.RunDailyDetailedAsync();
 
-        var log = await context.ReservaStatusChangeLogs.SingleAsync(l => l.ToStatus == EstadoReserva.ToSettle);
+        var log = await context.ReservaStatusChangeLogs.SingleAsync(l => l.ToStatus == EstadoReserva.Closed);
+        Assert.Equal(EstadoReserva.Traveling, log.FromStatus);
         Assert.Equal("Forward", log.Direction);
         Assert.Equal("system:lifecycle", log.ByUserId);
         Assert.Equal("Sistema (lifecycle)", log.ByUserName);

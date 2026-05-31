@@ -132,9 +132,12 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                           Budget → Vender → Sold           (abre modal de pasajeros)
                           Sold → Confirmar con operador → Confirmed
                           Confirmed → Marcar en viaje → Traveling  (igual que antes)
-                          Traveling → Marcar a liquidar → ToSettle  (manual; el job auto
-                                      tambien lo hace cuando vence la fecha de regreso)
-                          ToSettle → Finalizar / Marcar liquidada → Closed
+                          Traveling → Cerrar reserva → Closed   (DEFAULT: cierre directo
+                                      por fin de viaje, igual que el ciclo base; el job auto
+                                      tambien lo hace cuando vence la fecha de regreso y saldo=0)
+                          Traveling → Marcar a liquidar → ToSettle  (DESVIO OPCIONAL: apartar
+                                      para liquidar con el operador; lo hace SOLO el usuario)
+                          ToSettle → Finalizar / Marcar liquidada → Closed  (cierre manual)
                     ===================================================== */}
 
                     {isSoldToSettleEnabled ? (
@@ -173,20 +176,35 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                                 </button>
                             )}
                             {reserva.status === 'Traveling' && (
-                                // "A liquidar" es el paso intermedio antes de cerrar: el viaje termino
-                                // (o el operador lo da por terminado) y queda pendiente liquidar con el
-                                // operador. NO tiene gate de saldo (igual que el job auto: avanza aunque
-                                // quede saldo pendiente; el saldo recien se exige al pasar a Finalizada).
-                                // Existe como boton manual para que el operador no quede trabado si el
-                                // job todavia no corrio o el viaje vencio.
-                                <button
-                                    onClick={() => onStatusChange('ToSettle')}
-                                    data-testid="reserva-action-tosettle"
-                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-200 dark:shadow-none transition-all active:scale-95"
-                                    title="Marcar como a liquidar (paso previo a finalizar; tambien ocurre solo cuando vence la fecha de regreso)"
-                                >
-                                    Marcar a liquidar
-                                </button>
+                                // En viaje hay DOS acciones forward:
+                                //  1) "Cerrar reserva" (DEFAULT): cierre directo por fin de viaje,
+                                //     igual que el ciclo base. Mismo gate (endHasPast && balance<=0).
+                                //     Solo se muestra cuando el viaje ya termino.
+                                //  2) "Marcar a liquidar" (DESVIO OPCIONAL): aparta la reserva en la
+                                //     bandeja "A liquidar" para cerrar cuentas con el operador. Sin gate
+                                //     de saldo. Siempre disponible (algunos operadores se liquidan despues
+                                //     del viaje, otros no: por eso es opcional, no un paso obligatorio).
+                                <>
+                                    {endHasPast && (
+                                        <button
+                                            onClick={() => onStatusChange('Closed')}
+                                            disabled={!canClose}
+                                            data-testid="reserva-action-finalize-direct"
+                                            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
+                                            title={closeTooltip}
+                                        >
+                                            Cerrar reserva
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => onStatusChange('ToSettle')}
+                                        data-testid="reserva-action-tosettle"
+                                        className="bg-white text-emerald-700 border border-emerald-300 hover:bg-emerald-50 dark:bg-slate-900 dark:text-emerald-300 dark:border-emerald-700 dark:hover:bg-emerald-900/20 px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95"
+                                        title="Apartar para liquidar con el operador (opcional). Queda en la bandeja 'A liquidar' hasta que cierres cuentas."
+                                    >
+                                        Apartar para liquidar
+                                    </button>
+                                </>
                             )}
                             {reserva.status === 'ToSettle' && (
                                 // El viaje termino y la reserva quedo en estado "A liquidar".

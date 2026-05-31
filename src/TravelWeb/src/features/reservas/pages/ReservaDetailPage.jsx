@@ -593,7 +593,7 @@ export default function ReservaDetailPage() {
       {isSoldToSettleEnabled && reserva.status === "ToSettle" ? (
         <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-200">
           <strong className="font-bold">Reserva A liquidar.</strong>{" "}
-          El viaje termino. Falta liquidar con el operador para finalizar la reserva.
+          Apartada para cerrar cuentas con el operador. Cuando termines, usá "Finalizar" para cerrarla.
         </div>
       ) : null}
 

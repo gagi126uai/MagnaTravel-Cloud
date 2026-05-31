@@ -720,16 +720,25 @@ public class ReservaService : IReservaService
     };
 
     /// <summary>
-    /// Forward NUEVO (flag ON): inserta Sold despues de Budget y ToSettle despues de Traveling.
-    /// Espejo del revert nuevo. El salto directo Budget-&gt;Confirmed y Traveling-&gt;Closed
-    /// queda PROHIBIDO (INV-SM-01): no figuran como destino aca.
+    /// Forward NUEVO (flag ON): inserta Sold despues de Budget. ToSettle ("A liquidar") ya NO
+    /// es un paso obligatorio sino un DESVIO MANUAL OPCIONAL: con cada operador la plata se
+    /// arregla distinto (algunos antes del viaje, otros despues), asi que liquidar post-viaje
+    /// no es universal.
+    ///
+    /// Por eso Traveling tiene DOS destinos forward:
+    ///  - Traveling -&gt; Closed: el cierre por DEFAULT (igual que el ciclo clasico, gate Balance == 0).
+    ///  - Traveling -&gt; ToSettle: el desvio OPCIONAL (apartar para liquidar con el operador, sin gate).
+    /// Y ToSettle -&gt; Closed sigue siendo el cierre manual desde la bandeja "A liquidar".
+    ///
+    /// Sigue PROHIBIDO el salto directo Budget-&gt;Confirmed (INV-SM-01): readiness vive en Budget-&gt;Sold.
     /// </summary>
     private static readonly Dictionary<string, string[]> AllowedForwardTransitionsSoldToSettle = new(StringComparer.OrdinalIgnoreCase)
     {
         [EstadoReserva.Budget] = new[] { EstadoReserva.Sold },
         [EstadoReserva.Sold] = new[] { EstadoReserva.Confirmed },
         [EstadoReserva.Confirmed] = new[] { EstadoReserva.Traveling },
-        [EstadoReserva.Traveling] = new[] { EstadoReserva.ToSettle },
+        // Traveling: Closed = default (Finalizar), ToSettle = desvio opcional (Marcar a liquidar).
+        [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed, EstadoReserva.ToSettle },
         [EstadoReserva.ToSettle] = new[] { EstadoReserva.Closed },
     };
 
@@ -745,6 +754,12 @@ public class ReservaService : IReservaService
     /// Revert NUEVO (flag ON): reverts de a UN solo paso a lo largo de la cadena nueva.
     /// El gate "volver a Budget sin pagos/facturas/servicios" se mueve a Sold-&gt;Budget
     /// (antes vivia en Confirmed-&gt;Budget).
+    ///
+    /// Closed -&gt; Traveling (NO -&gt; ToSettle): como ToSettle es opcional, una reserva pudo cerrar
+    /// directo Traveling-&gt;Closed sin pasar nunca por ToSettle. Revertir Closed-&gt;ToSettle la
+    /// mandaria a un estado por el que nunca estuvo. Por eso el revert de Closed vuelve siempre
+    /// a Traveling (el estado anterior real garantizado). ToSettle-&gt;Traveling se mantiene para
+    /// las reservas que SI eligieron el desvio manual de liquidacion.
     /// </summary>
     private static readonly Dictionary<string, string[]> AllowedRevertTransitionsSoldToSettle = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -752,7 +767,7 @@ public class ReservaService : IReservaService
         [EstadoReserva.Confirmed] = new[] { EstadoReserva.Sold },
         [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
         [EstadoReserva.ToSettle] = new[] { EstadoReserva.Traveling },
-        [EstadoReserva.Closed] = new[] { EstadoReserva.ToSettle },
+        [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
     };
 
     /// <summary>
@@ -908,10 +923,11 @@ public class ReservaService : IReservaService
 
         var fromStatus = reserva.Status;
         reserva.Status = request.TargetStatus;
-        // Re-abrir una reserva cerrada borra el ClosedAt. En el ciclo clasico, el revert de Closed
-        // va a Traveling; en el ciclo nuevo (flag ON) va a ToSettle. En ambos casos la reserva deja
-        // de estar cerrada, asi que el ClosedAt tiene que quedar limpio (sino la reserva figura
-        // "cerrada el dia X" pero esta abierta -> dato inconsistente).
+        // Re-abrir una reserva cerrada borra el ClosedAt. En AMBOS ciclos el revert de Closed va a
+        // Traveling (no a ToSettle: ToSettle es un desvio opcional y una reserva pudo cerrar directo
+        // desde Traveling sin pasar por el). Se incluye ToSettle en la condicion solo por defensa
+        // (el revert ToSettle->Traveling no tiene ClosedAt, pero si alguna vez se permite Closed->ToSettle
+        // hay que limpiarlo igual). Sino la reserva figura "cerrada el dia X" pero esta abierta -> dato inconsistente.
         if ((request.TargetStatus == EstadoReserva.Traveling || request.TargetStatus == EstadoReserva.ToSettle)
             && reserva.ClosedAt.HasValue)
             reserva.ClosedAt = null;
@@ -1883,16 +1899,19 @@ public class ReservaService : IReservaService
 
     /// <summary>
     /// Camino NUEVO (flag EnableSoldToSettleStates = ON). Cadena
-    /// Budget -&gt; Sold -&gt; Confirmed -&gt; Traveling -&gt; ToSettle -&gt; Closed con gates relocalizados:
+    /// Budget -&gt; Sold -&gt; Confirmed -&gt; Traveling -&gt; Closed con gates relocalizados, y ToSettle
+    /// como DESVIO OPCIONAL colgando de Traveling:
     ///  - Budget-&gt;Sold: readiness (≥1 servicio + normalizar a Solicitado + pasajeros nominales).
     ///  - Sold-&gt;Confirmed: el operador confirmo los servicios (gate de servicios sin confirmar).
     ///  - Confirmed-&gt;Traveling: capacidad + economico (sin re-chequear servicios sin confirmar:
     ///    ya se garantizo en Sold-&gt;Confirmed).
-    ///  - Traveling-&gt;ToSettle: sin gate de balance (es una parada, no el cierre).
-    ///  - ToSettle-&gt;Closed: Balance == 0 + ClosedAt.
+    ///  - Traveling-&gt;Closed: cierre por DEFAULT, Balance == 0 + ClosedAt (igual que el clasico).
+    ///  - Traveling-&gt;ToSettle: desvio OPCIONAL, sin gate de balance (es apartar para liquidar,
+    ///    no el cierre).
+    ///  - ToSettle-&gt;Closed: cierre manual desde la bandeja "A liquidar", Balance == 0 + ClosedAt.
     ///
-    /// El salto directo Budget-&gt;Confirmed y Traveling-&gt;Closed esta PROHIBIDO (INV-SM-01): la
-    /// matriz forward nueva no los lista, y se rechazan con un mensaje claro.
+    /// El salto directo Budget-&gt;Confirmed sigue PROHIBIDO (INV-SM-01): la matriz forward nueva
+    /// no lo lista. Traveling-&gt;Closed AHORA SI se permite (es el cierre por default).
     /// </summary>
     private async Task ApplySoldToSettleTransitionAsync(Reserva file, int id, string status, OperationalFinanceSettings settings)
     {
@@ -1939,11 +1958,15 @@ public class ReservaService : IReservaService
             await EnsureCanStartTravelingAsync(file, id, settings, checkUnconfirmedServices: false);
         }
 
-        // Traveling -> ToSettle: sin gate. Es una parada intermedia (a liquidar), no el cierre.
+        // Traveling -> ToSettle: sin gate. Es el desvio OPCIONAL (apartar para liquidar con el
+        // operador), no el cierre. La reserva queda en la bandeja "A liquidar" hasta cierre manual.
 
-        if (file.Status == EstadoReserva.ToSettle && status == EstadoReserva.Closed)
+        // El cierre real (Balance == 0 + ClosedAt) corre tanto en el cierre por DEFAULT
+        // (Traveling->Closed) como en el cierre desde la bandeja de liquidacion (ToSettle->Closed).
+        // Ambos comparten el mismo gate: no se puede cerrar con saldo pendiente.
+        if (status == EstadoReserva.Closed
+            && (file.Status == EstadoReserva.Traveling || file.Status == EstadoReserva.ToSettle))
         {
-            // El cierre real vive aca ahora: Balance == 0 + ClosedAt.
             EnsureCanCloseAndStampClosedAt(file);
         }
     }
