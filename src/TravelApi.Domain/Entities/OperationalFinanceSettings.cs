@@ -418,6 +418,43 @@ public class OperationalFinanceSettings
     /// </summary>
     public bool EnableCancellationDebitNote { get; set; } = false;
 
+    // ============================================================
+    // ADR-014 (Confirmacion DIFERIDA de la penalidad, 2026-06-02): parametros del
+    // flujo diferido (confirmar la penalidad dias despues de la cancelacion y emitir
+    // la ND en el Dia N). Todos tienen default conservador y SOLO importan cuando
+    // EnableCancellationDebitNote esta ON.
+    // ============================================================
+
+    /// <summary>
+    /// ADR-014 (§3.5): plazo de gracia en dias CORRIDOS desde que el operador confirmo
+    /// la penalidad (<c>OperatorPenaltyConfirmedDate</c>). Si al emitir la ND ya pasaron
+    /// mas dias que este valor, la ND se emite IGUAL pero se loguea un warning + counter
+    /// para que el back-office lo vea (NO bloquea: la validez fiscal de una ND tardia es
+    /// decision del contador, no del software). Default 15 dias (RG 4540, a confirmar con
+    /// contador matriculado antes de prod).
+    /// </summary>
+    public int CancellationDebitNoteGraceDays { get; set; } = 15;
+
+    /// <summary>
+    /// ADR-014 (§3.5, M4): segundo umbral, mas alto, para priorizar las NDs MUY tardias.
+    /// Si pasaron mas dias que este valor desde la confirmacion del operador, el warning
+    /// se eleva (counter distinto <c>cancellation_debit_note_very_late</c>) para que el
+    /// back-office lo trate con prioridad. Tampoco bloquea. Default 60 dias.
+    /// </summary>
+    public int CancellationDebitNoteHardWarnDays { get; set; } = 60;
+
+    /// <summary>
+    /// ADR-014 (§3.6, M2): umbral en ARS por encima del cual la confirmacion diferida de
+    /// la penalidad EXIGE doble firma (4-eyes), aunque haya soporte documental. El 4-eyes
+    /// tambien es obligatorio SIEMPRE que NO se adjunte <c>SupportingDocumentReference</c>
+    /// (confirmar una penalidad propia sin respaldo documental es el caso de mayor riesgo
+    /// fiscal). Por debajo del umbral Y con soporte documental, alcanza el permiso
+    /// <c>cancellations.classify_agency_penalty</c>. Default 2.000.000 ARS (espeja el
+    /// umbral de revision admin de FC1.3).
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
+    public decimal CancellationDebitNoteFourEyesThreshold { get; set; } = 2_000_000m;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

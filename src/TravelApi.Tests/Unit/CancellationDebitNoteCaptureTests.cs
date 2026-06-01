@@ -60,23 +60,16 @@ public class CancellationDebitNoteCaptureTests
             // DebitNoteStatus=NotApplicable.
         };
 
-    private static ConfirmCancellationRequest RequestWith(
+    // ADR-014 (M1): CaptureDebitNoteClassification ahora consume el record neutro
+    // PenaltyClassificationInput (compartido entre el path sincrono y el diferido). Estos
+    // tests de no-regresion ejercen exactamente la misma logica de captura/guardas; solo
+    // cambio la FORMA de pasar los datos (record en vez de ConfirmCancellationRequest).
+    private static PenaltyClassificationInput RequestWith(
         CancellationConceptKind? concept = null,
         PenaltyStatus? status = null,
         DebitNotePurpose? purpose = null,
         decimal? amount = null)
-        => new ConfirmCancellationRequest(
-            SnapshotData: new FiscalSnapshotData(
-                CurrencyAtEvent: "ARS",
-                ExchangeRateAtOriginalInvoice: 1m,
-                Source: ExchangeRateSource.Manual,
-                ManualJustification: "Test",
-                AgencyTaxConditionAtEvent: "Monotributo",
-                SupplierTaxConditionAtEvent: "Monotributo",
-                CustomerTaxConditionAtEvent: "ConsumidorFinal"),
-            IsAdminOverride: false,
-            OverrideReason: null,
-            ApprovalRequestPublicId: null,
+        => new PenaltyClassificationInput(
             PenaltyConceptKind: concept,
             PenaltyStatus: status,
             DebitNotePurpose: purpose,

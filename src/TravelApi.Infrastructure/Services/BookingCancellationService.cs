@@ -396,8 +396,15 @@ public class BookingCancellationService
         // comportamiento previo a ADR-013 (commit d29ac8a), donde ConceptKind nunca se
         // escribia y quedaba en su default OperatorPenaltyPassThrough.
         var settings = await _settings.GetEntityAsync(ct);
+        // ADR-014 (M1): el path sincrono mapea su request al record comun de clasificacion.
+        // La logica de captura es identica al diferido; solo cambia la fuente de los campos.
+        var classification = new PenaltyClassificationInput(
+            PenaltyConceptKind: request.PenaltyConceptKind,
+            PenaltyStatus: request.PenaltyStatus,
+            DebitNotePurpose: request.DebitNotePurpose,
+            ConfirmedPenaltyAmount: request.ConfirmedPenaltyAmount);
         CaptureDebitNoteClassification(
-            bc, request, userId, userName, userCanClassifyAgencyPenalty,
+            bc, classification, userId, userName, userCanClassifyAgencyPenalty,
             debitNoteFeatureEnabled: settings.EnableCancellationDebitNote);
 
         // ===================================================================
@@ -1144,26 +1151,119 @@ public class BookingCancellationService
             // Resultado == "PENDING" o null: sigue en vuelo, lo dejamos en Pending.
         }
 
+        // (2-bis) ADR-014 (§3.8 pieza 3, M-R2-1): segunda rama de la bandeja para la ND
+        //     HUERFANA o NUNCA CREADA. El query (1) proyecta sobre BCs que YA tienen
+        //     DebitNoteInvoiceId (la ND ya vinculada) -> nunca ve un BC con
+        //     DebitNoteInvoiceId == null. El flujo diferido introduce dos casos nuevos que
+        //     ese query no captura:
+        //       (a) ND huerfana: el motor creo la ND (T1 commiteo) pero el link al BC (T2)
+        //           nunca corrio (crash entre crear y vincular). El BC quedo con
+        //           PenaltyStatus=Confirmed + DebitNoteInvoiceId=null, pero EXISTE una ND
+        //           para la factura original. -> re-vincular, NO re-emitir.
+        //       (b) ND nunca creada: PenaltyStatus=Confirmed pero el motor rebanoto a
+        //           ManualReview / no llego a crear nada. No hay ND para esa factura. -> la
+        //           dejamos visible en la bandeja para re-disparo manual (el endpoint
+        //           confirm-penalty ya rebota por PenaltyStatus=Confirmed).
+        //     La marca PenaltyStatus=Confirmed garantiza que re-vincular NUNCA re-emite.
+        var orphanCandidates = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Where(b => b.CreditNoteInvoiceId != null &&
+                        b.DebitNoteInvoiceId == null &&
+                        b.PenaltyStatus == PenaltyStatus.Confirmed)
+            .ToListAsync(ct);
+
+        var orphanRows = new List<CancellationDebitNotePendingDto>();
+        foreach (var bc in orphanCandidates)
+        {
+            // Buscar una ND existente para la MISMA factura original del BC y la misma
+            // reserva. Tipos de ND: 2 (A), 7 (B), 12 (C), 52 (M). Validar OriginalInvoiceId
+            // == bc.OriginatingInvoiceId es lo que evita re-vincular una ND de otro evento.
+            var orphanDebitNote = await _db.Invoices
+                .Where(i => debitNoteTipos.Contains(i.TipoComprobante) &&
+                            i.OriginalInvoiceId == bc.OriginatingInvoiceId &&
+                            i.ReservaId == bc.ReservaId)
+                .OrderByDescending(i => i.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            if (orphanDebitNote is not null)
+            {
+                // Caso (a): re-vincular la ND huerfana al BC. NO se emite otra. El estado de
+                // la ND se deriva de su Resultado (igual que la reconciliacion de arriba).
+                bc.DebitNoteInvoiceId = orphanDebitNote.Id;
+                bc.DebitNoteStatus = ResolveDebitNoteStatusFromInvoice(orphanDebitNote);
+                if (bc.DebitNoteStatus == DebitNoteStatus.Failed)
+                {
+                    var obs = orphanDebitNote.Observaciones ?? "ARCA rechazo la ND sin mensaje.";
+                    bc.DebitNoteArcaErrorMessage = obs.Length > 1000 ? obs[..1000] : obs;
+                }
+                changed = true;
+
+                _logger.LogWarning(
+                    "ADR-014: BC {BcPublicId} tenia una ND huerfana (Invoice {InvoiceId}) sin vincular. " +
+                    "Re-vinculada (NO re-emitida). Nuevo DebitNoteStatus={Status}.",
+                    bc.PublicId, orphanDebitNote.Id, bc.DebitNoteStatus);
+
+                // Si quedo Pending/Failed, la incluimos en la bandeja (sigue incompleta).
+                if (bc.DebitNoteStatus is DebitNoteStatus.Pending or DebitNoteStatus.Failed)
+                    orphanRows.Add(MapPendingDebitNoteRow(bc));
+            }
+            else
+            {
+                // Caso (b): no hay ND para esa factura. PenaltyStatus=Confirmed sin ND ->
+                // visible en la bandeja para re-disparo manual. La marcamos como Failed para
+                // que aparezca con un motivo claro (no quedo emitida).
+                orphanRows.Add(MapPendingDebitNoteRow(
+                    bc,
+                    overrideStatus: CancellationDebitNotePendingDto.ConfirmedWithoutDebitNotePseudoStatus));
+            }
+        }
+
         if (changed)
             await _db.SaveChangesAsync(ct);
 
         // (3) Proyectar SOLO los que siguen incompletos despues de reconciliar (los que
-        //     pasaron a Issued ya no son problema y salen de la bandeja).
-        return candidates
+        //     pasaron a Issued ya no son problema y salen de la bandeja). Sumamos los
+        //     huerfanos detectados por la segunda rama (ADR-014).
+        var rows = candidates
             .Where(b => b.DebitNoteStatus is DebitNoteStatus.Pending or DebitNoteStatus.Failed)
-            .Select(b => new CancellationDebitNotePendingDto
-            {
-                BookingCancellationPublicId = b.PublicId,
-                ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
-                DebitNoteStatus = b.DebitNoteStatus.ToString(),
-                PenaltyAmount = b.PenaltyAmountAtEvent,
-                PenaltyCurrency = b.PenaltyCurrencyAtEvent,
-                DebitNoteCbteTipo = b.DebitNoteCbteTipoAtEvent,
-                ArcaErrorMessage = b.DebitNoteArcaErrorMessage,
-                ConfirmedAt = b.ConfirmedWithClientAt,
-            })
+            .Select(b => MapPendingDebitNoteRow(b))
             .ToList();
+        rows.AddRange(orphanRows);
+        return rows;
     }
+
+    /// <summary>ADR-013/014: tipos de comprobante de Nota de Debito (A=2, B=7, C=12, M=52).</summary>
+    private static readonly int[] debitNoteTipos = { 2, 7, 12, 52 };
+
+    /// <summary>
+    /// ADR-014: deriva el <see cref="DebitNoteStatus"/> observable a partir del Resultado de
+    /// la Invoice ND (A=Issued con CAE / R=Failed / en vuelo=Pending). Misma logica que la
+    /// reconciliacion principal, extraida para reusarla en la rama de ND huerfana.
+    /// </summary>
+    private static DebitNoteStatus ResolveDebitNoteStatusFromInvoice(Invoice debitNote)
+    {
+        if (string.Equals(debitNote.Resultado, "A", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(debitNote.CAE))
+            return DebitNoteStatus.Issued;
+        if (string.Equals(debitNote.Resultado, "R", StringComparison.OrdinalIgnoreCase))
+            return DebitNoteStatus.Failed;
+        return DebitNoteStatus.Pending;
+    }
+
+    /// <summary>ADR-013/014: proyecta un BC a la fila de la bandeja "NC sin su ND".</summary>
+    private static CancellationDebitNotePendingDto MapPendingDebitNoteRow(
+        BookingCancellation b, string? overrideStatus = null)
+        => new CancellationDebitNotePendingDto
+        {
+            BookingCancellationPublicId = b.PublicId,
+            ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
+            DebitNoteStatus = overrideStatus ?? b.DebitNoteStatus.ToString(),
+            PenaltyAmount = b.PenaltyAmountAtEvent,
+            PenaltyCurrency = b.PenaltyCurrencyAtEvent,
+            DebitNoteCbteTipo = b.DebitNoteCbteTipoAtEvent,
+            ArcaErrorMessage = b.DebitNoteArcaErrorMessage,
+            ConfirmedAt = b.ConfirmedWithClientAt,
+        };
 
     // =========================================================================
     // FC1.3.3 (ADR-009 §2.7 G3, 2026-05-21): edicion admin de la liquidacion
@@ -1520,6 +1620,248 @@ public class BookingCancellationService
     }
 
     // =========================================================================
+    // ADR-014 (2026-06-02): confirmacion DIFERIDA de la penalidad + disparo de la ND.
+    // =========================================================================
+
+    /// <summary>
+    /// ADR-014 (§3.2): estados del BC en los que la NC total YA obtuvo CAE (post-NC). La
+    /// confirmacion diferida de la penalidad SOLO procede en estos: la ND nunca sale antes
+    /// que la NC (regla dura heredada de ADR-013). <c>CreditNoteInvoiceId != null</c> se
+    /// valida ademas explicitamente (precondicion 4): es la senial dura de "NC con CAE".
+    /// </summary>
+    private static readonly BookingCancellationStatus[] PostCreditNoteStatuses =
+    {
+        BookingCancellationStatus.AwaitingOperatorRefund,
+        BookingCancellationStatus.ClientCreditApplied,
+        BookingCancellationStatus.Closed,
+        BookingCancellationStatus.AbandonedByOperator,
+    };
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> ConfirmPenaltyAsync(
+        Guid publicId,
+        ConfirmPenaltyRequest request,
+        string userId,
+        string? userName,
+        bool requesterIsAdmin,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        // requesterIsAdmin se mantiene en la firma por paridad con ConfirmAsync, pero este
+        // flujo NO lo lee: el gate de permiso ya viene resuelto en userCanClassifyAgencyPenalty
+        // (el controller hace Admin-OR-permiso) y el 4-eyes se decide por documento+monto, no
+        // por rol. No lo borramos para no divergir la firma de los dos confirmadores.
+        _ = requesterIsAdmin;
+
+        var settings = await _settings.GetEntityAsync(ct);
+
+        // === Precondicion 1: flag maestro. Con OFF el endpoint es INERTE (rechaza, no muta
+        // nada) -> byte-identidad con el comportamiento previo a ADR-014. ===
+        if (!settings.EnableCancellationDebitNote)
+            throw new InvalidOperationException(
+                "La emision de Nota de Debito por penalidad esta deshabilitada " +
+                "(EnableCancellationDebitNote OFF).");
+
+        // === Precondicion 2: el BC existe (404 si no). Cargamos los mismos Includes que
+        // el gating necesita: factura original + sus Tributos (IIBB) + Supplier + Reserva.
+        // Mismo set que OnArcaSucceededAsync para que TryEmit no se quede corto. ===
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.OriginatingInvoice)
+                .ThenInclude(i => i.Tributes)
+            .Include(b => b.Supplier)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // === Precondicion 3: permiso elevado, ya resuelto server-side por el controller.
+        // A diferencia del path sincrono (que degrada a pass-through si falta el permiso),
+        // aca lo EXIGIMOS: el flujo diferido existe para disparar la ND, no tiene sentido
+        // sin el permiso que la habilita. ===
+        if (!userCanClassifyAgencyPenalty)
+            throw new BusinessInvariantViolationException(
+                "Confirmar la penalidad propia de la agencia emite una Nota de Debito fiscal " +
+                "y requiere el permiso 'cancellations.classify_agency_penalty'.",
+                invariantCode: "INV-ADR014-PERM");
+
+        // === Precondicion 4: estado post-NC con CAE. Nunca emitir la ND antes que la NC. ===
+        if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
+            throw new BusinessInvariantViolationException(
+                $"La confirmacion diferida de la penalidad requiere que la NC total ya tenga " +
+                $"CAE (estado post-NC + CreditNoteInvoiceId seteado). Estado actual: {bc.Status}, " +
+                $"CreditNoteInvoiceId: {(bc.CreditNoteInvoiceId is null ? "null" : "seteado")}.",
+                invariantCode: "INV-ADR014-001");
+
+        // === Precondicion 5: concepto agency-owned. Resolvemos el concepto efectivo (el
+        // explicito del request, o el default por operador) y rechazamos si es pass-through:
+        // una penalidad del operador NO emite ND (seria declarar ingreso ajeno). ===
+        var effectiveConcept = request.ConceptKind
+            ?? DefaultConceptFromSupplier(bc.Supplier?.PenaltyOwnership);
+        if (!ConceptIsAgencyOwnedDebitNote(effectiveConcept))
+            throw new BusinessInvariantViolationException(
+                "Esta penalidad no es ingreso propio de la agencia (pass-through del operador): " +
+                "no corresponde emitir Nota de Debito. Este endpoint es solo para penalidades propias.",
+                invariantCode: "INV-ADR014-002");
+
+        // === Precondicion 6: pre-check de idempotencia (B1, §3.4 pieza 1). Rebota con 409
+        // idempotente si la ND ya esta en juego o la penalidad ya fue confirmada por una
+        // corrida anterior. La condicion PenaltyStatus==Confirmed es la que cierra la ventana
+        // de doble emision tras un crash entre crear-la-ND y vincularla: la marca Confirmed
+        // se persiste ANTES de crear la ND (pieza 2 abajo). ===
+        var debitNoteAlreadyInPlay =
+            bc.PenaltyStatus == PenaltyStatus.Confirmed ||
+            bc.DebitNoteInvoiceId.HasValue ||
+            bc.DebitNoteStatus == DebitNoteStatus.Pending ||
+            bc.DebitNoteStatus == DebitNoteStatus.Issued;
+        if (debitNoteAlreadyInPlay)
+            throw new BusinessInvariantViolationException(
+                "La penalidad ya fue confirmada o la Nota de Debito ya esta en juego para esta " +
+                $"cancelacion (PenaltyStatus={bc.PenaltyStatus}, DebitNoteStatus={bc.DebitNoteStatus}, " +
+                $"DebitNoteInvoiceId={(bc.DebitNoteInvoiceId.HasValue ? "seteado" : "null")}). " +
+                "No se vuelve a emitir.",
+                invariantCode: "INV-ADR014-003");
+
+        // === Precondicion 7: fecha de confirmacion del operador valida (400). No futura;
+        // no anterior a la fecha de la cancelacion (ConfirmedWithClientAt). ===
+        var operatorDate = request.OperatorConfirmationDate;
+        if (operatorDate.Date > DateTime.UtcNow.Date)
+            throw new ArgumentException(
+                "OperatorConfirmationDate no puede ser una fecha futura.", nameof(request));
+        if (bc.ConfirmedWithClientAt.HasValue &&
+            operatorDate.Date < bc.ConfirmedWithClientAt.Value.Date)
+            throw new ArgumentException(
+                "OperatorConfirmationDate no puede ser anterior a la fecha de la cancelacion.",
+                nameof(request));
+
+        // === 4-eyes (M2, §3.6). Obligatorio si NO hay soporte documental O si el monto
+        // supera el umbral configurable, aunque el caller tenga el permiso base. Mismo patron
+        // que Confirm: si falta el approval valido, tiramos ApprovalRequiredException (el
+        // controller la traduce a 409 requiresApproval). ===
+        var requiresFourEyes =
+            string.IsNullOrWhiteSpace(request.SupportingDocumentReference) ||
+            request.ConfirmedPenaltyAmount > settings.CancellationDebitNoteFourEyesThreshold;
+        if (requiresFourEyes)
+            await EnsureFourEyesApprovalAsync(bc, request, userId, ct);
+
+        // === Aplicar la clasificacion (B1, §3.4 pieza 2, paso a). Reusa el MISMO metodo del
+        // path sincrono via el record comun: setea ConceptKind, PenaltyStatus=Confirmed,
+        // DebitNotePurpose, PenaltyAmountAtEvent + la auditoria del clasificador/confirmador,
+        // y enforza las guardas (permiso elevado + anti-reclasificacion). ===
+        var classification = new PenaltyClassificationInput(
+            PenaltyConceptKind: effectiveConcept,
+            PenaltyStatus: PenaltyStatus.Confirmed,
+            DebitNotePurpose: request.DebitNotePurpose
+                ?? Domain.Entities.DebitNotePurpose.PenaltyOrCancellationCharge,
+            ConfirmedPenaltyAmount: request.ConfirmedPenaltyAmount);
+        CaptureDebitNoteClassification(
+            bc, classification, userId, userName,
+            userCanClassifyAgencyPenalty: true, // ya validado en la precondicion 3
+            debitNoteFeatureEnabled: true);
+
+        // Paso b: las dos fechas nuevas del diferido (eje fiscal del plazo + soporte).
+        bc.OperatorPenaltyConfirmedDate = operatorDate;
+        bc.SupportingDocumentReference = request.SupportingDocumentReference;
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationArcaSucceeded,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                action = "deferred-penalty-confirmed",
+                conceptKind = bc.ConceptKind.ToString(),
+                confirmedAmount = request.ConfirmedPenaltyAmount,
+                operatorConfirmationDate = operatorDate,
+                hasSupportingDocument = !string.IsNullOrWhiteSpace(request.SupportingDocumentReference),
+                fourEyesApplied = requiresFourEyes,
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        // === Paso c (B1, §3.4 pieza 2): COMMIT PROPIO de la marca de no-retorno. Dejamos
+        // PenaltyStatus=Confirmed durable ANTES de crear la ND. Si este commit choca por xmin
+        // (otro proceso toco el BC), todavia NO se creo ninguna ND y el 409 es seguro de
+        // reintentar. NO fusionar con el SaveChanges interno de TryEmit. ===
+        await _db.SaveChangesAsync(ct);
+
+        // === Paso d: disparar la ND reusando el motor existente de ADR-013. TryEmit hace su
+        // propio gating (incluye el anti-doble-cobro RE-evaluado en runtime con query fresca
+        // del Dia N, §3.8/R13), la emision async, el snapshot y su propio SaveChanges que
+        // vincula DebitNoteInvoiceId. NO toca el balance ni el estado de la reserva (B2). ===
+        // Alerta de plazo (§3.5): no bloqueante, solo observabilidad.
+        WarnIfDebitNoteLate(bc, operatorDate, settings);
+        await TryEmitCancellationDebitNoteAsync(bc, ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_debit_note_deferred_confirmed | BcPublicId={BcPublicId} " +
+            "Amount={Amount} DebitNoteStatus={DebitNoteStatus}",
+            bc.PublicId, request.ConfirmedPenaltyAmount, bc.DebitNoteStatus);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException($"BC {publicId} no encontrada tras confirmar la penalidad.");
+    }
+
+    /// <summary>
+    /// ADR-014 (§3.6, M2): valida el 4-eyes de la confirmacion diferida reusando el patron
+    /// de approval de <c>Confirm</c>. Si el caller no trae un <c>InvariantOverride</c>
+    /// aprobado, scoped a este BC, solicitado por el mismo usuario y no vencido, tira
+    /// <see cref="ApprovalRequiredException"/> (el controller -> 409 requiresApproval).
+    /// </summary>
+    private async Task EnsureFourEyesApprovalAsync(
+        BookingCancellation bc, ConfirmPenaltyRequest request, string userId, CancellationToken ct)
+    {
+        if (request.ApprovalRequestPublicId is null)
+            throw new ApprovalRequiredException(
+                ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+
+        var approval = await _db.ApprovalRequests
+            .FirstOrDefaultAsync(a => a.PublicId == request.ApprovalRequestPublicId, ct)
+            ?? throw new ApprovalRequiredException(
+                ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+
+        var validForBc = approval.RequestType == ApprovalRequestType.InvariantOverride
+                      && approval.EntityType == "BookingCancellation"
+                      && approval.EntityId == bc.Id
+                      && approval.Status == ApprovalStatus.Approved
+                      && approval.RequestedByUserId == userId
+                      && approval.ExpiresAt > DateTime.UtcNow;
+        if (!validForBc)
+            throw new ApprovalRequiredException(
+                ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+    }
+
+    /// <summary>
+    /// ADR-014 (§3.5, M4): alerta de plazo NO bloqueante. Si pasaron mas dias que el plazo
+    /// de gracia desde que el operador confirmo, loguea un warning + counter para que el
+    /// back-office lo vea. Un segundo umbral (mas alto) eleva el aviso. NO bloquea la
+    /// emision: la validez fiscal de una ND tardia la decide el contador, no el software.
+    /// </summary>
+    private void WarnIfDebitNoteLate(
+        BookingCancellation bc, DateTime operatorConfirmationDate, OperationalFinanceSettings settings)
+    {
+        var daysSinceOperatorConfirmed = (DateTime.UtcNow.Date - operatorConfirmationDate.Date).TotalDays;
+
+        if (daysSinceOperatorConfirmed > settings.CancellationDebitNoteHardWarnDays)
+        {
+            _logger.LogWarning(
+                "ADR-014: BC {BcPublicId} confirma penalidad MUY tarde ({Days} dias desde la " +
+                "confirmacion del operador, umbral duro {Threshold}). Se emite igual; revisar " +
+                "validez fiscal con el contador. metric:cancellation_debit_note_very_late",
+                bc.PublicId, daysSinceOperatorConfirmed, settings.CancellationDebitNoteHardWarnDays);
+        }
+        else if (daysSinceOperatorConfirmed > settings.CancellationDebitNoteGraceDays)
+        {
+            _logger.LogWarning(
+                "ADR-014: BC {BcPublicId} confirma penalidad fuera del plazo de gracia ({Days} dias, " +
+                "plazo {Threshold}). Se emite igual. metric:cancellation_debit_note_late",
+                bc.PublicId, daysSinceOperatorConfirmed, settings.CancellationDebitNoteGraceDays);
+        }
+    }
+
+    // =========================================================================
     // ADR-013 (2026-06-01): emision de la Nota de Debito por penalidad propia.
     // =========================================================================
 
@@ -1753,7 +2095,11 @@ public class BookingCancellationService
     // solo muta el BC en memoria y loguea, no toca _db. InternalsVisibleTo("TravelApi.Tests").
     internal void CaptureDebitNoteClassification(
         BookingCancellation bc,
-        ConfirmCancellationRequest request,
+        // ADR-014 (M1, refactor de SHAPE): el metodo consume un record neutro
+        // (PenaltyClassificationInput) en vez de ConfirmCancellationRequest. Asi el path
+        // sincrono (Dia 0) y el diferido (Dia N) reusan EXACTAMENTE la misma logica de
+        // captura/guardas. La logica NO cambio: solo la forma de recibir los datos.
+        PenaltyClassificationInput classification,
         string userId,
         string? userName,
         bool userCanClassifyAgencyPenalty,
@@ -1775,7 +2121,7 @@ public class BookingCancellationService
         //       - conceptExplicit: el usuario lo informo en el request (decision deliberada).
         //       - requestedConcept: el efectivo, que cae al default por operador
         //         (PenaltyOwnership) si el usuario no informo nada ("depende del operador").
-        var conceptExplicit = request.PenaltyConceptKind;
+        var conceptExplicit = classification.PenaltyConceptKind;
         var requestedConcept = conceptExplicit
             ?? DefaultConceptFromSupplier(bc.Supplier?.PenaltyOwnership);
 
@@ -1832,9 +2178,9 @@ public class BookingCancellationService
 
         // (4) Finalidad de la ND. Si el usuario no la informo pero clasifico a ND propia,
         //     defaulteamos a PenaltyOrCancellationCharge (el unico caso que el MVP automatiza).
-        if (request.DebitNotePurpose.HasValue)
+        if (classification.DebitNotePurpose.HasValue)
         {
-            bc.DebitNotePurpose = request.DebitNotePurpose.Value;
+            bc.DebitNotePurpose = classification.DebitNotePurpose.Value;
         }
         else if (ConceptIsAgencyOwnedDebitNote(requestedConcept) && bc.DebitNotePurpose is null)
         {
@@ -1843,14 +2189,14 @@ public class BookingCancellationService
 
         // (5) Estado de la penalidad + monto confirmado. Solo seteamos PenaltyConfirmedBy*
         //     cuando el usuario marca Confirmed (R5: la confirmacion es el acto auditable).
-        if (request.PenaltyStatus.HasValue)
+        if (classification.PenaltyStatus.HasValue)
         {
-            bc.PenaltyStatus = request.PenaltyStatus.Value;
+            bc.PenaltyStatus = classification.PenaltyStatus.Value;
         }
 
-        if (request.ConfirmedPenaltyAmount.HasValue)
+        if (classification.ConfirmedPenaltyAmount.HasValue)
         {
-            bc.PenaltyAmountAtEvent = request.ConfirmedPenaltyAmount.Value;
+            bc.PenaltyAmountAtEvent = classification.ConfirmedPenaltyAmount.Value;
         }
 
         if (bc.PenaltyStatus == PenaltyStatus.Confirmed)

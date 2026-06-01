@@ -185,6 +185,98 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-014 (§3.1, 2026-06-02): confirmacion DIFERIDA de la penalidad propia de la
+    /// agencia, DIAS DESPUES de la cancelacion, cuando el operador confirma el monto. Dispara
+    /// la emision de la Nota de Debito. Controller thin: resuelve el permiso server-side y
+    /// traduce las excepciones al mismo shape que <c>Confirm</c> / <c>EditLiquidation</c>.
+    ///
+    /// <para><b>Permiso</b>: <see cref="Permissions.ReservasCancel"/> para llegar al endpoint
+    /// + <see cref="Permissions.CancellationsClassifyAgencyPenalty"/> (o Admin) resuelto
+    /// server-side para poder disparar la ND fiscal. La decision fiscalmente sensible NO se
+    /// confia al frontend.</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 404 (BC no existe); 409 INV-ADR014-PERM (sin permiso: el
+    /// service lo enforza lanzando <see cref="BusinessInvariantViolationException"/>, que el
+    /// GlobalExceptionHandler mapea a 409 con invariantCode, igual que el path sincrono Confirm
+    /// para falta de permiso explicita; NO es 403); 409 <c>requiresApproval</c> (4-eyes); 409
+    /// <c>CONCURRENT_EDIT</c> (xmin); 409 invariantes (INV-ADR014-*); 400 (fecha invalida);
+    /// 503 (DB caida).</para>
+    /// </summary>
+    [HttpPatch("{publicId:guid}/confirm-penalty")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> ConfirmPenalty(
+        Guid publicId,
+        ConfirmPenaltyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        var requesterIsAdmin = User.IsInRole("Admin");
+
+        // ADR-014: resolvemos SERVER-SIDE si el usuario puede confirmar la penalidad propia
+        // (lo que dispara una ND fiscal real). Admin siempre; el resto necesita el permiso
+        // dedicado. El service lo EXIGE (no degrada) en este flujo diferido.
+        var userCanClassifyAgencyPenalty = requesterIsAdmin
+            || (await _permissionResolver.GetPermissionsAsync(userId, cancellationToken))
+                .Contains(Permissions.CancellationsClassifyAgencyPenalty);
+
+        try
+        {
+            var dto = await _bcService.ConfirmPenaltyAsync(
+                publicId, request, userId, userName, requesterIsAdmin, cancellationToken,
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ApprovalRequiredException ex)
+        {
+            // Mismo contrato 409 + body que Confirm para que el frontend (RequestApprovalModal)
+            // consuma el mismo shape.
+            return Conflict(new
+            {
+                message = "Esta acción requiere autorización previa del Administrador o Colaborador.",
+                requiresApproval = true,
+                requestType = ex.RequestType.ToString(),
+                entityType = ex.EntityType,
+                entityId = ex.EntityId,
+            });
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // xmin: otro proceso toco el BC entre el read y el write. Gracias a que la marca
+            // PenaltyStatus=Confirmed se persiste en su commit propio ANTES de crear la ND
+            // (B1), el 409 es seguro de reintentar: el reintento rebota por INV-ADR014-003 o
+            // procede limpio si el commit no llego a suceder.
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag OFF, etc. 409.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            // Fecha de confirmacion invalida (futura / anterior a la cancelacion).
+            return BadRequest(new { message = ex.Message });
+        }
+        // BusinessInvariantViolationException (INV-ADR014-* + permiso) la atrapa
+        // GlobalExceptionHandler (409 con invariantCode). No la catcheamos aca, mismo
+        // criterio que Confirm/EditLiquidation.
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Aborta un BC en estado <c>Drafted</c> (el operador se arrepintio antes
     /// de tocar AFIP). Idempotente: si ya esta Aborted, retorna 200 con el DTO.
     /// </summary>

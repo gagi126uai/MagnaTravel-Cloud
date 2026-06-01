@@ -11,13 +11,28 @@ namespace TravelApi.Application.DTOs.Cancellation;
 /// </summary>
 public class CancellationDebitNotePendingDto
 {
+    /// <summary>
+    /// ADR-014 §3.8: pseudo-estado para el caso "penalidad confirmada (PenaltyStatus=Confirmed)
+    /// pero NUNCA se creo la ND" (el motor rebanoto a ManualReview o no llego a crear nada).
+    /// NO existe en el enum <c>DebitNoteStatus</c>: es un valor solo-de-lectura que la bandeja
+    /// proyecta en texto para que el frontend lo distinga de Pending/Failed. Centralizado aca
+    /// para que el servicio y los tests no dupliquen el literal.
+    /// </summary>
+    public const string ConfirmedWithoutDebitNotePseudoStatus = "ConfirmedWithoutDebitNote";
+
     /// <summary>PublicId del BookingCancellation (la UI navega por PublicId, nunca por Id int).</summary>
     public Guid BookingCancellationPublicId { get; set; }
 
     /// <summary>Numero de reserva (legible para el operador de la bandeja).</summary>
     public string ReservaNumero { get; set; } = string.Empty;
 
-    /// <summary>Estado de la ND: Pending (encolada) o Failed (fallo el CAE). En texto.</summary>
+    /// <summary>
+    /// Estado de la ND, en texto. Puede ser un valor del enum <c>DebitNoteStatus</c>
+    /// (tipicamente "Pending" = encolada o "Failed" = fallo el CAE) O el pseudo-estado
+    /// <see cref="ConfirmedWithoutDebitNotePseudoStatus"/> ("ConfirmedWithoutDebitNote",
+    /// ADR-014 §3.8), que NO pertenece al enum: indica que la penalidad quedo confirmada
+    /// pero la ND nunca llego a crearse. El frontend debe contemplar ambos casos.
+    /// </summary>
     public string DebitNoteStatus { get; set; } = string.Empty;
 
     /// <summary>Monto de la penalidad congelado al momento del evento.</summary>

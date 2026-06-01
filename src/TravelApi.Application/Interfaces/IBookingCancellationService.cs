@@ -182,6 +182,37 @@ public interface IBookingCancellationService
         string? userName,
         CancellationToken ct);
 
+    /// <summary>
+    /// ADR-014 (§3.1/§3.2, 2026-06-02): confirmacion DIFERIDA de la penalidad propia de
+    /// la agencia, DIAS DESPUES de la cancelacion. Valida las precondiciones (estado
+    /// post-NC con CAE, flag, permiso, concepto agency-owned, idempotencia, fecha),
+    /// persiste <c>PenaltyStatus=Confirmed</c> + monto + fecha del operador + auditoria en
+    /// un COMMIT PROPIO (la marca de no-retorno del exactly-once, §3.4), y recien entonces
+    /// dispara la ND reusando el motor de ADR-013. La ND es SOLO comprobante fiscal: NO
+    /// toca el balance ni reabre la reserva (B2, §3.4-bis).
+    ///
+    /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404) si el BC no existe;
+    /// <c>InvalidOperationException</c> (409) si el flag esta OFF o el estado/concepto no
+    /// procede (codigos INV-ADR014-*); <c>BusinessInvariantViolationException</c> (409
+    /// idempotente INV-ADR014-003 / permiso); <c>ApprovalRequiredException</c> (409
+    /// requiresApproval) si el caso exige 4-eyes y no hay approval valido;
+    /// <c>ArgumentException</c> (400) si la fecha es invalida;
+    /// <c>DbUpdateConcurrencyException</c> (409 CONCURRENT_EDIT) por xmin.</para>
+    /// </summary>
+    /// <param name="userCanClassifyAgencyPenalty">
+    /// ADR-014: true si el caller tiene <c>cancellations.classify_agency_penalty</c> (o es
+    /// Admin). Lo resuelve el controller. El service lo EXIGE (no degrada): confirmar una
+    /// penalidad propia diferida es disparar una ND fiscal real.
+    /// </param>
+    Task<BookingCancellationDto> ConfirmPenaltyAsync(
+        Guid publicId,
+        ConfirmPenaltyRequest request,
+        string userId,
+        string? userName,
+        bool requesterIsAdmin,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false);
+
     // ===== Queries =====
 
     /// <summary>Obtiene un BC por su PublicId. Null si no existe.</summary>

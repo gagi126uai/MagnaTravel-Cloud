@@ -1,0 +1,664 @@
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.DTOs.Cancellation;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
+using TravelApi.Application.Exceptions;
+using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services;
+using Xunit;
+
+namespace TravelApi.Tests.Unit;
+
+/// <summary>
+/// ADR-014 (Fase 1, 2026-06-02) — tests UNIT de la confirmacion DIFERIDA de la penalidad
+/// (<c>ConfirmPenaltyAsync</c>) + la extension de la bandeja para la ND huerfana.
+///
+/// <para>Mismo enfoque que <see cref="BookingCancellationServicePartialCreditNoteTests"/>:
+/// DbContext InMemory + mocks de las 8 deps, sin Docker. InMemory NO valida CHECK
+/// constraints SQL ni xmin (esos casos van a integracion VPS, ver §6 del ADR). Lo que SI
+/// cubrimos aca: precondiciones del endpoint, exactly-once via la marca Confirmed (pre-check),
+/// B2 (balance neutro), 4-eyes, anti-doble-cobro diferido (ruteo a manual), y la
+/// re-vinculacion de ND huerfana en la bandeja.</para>
+/// </summary>
+public class CancellationDeferredPenaltyTests
+{
+    // ============================================================
+    // Builders
+    // ============================================================
+
+    private static AppDbContext NewDbContext()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"adr014-deferred-{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(
+                Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        return new AppDbContext(options);
+    }
+
+    private sealed record Harness(
+        BookingCancellationService Service,
+        AppDbContext Ctx,
+        Mock<IInvoiceService> InvoiceMock,
+        OperationalFinanceSettings Settings,
+        CapturingLogger<BookingCancellationService> Log);
+
+    /// <summary>
+    /// Logger de test que guarda en memoria los mensajes Warning para poder asertar la rama
+    /// de plazo vencido (M4), que es solo logging y no muta estado. Captura el mensaje YA
+    /// formateado (con los valores de los placeholders) usando el formatter de ILogger.
+    /// </summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public readonly List<(LogLevel Level, string Message)> Entries = new();
+
+        IDisposable? ILogger.BeginScope<TState>(TState state) => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
+
+    private static Harness BuildService(bool flagOn = true)
+    {
+        var ctx = NewDbContext();
+        var invoiceMock = new Mock<IInvoiceService>();
+        var approvalMock = new Mock<IApprovalRequestService>();
+        var auditMock = new Mock<IAuditService>();
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        var calculatorMock = new Mock<IFiscalLiquidationCalculator>();
+        var adminCountMock = new Mock<IAdminUserCountService>();
+
+        var settings = new OperationalFinanceSettings
+        {
+            EnableNewCancellationFlow = true,
+            EnableCancellationDebitNote = flagOn,
+            CancellationDebitNoteGraceDays = 15,
+            CancellationDebitNoteHardWarnDays = 60,
+            CancellationDebitNoteFourEyesThreshold = 2_000_000m,
+        };
+        settingsMock.Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var log = new CapturingLogger<BookingCancellationService>();
+
+        var service = new BookingCancellationService(
+            ctx,
+            invoiceMock.Object,
+            approvalMock.Object,
+            auditMock.Object,
+            log,
+            settingsMock.Object,
+            calculatorMock.Object,
+            adminCountMock.Object);
+
+        return new Harness(service, ctx, invoiceMock, settings, log);
+    }
+
+    /// <summary>
+    /// Semilla del caso post-NC: factura C=11 con CAE, reserva, supplier (PenaltyOwnership por
+    /// parametro), BC en AwaitingOperatorRefund con CreditNoteInvoiceId seteado (NC con CAE),
+    /// concepto pass-through + Estimated (estado tipico al llegar al Dia N).
+    /// </summary>
+    private static async Task<(Guid BcPublicId, BookingCancellation Bc, Invoice Original)> SeedPostNcAsync(
+        AppDbContext ctx,
+        PenaltyOwnership ownership = PenaltyOwnership.Agency,
+        int tipoComprobante = 11,
+        BookingCancellationStatus status = BookingCancellationStatus.AwaitingOperatorRefund,
+        string? reservaStatus = null,
+        decimal originalTotal = 100_000m)
+    {
+        var customer = new Customer { FullName = "Cliente Test", IsActive = true };
+        var supplier = new Supplier { Name = "Operador X", IsActive = true, PenaltyOwnership = ownership };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva
+        {
+            NumeroReserva = "R-014",
+            Name = "Reserva Test",
+            PayerId = customer.Id,
+            Status = reservaStatus ?? EstadoReserva.PendingOperatorRefund,
+            Balance = 0m,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var original = new Invoice
+        {
+            TipoComprobante = tipoComprobante,
+            PuntoDeVenta = 1,
+            NumeroComprobante = 100,
+            CAE = "12345678",
+            Resultado = "A",
+            MonId = "PES",
+            ImporteTotal = originalTotal,
+            ImporteNeto = originalTotal,
+            ImporteIva = 0m,
+            ReservaId = reserva.Id,
+            AnnulmentStatus = AnnulmentStatus.None,
+        };
+        var creditNote = new Invoice
+        {
+            TipoComprobante = 13, // NC C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 101,
+            CAE = "99999999",
+            Resultado = "A",
+            ReservaId = reserva.Id,
+            OriginalInvoiceId = null,
+        };
+        ctx.Invoices.Add(original);
+        ctx.Invoices.Add(creditNote);
+        await ctx.SaveChangesAsync();
+        creditNote.OriginalInvoiceId = original.Id;
+        await ctx.SaveChangesAsync();
+
+        var bc = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = customer.Id,
+            SupplierId = supplier.Id,
+            OriginatingInvoiceId = original.Id,
+            CreditNoteInvoiceId = creditNote.Id,
+            Status = status,
+            Reason = "Cliente cancelo; penalidad a confirmar por el operador",
+            DraftedByUserId = "vendedor-1",
+            ConfirmedWithClientAt = DateTime.UtcNow.AddDays(-10),
+            // defaults conservadores: pass-through / Estimated / NotApplicable
+        };
+        ctx.BookingCancellations.Add(bc);
+        await ctx.SaveChangesAsync();
+
+        return (bc.PublicId, bc, original);
+    }
+
+    private static ConfirmPenaltyRequest Request(
+        decimal amount = 30_000m,
+        DateTime? date = null,
+        string? support = "https://docs/operador-mail.pdf",
+        CancellationConceptKind? concept = CancellationConceptKind.AgencyManagementFee)
+        => new ConfirmPenaltyRequest(
+            ConceptKind: concept,
+            ConfirmedPenaltyAmount: amount,
+            OperatorConfirmationDate: date ?? DateTime.UtcNow.AddDays(-2),
+            DebitNotePurpose: null,
+            SupportingDocumentReference: support);
+
+    /// <summary>Hace que CreateAsync inserte una ND en la BD InMemory y devuelva su DTO.</summary>
+    private static void SetupCreateEmitsDebitNote(Harness h)
+    {
+        h.InvoiceMock
+            .Setup(s => s.CreateAsync(
+                It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CreateInvoiceRequest req, string? uid, string? uname, CancellationToken ct) =>
+            {
+                var reservaId = h.Ctx.Reservas.First().Id;
+                var originalId = h.Ctx.Invoices.First(i => i.TipoComprobante == 11).Id;
+                var nd = new Invoice
+                {
+                    TipoComprobante = 12, // ND C
+                    PuntoDeVenta = 1,
+                    NumeroComprobante = 200,
+                    Resultado = "PENDING",
+                    ReservaId = reservaId,
+                    OriginalInvoiceId = originalId,
+                };
+                h.Ctx.Invoices.Add(nd);
+                h.Ctx.SaveChanges();
+                return new InvoiceDto { PublicId = nd.PublicId };
+            });
+    }
+
+    // ============================================================
+    // Precondiciones
+    // ============================================================
+
+    [Fact]
+    public async Task FlagOff_RejectsAndDoesNotMutate()
+    {
+        var h = BuildService(flagOn: false);
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+
+        // Byte-identidad: nada muto.
+        var bc = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Estimated, bc.PenaltyStatus);
+        Assert.Null(bc.OperatorPenaltyConfirmedDate);
+        Assert.Equal(DebitNoteStatus.NotApplicable, bc.DebitNoteStatus);
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BcNotFound_Throws404()
+    {
+        var h = BuildService();
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            h.Service.ConfirmPenaltyAsync(Guid.NewGuid(), Request(), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+    }
+
+    [Fact]
+    public async Task WithoutPermission_ThrowsPermInvariant()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(), "vendedor", "V", false, default,
+                userCanClassifyAgencyPenalty: false));
+        Assert.Equal("INV-ADR014-PERM", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task StateNotPostCreditNote_RejectsInv001()
+    {
+        var h = BuildService();
+        // Drafted = la NC todavia no salio.
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx, status: BookingCancellationStatus.Drafted);
+        // Quitamos el CreditNoteInvoiceId para reflejar "NC sin CAE".
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.CreditNoteInvoiceId = null;
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-001", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task PassThroughConcept_RejectsInv002()
+    {
+        var h = BuildService();
+        // Operador retiene la penalidad -> default pass-through; pedimos sin concepto explicito.
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(concept: null), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-002", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task FutureDate_Throws400()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(date: DateTime.UtcNow.AddDays(2)),
+                "u", "U", false, default, userCanClassifyAgencyPenalty: true));
+    }
+
+    [Fact]
+    public async Task DateBeforeCancellation_Throws400()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        // ConfirmedWithClientAt = hoy-10; mandamos hoy-30 (anterior).
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(date: DateTime.UtcNow.AddDays(-30)),
+                "u", "U", false, default, userCanClassifyAgencyPenalty: true));
+    }
+
+    // ============================================================
+    // Exactly-once / idempotencia (B1)
+    // ============================================================
+
+    [Fact]
+    public async Task AlreadyConfirmed_RejectsInv003_NoSecondDebitNote()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        // Simular una corrida previa: penalidad ya confirmada.
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.PenaltyStatus = PenaltyStatus.Confirmed;
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-003", ex.InvariantCode);
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DebitNoteAlreadyIssued_RejectsInv003()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.DebitNoteStatus = DebitNoteStatus.Issued;
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-003", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task HappyPath_ConfirmsMarkBeforeEmit_AndEnqueuesDebitNote()
+    {
+        var h = BuildService();
+        var (bcId, _, original) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        var dto = await h.Service.ConfirmPenaltyAsync(bcId, Request(amount: 30_000m),
+            "backoffice", "Back Office", false, default, userCanClassifyAgencyPenalty: true);
+
+        var bc = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Confirmed, bc.PenaltyStatus);
+        Assert.Equal(CancellationConceptKind.AgencyManagementFee, bc.ConceptKind);
+        Assert.Equal(30_000m, bc.PenaltyAmountAtEvent);
+        Assert.NotNull(bc.OperatorPenaltyConfirmedDate);
+        Assert.Equal("backoffice", bc.PenaltyConfirmedByUserId);
+        // La ND se encolo y vinculo (DebitNoteStatus=Pending, DebitNoteInvoiceId seteado).
+        Assert.Equal(DebitNoteStatus.Pending, bc.DebitNoteStatus);
+        Assert.NotNull(bc.DebitNoteInvoiceId);
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RetryAfterHappyPath_RejectsInv003_OnlyOneDebitNote()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        await h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+            userCanClassifyAgencyPenalty: true);
+
+        // Reintento: rebota por Confirmed/ND-en-juego, no emite una segunda ND.
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-003", ex.InvariantCode);
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ============================================================
+    // B2 — balance neutro
+    // ============================================================
+
+    [Fact]
+    public async Task DebitNoteOnClosedReserva_DoesNotTouchBalanceOrStatus()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx,
+            status: BookingCancellationStatus.Closed,
+            reservaStatus: EstadoReserva.Cancelled);
+        // EstadoReserva es una clase estatica de constantes string, no un enum.
+        SetupCreateEmitsDebitNote(h);
+
+        var reservaBefore = h.Ctx.Reservas.Single();
+        var statusBefore = reservaBefore.Status;
+        var balanceBefore = reservaBefore.Balance;
+
+        await h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+            userCanClassifyAgencyPenalty: true);
+
+        var reservaAfter = h.Ctx.Reservas.Single();
+        Assert.Equal(statusBefore, reservaAfter.Status);
+        Assert.Equal(balanceBefore, reservaAfter.Balance);
+        // El BC sigue Closed (no se reabre).
+        Assert.Equal(BookingCancellationStatus.Closed, h.Ctx.BookingCancellations.Single().Status);
+    }
+
+    // ============================================================
+    // 4-eyes (M2)
+    // ============================================================
+
+    [Fact]
+    public async Task NoSupportingDocument_RequiresFourEyes()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        // Sin soporte documental y sin approval -> ApprovalRequiredException.
+        await Assert.ThrowsAsync<ApprovalRequiredException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(support: null), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+    }
+
+    [Fact]
+    public async Task AmountAboveThreshold_RequiresFourEyes_EvenWithSupport()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx, originalTotal: 5_000_000m);
+
+        // Monto > 2.000.000 (umbral) aunque haya soporte -> 4-eyes.
+        await Assert.ThrowsAsync<ApprovalRequiredException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(amount: 3_000_000m), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+    }
+
+    [Fact]
+    public async Task LowAmountWithSupport_NoFourEyes_Emits()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        // Monto bajo + soporte documental -> no exige 4-eyes, emite directo.
+        var dto = await h.Service.ConfirmPenaltyAsync(bcId, Request(amount: 30_000m),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+        Assert.Equal(DebitNoteStatus.Pending, h.Ctx.BookingCancellations.Single().DebitNoteStatus);
+    }
+
+    // ============================================================
+    // Anti-doble-cobro diferido (R13) — re-evaluado en runtime
+    // ============================================================
+
+    [Fact]
+    public async Task PenaltyDeductionLoadedAfterDay0_RoutesToManualReview()
+    {
+        var h = BuildService();
+        var (bcId, bc, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        // Simular que entre el Dia 0 y el Dia N se cargo una deduction CancellationPenalty
+        // en el refund del operador para este BC. El gating diferido debe re-chequearlo en
+        // runtime y rutear a ManualReview (no emitir).
+        var refund = new OperatorRefundReceived
+        {
+            SupplierId = bc.SupplierId,
+            ReceivedAmount = 50_000m,
+            Currency = "ARS",
+            ReceivedAt = DateTime.UtcNow,
+            ReceivedByUserId = "cashier",
+        };
+        h.Ctx.Set<OperatorRefundReceived>().Add(refund);
+        await h.Ctx.SaveChangesAsync();
+
+        var allocation = new OperatorRefundAllocation
+        {
+            OperatorRefundReceivedId = refund.Id,
+            BookingCancellationId = h.Ctx.BookingCancellations.Single().Id,
+            GrossAmount = 50_000m,
+            NetAmount = 20_000m,
+            CreatedByUserId = "cashier",
+        };
+        allocation.Deductions.Add(new DeductionLine
+        {
+            Kind = DeductionKind.CancellationPenalty,
+            Amount = 30_000m,
+        });
+        h.Ctx.Set<OperatorRefundAllocation>().Add(allocation);
+        await h.Ctx.SaveChangesAsync();
+
+        await h.Service.ConfirmPenaltyAsync(bcId, Request(), "u", "U", false, default,
+            userCanClassifyAgencyPenalty: true);
+
+        // La penalidad quedo Confirmed (marca persistida) pero la ND NO se emitio: el motor
+        // la ruteo a ManualReview por la disyuncion anti-doble-cobro.
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Confirmed, after.PenaltyStatus);
+        Assert.Equal(DebitNoteStatus.ManualReview, after.DebitNoteStatus);
+        Assert.Null(after.DebitNoteInvoiceId);
+    }
+
+    [Fact]
+    public async Task PenaltyAboveOriginalTotal_RoutesToManualReview_NoDebitNote()
+    {
+        var h = BuildService();
+        // Factura original de 100.000; el operador confirma una penalidad de 150.000 (supera
+        // el total). El gating heredado de ADR-013 (BuildManualReviewReason: penalidad >
+        // ImporteTotal) debe rutear a ManualReview en el camino diferido, sin emitir la ND.
+        // El monto sigue por debajo del umbral de 4-eyes (2.000.000), asi que el 4-eyes no
+        // intercepta antes; lo que decide es el gating de monto.
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx, originalTotal: 100_000m);
+        SetupCreateEmitsDebitNote(h);
+
+        await h.Service.ConfirmPenaltyAsync(bcId, Request(amount: 150_000m),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+
+        // La marca Confirmed se persiste (exactly-once), pero la ND NO se emite: queda en
+        // ManualReview para que el back-office la revise.
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Confirmed, after.PenaltyStatus);
+        Assert.Equal(DebitNoteStatus.ManualReview, after.DebitNoteStatus);
+        Assert.Null(after.DebitNoteInvoiceId);
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ============================================================
+    // Plazo de la ND (M4) — alerta NO bloqueante
+    // ============================================================
+
+    [Fact]
+    public async Task ConfirmedPastGraceDays_EmitsAnyway_AndLogsLateWarning()
+    {
+        var h = BuildService();
+        // ConfirmedWithClientAt = hoy-10. La cancelacion fue hace mucho; el operador confirma
+        // 20 dias atras (> GraceDays=15 pero <= HardWarnDays=60). Para que la fecha sea valida
+        // (no anterior a la cancelacion) movemos ConfirmedWithClientAt mas atras.
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.ConfirmedWithClientAt = DateTime.UtcNow.AddDays(-40);
+        await h.Ctx.SaveChangesAsync();
+        SetupCreateEmitsDebitNote(h);
+
+        await h.Service.ConfirmPenaltyAsync(bcId, Request(date: DateTime.UtcNow.AddDays(-20)),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+
+        // NO bloquea: la ND igual se emite (Pending) pese a estar fuera del plazo de gracia.
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(DebitNoteStatus.Pending, after.DebitNoteStatus);
+        // Y queda registrado el warning de plazo (metric:cancellation_debit_note_late).
+        Assert.Contains(h.Log.Entries, e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("cancellation_debit_note_late"));
+    }
+
+    [Fact]
+    public async Task ConfirmedPastHardWarnDays_EmitsAnyway_AndLogsVeryLateWarning()
+    {
+        var h = BuildService();
+        // El operador confirma 70 dias atras (> HardWarnDays=60) -> warning elevado.
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.ConfirmedWithClientAt = DateTime.UtcNow.AddDays(-90);
+        await h.Ctx.SaveChangesAsync();
+        SetupCreateEmitsDebitNote(h);
+
+        await h.Service.ConfirmPenaltyAsync(bcId, Request(date: DateTime.UtcNow.AddDays(-70)),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+
+        // NO bloquea: emite igual.
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(DebitNoteStatus.Pending, after.DebitNoteStatus);
+        // Warning del umbral duro (metric:cancellation_debit_note_very_late).
+        Assert.Contains(h.Log.Entries, e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("cancellation_debit_note_very_late"));
+    }
+
+    // ============================================================
+    // Bandeja — ND huerfana (B1 pieza 3)
+    // ============================================================
+
+    [Fact]
+    public async Task OrphanDebitNote_BandejaRelinks_DoesNotReemit()
+    {
+        var h = BuildService();
+        var (_, bc, original) = await SeedPostNcAsync(h.Ctx);
+        // Simular crash entre T1 (ND creada) y T2 (vincular): PenaltyStatus=Confirmed,
+        // DebitNoteInvoiceId=null, pero existe una ND para la factura original.
+        var bcEntity = h.Ctx.BookingCancellations.Single();
+        bcEntity.PenaltyStatus = PenaltyStatus.Confirmed;
+        bcEntity.PenaltyAmountAtEvent = 30_000m;
+        await h.Ctx.SaveChangesAsync();
+
+        var orphanNd = new Invoice
+        {
+            TipoComprobante = 12, // ND C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 200,
+            Resultado = "A",
+            CAE = "55555555",
+            ReservaId = original.ReservaId,
+            OriginalInvoiceId = original.Id,
+        };
+        h.Ctx.Invoices.Add(orphanNd);
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        // La bandeja re-vinculo la ND huerfana (NO emitio otra). Como obtuvo CAE (Issued),
+        // ya no aparece en la bandeja como pendiente.
+        var relinked = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(orphanNd.Id, relinked.DebitNoteInvoiceId);
+        Assert.Equal(DebitNoteStatus.Issued, relinked.DebitNoteStatus);
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ConfirmedWithoutDebitNote_AppearsInBandejaForManualRetrigger()
+    {
+        var h = BuildService();
+        var (_, _, _) = await SeedPostNcAsync(h.Ctx);
+        // PenaltyStatus=Confirmed pero NO existe ND para la factura original.
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.PenaltyStatus = PenaltyStatus.Confirmed;
+        bc.PenaltyAmountAtEvent = 30_000m;
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        Assert.Contains(rows, r =>
+            r.BookingCancellationPublicId == bc.PublicId &&
+            r.DebitNoteStatus == CancellationDebitNotePendingDto.ConfirmedWithoutDebitNotePseudoStatus);
+    }
+}

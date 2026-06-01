@@ -405,4 +405,33 @@ public class BookingCancellation : IHasPublicId
 
     /// <summary>ADR-013 §3.11: momento UTC en que se clasifico el concepto.</summary>
     public DateTime? ConceptClassifiedAt { get; set; }
+
+    // ============================================================
+    // ADR-014 (2026-06-02): confirmacion DIFERIDA de la penalidad.
+    //
+    // Cuando el operador confirma el monto de la penalidad DIAS DESPUES de la
+    // cancelacion (el caso dominante del negocio), necesitamos persistir dos datos
+    // que el flujo sincrono de ADR-013 no tenia: la fecha REAL en que el operador
+    // confirmo (eje fiscal del plazo) y la referencia al soporte documental del
+    // acuerdo. Ambos aditivos y nullable.
+    // ============================================================
+
+    /// <summary>
+    /// ADR-014 §3.3: la fecha REAL en que el operador comunico/confirmo el monto de
+    /// la penalidad. <b>Distinta</b> de <see cref="PenaltyConfirmedAt"/> (que es el
+    /// timestamp del acto en el sistema, "cuando un usuario apreto Confirmar"). El
+    /// plazo de gracia RG 4540 (15 dias corridos) corre desde ESTA fecha, no desde
+    /// la del sistema. Null mientras la penalidad no se confirmo por el flujo diferido.
+    /// </summary>
+    public DateTime? OperatorPenaltyConfirmedDate { get; set; }
+
+    /// <summary>
+    /// ADR-014 §3.3: referencia/URL del soporte documental del acuerdo del operador
+    /// (mail, PDF de confirmacion del monto). Opcional, de auditoria. Si NO se adjunta,
+    /// la confirmacion diferida exige 4-eyes (§3.6): confirmar una penalidad propia sin
+    /// respaldo es el caso de mayor riesgo fiscal. NO almacena el archivo, solo la
+    /// referencia (subir el archivo a MinIO seria una pieza aparte).
+    /// </summary>
+    [MaxLength(500)]
+    public string? SupportingDocumentReference { get; set; }
 }

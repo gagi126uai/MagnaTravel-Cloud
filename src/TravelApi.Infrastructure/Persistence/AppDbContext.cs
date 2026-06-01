@@ -1407,6 +1407,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(b => b.ConceptClassifiedByUserName).HasMaxLength(200);
             entity.Property(b => b.DebitNoteArcaErrorMessage).HasMaxLength(1000);
 
+            // ADR-014 (2026-06-02): confirmacion diferida. SupportingDocumentReference
+            // con largo 500 (es una referencia/URL, no el archivo). OperatorPenaltyConfirmedDate
+            // no necesita config explicita (DateTime? mapea a timestamp nullable por default).
+            entity.Property(b => b.SupportingDocumentReference).HasMaxLength(500);
+
             // ND opcional: existe solo despues de que la NC total salio con CAE y el
             // gating habilito la emision. SetNull para que el rollback de una ND (caso
             // raro) no rompa el aggregate (mismo patron que CreditNoteInvoice).

@@ -180,6 +180,80 @@ public record ConfirmCancellationRequest(
 );
 
 /// <summary>
+/// ADR-014 (§3.1, 2026-06-02): payload del endpoint de confirmacion DIFERIDA de la
+/// penalidad — <c>PATCH /api/cancellations/{publicId}/confirm-penalty</c>.
+///
+/// <para>Se usa DIAS DESPUES de la cancelacion, cuando el operador confirma el monto
+/// definitivo de la penalidad PROPIA de la agencia. Dispara la emision de la ND
+/// reusando el motor existente. Es la decision fiscalmente mas sensible del flujo: el
+/// permiso <c>cancellations.classify_agency_penalty</c> se resuelve server-side y, segun
+/// el monto / el soporte documental, puede exigir 4-eyes (§3.6).</para>
+///
+/// <para><b>Diferencias con <see cref="ConfirmCancellationRequest"/></b>: alla los campos
+/// de penalidad son opcionales (clasificacion al confirmar la cancelacion en el Dia 0);
+/// aca <c>ConfirmedPenaltyAmount</c> y <c>OperatorConfirmationDate</c> son OBLIGATORIOS
+/// (el flujo diferido existe justamente para confirmar el monto y su fecha).</para>
+/// </summary>
+public record ConfirmPenaltyRequest(
+    /// <summary>
+    /// ADR-014 (R4): naturaleza fiscal del concepto. El frontend ofrece 2 opciones:
+    /// <c>AgencyManagementFee</c> (cargo de gestion) o <c>AgencyCancellationFee</c>
+    /// (cargo de cancelacion). Null = el service usa el default por operador
+    /// (Supplier.PenaltyOwnership). Clasificar como ingreso propio exige el permiso
+    /// <c>cancellations.classify_agency_penalty</c>.
+    /// </summary>
+    CancellationConceptKind? ConceptKind,
+
+    /// <summary>ADR-014 (§3.1): el monto definitivo de la penalidad que confirmo el operador. Obligatorio &gt; 0.</summary>
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto confirmado de la penalidad debe ser mayor a cero.")]
+    decimal ConfirmedPenaltyAmount,
+
+    /// <summary>
+    /// ADR-014 (§3.1, §3.3): la fecha REAL en que el operador confirmo el monto. Eje
+    /// fiscal del plazo (RG 4540) y del devengamiento. El service valida que no sea
+    /// futura ni anterior a la fecha de la cancelacion. Obligatoria.
+    /// </summary>
+    [Required]
+    DateTime OperatorConfirmationDate,
+
+    /// <summary>ADR-014 (R3): finalidad de la ND. Null = default PenaltyOrCancellationCharge (el unico que el MVP automatiza).</summary>
+    DebitNotePurpose? DebitNotePurpose = null,
+
+    /// <summary>
+    /// ADR-014 (§3.1, §3.6): referencia/URL del soporte documental del acuerdo del
+    /// operador (mail / PDF). Opcional. Si NO se adjunta, el service exige 4-eyes
+    /// (confirmar una penalidad propia sin respaldo es el caso de mayor riesgo).
+    /// </summary>
+    [MaxLength(500)] string? SupportingDocumentReference = null,
+
+    // 4-eyes: mismo patron que ConfirmCancellationRequest. Si el caso exige doble firma
+    // (sin soporte documental O monto sobre el umbral) y el caller no trae un approval
+    // valido, el service tira ApprovalRequiredException -> 409 requiresApproval. El caller
+    // crea el approval y reintenta pasando el ApprovalRequestPublicId.
+    [MaxLength(500)] string? OverrideReason = null,
+    Guid? ApprovalRequestPublicId = null
+);
+
+/// <summary>
+/// ADR-014 (M1, §3.2, 2026-06-02): forma de entrada COMUN de la clasificacion de la
+/// penalidad. Tanto el path SINCRONO (<see cref="ConfirmCancellationRequest"/>, Dia 0)
+/// como el DIFERIDO (<see cref="ConfirmPenaltyRequest"/>, Dia N) construyen este record
+/// y se lo pasan a <c>CaptureDebitNoteClassification</c>.
+///
+/// <para><b>Por que un record comun y no una firma polimorfica</b> (M1): cambiar la firma
+/// de <c>CaptureDebitNoteClassification</c> a aceptar dos tipos distintos (o un tipo base)
+/// arriesgaria el path sincrono ya probado. Extraer un record neutro mantiene la logica del
+/// metodo intacta: solo cambia la FORMA de pasar los datos, no QUE hace con ellos. Cada
+/// request mapea sus campos a este record con una funcion explicita.</para>
+/// </summary>
+public record PenaltyClassificationInput(
+    CancellationConceptKind? PenaltyConceptKind,
+    PenaltyStatus? PenaltyStatus,
+    DebitNotePurpose? DebitNotePurpose,
+    decimal? ConfirmedPenaltyAmount
+);
+
+/// <summary>
 /// FC1.2.1 §3.2.subset: payload del snapshot fiscal. Las 3 condiciones fiscales
 /// se reciben raw (free-text desde el frontend, alineado al patron del repo).
 /// El service las normaliza con <c>TaxConditionNormalizer</c> antes de persistir.
