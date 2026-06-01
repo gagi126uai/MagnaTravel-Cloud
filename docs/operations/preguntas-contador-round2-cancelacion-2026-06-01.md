@@ -40,7 +40,7 @@ El cliente pagó **$100.000** por un viaje. Cancela. Hay una penalidad de **$30.
 
 **Ejemplo:** al cancelar le cobramos al cliente una penalidad **estimada** de $30.000, pero después el operador confirma que la penalidad real era $35.000 (o $25.000).
 
-**Pregunta concreta:** ¿se hace una **Nota de Débito complementaria** por la diferencia? ¿Desde cuándo se cuentan los 15 días hábiles de la RG 4540 para emitirla: desde la cancelación, o desde que el operador confirma la penalidad real?
+**Pregunta concreta:** ¿se hace una **Nota de Débito complementaria** por la diferencia? ¿Desde cuándo se cuentan los **15 días corridos** de la RG 4540 para emitirla: desde la cancelación, o desde que el operador confirma la penalidad real? *(Corrección del matriculado: son 15 días CORRIDOS, no hábiles.)*
 
 ## 6. Ingresos Brutos (provincial)
 
