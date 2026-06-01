@@ -74,6 +74,24 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.EnableMultiCurrencyInvoicing = request.EnableMultiCurrencyInvoicing.Value;
         }
 
+        // Rediseño estados Reserva (Fase A+B, 2026-05-30): persistimos el flag del ciclo de
+        // vida extendido (Vendida / A liquidar). Update CONDICIONAL (patch-like, criterio B-002):
+        // solo se aplica si el request trae valor. Es un flag de comportamiento puro, sin
+        // dependencias con otros flags, por eso NO tiene validacion cruzada mas abajo.
+        if (request.EnableSoldToSettleStates.HasValue)
+        {
+            entity.EnableSoldToSettleStates = request.EnableSoldToSettleStates.Value;
+        }
+
+        // ADR-013 (Nota de Debito en cancelacion, 2026-06-01): persistimos el flag de emision
+        // de ND. Update CONDICIONAL (patch-like, criterio B-002): solo se aplica si el request
+        // trae valor. La pre-condicion (requiere EnableNewCancellationFlow) se valida mas abajo
+        // junto a las demas cross-field rules, una vez aplicados todos los flags sobre 'entity'.
+        if (request.EnableCancellationDebitNote.HasValue)
+        {
+            entity.EnableCancellationDebitNote = request.EnableCancellationDebitNote.Value;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -95,6 +113,33 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
                 "Combinacion de flags invalida (GR-002): para tener EnablePartialCreditNotes=true se requiere " +
                 "EnableNewCancellationFlow=true. Si quiere apagar FC1.2, primero apague FC1.3 " +
                 "(EnablePartialCreditNotes=false) en el mismo UPDATE o en uno anterior.");
+        }
+
+        // ADR-013 (Nota de Debito en cancelacion, 2026-06-01): pre-condicion GR-013.
+        // EnableCancellationDebitNote DEPENDE de EnableNewCancellationFlow=true. La ND se
+        // dispara desde el callback de la NC total, que solo existe en el flujo de cancelacion
+        // nuevo (FC1.2). Sin ese flujo no hay desde donde engancharse a emitir la ND.
+        //
+        // Por que validamos contra 'entity' (estado post-aplicacion del request) y NO solo
+        // contra 'request': hoy el DTO NO expone EnableNewCancellationFlow, asi que no se puede
+        // prender FC1.2 en el mismo PUT. Si el admin manda EnableCancellationDebitNote=true y
+        // la entidad tiene EnableNewCancellationFlow=false (porque FC1.2 se prende via SQL/seed),
+        // 'entity' ya refleja la combinacion invalida y la rechazamos.
+        //
+        // CRITICO: este mismo check existe como startup-check en Program.cs (la app NO arranca
+        // si la combinacion es invalida). Validar aca tambien evita que un PUT deje guardada una
+        // configuracion que despues impida que la app vuelva a arrancar. Mejor un 400 ahora que
+        // una app caida en el proximo restart.
+        //
+        // Tiramos ValidationException (System.ComponentModel.DataAnnotations), que el
+        // GlobalExceptionHandler ya mapea a HTTP 400 — mismo manejo que GR-002.
+        if (entity.EnableCancellationDebitNote && !entity.EnableNewCancellationFlow)
+        {
+            throw new ValidationException(
+                "Combinacion de flags invalida (GR-013): para tener EnableCancellationDebitNote=true se requiere " +
+                "EnableNewCancellationFlow=true. La Nota de Debito se dispara desde el flujo de cancelacion nuevo; " +
+                "sin ese flujo no hay donde engancharse. Prenda el flujo de cancelacion (via SQL/seed) antes de " +
+                "prender la emision de Nota de Debito.");
         }
 
         // ============================================================
@@ -180,6 +225,10 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             // ADR-012 MVP: el GET devuelve el estado actual del flag de multimoneda para que la
             // pantalla de Configuracion -> Facturacion lo muestre como un toggle.
             EnableMultiCurrencyInvoicing = entity.EnableMultiCurrencyInvoicing,
+            // Rediseño estados Reserva: el GET expone el flag del ciclo de vida extendido.
+            EnableSoldToSettleStates = entity.EnableSoldToSettleStates,
+            // ADR-013: el GET expone el flag de emision de Nota de Debito en cancelacion.
+            EnableCancellationDebitNote = entity.EnableCancellationDebitNote,
         };
     }
 }

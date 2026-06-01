@@ -88,4 +88,41 @@ public class OperationalFinanceSettingsDto
     /// la entidad, asi que refleja automaticamente lo que se guarde por aca.</para>
     /// </summary>
     public bool? EnableMultiCurrencyInvoicing { get; set; }
+
+    /// <summary>
+    /// Rediseño estados Reserva (Fase A+B, 2026-05-30): feature flag del ciclo de vida
+    /// extendido (estados "Vendida" y "A liquidar"). Hasta hoy solo se prendia por SQL;
+    /// ahora el admin lo prende/apaga desde el panel de Configuracion.
+    ///
+    /// <para>Es un flag de COMPORTAMIENTO puro: NO emite nada fiscal, NO tiene dependencias
+    /// con otros flags. Con OFF (default) el ciclo de vida es el clasico de siempre; con ON
+    /// se habilitan las dos etapas nuevas. Por eso no hay validacion cruzada para este flag.</para>
+    ///
+    /// <para>Nullable y patch-like (mismo criterio B-002 que el resto del DTO): enviar null
+    /// u omitir el campo en el PUT = no se modifica el valor actual. Solo se persiste si viene
+    /// con valor. Asi un PUT legacy o un frontend que olvide el campo no lo apaga sin querer.</para>
+    /// </summary>
+    public bool? EnableSoldToSettleStates { get; set; }
+
+    /// <summary>
+    /// ADR-013 (Nota de Debito en cancelacion, 2026-06-01): feature flag de la emision de
+    /// Nota de Debito por penalidad propia de la agencia en el flujo de cancelacion. Hasta
+    /// hoy solo se prendia por SQL; ahora el admin lo prende/apaga desde el panel.
+    ///
+    /// <para><b>ZONA PELIGROSA — emision fiscal real</b>: con ON, una cancelacion puede emitir
+    /// una ND C real contra ARCA. NO prender hasta tener signoff del contador + CAE de
+    /// homologacion ARCA para ND C asociada a factura. El frontend deberia tratar este toggle
+    /// como zona peligrosa (confirmacion explicita), igual que el de multimoneda.</para>
+    ///
+    /// <para><b>Validacion cruzada (server-side)</b>: prender este flag exige tener
+    /// <c>EnableNewCancellationFlow=true</c>, porque la ND se dispara desde el callback de la
+    /// NC total, que solo existe en el flujo de cancelacion nuevo (FC1.2). Hay un startup-check
+    /// en Program.cs que rechaza el arranque si la combinacion es invalida; el service rechaza
+    /// el mismo PUT con un 400 antes de persistir, para no dejar la app en un estado que no
+    /// vuelve a arrancar. Mismo estilo que la validacion GR-002.</para>
+    ///
+    /// <para>Nullable y patch-like (mismo criterio B-002): enviar null u omitir el campo en
+    /// el PUT = no se modifica el valor actual. Solo se persiste si viene con valor.</para>
+    /// </summary>
+    public bool? EnableCancellationDebitNote { get; set; }
 }

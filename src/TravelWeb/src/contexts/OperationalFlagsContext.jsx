@@ -19,9 +19,15 @@ import { createContext, useContext, useState, useEffect } from "react";
 import { api } from "../api";
 
 // Valores default seguros: si el contexto se usa fuera del provider, no rompe.
+// Cada flag arranca en false (comportamiento base conservador).
 const defaultFlags = {
     enableSoldToSettleStates: false,
     enableMultiCurrencyInvoicing: false,
+    // ADR-013: flag de emisión de Nota de Débito fiscal en cancelaciones.
+    // No se usa todavía en la UI de reservas/cancelaciones (solo en el panel de settings),
+    // pero se incluye en el contexto global para que el día que un componente necesite
+    // saber si la ND está activa, lo lea desde acá en lugar de hacer un fetch propio.
+    enableCancellationDebitNote: false,
 };
 
 const OperationalFlagsContext = createContext(undefined);
@@ -45,6 +51,11 @@ export function OperationalFlagsProvider({ children }) {
                     setFlags({
                         enableSoldToSettleStates: Boolean(data.enableSoldToSettleStates),
                         enableMultiCurrencyInvoicing: Boolean(data.enableMultiCurrencyInvoicing),
+                        // ADR-013: si el endpoint /afip/settings llegara a exponer este flag
+                        // en el futuro, ya lo leemos. Por ahora el backend no lo proyecta
+                        // en AfipSettingsResponse (solo en /settings/operational-finance),
+                        // así que data.enableCancellationDebitNote será undefined → false.
+                        enableCancellationDebitNote: Boolean(data.enableCancellationDebitNote),
                     });
                 }
             } catch {
