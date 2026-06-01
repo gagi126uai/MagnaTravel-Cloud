@@ -39,6 +39,10 @@ public class CancellationDebitNoteGatingTests
         DebitNotePurpose = DebitNotePurpose.PenaltyOrCancellationCharge,
         PenaltyAmountAtEvent = 30_000m,
         Supplier = new Supplier { Name = "Operador X", PenaltyOwnership = PenaltyOwnership.Agency },
+        // B3 (review 2026-06-01): el gating exige el rastro de auditoria (quien clasifico
+        // el concepto y quien confirmo la penalidad). El caso feliz los trae poblados.
+        ConceptClassifiedByUserId = "user-backoffice",
+        PenaltyConfirmedByUserId = "user-backoffice",
     };
 
     [Fact]
@@ -193,6 +197,29 @@ public class CancellationDebitNoteGatingTests
         Assert.Null(BookingCancellationService.EvaluateDebitNoteGating(HappyBc(), invoice));
     }
 
+    // ---- B3 (review 2026-06-01): auditoria como invariante del gating ----
+
+    [Fact]
+    public void MissingConceptClassifier_RoutesToManual()
+    {
+        // B3: si no hay rastro de QUIEN clasifico el concepto, no se emite (a manual),
+        //     aunque todo lo demas del caso feliz se cumpla. Reproduce el camino real:
+        //     un BC ya creado con ConceptKind=AgencyCancellationFee + un Confirm que lo
+        //     deja igual -> la captura no setea ConceptClassifiedByUserId (queda null).
+        var bc = HappyBc();
+        bc.ConceptClassifiedByUserId = null;
+        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(bc, HappyInvoice()));
+    }
+
+    [Fact]
+    public void MissingPenaltyConfirmer_RoutesToManual()
+    {
+        // B3: si no hay rastro de QUIEN confirmo la penalidad, no se emite (a manual).
+        var bc = HappyBc();
+        bc.PenaltyConfirmedByUserId = null;
+        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(bc, HappyInvoice()));
+    }
+
     // ---- Disyuncion anti-doble-cobro (INV-ADR013-001, §3.3) ----
 
     /// <summary>
@@ -212,5 +239,26 @@ public class CancellationDebitNoteGatingTests
         CancellationConceptKind concept, bool expected)
     {
         Assert.Equal(expected, BookingCancellationService.ConceptIsAgencyOwnedDebitNote(concept));
+    }
+
+    /// <summary>
+    /// B1 regresion (review 2026-06-01): la disyuncion anti-doble-cobro de
+    /// OperatorRefundService (INV-ADR013-001, OperatorRefundService.cs:356) se dispara
+    /// SOLO cuando <c>ConceptIsAgencyOwnedDebitNote(bc.ConceptKind)</c> es true. Con el
+    /// flag EnableCancellationDebitNote OFF, la captura deja <c>ConceptKind</c> en
+    /// <see cref="CancellationConceptKind.OperatorPenaltyPassThrough"/> (ver
+    /// CancellationDebitNoteCaptureTests.Capture_FeatureFlagOff_*). Este test fija el otro
+    /// extremo: para ese valor el helper devuelve false, asi que la deduccion
+    /// CancellationPenalty se acepta como siempre (la disyuncion NO se activa). Es el eje
+    /// que garantiza que con el flag OFF OperatorRefundService se comporta como en d29ac8a.
+    /// </summary>
+    [Fact]
+    public void PassThroughConcept_DoesNotTriggerRefundDisjunction()
+    {
+        // El default que deja el flag OFF NO es agency-owned -> el guard del
+        // OperatorRefundService (conceptIsAgencyOwnedDebitNote && ...) es false -> acepta
+        // la deduction CancellationPenalty.
+        Assert.False(BookingCancellationService.ConceptIsAgencyOwnedDebitNote(
+            CancellationConceptKind.OperatorPenaltyPassThrough));
     }
 }

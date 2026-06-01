@@ -376,6 +376,15 @@ public class BookingCancellation : IHasPublicId
     [MaxLength(450)]
     public string? PenaltyConfirmedByUserId { get; set; }
 
+    /// <summary>
+    /// ADR-013 §3.8 (M1, review 2026-06-01): nombre legible del usuario que confirmo el
+    /// monto. Persistido (no solo el Id) por simetria con el resto del modulo de
+    /// auditoria fiscal (DraftedByUserName/ConfirmedByUserName/etc.), para que el
+    /// back-office vea el rastro sin resolver el Id contra AspNetUsers.
+    /// </summary>
+    [MaxLength(200)]
+    public string? PenaltyConfirmedByUserName { get; set; }
+
     /// <summary>ADR-013 §3.8: momento UTC en que se confirmo la penalidad.</summary>
     public DateTime? PenaltyConfirmedAt { get; set; }
 
@@ -386,6 +395,13 @@ public class BookingCancellation : IHasPublicId
     /// </summary>
     [MaxLength(450)]
     public string? ConceptClassifiedByUserId { get; set; }
+
+    /// <summary>
+    /// ADR-013 §3.11 (M1, review 2026-06-01): nombre legible del usuario que clasifico
+    /// el concepto. Mismo motivo que <see cref="PenaltyConfirmedByUserName"/>.
+    /// </summary>
+    [MaxLength(200)]
+    public string? ConceptClassifiedByUserName { get; set; }
 
     /// <summary>ADR-013 §3.11: momento UTC en que se clasifico el concepto.</summary>
     public DateTime? ConceptClassifiedAt { get; set; }

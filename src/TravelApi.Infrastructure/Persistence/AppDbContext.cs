@@ -1402,7 +1402,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(b => b.PenaltyCurrencyAtEvent).HasMaxLength(3);
             entity.Property(b => b.EmitterTaxConditionAtEvent).HasMaxLength(50);
             entity.Property(b => b.PenaltyConfirmedByUserId).HasMaxLength(450);
+            entity.Property(b => b.PenaltyConfirmedByUserName).HasMaxLength(200);
             entity.Property(b => b.ConceptClassifiedByUserId).HasMaxLength(450);
+            entity.Property(b => b.ConceptClassifiedByUserName).HasMaxLength(200);
             entity.Property(b => b.DebitNoteArcaErrorMessage).HasMaxLength(1000);
 
             // ND opcional: existe solo despues de que la NC total salio con CAE y el

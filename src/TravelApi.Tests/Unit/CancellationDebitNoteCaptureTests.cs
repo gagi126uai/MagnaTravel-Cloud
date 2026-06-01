@@ -98,7 +98,8 @@ public class CancellationDebitNoteCaptureTests
             purpose: DebitNotePurpose.PenaltyOrCancellationCharge,
             amount: 30_000m);
 
-        svc.CaptureDebitNoteClassification(bc, req, "user-backoffice", "Back Office", userCanClassifyAgencyPenalty: true);
+        svc.CaptureDebitNoteClassification(bc, req, "user-backoffice", "Back Office",
+            userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true);
 
         Assert.Equal(CancellationConceptKind.AgencyManagementFee, bc.ConceptKind);
         Assert.Equal(PenaltyStatus.Confirmed, bc.PenaltyStatus);
@@ -107,9 +108,11 @@ public class CancellationDebitNoteCaptureTests
 
         // Auditoria: clasificador (concepto cambio respecto del default pass-through).
         Assert.Equal("user-backoffice", bc.ConceptClassifiedByUserId);
+        Assert.Equal("Back Office", bc.ConceptClassifiedByUserName);
         Assert.NotNull(bc.ConceptClassifiedAt);
-        // Auditoria: confirmador (estado Confirmed).
+        // Auditoria: confirmador (estado Confirmed). M1: persiste tambien el nombre.
         Assert.Equal("user-backoffice", bc.PenaltyConfirmedByUserId);
+        Assert.Equal("Back Office", bc.PenaltyConfirmedByUserName);
         Assert.NotNull(bc.PenaltyConfirmedAt);
     }
 
@@ -123,7 +126,8 @@ public class CancellationDebitNoteCaptureTests
             status: PenaltyStatus.Confirmed,
             amount: 5_000m); // sin purpose explicito
 
-        svc.CaptureDebitNoteClassification(bc, req, "u", "n", userCanClassifyAgencyPenalty: true);
+        svc.CaptureDebitNoteClassification(bc, req, "u", "n",
+            userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true);
 
         // El service defaultea la finalidad al unico caso que el MVP automatiza.
         Assert.Equal(DebitNotePurpose.PenaltyOrCancellationCharge, bc.DebitNotePurpose);
@@ -141,7 +145,8 @@ public class CancellationDebitNoteCaptureTests
         var bc = NewDraftBc(supplierOwnership: PenaltyOwnership.Operator);
         var req = RequestWith(); // todo null
 
-        svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor", userCanClassifyAgencyPenalty: false);
+        svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor",
+            userCanClassifyAgencyPenalty: false, debitNoteFeatureEnabled: true);
 
         // Default conservador: pass-through (NO ND), igual a hoy.
         Assert.Equal(CancellationConceptKind.OperatorPenaltyPassThrough, bc.ConceptKind);
@@ -154,16 +159,40 @@ public class CancellationDebitNoteCaptureTests
     }
 
     [Fact]
-    public void Capture_NoClassification_OperatorIsAgency_SuggestsAgencyFee_ButNeedsPermission()
+    public void Capture_NoClassification_OperatorIsAgency_NoPermission_DegradesToPassThrough_NoThrow()
     {
+        // B2-back (review 2026-06-01): el operador esta marcado Agency, asi que el DEFAULT
+        // sugerido es agency-owned. Pero el usuario NO informo el concepto a mano y NO tiene
+        // el permiso. Antes esto lanzaba INV-ADR013-PERM y abortaba un confirm que hoy
+        // funciona; ahora degrada conservador a pass-through (NO ND) SIN lanzar excepcion.
         var svc = BuildService();
         var bc = NewDraftBc(supplierOwnership: PenaltyOwnership.Agency);
         var req = RequestWith(); // no informa concepto -> el default sale del operador (Agency)
 
-        // El default sugerido es AgencyCancellationFee (ingreso propio) -> exige permiso.
-        // Sin permiso, debe rechazar aunque el usuario no haya informado el concepto a mano.
-        Assert.Throws<BusinessInvariantViolationException>(() =>
-            svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor", userCanClassifyAgencyPenalty: false));
+        // No lanza.
+        svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor",
+            userCanClassifyAgencyPenalty: false, debitNoteFeatureEnabled: true);
+
+        // Degradacion conservadora: pass-through, NO ND.
+        Assert.Equal(CancellationConceptKind.OperatorPenaltyPassThrough, bc.ConceptKind);
+        // No cambio respecto del default de la entidad -> no se setea clasificador.
+        Assert.Null(bc.ConceptClassifiedByUserId);
+    }
+
+    [Fact]
+    public void Capture_NoClassification_OperatorIsAgency_WithPermission_AppliesAgencyFee()
+    {
+        // Contraparte del test de arriba: el MISMO escenario (default por operador Agency,
+        // sin concepto explicito) pero con el permiso -> aplica el default agency-owned.
+        var svc = BuildService();
+        var bc = NewDraftBc(supplierOwnership: PenaltyOwnership.Agency);
+        var req = RequestWith();
+
+        svc.CaptureDebitNoteClassification(bc, req, "backoffice", "Back Office",
+            userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true);
+
+        Assert.Equal(CancellationConceptKind.AgencyCancellationFee, bc.ConceptKind);
+        Assert.Equal("backoffice", bc.ConceptClassifiedByUserId);
     }
 
     // =====================================================================
@@ -180,7 +209,8 @@ public class CancellationDebitNoteCaptureTests
         var req = RequestWith(concept: concept, status: PenaltyStatus.Confirmed, amount: 1_000m);
 
         var ex = Assert.Throws<BusinessInvariantViolationException>(() =>
-            svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor", userCanClassifyAgencyPenalty: false));
+            svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor",
+                userCanClassifyAgencyPenalty: false, debitNoteFeatureEnabled: true));
         Assert.Equal("INV-ADR013-PERM", ex.InvariantCode);
 
         // Y NO debe haber tocado el concepto (rechazo antes de mutar).
@@ -195,7 +225,8 @@ public class CancellationDebitNoteCaptureTests
         var bc = NewDraftBc();
         var req = RequestWith(concept: CancellationConceptKind.OperatorPenaltyPassThrough);
 
-        svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor", userCanClassifyAgencyPenalty: false);
+        svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor",
+            userCanClassifyAgencyPenalty: false, debitNoteFeatureEnabled: true);
         Assert.Equal(CancellationConceptKind.OperatorPenaltyPassThrough, bc.ConceptKind);
     }
 
@@ -217,7 +248,8 @@ public class CancellationDebitNoteCaptureTests
         var req = RequestWith(concept: CancellationConceptKind.OperatorPenaltyPassThrough);
 
         var ex = Assert.Throws<BusinessInvariantViolationException>(() =>
-            svc.CaptureDebitNoteClassification(bc, req, "admin", "Admin", userCanClassifyAgencyPenalty: true));
+            svc.CaptureDebitNoteClassification(bc, req, "admin", "Admin",
+                userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true));
         Assert.Equal("INV-ADR013-002", ex.InvariantCode);
     }
 
@@ -232,7 +264,8 @@ public class CancellationDebitNoteCaptureTests
         var req = RequestWith(concept: CancellationConceptKind.AgencyCancellationFee); // cambio real
 
         var ex = Assert.Throws<BusinessInvariantViolationException>(() =>
-            svc.CaptureDebitNoteClassification(bc, req, "admin", "Admin", userCanClassifyAgencyPenalty: true));
+            svc.CaptureDebitNoteClassification(bc, req, "admin", "Admin",
+                userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true));
         Assert.Equal("INV-ADR013-002", ex.InvariantCode);
     }
 
@@ -249,8 +282,62 @@ public class CancellationDebitNoteCaptureTests
         var req = RequestWith(concept: CancellationConceptKind.AgencyManagementFee);
 
         // No lanza.
-        svc.CaptureDebitNoteClassification(bc, req, "admin", "Admin", userCanClassifyAgencyPenalty: true);
+        svc.CaptureDebitNoteClassification(bc, req, "admin", "Admin",
+            userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true);
         Assert.Equal(CancellationConceptKind.AgencyManagementFee, bc.ConceptKind);
+    }
+
+    // =====================================================================
+    // (B1) Flag OFF: la captura NO toca NADA ni lanza, aunque el request traiga
+    //      los 4 campos de clasificacion. Garantiza byte-identidad con d29ac8a.
+    // =====================================================================
+
+    [Fact]
+    public void Capture_FeatureFlagOff_DoesNotMutateAnything_NoThrow()
+    {
+        var svc = BuildService();
+        var bc = NewDraftBc();
+        // Request "agresivo": pide clasificar como ingreso propio + confirmado + monto,
+        // SIN permiso (que con el flag ON dispararia INV-ADR013-PERM). Con el flag OFF
+        // todo esto debe ignorarse por completo.
+        var req = RequestWith(
+            concept: CancellationConceptKind.AgencyManagementFee,
+            status: PenaltyStatus.Confirmed,
+            purpose: DebitNotePurpose.PenaltyOrCancellationCharge,
+            amount: 30_000m);
+
+        // No lanza (ni INV-ADR013-PERM ni INV-ADR013-002).
+        svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor",
+            userCanClassifyAgencyPenalty: false, debitNoteFeatureEnabled: false);
+
+        // NADA muto: el BC queda con los defaults de la entidad (= comportamiento d29ac8a).
+        Assert.Equal(CancellationConceptKind.OperatorPenaltyPassThrough, bc.ConceptKind);
+        Assert.Equal(PenaltyStatus.Estimated, bc.PenaltyStatus);
+        Assert.Null(bc.DebitNotePurpose);
+        Assert.Null(bc.PenaltyAmountAtEvent);
+        Assert.Null(bc.ConceptClassifiedByUserId);
+        Assert.Null(bc.ConceptClassifiedByUserName);
+        Assert.Null(bc.ConceptClassifiedAt);
+        Assert.Null(bc.PenaltyConfirmedByUserId);
+        Assert.Null(bc.PenaltyConfirmedByUserName);
+        Assert.Null(bc.PenaltyConfirmedAt);
+    }
+
+    [Fact]
+    public void Capture_FeatureFlagOff_SupplierAgency_StaysPassThrough()
+    {
+        // Mismo escenario que activaba la disyuncion anti-doble-cobro en OperatorRefundService:
+        // un supplier PenaltyOwnership.Agency. Con el flag OFF, el concepto NO debe quedar
+        // agency-owned -> la disyuncion nunca se activa (regresion clave de B1).
+        var svc = BuildService();
+        var bc = NewDraftBc(supplierOwnership: PenaltyOwnership.Agency);
+        var req = RequestWith();
+
+        svc.CaptureDebitNoteClassification(bc, req, "vendedor", "Vendedor",
+            userCanClassifyAgencyPenalty: false, debitNoteFeatureEnabled: false);
+
+        Assert.Equal(CancellationConceptKind.OperatorPenaltyPassThrough, bc.ConceptKind);
+        Assert.False(BookingCancellationService.ConceptIsAgencyOwnedDebitNote(bc.ConceptKind));
     }
 
     // =====================================================================

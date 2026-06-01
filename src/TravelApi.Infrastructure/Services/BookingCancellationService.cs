@@ -388,7 +388,17 @@ public class BookingCancellationService
         // Lo hacemos ANTES de la transicion (step 8) y de encolar la NC, asi cuando
         // mas tarde corra OnArcaSucceededAsync (post-CAE de la NC), el BC ya tiene la
         // clasificacion seteada y el gating de la ND la lee.
-        CaptureDebitNoteClassification(bc, request, userId, userName, userCanClassifyAgencyPenalty);
+        //
+        // B1 (review 2026-06-01): la captura SOLO corre si el flag de la ND esta ON.
+        // Cargamos settings ACA (y lo reusamos para la rama NC parcial mas abajo) para
+        // decidirlo. Con EnableCancellationDebitNote=false el metodo NO toca ningun campo
+        // de clasificacion ni lanza excepcion -> ConfirmAsync queda byte-identico al
+        // comportamiento previo a ADR-013 (commit d29ac8a), donde ConceptKind nunca se
+        // escribia y quedaba en su default OperatorPenaltyPassThrough.
+        var settings = await _settings.GetEntityAsync(ct);
+        CaptureDebitNoteClassification(
+            bc, request, userId, userName, userCanClassifyAgencyPenalty,
+            debitNoteFeatureEnabled: settings.EnableCancellationDebitNote);
 
         // ===================================================================
         // FC1.3.3 (ADR-009 §2.3.5 + §2.9 + §2.11, 2026-05-21): rama NC parcial.
@@ -414,7 +424,7 @@ public class BookingCancellationService
         //    SubmitForReviewAsync que crea el ApprovalRequest, transiciona el
         //    BC a ManualReviewPending y retorna directo. NO caemos al step 8.
         // ===================================================================
-        var settings = await _settings.GetEntityAsync(ct);
+        // settings ya fue cargado arriba (step 7-bis) para gatear la captura de la ND.
         if (settings.EnablePartialCreditNotes)
         {
             // (a) INV-FC1.3-007: solo Hotel. Patron real lineas 256-285 de override.
@@ -1746,30 +1756,40 @@ public class BookingCancellationService
         ConfirmCancellationRequest request,
         string userId,
         string? userName,
-        bool userCanClassifyAgencyPenalty)
+        bool userCanClassifyAgencyPenalty,
+        // B1 (review 2026-06-01): si el flag de la ND esta OFF, este metodo NO debe tocar
+        // NINGUN campo ni lanzar excepcion -> ConfirmAsync queda byte-identico a hoy.
+        bool debitNoteFeatureEnabled)
     {
-        // (0) Resolver el concepto que el usuario quiere aplicar. Si no informo nada,
-        //     sugerimos el default a partir del operador (PenaltyOwnership). Es la regla
-        //     "depende del operador": el default sale del acuerdo del proveedor, pero el
-        //     usuario puede overridearlo informando un concepto explicito.
-        var requestedConcept = request.PenaltyConceptKind
+        // (B1) Flag OFF -> short-circuit total. No mutamos ConceptKind/PenaltyStatus/
+        //      PenaltyAmountAtEvent/DebitNotePurpose ni la auditoria, y NO lanzamos
+        //      INV-ADR013-PERM/INV-ADR013-002. El BC se queda con sus defaults
+        //      conservadores (pass-through / Estimated) exactamente como en d29ac8a,
+        //      asi la disyuncion anti-doble-cobro en OperatorRefundService nunca se
+        //      activa (ConceptKind queda pass-through, no agency-owned).
+        if (!debitNoteFeatureEnabled)
+            return;
+
+        // (0) Resolver el concepto que el usuario quiere aplicar. Distinguimos dos casos
+        //     porque afectan la guarda de permiso (B2-back):
+        //       - conceptExplicit: el usuario lo informo en el request (decision deliberada).
+        //       - requestedConcept: el efectivo, que cae al default por operador
+        //         (PenaltyOwnership) si el usuario no informo nada ("depende del operador").
+        var conceptExplicit = request.PenaltyConceptKind;
+        var requestedConcept = conceptExplicit
             ?? DefaultConceptFromSupplier(bc.Supplier?.PenaltyOwnership);
 
-        // (1) Guarda anti-reclasificacion (B/bloqueante). Si la ND ya esta en juego, el
-        //     concepto NO se puede cambiar: hacerlo abriria una ventana de doble cobro
-        //     (ej. emitir la ND y despues reclasificar a pass-through + cargar la penalidad
-        //     como deduction del refund). Bloqueamos cualquier CAMBIO de concepto en ese
-        //     estado. Si el concepto requerido es el MISMO que ya tiene, es un no-op y se
-        //     permite (no hay reclasificacion real).
-        EnsureConceptNotLockedByDebitNote(bc, requestedConcept);
-
-        // (2) Guarda de permiso (Importante). Clasificar como ingreso propio de la agencia
-        //     dispara una ND fiscal real -> exige permiso elevado. Solo chequeamos cuando
-        //     el concepto requerido ES de ND propia: pass-through / seguros no necesitan
-        //     el permiso (no emiten ND automatica). Defensa en profundidad: aunque el flag
-        //     EnableCancellationDebitNote este OFF, igual exigimos el permiso para que el
-        //     dato no se cargue sin control (cuando se prenda el flag, ya estaria seteado).
-        if (ConceptIsAgencyOwnedDebitNote(requestedConcept) && !userCanClassifyAgencyPenalty)
+        // (B2-back, review 2026-06-01) Guarda de permiso acotada al concepto EXPLICITO.
+        //     Clasificar como ingreso propio de la agencia dispara una ND fiscal real ->
+        //     exige permiso elevado. Pero SOLO lo exigimos cuando el usuario lo pidio
+        //     EXPLICITAMENTE (AgencyManagementFee/AgencyCancellationFee en el request). Si
+        //     el concepto agency-owned proviene del DEFAULT derivado del supplier (operador
+        //     marcado como Agency) y el usuario no tiene el permiso, NO abortamos el confirm:
+        //     degradamos conservador a pass-through (NO ND, igual a hoy). Asi un vendedor sin
+        //     permiso puede cancelar sobre un operador Agency sin que el confirm explote; la
+        //     ND simplemente no se dispara (queda para quien tenga el permiso).
+        if (conceptExplicit.HasValue && ConceptIsAgencyOwnedDebitNote(conceptExplicit.Value) &&
+            !userCanClassifyAgencyPenalty)
         {
             throw new BusinessInvariantViolationException(
                 "Clasificar la penalidad como ingreso propio de la agencia emite una Nota " +
@@ -1778,6 +1798,27 @@ public class BookingCancellationService
                 invariantCode: "INV-ADR013-PERM");
         }
 
+        // Degradacion conservadora: el default por operador sugiere agency-owned pero el
+        // usuario no tiene permiso para disparar la ND. No lanzamos: dejamos pass-through.
+        if (!conceptExplicit.HasValue && ConceptIsAgencyOwnedDebitNote(requestedConcept) &&
+            !userCanClassifyAgencyPenalty)
+        {
+            _logger.LogInformation(
+                "ADR-013 capture: BC {BcPublicId} operador sugiere ND propia (default por " +
+                "PenaltyOwnership) pero el usuario {UserId} no tiene permiso. Degrada a " +
+                "pass-through (NO ND).", bc.PublicId, userId);
+            requestedConcept = CancellationConceptKind.OperatorPenaltyPassThrough;
+        }
+
+        // (1) Guarda anti-reclasificacion (B/bloqueante). Si la ND ya esta en juego, el
+        //     concepto NO se puede cambiar: hacerlo abriria una ventana de doble cobro
+        //     (ej. emitir la ND y despues reclasificar a pass-through + cargar la penalidad
+        //     como deduction del refund). Bloqueamos cualquier CAMBIO de concepto en ese
+        //     estado. Si el concepto requerido es el MISMO que ya tiene, es un no-op y se
+        //     permite (no hay reclasificacion real). Va DESPUES de resolver la degradacion
+        //     para no rechazar un confirm que en realidad no cambia el concepto.
+        EnsureConceptNotLockedByDebitNote(bc, requestedConcept);
+
         // (3) Auditoria del clasificador (B/bloqueante, §3.11): registramos quien clasifico
         //     el concepto SOLO si cambia respecto del valor actual (evita pisar el rastro de
         //     una clasificacion previa con un confirm que no toca el concepto).
@@ -1785,6 +1826,7 @@ public class BookingCancellationService
         {
             bc.ConceptKind = requestedConcept;
             bc.ConceptClassifiedByUserId = userId;
+            bc.ConceptClassifiedByUserName = userName;
             bc.ConceptClassifiedAt = DateTime.UtcNow;
         }
 
@@ -1815,6 +1857,7 @@ public class BookingCancellationService
         {
             // Auditoria de la confirmacion (§3.8, R5): quien y cuando confirmo el monto.
             bc.PenaltyConfirmedByUserId = userId;
+            bc.PenaltyConfirmedByUserName = userName;
             bc.PenaltyConfirmedAt = DateTime.UtcNow;
         }
 
@@ -1823,10 +1866,6 @@ public class BookingCancellationService
             "amount={Amount} by {UserId}.",
             bc.PublicId, bc.ConceptKind, bc.PenaltyStatus, bc.DebitNotePurpose,
             bc.PenaltyAmountAtEvent, userId);
-
-        // Silenciar el warning de variable no usada en builds donde userName no se loguea:
-        // lo mantenemos en la firma por simetria con el resto del modulo (audit names).
-        _ = userName;
     }
 
     /// <summary>
@@ -1886,6 +1925,19 @@ public class BookingCancellationService
         // Penalidad confirmada por el operador (R5): no se emite sobre estimada.
         if (bc.PenaltyStatus != PenaltyStatus.Confirmed)
             return "La penalidad no esta confirmada (Estimated): no se emite ND sobre un estimado.";
+
+        // (B3, review 2026-06-01) Auditoria como INVARIANTE del gating, no como convencion.
+        //   La ND es la decision fiscalmente mas sensible: exigimos rastro de QUIEN clasifico
+        //   el concepto y QUIEN confirmo el monto. Hay caminos donde estos quedan NULL y la
+        //   ND seria igual emitible (ej. un BC ya creado con ConceptKind=AgencyCancellationFee
+        //   + un Confirm que lo deja igual: el `if (bc.ConceptKind != requested)` de la captura
+        //   es falso y nunca setea ConceptClassifiedByUserId). Sin clasificador/confirmador
+        //   conocido, NO emitimos: a revision manual. Asi la auditoria es obligatoria por
+        //   construccion, no por confianza en el orden de las mutaciones.
+        if (bc.ConceptClassifiedByUserId is null)
+            return "Falta el rastro de quien clasifico el concepto de la penalidad (auditoria): revision manual.";
+        if (bc.PenaltyConfirmedByUserId is null)
+            return "Falta el rastro de quien confirmo la penalidad (auditoria): revision manual.";
 
         // Finalidad: el MVP solo automatiza PenaltyOrCancellationCharge.
         if (bc.DebitNotePurpose != TravelApi.Domain.Entities.DebitNotePurpose.PenaltyOrCancellationCharge)
