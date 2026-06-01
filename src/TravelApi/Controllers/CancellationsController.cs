@@ -50,13 +50,18 @@ public class CancellationsController : ControllerBase
 {
     private readonly IBookingCancellationService _bcService;
     private readonly IOwnershipResolver _ownershipResolver;
+    // ADR-013: para resolver server-side si el usuario puede clasificar la penalidad
+    // como ingreso propio de la agencia (permiso elevado que dispara la ND fiscal).
+    private readonly IUserPermissionResolver _permissionResolver;
 
     public CancellationsController(
         IBookingCancellationService bcService,
-        IOwnershipResolver ownershipResolver)
+        IOwnershipResolver ownershipResolver,
+        IUserPermissionResolver permissionResolver)
     {
         _bcService = bcService;
         _ownershipResolver = ownershipResolver;
+        _permissionResolver = permissionResolver;
     }
 
     /// <summary>
@@ -132,9 +137,20 @@ public class CancellationsController : ControllerBase
         var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
         var requesterIsAdmin = User.IsInRole("Admin");
 
+        // ADR-013: resolvemos SERVER-SIDE si el usuario puede clasificar la penalidad como
+        // ingreso propio de la agencia (lo que dispara una ND fiscal real). El Admin lo
+        // puede siempre (bypass de rol). El resto necesita el permiso dedicado. No confiamos
+        // en el frontend para esta decision fiscalmente sensible. El service exige este flag
+        // cuando la clasificacion del request es de ingreso propio.
+        var userCanClassifyAgencyPenalty = requesterIsAdmin
+            || (await _permissionResolver.GetPermissionsAsync(userId, cancellationToken))
+                .Contains(Permissions.CancellationsClassifyAgencyPenalty);
+
         try
         {
-            var dto = await _bcService.ConfirmAsync(publicId, request, userId, userName, requesterIsAdmin, cancellationToken);
+            var dto = await _bcService.ConfirmAsync(
+                publicId, request, userId, userName, requesterIsAdmin, cancellationToken,
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
             return Ok(dto);
         }
         catch (KeyNotFoundException)

@@ -137,7 +137,46 @@ public record ConfirmCancellationRequest(
     [Required] FiscalSnapshotData SnapshotData,
     bool IsAdminOverride,
     [MaxLength(500)] string? OverrideReason,
-    Guid? ApprovalRequestPublicId
+    Guid? ApprovalRequestPublicId,
+
+    // ===================================================================
+    // ADR-013 (2026-06-01): captura de la clasificacion de la penalidad.
+    //
+    // TODOS opcionales (nullable) para NO romper el contrato actual: si el
+    // frontend no manda nada, el BC queda con sus defaults conservadores
+    // (pass-through / Estimated) y el comportamiento es byte-identico a hoy
+    // (NC total, sin ND). Con el flag EnableCancellationDebitNote OFF estos
+    // campos se ignoran aunque vengan seteados.
+    //
+    // El usuario, al confirmar la penalidad con el operador, informa:
+    //  - ConceptKind: si la penalidad es propia de la agencia (ingreso gravado
+    //    -> ND) o del operador (pass-through -> NO ND). Si null, el service
+    //    sugiere el default a partir de Supplier.PenaltyOwnership del operador.
+    //  - PenaltyStatus: Confirmed cuando el operador confirmo el monto.
+    //  - DebitNotePurpose: la finalidad (MVP solo PenaltyOrCancellationCharge).
+    //  - ConfirmedPenaltyAmount: el monto confirmado de la penalidad.
+    // ===================================================================
+
+    /// <summary>
+    /// ADR-013 (R4): naturaleza fiscal del concepto. Null = el service decide el
+    /// default segun el operador (Supplier.PenaltyOwnership). Clasificar como
+    /// ingreso propio de la agencia (AgencyManagementFee / AgencyCancellationFee)
+    /// exige el permiso <c>cancellations.classify_agency_penalty</c>.
+    /// </summary>
+    CancellationConceptKind? PenaltyConceptKind = null,
+
+    /// <summary>ADR-013 (R5): estado de la penalidad. Solo Confirmed dispara la ND.</summary>
+    PenaltyStatus? PenaltyStatus = null,
+
+    /// <summary>ADR-013 (R3): finalidad de la ND. MVP automatiza PenaltyOrCancellationCharge.</summary>
+    DebitNotePurpose? DebitNotePurpose = null,
+
+    /// <summary>
+    /// ADR-013 (§3.8): monto confirmado de la penalidad. Debe ser &gt; 0 si se
+    /// informa. Se congela como <c>PenaltyAmountAtEvent</c> al disparar la ND.
+    /// </summary>
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto de la penalidad debe ser mayor a cero.")]
+    decimal? ConfirmedPenaltyAmount = null
 );
 
 /// <summary>

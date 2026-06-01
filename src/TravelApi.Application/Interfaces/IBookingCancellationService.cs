@@ -60,13 +60,26 @@ public interface IBookingCancellationService
     /// <c>IsAdminOverride=true</c>, requiere un <c>InvariantOverride</c> aprobado.
     /// Throws <c>ApprovalRequiredException</c> sino.
     /// </summary>
+    /// <param name="userCanClassifyAgencyPenalty">
+    /// ADR-013: true si el caller tiene el permiso
+    /// <c>cancellations.classify_agency_penalty</c> (o es Admin). Lo resuelve el
+    /// controller contra los claims del usuario. El service lo exige cuando la
+    /// clasificacion del request es "ingreso propio de la agencia" (dispara ND
+    /// fiscal): un vendedor comun NO puede disparar una ND.
+    /// </param>
     Task<BookingCancellationDto> ConfirmAsync(
         Guid publicId,
         ConfirmCancellationRequest request,
         string userId,
         string? userName,
         bool requesterIsAdmin,
-        CancellationToken ct);
+        CancellationToken ct,
+        // ADR-013: lo ponemos DESPUES del CancellationToken con default false para no
+        // romper los callers posicionales existentes (pasan el token como ultimo arg) y
+        // mantener conservador por default. El controller lo pasa nombrado con el valor
+        // real resuelto contra el permiso. NUNCA defaultear a true (abriria la ND a
+        // cualquier caller).
+        bool userCanClassifyAgencyPenalty = false);
 
     /// <summary>
     /// Aborta un BC en <c>Drafted</c>. Idempotente: si ya esta <c>Aborted</c>,

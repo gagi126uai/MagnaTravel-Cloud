@@ -177,6 +177,22 @@ public class CancellationDebitNoteGatingTests
         Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(HappyBc(), invoice));
     }
 
+    [Fact]
+    public void EmptyTributesCollection_GatingAlonePasses_DocumentsFalseNegative()
+    {
+        // ADR-013 fix del falso negativo de Tributos: el gating PURO solo ve la coleccion
+        // en memoria. Si la factura llegara SIN el Include de Tributes, la coleccion queda
+        // VACIA (default del constructor de Invoice, NO null), asi que el gating por si solo
+        // devolveria null (emitiria) aunque la BD tenga IIBB. Este test PINEA ese limite del
+        // gating puro y documenta por que NO alcanza con el gating: la proteccion real son
+        // (1) el Include .ThenInclude(i => i.Tributes) en OnArcaSucceededAsync y (2) el
+        // fail-safe que consulta los tributos directamente contra la BD antes de emitir
+        // (ambos cubiertos por integration tests con Postgres real).
+        var invoice = HappyInvoice();
+        invoice.Tributes = new List<InvoiceTribute>(); // coleccion cargada vacia (sin Include)
+        Assert.Null(BookingCancellationService.EvaluateDebitNoteGating(HappyBc(), invoice));
+    }
+
     // ---- Disyuncion anti-doble-cobro (INV-ADR013-001, §3.3) ----
 
     /// <summary>

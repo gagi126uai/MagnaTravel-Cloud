@@ -254,7 +254,12 @@ public class BookingCancellationService
         // checks de policy y para mantener simetria con IPaymentService /
         // IInvoiceService que tambien lo aceptan.
         bool requesterIsAdmin,
-        CancellationToken ct)
+        CancellationToken ct,
+        // ADR-013: el caller puede clasificar la penalidad como ingreso propio de la
+        // agencia (lo que dispara una ND fiscal). Lo resuelve el controller contra el
+        // permiso cancellations.classify_agency_penalty. Va DESPUES del CancellationToken
+        // con default false para no romper callers posicionales legacy y ser conservador.
+        bool userCanClassifyAgencyPenalty = false)
     {
         await EnsureFeatureFlagOnAsync(ct);
 
@@ -271,6 +276,9 @@ public class BookingCancellationService
             .Include(b => b.Reserva)
             .Include(b => b.OriginatingInvoice)
                 .ThenInclude(i => i.Tributes)
+            // ADR-013: Supplier para poder sugerir el default de la clasificacion de la
+            // penalidad a partir de Supplier.PenaltyOwnership ("depende del operador").
+            .Include(b => b.Supplier)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
 
@@ -367,6 +375,20 @@ public class BookingCancellationService
             SupplierTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(supplierCanonical),
             CustomerTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(customerCanonical),
         };
+
+        // 7-bis) ADR-013 (2026-06-01): capturar la clasificacion de la penalidad.
+        //
+        // Aca es donde el usuario, al confirmar la cancelacion con el operador,
+        // informa si la penalidad es ingreso propio de la agencia (-> ND) o del
+        // operador (pass-through -> NO ND), el estado (Confirmed/Estimated), la
+        // finalidad y el monto confirmado. Si no informa nada, todo queda en los
+        // defaults conservadores (pass-through / Estimated) y el comportamiento es
+        // byte-identico a hoy (NC total, sin ND).
+        //
+        // Lo hacemos ANTES de la transicion (step 8) y de encolar la NC, asi cuando
+        // mas tarde corra OnArcaSucceededAsync (post-CAE de la NC), el BC ya tiene la
+        // clasificacion seteada y el gating de la ND la lee.
+        CaptureDebitNoteClassification(bc, request, userId, userName, userCanClassifyAgencyPenalty);
 
         // ===================================================================
         // FC1.3.3 (ADR-009 §2.3.5 + §2.9 + §2.11, 2026-05-21): rama NC parcial.
@@ -1412,6 +1434,14 @@ public class BookingCancellationService
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
             .Include(b => b.OriginatingInvoice)
+                // ADR-013 (fix falso negativo de Tributos): el gating de la ND rutea a
+                // revision manual las facturas con tributos provinciales (IIBB). SIN este
+                // ThenInclude, EF deja Invoice.Tributes con su default del constructor (lista
+                // VACIA, no null), asi que el gating leeria "0 tributos" aunque la BD tenga
+                // IIBB -> emitiria una ND sobre una factura que debia ir a manual. Con el
+                // Include, el gating ve los tributos reales. (El proyecto NO usa lazy loading,
+                // ver Program.cs AddDbContext, por eso el Include es obligatorio.)
+                .ThenInclude(i => i.Tributes)
             .Include(b => b.Supplier)
             .FirstOrDefaultAsync(b =>
                 b.OriginatingInvoiceId == originatingInvoiceId &&
@@ -1524,6 +1554,28 @@ public class BookingCancellationService
                 "ADR-013: BC {BcPublicId} sin OriginatingInvoice cargada. Se rutea a revision manual.",
                 bc.PublicId);
             await RouteDebitNoteToManualReviewAsync(bc, "OriginatingInvoice no cargada.", ct);
+            return;
+        }
+
+        // (1-bis) FAIL-SAFE de Tributos (defensa en profundidad del fix del Include).
+        //     El gating chequea originatingInvoice.Tributes para mandar a manual las
+        //     facturas con IIBB. Esa coleccion se inicializa VACIA en el constructor de
+        //     Invoice, asi que si por algun camino llego sin el ThenInclude, leeriamos
+        //     "0 tributos" (falso negativo) y emitiriamos una ND sobre una factura con
+        //     IIBB. Para no depender SOLO del Include, verificamos la existencia de
+        //     tributos directamente contra la BD (no contra la coleccion en memoria). Si
+        //     la BD dice que hay tributos pero la coleccion cargada no los tiene, forzamos
+        //     manual. Es una query barata y conservadora (ante la duda, NO emitir).
+        var dbTributesCount = await _db.Set<InvoiceTribute>()
+            .CountAsync(t => t.InvoiceId == originatingInvoice.Id, ct);
+        if (dbTributesCount > 0 && (originatingInvoice.Tributes?.Count ?? 0) == 0)
+        {
+            _logger.LogWarning(
+                "ADR-013 fail-safe: BC {BcPublicId} factura {InvoiceId} tiene {Count} tributos en BD " +
+                "pero la coleccion cargada esta vacia (Include faltante). Rutea a revision manual.",
+                bc.PublicId, originatingInvoice.Id, dbTributesCount);
+            await RouteDebitNoteToManualReviewAsync(
+                bc, "Factura con tributos provinciales (fail-safe: coleccion no cargada).", ct);
             return;
         }
 
@@ -1662,6 +1714,160 @@ public class BookingCancellationService
     internal static bool ConceptIsAgencyOwnedDebitNote(CancellationConceptKind concept) =>
         concept == CancellationConceptKind.AgencyManagementFee ||
         concept == CancellationConceptKind.AgencyCancellationFee;
+
+    /// <summary>
+    /// ADR-013 (2026-06-01): aplica al BC la clasificacion de la penalidad que viene en
+    /// el request de Confirm. Es el wiring de captura: traduce lo que el usuario informo
+    /// (concepto / estado / finalidad / monto) a los campos del <see cref="BookingCancellation"/>
+    /// que el gating de la ND lee mas tarde.
+    ///
+    /// <para><b>Conservador</b>: si el request no informa concepto, sugiere el default a
+    /// partir de <c>Supplier.PenaltyOwnership</c> del operador ("depende del operador",
+    /// §3.7). Si el operador retiene la penalidad (pass-through, default), el concepto
+    /// queda en pass-through -> NO ND, igual a hoy.</para>
+    ///
+    /// <para><b>Guardas de seguridad (security review):</b>
+    /// <list type="number">
+    /// <item><b>Permiso elevado</b>: clasificar como ingreso propio de la agencia
+    /// (dispara ND fiscal real) exige <c>cancellations.classify_agency_penalty</c>. Si el
+    /// caller no lo tiene, se rechaza (un vendedor comun no dispara una ND).</item>
+    /// <item><b>Anti-reclasificacion</b>: no se puede cambiar el concepto cuando la ND ya
+    /// esta en juego (<see cref="DebitNoteStatus.Pending"/>/<see cref="DebitNoteStatus.Issued"/>
+    /// o ya hay <c>DebitNoteInvoiceId</c>). Cierra la ventana de doble cobro por edicion.</item>
+    /// <item><b>Auditoria</b>: setea quien clasifico el concepto y quien confirmo la
+    /// penalidad (la decision fiscalmente mas sensible, §3.11).</item>
+    /// </list></para>
+    /// </summary>
+    // internal (no private) para que los tests unit puedan ejercer la captura + las
+    // guardas (permiso / anti-reclasificacion / auditoria) sin levantar DB: el metodo
+    // solo muta el BC en memoria y loguea, no toca _db. InternalsVisibleTo("TravelApi.Tests").
+    internal void CaptureDebitNoteClassification(
+        BookingCancellation bc,
+        ConfirmCancellationRequest request,
+        string userId,
+        string? userName,
+        bool userCanClassifyAgencyPenalty)
+    {
+        // (0) Resolver el concepto que el usuario quiere aplicar. Si no informo nada,
+        //     sugerimos el default a partir del operador (PenaltyOwnership). Es la regla
+        //     "depende del operador": el default sale del acuerdo del proveedor, pero el
+        //     usuario puede overridearlo informando un concepto explicito.
+        var requestedConcept = request.PenaltyConceptKind
+            ?? DefaultConceptFromSupplier(bc.Supplier?.PenaltyOwnership);
+
+        // (1) Guarda anti-reclasificacion (B/bloqueante). Si la ND ya esta en juego, el
+        //     concepto NO se puede cambiar: hacerlo abriria una ventana de doble cobro
+        //     (ej. emitir la ND y despues reclasificar a pass-through + cargar la penalidad
+        //     como deduction del refund). Bloqueamos cualquier CAMBIO de concepto en ese
+        //     estado. Si el concepto requerido es el MISMO que ya tiene, es un no-op y se
+        //     permite (no hay reclasificacion real).
+        EnsureConceptNotLockedByDebitNote(bc, requestedConcept);
+
+        // (2) Guarda de permiso (Importante). Clasificar como ingreso propio de la agencia
+        //     dispara una ND fiscal real -> exige permiso elevado. Solo chequeamos cuando
+        //     el concepto requerido ES de ND propia: pass-through / seguros no necesitan
+        //     el permiso (no emiten ND automatica). Defensa en profundidad: aunque el flag
+        //     EnableCancellationDebitNote este OFF, igual exigimos el permiso para que el
+        //     dato no se cargue sin control (cuando se prenda el flag, ya estaria seteado).
+        if (ConceptIsAgencyOwnedDebitNote(requestedConcept) && !userCanClassifyAgencyPenalty)
+        {
+            throw new BusinessInvariantViolationException(
+                "Clasificar la penalidad como ingreso propio de la agencia emite una Nota " +
+                "de Debito fiscal y requiere el permiso 'cancellations.classify_agency_penalty'. " +
+                "Tu usuario no lo tiene.",
+                invariantCode: "INV-ADR013-PERM");
+        }
+
+        // (3) Auditoria del clasificador (B/bloqueante, §3.11): registramos quien clasifico
+        //     el concepto SOLO si cambia respecto del valor actual (evita pisar el rastro de
+        //     una clasificacion previa con un confirm que no toca el concepto).
+        if (bc.ConceptKind != requestedConcept)
+        {
+            bc.ConceptKind = requestedConcept;
+            bc.ConceptClassifiedByUserId = userId;
+            bc.ConceptClassifiedAt = DateTime.UtcNow;
+        }
+
+        // (4) Finalidad de la ND. Si el usuario no la informo pero clasifico a ND propia,
+        //     defaulteamos a PenaltyOrCancellationCharge (el unico caso que el MVP automatiza).
+        if (request.DebitNotePurpose.HasValue)
+        {
+            bc.DebitNotePurpose = request.DebitNotePurpose.Value;
+        }
+        else if (ConceptIsAgencyOwnedDebitNote(requestedConcept) && bc.DebitNotePurpose is null)
+        {
+            bc.DebitNotePurpose = TravelApi.Domain.Entities.DebitNotePurpose.PenaltyOrCancellationCharge;
+        }
+
+        // (5) Estado de la penalidad + monto confirmado. Solo seteamos PenaltyConfirmedBy*
+        //     cuando el usuario marca Confirmed (R5: la confirmacion es el acto auditable).
+        if (request.PenaltyStatus.HasValue)
+        {
+            bc.PenaltyStatus = request.PenaltyStatus.Value;
+        }
+
+        if (request.ConfirmedPenaltyAmount.HasValue)
+        {
+            bc.PenaltyAmountAtEvent = request.ConfirmedPenaltyAmount.Value;
+        }
+
+        if (bc.PenaltyStatus == PenaltyStatus.Confirmed)
+        {
+            // Auditoria de la confirmacion (§3.8, R5): quien y cuando confirmo el monto.
+            bc.PenaltyConfirmedByUserId = userId;
+            bc.PenaltyConfirmedAt = DateTime.UtcNow;
+        }
+
+        _logger.LogInformation(
+            "ADR-013 capture: BC {BcPublicId} concept={Concept} status={Status} purpose={Purpose} " +
+            "amount={Amount} by {UserId}.",
+            bc.PublicId, bc.ConceptKind, bc.PenaltyStatus, bc.DebitNotePurpose,
+            bc.PenaltyAmountAtEvent, userId);
+
+        // Silenciar el warning de variable no usada en builds donde userName no se loguea:
+        // lo mantenemos en la firma por simetria con el resto del modulo (audit names).
+        _ = userName;
+    }
+
+    /// <summary>
+    /// ADR-013 §3.7: traduce el "quien se queda la penalidad" del operador al concepto
+    /// por defecto. Operador retiene (default) -> pass-through (NO ND). Operador =
+    /// agencia -> cargo de cancelacion propio (candidato a ND, pero el usuario decide el
+    /// sub-tipo exacto si quiere). Conservador: ante la ausencia de dato, pass-through.
+    /// </summary>
+    internal static CancellationConceptKind DefaultConceptFromSupplier(PenaltyOwnership? ownership) =>
+        ownership == PenaltyOwnership.Agency
+            ? CancellationConceptKind.AgencyCancellationFee
+            : CancellationConceptKind.OperatorPenaltyPassThrough;
+
+    /// <summary>
+    /// ADR-013 (anti-reclasificacion, B/bloqueante): rechaza CAMBIAR el concepto de la
+    /// penalidad cuando la ND ya esta en juego. "En juego" = ya hay una ND vinculada
+    /// (<c>DebitNoteInvoiceId</c>) o el estado de la ND es Pending/Issued. Permitir el
+    /// cambio en ese momento abriria una ventana de doble cobro (emitir ND + despues
+    /// reclasificar a pass-through y netear la penalidad del refund). Si el concepto
+    /// requerido es identico al actual, NO es reclasificacion y se permite (no-op).
+    /// </summary>
+    internal static void EnsureConceptNotLockedByDebitNote(
+        BookingCancellation bc, CancellationConceptKind requestedConcept)
+    {
+        if (requestedConcept == bc.ConceptKind)
+            return; // mismo valor: no hay reclasificacion real.
+
+        var debitNoteInPlay =
+            bc.DebitNoteInvoiceId.HasValue ||
+            bc.DebitNoteStatus == DebitNoteStatus.Pending ||
+            bc.DebitNoteStatus == DebitNoteStatus.Issued;
+
+        if (debitNoteInPlay)
+        {
+            throw new BusinessInvariantViolationException(
+                "No se puede reclasificar el concepto de la penalidad: ya hay una Nota de " +
+                $"Debito en juego (estado {bc.DebitNoteStatus}). Cambiar el concepto ahora " +
+                "podria producir un doble cobro. Anula la ND antes de reclasificar.",
+                invariantCode: "INV-ADR013-002");
+        }
+    }
 
     // internal (no private) para que los tests unit puedan validar el gating sin DB:
     // el proyecto tiene InternalsVisibleTo("TravelApi.Tests"). Es una funcion pura.

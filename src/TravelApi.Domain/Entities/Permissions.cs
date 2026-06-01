@@ -104,6 +104,25 @@ public static class Permissions
     public const string CancellationsForceArcaConfirmation = "cancellations.force_arca_confirmation";
 
     /// <summary>
+    /// ADR-013 (2026-06-01): clasificar la penalidad de una cancelacion como
+    /// "ingreso propio de la agencia" (<c>AgencyManagementFee</c> /
+    /// <c>AgencyCancellationFee</c>). Es la decision FISCALMENTE mas sensible del
+    /// flujo: dispara la emision automatica de una Nota de Debito real al ARCA
+    /// (la agencia declara un ingreso propio gravado). Un error aca hace que la
+    /// agencia declare como venta propia plata que es del operador (riesgo fiscal).
+    ///
+    /// <para><b>Por que un permiso NUEVO y no reusamos <c>CobranzasInvoice</c></b>:
+    /// el Vendedor YA tiene <c>cobranzas.invoice</c> (factura reservas propias), asi
+    /// que ese permiso no separa "vendedor comun" de "back-office fiscal". El brief
+    /// de seguridad pide que un vendedor comun NO pueda disparar una ND. Por eso un
+    /// permiso dedicado que por default NO va a Vendedor (solo Admin lo tiene por el
+    /// bypass de rol; se agrega explicito al Colaborador como back-office fiscal).</para>
+    ///
+    /// <para>Default <b>solo Admin + Colaborador</b> — NO va a Vendedor.</para>
+    /// </summary>
+    public const string CancellationsClassifyAgencyPenalty = "cancellations.classify_agency_penalty";
+
+    /// <summary>
     /// Todos los permisos disponibles agrupados por módulo para la UI.
     /// </summary>
     public static readonly Dictionary<string, string[]> AllByModule = new()
@@ -114,6 +133,8 @@ public static class Permissions
             ReservasViewAll, ReservasCancel, ReservasCancelWithPayment, ReservasDiscountAboveThreshold,
             // FC1.2.1 (BR-V2-01): permission del modulo cancelacion/refund expuesto en UI Reservas.
             CancellationsForceArcaConfirmation,
+            // ADR-013: clasificar penalidad como ingreso propio (dispara ND fiscal).
+            CancellationsClassifyAgencyPenalty,
         },
         ["Vouchers"] = new[] { VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersAuthorizeException, VouchersRevoke },
         ["Mensajes"] = new[] { MessagesView, MessagesSend },
@@ -148,6 +169,9 @@ public static class Permissions
         // B1.15: el Colaborador opera reservas globalmente, puede cancelar (incluso con pagos)
         // y opera cobranzas/facturacion completas. NO discount_above_threshold (Admin-only por seguridad).
         ReservasViewAll, ReservasCancel, ReservasCancelWithPayment,
+        // ADR-013: el Colaborador es back-office fiscal -> puede clasificar la penalidad
+        // como ingreso propio de la agencia (dispara ND). El Vendedor NO (riesgo fiscal).
+        CancellationsClassifyAgencyPenalty,
         VouchersGenerate, VouchersIssue, VouchersUpload, VouchersSend, VouchersRevoke,
         MessagesView, MessagesSend,
         ClientesView, ClientesEdit,
