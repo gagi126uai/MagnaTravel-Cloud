@@ -73,3 +73,41 @@ Tengo un sistema (software) para mi agencia de viajes minorista. **Hoy soy Monot
 - Ley 18.829 + Dictamen DAT 44/01 (base imponible agencias de viaje): Infoleg / Consejo.
 
 > **Nota honesta:** todo esto lo verificamos con un asistente con acceso a internet contra fuentes oficiales, pero **no reemplaza tu firma profesional**. Estando en Monotributo el riesgo es bajo; las preguntas 3, 4 y 8 son sobre todo para **antes de pasar a Responsable Inscripto**.
+
+---
+
+## ✅ RESPUESTAS DEL CONTADOR MATRICULADO (2026-06-01)
+
+> Respondidas por un contador **matriculado** (confirmado por Gastón). Esto pasa de "borrador a confirmar" a **criterio profesional firmado**.
+
+1. **Cotización para facturar en USD:** correcto lo de la resolución → **vendedor divisa BNA, día hábil anterior** (RG 5616). Confirmado.
+
+2. **Dólar de la NC:** el **mismo de la factura original** (el del día que se facturó). Confirmado el criterio que ya teníamos.
+
+3. **Penalidad/cargo en una cancelación → CAMBIO DE MODELO IMPORTANTE.** No se hace una NC parcial. Lo correcto es: **Nota de Crédito por el TOTAL** (se anula la factura entera) **+ Nota de Débito por la penalidad** que exista. El sistema de penalizaciones depende de la **política de cada proveedor/operador**. Refleja la cadena: el operador mayorista, que también le facturó al minorista, le hace al minorista una **NC por el total + una ND por el cargo de anulación** que le cobra; el minorista hace lo mismo con su cliente.
+   - **Implica:** enterrar el enfoque de **NC parcial** (FC1.3 fase 2, flag `EnablePartialCreditNoteRealEmission`, hoy OFF) y construir **"NC total + ND por penalidad"**. El sistema HOY ya emite NC total; falta agregar la **emisión de Nota de Débito** por la penalidad.
+
+4. **Diferencia de cambio (factura USD vs cobro/devolución):** **se factura la diferencia en dólares** (factura nueva), porque el cliente va a pedir una factura por el cambio de cotización. NO es solo un resultado contable: genera comprobante.
+
+5. **Momento que cuenta como "el hecho" para el plazo de la NC:** **acuerdo entre operador y minorista**. En la práctica AFIP no tiene cómo determinar el momento exacto; se documenta lo acordado.
+
+6. **Tope de efectivo / medio de devolución:** **NO se hardcodea un tope.** Como es un sistema que se vende a distintas agencias, el límite y el medio (efectivo o transferencia) quedan a **criterio humano del cliente que usa el sistema**. Basta con que el sistema **registre cómo se hizo** (medio + moneda + TC). Principio general (vale para varias respuestas): la moneda y el TC de la devolución son **los mismos con los que se pagó**, avalados por el TC del mayorista; todo se alinea según la política del mayorista y de la minorista (suelen acordarse entre ellos).
+
+7. **Campo `CanMisMonExt`:** **sí**, se necesita. (Ya implementado, commit `614d7d7`.)
+
+8. **Transición Mono → RI → REGLA DURA.** Desde el momento en que se es RI, **todo se trata como RI**. Las NC y ND de operaciones viejas (facturadas en C cuando era Mono) pasan a ser **tipo B**. **Un RI NO puede emitir factura C, ni NC C, ni ND C.** El tipo de comprobante lo manda la condición fiscal **actual** del emisor, no la de la operación original.
+
+9. **Facturar USD siendo Monotributo:** **no** hay límites ni requisitos especiales. Lo único es la **recategorización** normal del monotributo si se supera el nivel de ventas (tema de AFIP, no del sistema).
+
+### Qué desbloquea / qué implica construir
+- **Multimoneda (1, 2, 7):** confirmado el criterio → desbloquea homologación ARCA + NC/ND total USD heredando moneda/TC.
+- **Cancelación (3) — el más grande:** revisar si se entierra el NC parcial y se construye **NC total + ND por penalidad**. Requiere análisis del contador-integrado (impacto sobre `BookingCancellationService` / `AfipService` / `FiscalLiquidation`).
+- **Diferencia de cambio (4):** nueva pieza a futuro (RI) → factura por la diferencia de cambio.
+- **Devoluciones (6):** registrar medio + moneda + TC; sin tope hardcodeado.
+- **Mono→RI (8):** el tipo de comprobante (incluida NC/ND sobre facturas viejas) se deriva de la condición fiscal **vigente** del emisor. Verificar que el sistema lo resuelva así.
+
+### Decisión de negocio de Gastón (2026-06-01) sobre la penalidad
+- **¿Quién se queda la penalidad? → "DEPENDE DEL OPERADOR".** El sistema debe soportar AMBOS modos (consistente con la decisión previa "facturación configurable por operador"):
+  - **Operador retiene** → para el minorista es **pass-through** (NO ingreso propio). Cuidado fiscal: no documentarla como venta del minorista.
+  - **Minorista se la queda** → **ingreso propio** → NC total + ND (con IVA si RI).
+- Esto deja abierto el **tratamiento fiscal del caso pass-through**, que requiere firma del matriculado. → ver `docs/operations/preguntas-contador-round2-cancelacion-2026-06-01.md`.
