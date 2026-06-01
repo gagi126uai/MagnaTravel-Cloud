@@ -124,4 +124,40 @@ public class InvoiceComprobanteHelpersTests
     {
         Assert.Null(InvoiceComprobanteHelpers.GetCreditNoteTypeForInvoice(tipo));
     }
+
+    // ===================== GetDebitNoteTypeForAssociated (ADR-013 §3.9, FIX M1) =====================
+
+    /// <summary>
+    /// ADR-013 §3.9 (M1, FIX bloqueante): la ND debe derivar su tipo del comprobante
+    /// ASOCIADO, cubriendo TANTO facturas COMO notas de credito como origen.
+    ///
+    /// <para><b>El caso que prueba que el bug se arreglo</b>: factura C=11 -> ND C=12.
+    /// Antes del fix, el switch inline de AfipService solo contemplaba NC como origen
+    /// (13 -> 12) y NO la factura (11), asi que una ND asociada a una factura C salia con
+    /// el tipo equivocado (11 = factura). Estos casos pinean el mapeo correcto.</para>
+    /// </summary>
+    [Theory]
+    // Origen = FACTURA (el caso del MVP de ADR-013).
+    [InlineData(1, 2)]    // Factura A -> ND A
+    [InlineData(6, 7)]    // Factura B -> ND B
+    [InlineData(11, 12)]  // Factura C -> ND C   <-- EL caso del MVP. Antes salia 11 (bug).
+    [InlineData(51, 52)]  // Factura M -> ND M
+    // Origen = NOTA DE CREDITO (no-regresion: lo que el switch ya hacia).
+    [InlineData(3, 2)]    // NC A -> ND A
+    [InlineData(8, 7)]    // NC B -> ND B
+    [InlineData(13, 12)]  // NC C -> ND C
+    [InlineData(53, 52)]  // NC M -> ND M
+    public void GetDebitNoteTypeForAssociated_KnownTypes_ReturnsMapping(int associatedTipo, int expectedNdTipo)
+    {
+        Assert.Equal(expectedNdTipo, InvoiceComprobanteHelpers.GetDebitNoteTypeForAssociated(associatedTipo));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(99)]
+    [InlineData(201)]  // Factura MiPyME — no soportada hoy.
+    public void GetDebitNoteTypeForAssociated_UnknownTypes_ReturnsNull(int tipo)
+    {
+        Assert.Null(InvoiceComprobanteHelpers.GetDebitNoteTypeForAssociated(tipo));
+    }
 }

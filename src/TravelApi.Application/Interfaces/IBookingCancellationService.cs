@@ -173,4 +173,18 @@ public interface IBookingCancellationService
 
     /// <summary>Obtiene un BC por su PublicId. Null si no existe.</summary>
     Task<BookingCancellationDto?> GetByPublicIdAsync(Guid publicId, CancellationToken ct);
+
+    /// <summary>
+    /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su
+    /// ND". Devuelve los BCs cuya NC total ya salio (CreditNoteInvoiceId seteado) pero cuya
+    /// ND quedo en <c>Pending</c> o <c>Failed</c> -> fiscalmente incompletas.
+    ///
+    /// <para>Como efecto secundario RECONCILIA el estado de la ND: para los que estan en
+    /// <c>Pending</c>, lee el <c>Resultado</c> de la Invoice ND vinculada (que la emite el
+    /// job async) y, si ya tiene CAE (Aprobado) o fue Rechazada, transiciona el
+    /// <c>DebitNoteStatus</c> a <c>Issued</c>/<c>Failed</c>. Asi la bandeja se va limpiando
+    /// sola a medida que ARCA responde, sin necesitar un callback dedicado.</para>
+    /// </summary>
+    Task<IReadOnlyList<CancellationDebitNotePendingDto>> GetCancellationsWithMissingDebitNoteAsync(
+        CancellationToken ct);
 }

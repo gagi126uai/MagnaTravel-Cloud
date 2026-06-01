@@ -82,6 +82,43 @@ public static class InvoiceComprobanteHelpers
             11 => 13,  // Factura C -> NC C
             _ => null,
         };
+
+    /// <summary>
+    /// ADR-013 §3.9 (M1, 2026-06-01): devuelve el cbteTipo de la Nota de Debito que
+    /// corresponde a un comprobante asociado, derivando la LETRA (A/B/C/M) del tipo
+    /// del comprobante asociado — NO de la condicion fiscal del emisor.
+    ///
+    /// <para><b>Por que cubre TANTO facturas COMO notas de credito como origen</b>:
+    /// una ND se puede asociar a la factura original (caso del MVP: penalidad de
+    /// cancelacion -> ND C asociada a la factura C) o a una NC previa (caso
+    /// CorrectCreditNote, futuro). En ambos casos la ND debe tener la MISMA letra que
+    /// el comprobante asociado (RG 4540: comprobante asociado). Por eso mapeamos las
+    /// dos familias a la misma letra:
+    /// <list type="bullet">
+    /// <item>A: factura 1, ND 2, NC 3  -> ND A = 2</item>
+    /// <item>B: factura 6, ND 7, NC 8  -> ND B = 7</item>
+    /// <item>C: factura 11, ND 12, NC 13 -> ND C = 12</item>
+    /// <item>M: factura 51, ND 52, NC 53 -> ND M = 52</item>
+    /// </list></para>
+    ///
+    /// <para><b>El bug que arregla</b>: antes el switch inline de AfipService solo
+    /// contemplaba los tipos de NC (3/8/13/53) como origen de una ND. Una ND asociada
+    /// a una FACTURA C=11 (el caso EXACTO del MVP) no matcheaba ninguna rama y salia
+    /// con el tipo de la factura (11) en vez de ND C (12). Este helper cubre las dos
+    /// familias para que ese caso derive 12 correctamente.</para>
+    ///
+    /// <para>Retorna null si el tipo asociado no es uno de los conocidos (el caller
+    /// debe rechazar la operacion en vez de emitir un comprobante con tipo dudoso).</para>
+    /// </summary>
+    public static int? GetDebitNoteTypeForAssociated(int associatedTipo) =>
+        associatedTipo switch
+        {
+            1 or 2 or 3 => 2,      // Factura A / ND A / NC A  -> ND A
+            6 or 7 or 8 => 7,      // Factura B / ND B / NC B  -> ND B
+            11 or 12 or 13 => 12,  // Factura C / ND C / NC C  -> ND C
+            51 or 52 or 53 => 52,  // Factura M / ND M / NC M  -> ND M
+            _ => null,
+        };
 }
 
 /// <summary>

@@ -619,10 +619,27 @@ public class AfipService : IAfipService
              }
              else if (request.IsDebitNote)
              {
-                 if (t == 3) cbteTipo = 2;
-                 else if (t == 8) cbteTipo = 7;
-                 else if (t == 13) cbteTipo = 12;
-                 else if (t == 53) cbteTipo = 52;
+                 // ADR-013 §3.9 (M1, 2026-06-01) — FIX de bug fiscal bloqueante.
+                 //
+                 // ANTES este bloque solo contemplaba como origen los tipos de NOTA DE
+                 // CREDITO (3/8/13/53). Una ND asociada a una FACTURA C=11 (el caso del
+                 // MVP de ADR-013: penalidad de cancelacion -> ND C asociada a la factura
+                 // original C) NO matcheaba ninguna rama, y cbteTipo quedaba en baseType.
+                 // Para Monotributo baseType=11 (factura C), asi que la ND salia con
+                 // CbteTipo=11 (FACTURA C) en vez de 12 (ND C): comprobante equivocado ->
+                 // rechazo de ARCA o, peor, una "factura" emitida en lugar de una ND.
+                 //
+                 // El helper deriva la LETRA de la ND del tipo del comprobante ASOCIADO
+                 // (factura O nota de credito), NO de la condicion fiscal del emisor. Esto
+                 // ademas es lo correcto fiscalmente (RG 4540: misma letra que el
+                 // comprobante asociado), y evita desincronizaciones cuando el emisor paso
+                 // de Mono a RI pero la factura asociada sigue siendo C.
+                 //
+                 // Si el helper no reconoce el tipo asociado (devuelve null), dejamos
+                 // cbteTipo en baseType (comportamiento previo para tipos raros) en vez de
+                 // inventar uno.
+                 var debitNoteTipo = InvoiceComprobanteHelpers.GetDebitNoteTypeForAssociated(t);
+                 if (debitNoteTipo.HasValue) cbteTipo = debitNoteTipo.Value;
              }
         }
         else 

@@ -332,6 +332,38 @@ public class OperatorRefundService : IOperatorRefundService
             supplierTaxConditionAtEvent: bc.FiscalSnapshot?.SupplierTaxConditionAtEvent,
             deductions: request.Deductions);
 
+        // 5-bis) ADR-013 INV-ADR013-001 (anti-doble-cobro, §3.3) — DISYUNCION DURA.
+        //
+        //   La penalidad propia de la agencia se materializa EXACTAMENTE UNA VEZ. Si
+        //   el concepto de la cancelacion es "ingreso propio de la agencia" (la ND
+        //   propia cobra esa plata), entonces esa MISMA penalidad NO puede ademas
+        //   bajar el refund que recibe el cliente. La via de neteo del refund es
+        //   cargar una deduction Kind=CancellationPenalty en la allocation del
+        //   operador (netAmount = gross - deducciones). Las dos vias son mutuamente
+        //   excluyentes para un mismo monto.
+        //
+        //   Por eso: si el BC esta clasificado como ND propia de la agencia
+        //   (AgencyManagementFee / AgencyCancellationFee), RECHAZAMOS cargar una
+        //   deduction CancellationPenalty. Esa penalidad ya se cobra (o se va a cobrar)
+        //   con la ND; netearla aca seria cobrarla dos veces.
+        //
+        //   La validacion vive en runtime (no en un CHECK SQL) porque es
+        //   cross-aggregate (BC + allocation del operador): un CHECK acoplaria dos
+        //   tablas. Mismo precedente que INV-126 (validacion cross-aggregate en
+        //   runtime, no en BD).
+        var conceptIsAgencyOwnedDebitNote =
+            BookingCancellationService.ConceptIsAgencyOwnedDebitNote(bc.ConceptKind);
+        if (conceptIsAgencyOwnedDebitNote &&
+            request.Deductions.Any(d => d.Kind == DeductionKind.CancellationPenalty))
+        {
+            throw new BusinessInvariantViolationException(
+                "La penalidad de esta cancelacion es ingreso propio de la agencia y se " +
+                "cobra con una Nota de Debito; no puede ademas descontarse del reintegro " +
+                "al cliente (seria doble cobro). Quita la deduccion de penalidad o " +
+                "reclasifica el concepto.",
+                invariantCode: "INV-ADR013-001");
+        }
+
         // 6) Calcular NetAmount + total deducciones. INV-112 (CHECK SQL) valida
         //    NetAmount >= 0 y GrossAmount >= NetAmount, pero validamos antes
         //    para devolver un mensaje claro.

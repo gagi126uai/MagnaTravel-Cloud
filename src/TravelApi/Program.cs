@@ -988,6 +988,19 @@ using (var startupValidationScope = app.Services.CreateScope())
             "hubo UPDATE manual a BD, restore de backup o escritura por fuera del service.");
     }
 
+    // ADR-013 (2026-06-01): la emision de ND en cancelacion depende del flujo de
+    // cancelacion nuevo (la ND se dispara desde el callback de la NC total, que solo
+    // existe en el flujo FC1.2). Sin EnableNewCancellationFlow, no hay donde engancharse.
+    // Misma red de seguridad que GR-002: si la BD llego a la combinacion invalida por
+    // fuera del service, la app NO arranca.
+    if (settings.EnableCancellationDebitNote && !settings.EnableNewCancellationFlow)
+    {
+        throw new InvalidOperationException(
+            "Configuracion invalida: EnableCancellationDebitNote=true requiere " +
+            "EnableNewCancellationFlow=true (la ND se dispara desde el flujo de cancelacion). " +
+            "Apague la ND o prenda el flujo de cancelacion antes de arrancar.");
+    }
+
     // RH-013: si FC1.3 esta prendido pero falta Fc13DeployDate, lo seteamos
     // automaticamente a UtcNow y emitimos warning. El clasificador caso 4
     // (factura legacy / confusa) usa esa fecha para flagear facturas viejas

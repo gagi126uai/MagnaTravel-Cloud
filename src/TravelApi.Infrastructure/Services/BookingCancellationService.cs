@@ -1068,6 +1068,71 @@ public class BookingCancellationService
         return await MapToDtoAsync(bc.Id, ct);
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<CancellationDebitNotePendingDto>> GetCancellationsWithMissingDebitNoteAsync(
+        CancellationToken ct)
+    {
+        // (1) Traer los BC con NC ya emitida (CreditNoteInvoiceId seteado) cuya ND quedo
+        //     pendiente o fallida. Trackeados (no AsNoTracking) porque podemos reconciliar
+        //     el estado de los Pending y persistir la transicion.
+        var pendingStates = new[] { DebitNoteStatus.Pending, DebitNoteStatus.Failed };
+        var candidates = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.DebitNoteInvoice)
+            .Where(b => b.CreditNoteInvoiceId != null &&
+                        pendingStates.Contains(b.DebitNoteStatus))
+            .ToListAsync(ct);
+
+        // (2) Reconciliar los Pending: la ND la emite el job async (ProcessInvoiceJob), que
+        //     setea Invoice.Resultado ("A"=Aprobado / "R"=Rechazado / "PENDING"=en vuelo).
+        //     Leemos ese resultado y, si ya cerro, transicionamos DebitNoteStatus. No hay
+        //     callback dedicado: esta lectura ES la reconciliacion (mismo espiritu que el
+        //     "barrendero" de FC1.3).
+        var changed = false;
+        foreach (var bc in candidates)
+        {
+            if (bc.DebitNoteStatus != DebitNoteStatus.Pending) continue;
+            var nd = bc.DebitNoteInvoice;
+            if (nd is null) continue;
+
+            if (string.Equals(nd.Resultado, "A", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(nd.CAE))
+            {
+                bc.DebitNoteStatus = DebitNoteStatus.Issued;
+                bc.DebitNoteArcaErrorMessage = null;
+                changed = true;
+            }
+            else if (string.Equals(nd.Resultado, "R", StringComparison.OrdinalIgnoreCase))
+            {
+                bc.DebitNoteStatus = DebitNoteStatus.Failed;
+                var obs = nd.Observaciones ?? "ARCA rechazo la ND sin mensaje.";
+                bc.DebitNoteArcaErrorMessage = obs.Length > 1000 ? obs[..1000] : obs;
+                changed = true;
+            }
+            // Resultado == "PENDING" o null: sigue en vuelo, lo dejamos en Pending.
+        }
+
+        if (changed)
+            await _db.SaveChangesAsync(ct);
+
+        // (3) Proyectar SOLO los que siguen incompletos despues de reconciliar (los que
+        //     pasaron a Issued ya no son problema y salen de la bandeja).
+        return candidates
+            .Where(b => b.DebitNoteStatus is DebitNoteStatus.Pending or DebitNoteStatus.Failed)
+            .Select(b => new CancellationDebitNotePendingDto
+            {
+                BookingCancellationPublicId = b.PublicId,
+                ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
+                DebitNoteStatus = b.DebitNoteStatus.ToString(),
+                PenaltyAmount = b.PenaltyAmountAtEvent,
+                PenaltyCurrency = b.PenaltyCurrencyAtEvent,
+                DebitNoteCbteTipo = b.DebitNoteCbteTipoAtEvent,
+                ArcaErrorMessage = b.DebitNoteArcaErrorMessage,
+                ConfirmedAt = b.ConfirmedWithClientAt,
+            })
+            .ToList();
+    }
+
     // =========================================================================
     // FC1.3.3 (ADR-009 §2.7 G3, 2026-05-21): edicion admin de la liquidacion
     // =========================================================================
@@ -1338,8 +1403,16 @@ public class BookingCancellationService
     {
         // MR-04 plan v3: buscar SOLO BCs en AwaitingFiscalConfirmation. Si el
         // BC ya transiciono (Force manual antes que el callback) no hacemos nada.
+        //
+        // ADR-013: incluimos OriginatingInvoice + Supplier porque el gating de la ND
+        // (despues de transicionar) los necesita (tipo de comprobante de la factura
+        // original, "quien se queda la penalidad" del operador). Con el flag OFF estos
+        // Includes solo cargan datos que ya se usan en otros lados; no cambian el
+        // comportamiento.
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
+            .Include(b => b.OriginatingInvoice)
+            .Include(b => b.Supplier)
             .FirstOrDefaultAsync(b =>
                 b.OriginatingInvoiceId == originatingInvoiceId &&
                 b.Status == BookingCancellationStatus.AwaitingFiscalConfirmation, ct);
@@ -1382,6 +1455,311 @@ public class BookingCancellationService
         _logger.LogInformation(
             "metric:cancellation_arca_succeeded | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} CreditNoteInvoiceId={CreditNoteInvoiceId}",
             bc.PublicId, originatingInvoiceId, creditNoteInvoiceId);
+
+        // ADR-013 (2026-06-01): ORDEN NO NEGOCIABLE — la ND se dispara SOLO ahora, despues
+        // de que la NC total obtuvo CAE (este callback es exactamente ese momento). Si la
+        // NC hubiera fallado, este metodo nunca corre (corre OnArcaFailedAsync), asi que la
+        // ND no se dispara sobre una NC fallida. Con el flag OFF, TryEmit... retorna sin
+        // tocar nada (byte-identico a hoy). Va envuelto en try/catch porque una falla al
+        // emitir la ND NO debe revertir la cancelacion: la NC ya quedo correcta.
+        try
+        {
+            await TryEmitCancellationDebitNoteAsync(bc, ct);
+        }
+        catch (Exception ex)
+        {
+            // No re-lanzamos: la cancelacion ya esta correcta con la NC. La ND quedo en
+            // Failed (o sin tocar) y la bandeja "NC sin su ND" la levanta para reintento/
+            // manual. Re-lanzar pondria al job de Hangfire en retry-loop sobre una NC que
+            // ya esta commiteada (peor).
+            _logger.LogError(ex,
+                "ADR-013: fallo al intentar emitir la ND para BC {BcPublicId} tras NC exitosa. " +
+                "La cancelacion queda correcta (NC emitida); la ND queda pendiente de revision.",
+                bc.PublicId);
+        }
+    }
+
+    // =========================================================================
+    // ADR-013 (2026-06-01): emision de la Nota de Debito por penalidad propia.
+    // =========================================================================
+
+    /// <summary>
+    /// ADR-013 (2026-06-01): intenta emitir la Nota de Debito por la penalidad propia de
+    /// la agencia, DESPUES de que la NC total ya obtuvo CAE. Es el corazon del MVP.
+    ///
+    /// <para><b>Conservador por diseño</b>: solo emite si TODO el gating (P3 del ADR) se
+    /// cumple. Ante cualquier duda (pass-through, factura no-C, moneda no-ARS, penalidad
+    /// estimada, penalidad &gt; factura, etc.) NO emite y rutea a revision manual marcando
+    /// <see cref="DebitNoteStatus.ManualReview"/>. Con el flag OFF retorna de inmediato sin
+    /// tocar nada -> comportamiento byte-identico a hoy.</para>
+    ///
+    /// <para><b>Idempotencia</b>: si el BC ya tiene <c>DebitNoteInvoiceId</c>, no crea otra
+    /// ND (guard duro). El pipeline de emision ademas tiene su propio anti-doble-POST.</para>
+    /// </summary>
+    private async Task TryEmitCancellationDebitNoteAsync(BookingCancellation bc, CancellationToken ct)
+    {
+        var settings = await _settings.GetEntityAsync(ct);
+
+        // (0) Flag maestro OFF -> comportamiento byte-identico a hoy (NC total, sin ND).
+        //     Esta es la primera y mas importante guarda: TODA la logica nueva vive aca
+        //     adentro. Mientras el flag siga apagado, nada de esto corre.
+        if (!settings.EnableCancellationDebitNote)
+            return;
+
+        // (1) Idempotencia dura: si ya hay una ND vinculada, no creamos otra.
+        if (bc.DebitNoteInvoiceId.HasValue)
+        {
+            _logger.LogInformation(
+                "ADR-013: BC {BcPublicId} ya tiene ND vinculada (Id={DebitNoteInvoiceId}). No se crea otra.",
+                bc.PublicId, bc.DebitNoteInvoiceId);
+            return;
+        }
+
+        var originatingInvoice = bc.OriginatingInvoice;
+        if (originatingInvoice is null)
+        {
+            // Defensivo: el caller (OnArcaSucceededAsync) hace el Include. Si falta, no
+            // arriesgamos emitir con datos incompletos.
+            _logger.LogWarning(
+                "ADR-013: BC {BcPublicId} sin OriginatingInvoice cargada. Se rutea a revision manual.",
+                bc.PublicId);
+            await RouteDebitNoteToManualReviewAsync(bc, "OriginatingInvoice no cargada.", ct);
+            return;
+        }
+
+        // (2) Gating P3 (§3.4.1): ante la duda, NO emitir -> revision manual. Evaluamos
+        //     cada condicion y juntamos los motivos para dejarlos en el log/auditoria.
+        var manualReason = EvaluateDebitNoteGating(bc, originatingInvoice);
+        if (manualReason is not null)
+        {
+            _logger.LogInformation(
+                "ADR-013: BC {BcPublicId} NO califica para ND automatica ({Reason}). Rutea a revision manual.",
+                bc.PublicId, manualReason);
+            await RouteDebitNoteToManualReviewAsync(bc, manualReason, ct);
+            return;
+        }
+
+        // (3) Disyuncion anti-doble-cobro (INV-ADR013-001, §3.3) desde el lado de la ND:
+        //     si por algun camino quedo cargada una deduction CancellationPenalty para
+        //     este BC, NO emitimos la ND (esa penalidad ya bajo el refund -> emitir la ND
+        //     seria cobrarla dos veces). Va a revision manual. La guarda simetrica vive en
+        //     OperatorRefundService (rechaza cargar la deduction si el concepto es ND propia).
+        // (defensa simetrica: el concepto YA paso el gating como ND propia, pero validamos
+        // que ademas no haya una deduction de penalidad cargada para este BC).
+        var hasPenaltyDeduction = await _db.OperatorRefundAllocations
+            .Where(a => a.BookingCancellationId == bc.Id && !a.IsVoided)
+            .SelectMany(a => a.Deductions)
+            .AnyAsync(d => d.Kind == DeductionKind.CancellationPenalty, ct);
+        if (hasPenaltyDeduction)
+        {
+            _logger.LogWarning(
+                "ADR-013 INV-ADR013-001: BC {BcPublicId} tiene una deduccion CancellationPenalty cargada " +
+                "Y concepto de ND propia. No se emite la ND (seria doble cobro). Rutea a revision manual.",
+                bc.PublicId);
+            await RouteDebitNoteToManualReviewAsync(
+                bc, "Penalidad cargada como deduccion del refund (anti-doble-cobro).", ct);
+            return;
+        }
+
+        // (4) Construir el request de la ND y emitir por el pipeline existente.
+        //     - IsDebitNote=true + OriginalInvoiceId=factura original -> el pipeline arma
+        //       el <CbtesAsoc> y deriva CbteTipo=12 (ND C) con el fix M1 (§3.9).
+        //     - Un solo item: el monto de la penalidad, AlicuotaIvaId=3 (0% / no gravado),
+        //       que es lo que usa el sistema para comprobantes C (ImpIVA=0). El monto de la
+        //       ND es INDEPENDIENTE del refund (no participa de ninguna suma del refund).
+        var penaltyAmount = bc.PenaltyAmountAtEvent!.Value; // gating garantizo > 0
+        var debitNoteRequest = new CreateInvoiceRequest
+        {
+            ReservaId = originatingInvoice.ReservaId!.Value.ToString(),
+            Concepto = 3, // Productos y Servicios (mismo default que la NC total).
+            OriginalInvoiceId = originatingInvoice.PublicId.ToString(),
+            IsCreditNote = false,
+            IsDebitNote = true,
+            Items = new List<InvoiceItemDto>
+            {
+                new()
+                {
+                    Description = $"Penalidad por cancelacion s/Fc " +
+                                  $"{originatingInvoice.PuntoDeVenta:00000}-{originatingInvoice.NumeroComprobante:00000000}.",
+                    Quantity = 1,
+                    UnitPrice = penaltyAmount,
+                    Total = penaltyAmount,
+                    AlicuotaIvaId = 3, // 0% / no gravado -> C sin IVA discriminado.
+                },
+            },
+            Tributes = new List<InvoiceTributeDto>(),
+            // MVP: solo ARS (el gating ya rechazo no-ARS). MonId/MonCotiz quedan en su
+            // default (PES/1), igual que la NC total.
+        };
+
+        // Emitir via el pipeline existente (CreateAsync -> CreatePendingInvoice +
+        // ProcessInvoiceJob async). Reusamos toda la infra de emision/idempotencia/CAE.
+        var debitNoteDto = await _invoiceService.CreateAsync(
+            debitNoteRequest, bc.ConfirmedByUserId, bc.ConfirmedByUserName, ct);
+
+        // Resolver el Id (legacy int) de la ND recien creada para vincularla al BC.
+        var debitNoteId = await _db.Invoices
+            .Where(i => i.PublicId == debitNoteDto.PublicId)
+            .Select(i => (int?)i.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (debitNoteId is null)
+        {
+            _logger.LogError(
+                "ADR-013: no se pudo resolver el Id de la ND recien creada para BC {BcPublicId}. " +
+                "La ND existe pero quedo sin vincular; rutea a revision manual.",
+                bc.PublicId);
+            await RouteDebitNoteToManualReviewAsync(bc, "ND creada pero no vinculada.", ct);
+            return;
+        }
+
+        // (5) Vincular la ND + congelar el snapshot fiscal + marcar Pending. El resultado
+        //     final (Issued/Failed) lo reconcilia la bandeja leyendo Invoice.Resultado
+        //     (la ND se emite async por ProcessInvoiceJob).
+        bc.DebitNoteInvoiceId = debitNoteId.Value;
+        bc.DebitNoteStatus = DebitNoteStatus.Pending;
+        FreezeDebitNoteSnapshot(bc, originatingInvoice, penaltyAmount);
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationArcaSucceeded,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                debitNoteAction = "debit-note-enqueued",
+                debitNoteInvoiceId = debitNoteId.Value,
+                penaltyAmount,
+                conceptKind = bc.ConceptKind.ToString(),
+                debitNoteCbteTipo = bc.DebitNoteCbteTipoAtEvent,
+            }),
+            userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
+            ct: ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_debit_note_enqueued | BcPublicId={BcPublicId} DebitNoteInvoiceId={DebitNoteId} Penalty={Penalty}",
+            bc.PublicId, debitNoteId.Value, penaltyAmount);
+    }
+
+    /// <summary>
+    /// ADR-013 §3.4.1 (P3 gating): decide si el caso califica para emitir la ND automatica.
+    /// Devuelve <c>null</c> si TODO se cumple (puede emitir), o un string con el motivo por
+    /// el cual va a revision manual. Conservador: ante la duda, devuelve motivo (NO emitir).
+    ///
+    /// <para>El criterio de "es C" mira el <c>TipoComprobante</c> de la factura ORIGINAL
+    /// (11/12 = C), NO la condicion fiscal del emisor (M3, §3.4.1.b): la factura asociada es
+    /// la fuente de verdad para la letra de la ND.</para>
+    /// </summary>
+    /// <summary>
+    /// ADR-013 (§3.3 / §3.4.1): true si el concepto clasifica a "ingreso propio de la
+    /// agencia" -> emite ND propia. Es la pieza central de la disyuncion anti-doble-cobro:
+    /// la usan TANTO el gating de la ND (¿emite?) COMO OperatorRefundService (¿puede cargar
+    /// la penalidad como deduction del refund?). Pura, testeable sin DB.
+    /// </summary>
+    internal static bool ConceptIsAgencyOwnedDebitNote(CancellationConceptKind concept) =>
+        concept == CancellationConceptKind.AgencyManagementFee ||
+        concept == CancellationConceptKind.AgencyCancellationFee;
+
+    // internal (no private) para que los tests unit puedan validar el gating sin DB:
+    // el proyecto tiene InternalsVisibleTo("TravelApi.Tests"). Es una funcion pura.
+    internal static string? EvaluateDebitNoteGating(BookingCancellation bc, Invoice originatingInvoice)
+    {
+        // Concepto: solo ingreso propio de la agencia emite ND. Pass-through (default) y
+        // seguros -> manual.
+        if (!ConceptIsAgencyOwnedDebitNote(bc.ConceptKind))
+            return $"Concepto {bc.ConceptKind} no es ingreso propio de la agencia (no emite ND).";
+
+        // El operador NO debe ser pass-through (defensa redundante con el concepto, pero
+        // explicita: el operador define el default y el concepto puede haberlo overrideado).
+        if (bc.Supplier?.PenaltyOwnership == PenaltyOwnership.Operator)
+            return "El operador retiene la penalidad (pass-through): la agencia no emite ND.";
+
+        // Penalidad confirmada por el operador (R5): no se emite sobre estimada.
+        if (bc.PenaltyStatus != PenaltyStatus.Confirmed)
+            return "La penalidad no esta confirmada (Estimated): no se emite ND sobre un estimado.";
+
+        // Finalidad: el MVP solo automatiza PenaltyOrCancellationCharge.
+        if (bc.DebitNotePurpose != TravelApi.Domain.Entities.DebitNotePurpose.PenaltyOrCancellationCharge)
+            return $"DebitNotePurpose {bc.DebitNotePurpose?.ToString() ?? "(null)"} no se automatiza en el MVP.";
+
+        // Factura original C (11/12). A=1/2, B=6/7, M=51/52 -> manual (M3).
+        if (originatingInvoice.TipoComprobante is not (11 or 12))
+            return $"Factura original tipo {originatingInvoice.TipoComprobante} no es C (11/12): revision manual.";
+
+        // Moneda ARS (la factura original en pesos). MonId "PES" o vacio = pesos.
+        var isArs = string.IsNullOrWhiteSpace(originatingInvoice.MonId) ||
+                    string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase);
+        if (!isArs)
+            return $"Factura original en moneda {originatingInvoice.MonId} (no ARS): revision manual.";
+
+        // La factura con tributos provinciales (IIBB/percepciones) -> manual (R6).
+        if (originatingInvoice.Tributes is { Count: > 0 })
+            return "La factura original tiene tributos provinciales: revision manual.";
+
+        // Monto de la penalidad: debe estar seteado, ser > 0 y NO superar la factura (M2).
+        if (!bc.PenaltyAmountAtEvent.HasValue || bc.PenaltyAmountAtEvent.Value <= 0m)
+            return "No hay monto de penalidad confirmado (> 0).";
+        if (bc.PenaltyAmountAtEvent.Value > originatingInvoice.ImporteTotal)
+            return $"La penalidad ({bc.PenaltyAmountAtEvent.Value}) supera el total de la factura " +
+                   $"({originatingInvoice.ImporteTotal}): revision manual (M2).";
+
+        return null; // Pasa todo el gating: puede emitir.
+    }
+
+    /// <summary>
+    /// ADR-013 §3.8/§3.11: congela el snapshot fiscal de la ND al momento del evento. Sirve
+    /// para auditoria: prueba con que reglas (monto, moneda, tipo de comprobante, condicion
+    /// fiscal, quien confirmo/clasifico) se emitio. El tipo de la ND se deriva del
+    /// <c>TipoComprobante</c> de la factura original (M3), no de la condicion fiscal.
+    /// </summary>
+    private static void FreezeDebitNoteSnapshot(
+        BookingCancellation bc, Invoice originatingInvoice, decimal penaltyAmount)
+    {
+        bc.PenaltyAmountAtEvent = penaltyAmount;
+        bc.PenaltyCurrencyAtEvent = string.IsNullOrWhiteSpace(originatingInvoice.MonId)
+            ? "ARS"
+            : (string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase) ? "ARS" : originatingInvoice.MonId);
+        bc.OriginalInvoiceCbteTipoAtEvent = originatingInvoice.TipoComprobante;
+        // ND C = 12 (derivado del tipo de la factura original via el helper, M1/M3).
+        bc.DebitNoteCbteTipoAtEvent =
+            InvoiceComprobanteHelpers.GetDebitNoteTypeForAssociated(originatingInvoice.TipoComprobante);
+        bc.EmitterTaxConditionAtEvent ??= bc.FiscalSnapshot?.AgencyTaxConditionAtEvent;
+        bc.PenaltyOwnershipAtEvent ??= bc.Supplier?.PenaltyOwnership;
+    }
+
+    /// <summary>
+    /// ADR-013 §3.10 (M4): marca la ND como pendiente de revision manual sin emitirla.
+    /// Hace observable el caso (la bandeja lo levanta) y deja el motivo persistido.
+    /// </summary>
+    private async Task RouteDebitNoteToManualReviewAsync(
+        BookingCancellation bc, string reason, CancellationToken ct)
+    {
+        bc.DebitNoteStatus = DebitNoteStatus.ManualReview;
+        bc.DebitNoteArcaErrorMessage = reason.Length > 1000 ? reason[..1000] : reason;
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationArcaSucceeded,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                debitNoteAction = "debit-note-manual-review",
+                reason,
+                conceptKind = bc.ConceptKind.ToString(),
+            }),
+            userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
+            ct: ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_debit_note_manual_review | BcPublicId={BcPublicId} Reason={Reason}",
+            bc.PublicId, reason);
     }
 
     public async Task OnArcaFailedAsync(int originatingInvoiceId, string? afipErrorMessage, CancellationToken ct)

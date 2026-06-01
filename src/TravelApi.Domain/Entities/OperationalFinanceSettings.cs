@@ -389,6 +389,35 @@ public class OperationalFinanceSettings
     /// </summary>
     public bool EnableSoldToSettleStates { get; set; } = false;
 
+    // ============================================================
+    // ADR-013 (Nota de Debito por penalidad en cancelacion, 2026-06-01): flag
+    // maestro de la emision de ND en el flujo de cancelacion. Default conservador
+    // (OFF), igual que todos los flags fiscales nuevos.
+    // ============================================================
+
+    /// <summary>
+    /// ADR-013 (2026-06-01): feature flag MAESTRO de la emision de Nota de Debito por
+    /// penalidad propia de la agencia en el flujo de cancelacion.
+    ///
+    /// <para><b>Con OFF (default)</b>: la cancelacion se comporta EXACTAMENTE como hoy
+    /// (NC total, sin ND). El disparo de la ND vive entero detras de este flag. Cero
+    /// riesgo de regresion mientras siga apagado.</para>
+    ///
+    /// <para><b>Con ON</b>: despues de que la NC total obtiene CAE, si el caso pasa el
+    /// gating conservador (concepto = ingreso propio de la agencia, penalidad
+    /// confirmada, factura original C, moneda ARS, penalidad &lt;= factura), se encola
+    /// una ND C asociada a la factura original. Cualquier caso fuera de ese feliz va a
+    /// revision manual, NUNCA se emite por las dudas.</para>
+    ///
+    /// <para><b>NO confundir con <see cref="EnablePartialCreditNoteRealEmission"/></b>
+    /// (NC parcial, CONGELADO): ese sigue su camino. Este es un flag NUEVO y distinto.</para>
+    ///
+    /// <para>Default <c>false</c>. NO prender en prod hasta: (a) signoff del contador
+    /// matriculado (§11 del ADR), (b) CAE de homologacion ARCA para ND C asociada a
+    /// factura. Misma disciplina que los demas flags fiscales.</para>
+    /// </summary>
+    public bool EnableCancellationDebitNote { get; set; } = false;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

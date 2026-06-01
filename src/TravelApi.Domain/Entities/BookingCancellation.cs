@@ -277,4 +277,116 @@ public class BookingCancellation : IHasPublicId
     /// </summary>
     [MaxLength(1000)]
     public string? ManualReviewComment { get; set; }
+
+    // ============================================================
+    // ADR-013 (2026-06-01): Nota de Debito por penalidad propia de la agencia.
+    //
+    // Todo este bloque es ADITIVO y nullable / con default conservador. Con el
+    // flag EnableCancellationDebitNote OFF, NADIE setea estos campos y el
+    // comportamiento es byte-identico a hoy (NC total, sin ND).
+    //
+    // Los campos se dividen en tres grupos:
+    //  (1) clasificacion del evento  -> que tipo de penalidad es y en que estado.
+    //  (2) vinculo + estado de la ND -> idempotencia + observabilidad (bandeja).
+    //  (3) snapshot fiscal congelado -> con que reglas se emitio (auditoria).
+    // ============================================================
+
+    // ---- (1) Clasificacion del evento ----
+
+    /// <summary>
+    /// ADR-013 (R5): estado de la penalidad. Solo <see cref="Entities.PenaltyStatus.Confirmed"/>
+    /// habilita emitir la ND (no se emite comprobante sobre un estimado). Default
+    /// <see cref="Entities.PenaltyStatus.Estimated"/> (conservador = NO ND).
+    /// </summary>
+    public PenaltyStatus PenaltyStatus { get; set; } = PenaltyStatus.Estimated;
+
+    /// <summary>
+    /// ADR-013 (R4): naturaleza fiscal del concepto (define si hay ND propia o no).
+    /// Default <see cref="Entities.CancellationConceptKind.OperatorPenaltyPassThrough"/>
+    /// (conservador = NO ND, igual a hoy). Su cambio se audita (es la decision
+    /// fiscalmente mas sensible, §3.11).
+    /// </summary>
+    public CancellationConceptKind ConceptKind { get; set; } = CancellationConceptKind.OperatorPenaltyPassThrough;
+
+    /// <summary>
+    /// ADR-013 (R3): finalidad de la ND. Null mientras no haya ND. El MVP solo
+    /// automatiza <see cref="Entities.DebitNotePurpose.PenaltyOrCancellationCharge"/>.
+    /// </summary>
+    public DebitNotePurpose? DebitNotePurpose { get; set; }
+
+    // ---- (2) Vinculo + estado de la ND ----
+
+    /// <summary>
+    /// ADR-013 §3.1: FK a la <see cref="Invoice"/> que es la ND emitida por la
+    /// penalidad propia. Null hasta que se encola la ND. <b>Es el guard de
+    /// idempotencia</b>: si ya tiene valor, NO se crea otra ND (espeja como el BC
+    /// vincula la NC via <see cref="CreditNoteInvoiceId"/>).
+    /// </summary>
+    public int? DebitNoteInvoiceId { get; set; }
+    public Invoice? DebitNoteInvoice { get; set; }
+
+    /// <summary>
+    /// ADR-013 §3.10 (M4): estado observable de la ND. Alimenta la bandeja
+    /// "cancelaciones con NC pero sin su ND". Default
+    /// <see cref="Entities.DebitNoteStatus.NotApplicable"/> (conservador = no hay ND).
+    /// </summary>
+    public DebitNoteStatus DebitNoteStatus { get; set; } = DebitNoteStatus.NotApplicable;
+
+    /// <summary>
+    /// ADR-013 §3.10: mensaje de error que ARCA devolvio si la ND fallo su CAE.
+    /// Persistido aca para que el back-office vea el motivo sin abrir Hangfire.
+    /// </summary>
+    [MaxLength(1000)]
+    public string? DebitNoteArcaErrorMessage { get; set; }
+
+    // ---- (3) Snapshot fiscal de la ND (congelado al momento del evento, §3.8) ----
+
+    /// <summary>ADR-013 §3.8: monto de la penalidad confirmada congelado al disparar la ND.</summary>
+    public decimal? PenaltyAmountAtEvent { get; set; }
+
+    /// <summary>ADR-013 §3.8: moneda de la penalidad congelada (ARS en el MVP). ISO 4217.</summary>
+    [MaxLength(3)]
+    public string? PenaltyCurrencyAtEvent { get; set; }
+
+    /// <summary>
+    /// ADR-013 §3.8 (M3): tipo de comprobante de la ND derivado del
+    /// <c>TipoComprobante</c> de la factura original AL MOMENTO (ej. 12 = ND C), NO
+    /// de la condicion fiscal del emisor. Congelado para auditoria.
+    /// </summary>
+    public int? DebitNoteCbteTipoAtEvent { get; set; }
+
+    /// <summary>
+    /// ADR-013 §3.8 (M3): tipo de comprobante de la factura asociada (11/12 = C en el
+    /// MVP). Es la FUENTE DE VERDAD para derivar el tipo de la ND.
+    /// </summary>
+    public int? OriginalInvoiceCbteTipoAtEvent { get; set; }
+
+    /// <summary>
+    /// ADR-013 §3.8: condicion fiscal del emisor al momento (Mono en el MVP).
+    /// INFORMATIVO/auditoria — NO se usa para derivar el tipo de la ND (eso lo hace
+    /// <see cref="OriginalInvoiceCbteTipoAtEvent"/>).
+    /// </summary>
+    [MaxLength(50)]
+    public string? EmitterTaxConditionAtEvent { get; set; }
+
+    /// <summary>ADR-013 §3.8: "quien se queda la penalidad" congelado del operador (Agency/Operator).</summary>
+    public PenaltyOwnership? PenaltyOwnershipAtEvent { get; set; }
+
+    /// <summary>ADR-013 §3.8 (R5 + audit): userId que confirmo el monto de la penalidad.</summary>
+    [MaxLength(450)]
+    public string? PenaltyConfirmedByUserId { get; set; }
+
+    /// <summary>ADR-013 §3.8: momento UTC en que se confirmo la penalidad.</summary>
+    public DateTime? PenaltyConfirmedAt { get; set; }
+
+    /// <summary>
+    /// ADR-013 §3.11: userId que clasifico el concepto (pass-through vs ingreso
+    /// propio). Es la decision fiscalmente mas sensible -> se audita el clasificador,
+    /// no solo el confirmador.
+    /// </summary>
+    [MaxLength(450)]
+    public string? ConceptClassifiedByUserId { get; set; }
+
+    /// <summary>ADR-013 §3.11: momento UTC en que se clasifico el concepto.</summary>
+    public DateTime? ConceptClassifiedAt { get; set; }
 }

@@ -274,6 +274,26 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su
+    /// ND". Devuelve las cancelaciones cuya NC total ya salio con CAE pero cuya Nota de
+    /// Debito quedo pendiente o fallida -> fiscalmente incompletas. El service reconcilia de
+    /// paso los Pending leyendo el resultado de la ND emitida async.
+    ///
+    /// <para><b>Permiso</b>: <see cref="Permissions.CobranzasInvoiceAnnul"/> — es una vista
+    /// de back-office fiscal (cross-reserva), mismo dominio que el annul/edicion fiscal. No
+    /// lleva ownership por fila porque es una lista agregada para el back-office, no una
+    /// vista del vendedor sobre "sus" reservas.</para>
+    /// </summary>
+    [HttpGet("debit-notes/pending")]
+    [RequirePermission(Permissions.CobranzasInvoiceAnnul)]
+    public async Task<ActionResult<IReadOnlyList<CancellationDebitNotePendingDto>>> GetPendingDebitNotes(
+        CancellationToken cancellationToken)
+    {
+        var rows = await _bcService.GetCancellationsWithMissingDebitNoteAsync(cancellationToken);
+        return Ok(rows);
+    }
+
+    /// <summary>
     /// FC1.3.5 (ADR-009 §2.7 G3 + §2.11, 2026-05-21): G3 self-loop. El admin
     /// (o el Vendedor que tenga <c>CobranzasInvoiceAnnul</c> + ownership)
     /// edita los inputs de la liquidacion fiscal de un BC que esta esperando

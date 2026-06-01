@@ -373,6 +373,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(s => s.ContactName).HasMaxLength(100);
             entity.Property(s => s.Email).HasMaxLength(100);
             entity.Property(s => s.Phone).HasMaxLength(50);
+
+            // ADR-013 (2026-06-01): "quien se queda la penalidad". Enum como int,
+            // consistente con el resto del modulo. Default Operator (pass-through) lo
+            // pone la migracion a nivel BD para que las filas existentes queden en el
+            // valor conservador (= NO ND).
+            entity.Property(s => s.PenaltyOwnership).HasConversion<int>();
         });
 
         // Customer
@@ -1380,6 +1386,37 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // por este approval X".
             entity.HasIndex(b => b.PartialCreditNoteApprovalRequestId)
                   .HasDatabaseName("IX_BookingCancellations_PartialCreditNoteApprovalRequestId");
+
+            // ============================================================
+            // ADR-013 (2026-06-01): Nota de Debito por penalidad propia.
+            // Enums persistidos como int (consistencia con el resto del modulo).
+            // FK a la Invoice ND con SetNull (mismo patron que CreditNoteInvoice).
+            // ============================================================
+            entity.Property(b => b.PenaltyStatus).HasConversion<int>();
+            entity.Property(b => b.ConceptKind).HasConversion<int>();
+            entity.Property(b => b.DebitNotePurpose).HasConversion<int?>();
+            entity.Property(b => b.DebitNoteStatus).HasConversion<int>();
+            entity.Property(b => b.PenaltyOwnershipAtEvent).HasConversion<int?>();
+
+            entity.Property(b => b.PenaltyAmountAtEvent).HasPrecision(18, 2);
+            entity.Property(b => b.PenaltyCurrencyAtEvent).HasMaxLength(3);
+            entity.Property(b => b.EmitterTaxConditionAtEvent).HasMaxLength(50);
+            entity.Property(b => b.PenaltyConfirmedByUserId).HasMaxLength(450);
+            entity.Property(b => b.ConceptClassifiedByUserId).HasMaxLength(450);
+            entity.Property(b => b.DebitNoteArcaErrorMessage).HasMaxLength(1000);
+
+            // ND opcional: existe solo despues de que la NC total salio con CAE y el
+            // gating habilito la emision. SetNull para que el rollback de una ND (caso
+            // raro) no rompa el aggregate (mismo patron que CreditNoteInvoice).
+            entity.HasOne(b => b.DebitNoteInvoice)
+                  .WithMany()
+                  .HasForeignKey(b => b.DebitNoteInvoiceId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            // Indice para la bandeja "cancelaciones con NC pero sin su ND": filtra por
+            // DebitNoteStatus in (Pending, Failed). Un indice sobre la columna basta.
+            entity.HasIndex(b => b.DebitNoteStatus)
+                  .HasDatabaseName("IX_BookingCancellations_DebitNoteStatus");
 
             // Concurrency lock-free (ADR-002 §2.5 / B11). Pre-requisito FC1.1
             // verificado: Npgsql 8.x soporta xmin nativamente.

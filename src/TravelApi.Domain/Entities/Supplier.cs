@@ -81,6 +81,24 @@ public class Supplier : IHasPublicId
     /// </summary>
     [Column(TypeName = "jsonb")]
     public string? PenaltyPolicyJson { get; set; }
+
+    /// <summary>
+    /// ADR-013 §3.7 (2026-06-01): "quien se queda la penalidad" de cancelacion para
+    /// este operador. <b>Ortogonal a <see cref="InvoicingMode"/></b> (ese es
+    /// reseller-vs-intermediario, otro eje).
+    ///
+    /// <para><see cref="PenaltyOwnership.Operator"/> = pass-through (la plata es del
+    /// operador, la agencia NO emite ND propia, comportamiento de hoy).
+    /// <see cref="PenaltyOwnership.Agency"/> = la penalidad es ingreso propio de la
+    /// agencia (habilita emitir la ND gravada).</para>
+    ///
+    /// <para>Default <see cref="PenaltyOwnership.Operator"/> (conservador): mientras
+    /// nadie lo cambie, el sistema sigue haciendo SOLO la NC total, igual que hoy. Al
+    /// momento del evento de cancelacion este valor se CONGELA en el snapshot fiscal
+    /// (mismo patron que <c>InvoicingModeAtEvent</c>) para usar el acuerdo vigente AL
+    /// MOMENTO, no el actual.</para>
+    /// </summary>
+    public PenaltyOwnership PenaltyOwnership { get; set; } = PenaltyOwnership.Operator;
 }
 
 public static class TaxConditions
