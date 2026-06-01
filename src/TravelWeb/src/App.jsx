@@ -35,6 +35,7 @@ import PublicPackageEmbedPage from "./pages/PublicPackageEmbedPage";
 import PreviewCountryPage from "./pages/PreviewCountryPage";
 import PreviewPackagePage from "./pages/PreviewPackagePage";
 import { AlertsProvider } from "./contexts/AlertsContext";
+import { OperationalFlagsProvider } from "./contexts/OperationalFlagsContext";
 import { Toaster } from "sonner";
 import PackagesPage from "./features/packages/pages/PackagesPage";
 import DestinationEditorPage from "./features/packages/pages/DestinationEditorPage";
@@ -191,6 +192,15 @@ export default function App() {
           path="/*"
           element={
             <PrivateRoute>
+              {/*
+                OperationalFlagsProvider va dentro de PrivateRoute porque
+                GET /afip/settings requiere autenticacion. Al estar aca arriba
+                (antes que cualquier pagina autenticada se monte), el fetch
+                ocurre una sola vez para toda la sesion. Cuando el usuario
+                navega entre /reservas y /reservas/:id, el valor ya esta cacheado
+                en el contexto y no hay re-fetch ni parpadeo.
+              */}
+              <OperationalFlagsProvider>
               <AlertsProvider>
                 <Layout onLogout={handleLogout} isAdmin={adminUser}>
                   <Routes>
@@ -271,6 +281,7 @@ export default function App() {
                     />
                   </Routes>                </Layout>
               </AlertsProvider>
+              </OperationalFlagsProvider>
             </PrivateRoute>
           }
         />

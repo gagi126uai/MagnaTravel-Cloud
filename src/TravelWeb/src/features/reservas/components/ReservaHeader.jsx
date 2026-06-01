@@ -24,10 +24,14 @@ function formatTripDate(value) {
  * - isSoldToSettleEnabled: si es true, usa el ciclo extendido de estados
  *   (Budget→Sold→Confirmed→Traveling→ToSettle→Closed). Si es false (default),
  *   la botonera es identica a la version anterior.
+ * - loadingFlags: mientras es true, los flags del servidor todavia no llegaron.
+ *   En ese caso ocultamos la botonera de acciones para evitar el parpadeo
+ *   "Confirmar Reserva" → "Vender" en reservas en estado Budget.
+ *   El resto del header (nombre, numero, estado, fechas) se muestra igual.
  * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates
  *   son manejados por el padre (ReservaDetailPage).
  */
-export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert, onEditDates, isSoldToSettleEnabled = false }) {
+export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert, onEditDates, isSoldToSettleEnabled = false, loadingFlags = false }) {
     const isArchived = reserva.status === 'Archived';
     const canDelete = (reserva.status === 'Budget' || reserva.status === 'Confirmed');
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
@@ -113,7 +117,19 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
                 </div>
             </div>
 
-            {isArchived ? (
+            {/*
+              Mientras loadingFlags sea true, los flags del servidor no llegaron todavia.
+              Ocultamos la botonera y mostramos un placeholder para evitar el parpadeo:
+              si mostramos la botonera con isSoldToSettleEnabled=false (default) y
+              despues llega true, el boton "Confirmar Reserva" saltaria a "Vender".
+              El placeholder tiene la misma altura aproximada para no provocar un layout shift.
+            */}
+            {loadingFlags ? (
+                <div data-testid="reserva-header-actions-loading" className="flex gap-3">
+                    <div className="animate-pulse h-10 w-36 rounded-xl bg-slate-200 dark:bg-slate-700" />
+                    <div className="animate-pulse h-10 w-10 rounded-xl bg-slate-100 dark:bg-slate-800" />
+                </div>
+            ) : isArchived ? (
                 <div className="flex items-center gap-2 px-4 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
                     <AlertTriangle className="w-4 h-4 text-slate-500" />
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Solo lectura — Reserva archivada</span>

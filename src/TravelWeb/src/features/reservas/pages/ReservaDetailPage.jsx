@@ -34,7 +34,7 @@ import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
 import { useReservaDetail } from "../hooks/useReservaDetail";
-import { useOperationalFlags } from "../../../hooks/useOperationalFlags";
+import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 
 // Mapa de TipoComprobante AFIP a etiqueta legible.
 //  Facturas: 1=A, 6=B, 11=C, 51=M.
@@ -351,9 +351,12 @@ export default function ReservaDetailPage() {
   const [activeTab, setActiveTab] = useState("services");
 
   // Lee si el ciclo extendido de reservas esta habilitado.
-  // Con flag OFF: la pagina es identica a antes (Budget→Confirmed directo).
+  // Con flag OFF (default en produccion): la pagina es identica a antes (Budget→Confirmed directo).
   // Con flag ON: Budget→Sold (con modal de pasajeros) → Confirmed.
-  const { flags } = useOperationalFlags();
+  // loadingFlags: mientras es true, isSoldToSettleEnabled es false (default).
+  // Lo pasamos a ReservaHeader para que no muestre la botonera hasta tener
+  // el valor definitivo del flag — evita el salto del boton "Confirmar Reserva" a "Vender".
+  const { flags, loadingFlags } = useOperationalFlags();
   const isSoldToSettleEnabled = flags.enableSoldToSettleStates;
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [serviceToEdit, setServiceToEdit] = useState(null);
@@ -533,6 +536,7 @@ export default function ReservaDetailPage() {
       <ReservaHeader
         reserva={reserva}
         isSoldToSettleEnabled={isSoldToSettleEnabled}
+        loadingFlags={loadingFlags}
         onBack={() => navigate("/reservas")}
         onStatusChange={(newStatus) => {
           // Con ciclo base (flag OFF): Budget → Confirmed abre el modal de pasajeros.

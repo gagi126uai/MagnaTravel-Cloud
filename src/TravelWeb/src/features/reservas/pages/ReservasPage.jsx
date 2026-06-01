@@ -3,10 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { Plus, Search, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 
 import { useReservas } from "../hooks/useReservas";
-import { useOperationalFlags } from "../../../hooks/useOperationalFlags";
+import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { Button } from "../../../components/ui/button";
 import CreateReservaModal from "../../../components/CreateReservaModal";
-import { FilesPageSkeleton } from "../../../components/ui/skeleton";
+import { FilesPageSkeleton, Skeleton } from "../../../components/ui/skeleton";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { ListPageHeader } from "../../../components/ui/ListPageHeader";
@@ -44,8 +44,12 @@ export default function ReservasPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Lee si el ciclo extendido de reservas esta habilitado.
-  // Si el flag esta OFF (default) la pagina es identica a antes.
-  const { flags } = useOperationalFlags();
+  // Con flag OFF (default en produccion): la pagina es identica a antes.
+  // loadingFlags: mientras es true, los flags todavia no llegaron del servidor.
+  // Usamos loadingFlags para NO decidir que tabs mostrar hasta tener el valor definitivo.
+  // Razon: si decidimos con false (el default) y despues llega true (flag ON),
+  // el tab-bar salta de 6 a 8 tabs — ese es el parpadeo que queremos eliminar.
+  const { flags, loadingFlags } = useOperationalFlags();
   const tabs = flags.enableSoldToSettleStates ? EXTENDED_TABS : BASE_TABS;
 
   // Mapping del valor de la tab al key de tabCounts del hook.
@@ -119,30 +123,51 @@ export default function ReservasPage() {
 
       {/* Tabs en su propia fila — ocupan todo el ancho y permiten scroll horizontal sin tapar otros controles */}
       <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-        <div className="flex overflow-x-auto scrollbar-hide rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-          {tabs.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setViewFilter(tab.value)}
-              className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
-                viewFilter === tab.value
-                  ? "bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white"
-                  : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
-              }`}
-            >
-              {tab.label}
-              <span
-                className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+        {/*
+          Mientras loadingFlags sea true, los flags del servidor no llegaron todavia.
+          En ese caso mostramos un placeholder de la misma altura que el tab-bar real,
+          en lugar de renderizar las tabs con el valor default (BASE_TABS).
+          Razon: si renderiamos BASE_TABS y despues llegan los flags con
+          enableSoldToSettleStates=true, el tab-bar saltaria de 6 a 8 tabs — ese
+          es el parpadeo que estamos eliminando.
+          Con flag OFF (produccion actual) este placeholder dura muy poco (el fetch
+          de /afip/settings tarda milisegundos) y el comportamiento visual es igual al de antes.
+        */}
+        {loadingFlags ? (
+          <div data-testid="reservas-tabs-loading" className="flex gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+            {/* Un placeholder por cada tab base. Derivamos la cantidad de BASE_TABS
+                (en vez de un array de anchos fijos) para que el skeleton no quede
+                desalineado si en el futuro se agrega o saca una tab del ciclo base. */}
+            {BASE_TABS.map((tab) => (
+              <Skeleton key={tab.value} className="h-8 w-20 rounded-md" />
+            ))}
+          </div>
+        ) : (
+          <div className="flex overflow-x-auto scrollbar-hide rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+            {tabs.map((tab) => (
+              <button
+                key={tab.value}
+                onClick={() => setViewFilter(tab.value)}
+                className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
                   viewFilter === tab.value
-                    ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
-                    : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                    ? "bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white"
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
                 }`}
               >
-                {tabCounts[tabCountKey(tab.value)] || 0}
-              </span>
-            </button>
-          ))}
-        </div>
+                {tab.label}
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                    viewFilter === tab.value
+                      ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+                      : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                  }`}
+                >
+                  {tabCounts[tabCountKey(tab.value)] || 0}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Filtros (rango fecha + tipo de fecha + buscar) en su propia fila */}
