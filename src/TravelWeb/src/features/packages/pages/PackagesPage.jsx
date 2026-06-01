@@ -458,7 +458,7 @@ export default function PackagesPage() {
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
       <ListPageHeader
         title="Paises y destinos"
-        subtitle="Organiza el catalogo por pais, revisa destinos y controla su publicacion."
+        subtitle="Ordená tu catálogo por país, revisá los destinos y decidí cuáles se publican."
         actions={
           <div className="flex flex-wrap gap-2">
             {canEdit ? (

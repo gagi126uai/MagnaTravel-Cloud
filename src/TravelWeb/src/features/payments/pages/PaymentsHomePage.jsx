@@ -125,7 +125,7 @@ export default function PaymentsHomePage() {
 
         <HomeCard
           title="Facturacion"
-          description="Estado fiscal AFIP: que esta listo, que esta bloqueado y que ya se emitio."
+          description="Qué reservas están listas para facturar, cuáles están frenadas por deuda y cuáles ya facturaste."
           icon={FileText}
           accentClass="bg-indigo-50 text-indigo-600 dark:bg-indigo-950/30 dark:text-indigo-300"
           metrics={[
@@ -215,10 +215,10 @@ export default function PaymentsHomePage() {
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4 shadow-sm">
           <div className="flex items-center gap-3 mb-2 text-slate-500">
             <FileText className="w-4 h-4" />
-            <span className="text-sm font-medium">Lectura fiscal</span>
+            <span className="text-sm font-medium">Facturación</span>
           </div>
           <div className="text-sm text-slate-500 dark:text-slate-400">
-            Facturacion separa lo listo para AFIP, lo bloqueado por deuda y lo ya emitido.
+            Separá lo que está listo para facturar, lo frenado por deuda y lo que ya facturaste.
           </div>
         </div>
       </div>

@@ -95,7 +95,7 @@ export default function DashboardPage() {
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Dashboard</h2>
                     <p className="text-muted-foreground mt-1">
-                        Vista general del rendimiento de tu agencia.
+                        Cómo viene tu agencia de un vistazo.
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">

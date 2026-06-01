@@ -53,7 +53,7 @@ export default function CustomersPage() {
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
       <ListPageHeader
         title="Gestion de Clientes"
-        subtitle="Administra pasajeros y cuentas corporativas."
+        subtitle="Tus pasajeros y empresas, con la cuenta corriente de cada uno."
         actions={
           <>
             <Button

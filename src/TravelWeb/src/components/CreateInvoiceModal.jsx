@@ -209,7 +209,7 @@ export default function CreateInvoiceModal({
     }
 
     if (isBlockedByDebt) {
-      showError(reserva?.economicBlockReason || "La reserva tiene deuda y AFIP está bloqueado.");
+      showError(reserva?.economicBlockReason || "No se puede facturar: la reserva tiene saldo pendiente.");
       return;
     }
 

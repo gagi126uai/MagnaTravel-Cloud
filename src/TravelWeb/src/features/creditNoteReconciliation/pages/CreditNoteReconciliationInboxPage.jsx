@@ -97,11 +97,12 @@ export default function CreditNoteReconciliationInboxPage() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-            Reconciliacion de NC parciales
+            Notas de crédito por revisar
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Casos donde se emitio una nota de credito parcial y quedan recibos de pago sin anular.
-            La devolucion real se gestiona en Caja, no aca.
+            Reservas a las que les hiciste una nota de crédito por una parte del importe y todavía
+            tienen recibos de pago sin anular. Acá los dejás al día; la devolución de la plata se
+            hace en Caja.
           </p>
         </div>
       </div>

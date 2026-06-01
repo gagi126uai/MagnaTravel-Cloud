@@ -10,7 +10,7 @@ export default function PaymentsPage() {
             Cobranza y Facturacion
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Cobros de clientes y emision fiscal ordenados en una sola vista operativa.
+Lo que cobrás a tus clientes y las facturas que emitís, todo en un mismo lugar.
           </p>
         </div>
 

@@ -53,7 +53,7 @@ export default function SuppliersPage() {
     <div className="animate-in fade-in space-y-6 duration-500">
       <ListPageHeader
         title="Proveedores"
-        subtitle="Gestion comercial y cuentas corrientes"
+        subtitle="Tus operadores y mayoristas, con la cuenta corriente de cada uno."
         actions={
           <Button
             onClick={() => handleOpenModal()}

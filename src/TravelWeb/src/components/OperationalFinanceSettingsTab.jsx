@@ -128,7 +128,7 @@ export default function OperationalFinanceSettingsTab() {
           </div>
           <div>
             <h3 className="font-semibold text-slate-900 dark:text-white">Operativa, Cobranzas y Facturación</h3>
-            <p className="text-xs text-slate-500">Reglas económicas que gobiernan operativo, vouchers, AFIP y alertas.</p>
+            <p className="text-xs text-slate-500">Reglas de dinero de tu agencia: cuándo se libera una reserva, cuándo se emite un voucher y cómo se factura.</p>
           </div>
         </div>
 
@@ -199,11 +199,11 @@ export default function OperationalFinanceSettingsTab() {
                   Habilitar facturación en moneda extranjera (dólares)
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Al activarlo, aparece el selector Pesos/Dólares al crear facturas y se habilita
-                  el campo de tipo de cambio manual.{" "}
+                  Permite facturar a tus clientes en dólares además de en pesos, eligiendo
+                  la cotización del día.{" "}
                   <span className="font-semibold text-amber-600 dark:text-amber-400">
-                    Activá esto solo cuando hayas probado en homologación y tu contador lo confirme.
-                    Mientras esté apagado, el sistema factura solo en pesos como siempre.
+                    Activalo solo si tu contador confirma que tu agencia puede facturar en dólares.
+                    Mientras esté apagado, todas las facturas salen en pesos, como hasta ahora.
                   </span>
                 </div>
               </div>
@@ -229,11 +229,11 @@ export default function OperationalFinanceSettingsTab() {
                   Ciclo extendido de estados de reserva (Vendida / A liquidar)
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Al activarlo, el ciclo de vida de las reservas pasa a tener dos etapas
-                  nuevas: <span className="font-medium">Vendida</span> (antes de la confirmación del operador) y{" "}
-                  <span className="font-medium">A liquidar</span> (apartar manualmente las reservas que
-                  requieran liquidación con el operador post-viaje). Con el flag apagado, el sistema
-                  funciona exactamente como antes.
+                  Suma dos pasos al seguimiento de tus reservas:{" "}
+                  <span className="font-medium">Vendida</span>, para marcar la venta antes de que el
+                  operador la confirme, y <span className="font-medium">A liquidar</span>, para apartar
+                  a mano las reservas que tengas que saldar con el operador después del viaje.
+                  Si lo dejás apagado, las reservas se manejan como hasta ahora.
                 </div>
               </div>
             </label>
@@ -249,7 +249,7 @@ export default function OperationalFinanceSettingsTab() {
             <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 flex items-center gap-2 border-b border-red-200 dark:border-red-900/40">
               <FileWarning className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0" aria-hidden="true" />
               <span className="text-sm font-semibold text-red-800 dark:text-red-300">
-                Zona fiscal — requiere homologación ARCA y firma del contador
+                Facturación automática — emite comprobantes reales
               </span>
             </div>
 
@@ -274,16 +274,13 @@ export default function OperationalFinanceSettingsTab() {
                     className="text-xs text-slate-600 dark:text-slate-400 mt-1 space-y-1"
                   >
                     <p>
-                      Al activarlo, cada vez que se aprueba una cancelación con penalidad, el sistema
-                      emite automáticamente una{" "}
-                      <span className="font-semibold">Nota de Débito real a ARCA/AFIP</span>. Ese
-                      comprobante tiene CAE y no se puede borrar.
+                      Cuando cancelás una reserva con penalidad, el sistema le factura esa penalidad
+                      al cliente con una <span className="font-semibold">nota de débito</span>, sin que
+                      tengas que cargarla a mano.
                     </p>
                     <p className="font-semibold text-red-700 dark:text-red-400">
-                      Antes de prender este flag: necesitás tener el flujo de cancelación nuevo activo
-                      (EnableNewCancellationFlow), homologación ARCA aprobada y la confirmación de tu
-                      contador. Si falta alguna de estas condiciones, el sistema rechazará la activación
-                      con un mensaje explicativo.
+                      Emite comprobantes fiscales de verdad, que después no se pueden borrar.
+                      Activalo solo cuando tengas todo verificado con tu contador.
                     </p>
                   </div>
                 </div>
@@ -295,10 +292,10 @@ export default function OperationalFinanceSettingsTab() {
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
                 <ShieldAlert className="w-4 h-4 text-amber-500" />
-                Control de AFIP
+                Facturar con deuda pendiente
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-4">
-                Define si AFIP requiere pago total o si el agente puede tener la última palabra con motivo obligatorio.
+                Elegí si una reserva con saldo se puede facturar igual. Podés exigir el pago total o dejar que el vendedor lo decida, siempre con un motivo.
               </p>
               <select
                 value={form.afipInvoiceControlMode}
@@ -306,8 +303,8 @@ export default function OperationalFinanceSettingsTab() {
                 className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
                 disabled={loading}
               >
-                <option value="FullPaymentRequired">Pago total obligatorio</option>
-                <option value="AllowAgentOverrideWithReason">Permitir override del agente con motivo</option>
+                <option value="FullPaymentRequired">Exigir pago total para facturar</option>
+                <option value="AllowAgentOverrideWithReason">Permitir facturar con deuda (el vendedor indica el motivo)</option>
               </select>
             </div>
 
@@ -349,9 +346,9 @@ export default function OperationalFinanceSettingsTab() {
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" />
               <div className="space-y-1">
-                <div className="font-semibold">Reglas duras de esta etapa</div>
+                <div className="font-semibold">Tené en cuenta</div>
                 <p>
-                  El override del agente aplica solo a AFIP. Operativo y voucher siguen bloqueados si la reserva tiene deuda.
+                  La excepción para facturar con deuda solo aplica a la factura. Pasar la reserva a operativo y emitir el voucher siguen bloqueados mientras haya saldo pendiente.
                 </p>
               </div>
             </div>
@@ -405,31 +402,25 @@ export default function OperationalFinanceSettingsTab() {
               id="debit-note-dialog-title"
               className="text-base font-semibold text-slate-900 dark:text-white"
             >
-              Estás por habilitar la Nota de Débito fiscal
+              Vas a activar la facturación automática de penalidades
             </h2>
           </div>
 
           <div id="debit-note-dialog-desc" className="text-sm text-slate-600 dark:text-slate-300 space-y-3">
             <p>
-              Esto habilita la <strong>emisión automática de Notas de Débito reales a AFIP/ARCA</strong>{" "}
-              cada vez que se aprueba una cancelación con penalidad.
+              A partir de ahora, cada vez que canceles una reserva con penalidad, el sistema
+              le va a <strong>facturar esa penalidad al cliente automáticamente</strong>.
             </p>
             <p>
-              Esos comprobantes tienen CAE y <strong>no se pueden borrar</strong> — quedan en el historial
-              fiscal de la agencia.
+              Son comprobantes fiscales de verdad: una vez emitidos, <strong>no se pueden borrar</strong>{" "}
+              y quedan en el historial de tu agencia.
             </p>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-4 py-3 text-amber-800 dark:text-amber-200 text-xs space-y-1">
-              <p className="font-semibold">Antes de continuar, confirmá que:</p>
-              <ul className="list-disc list-inside space-y-0.5">
-                <li>El flujo de cancelación nuevo (FC1.2) ya está activo en la base de datos.</li>
-                <li>Realizaste la homologación de Notas de Débito con ARCA.</li>
-                <li>Tu contador revisó y aprobó la configuración.</li>
-              </ul>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-4 py-3 text-amber-800 dark:text-amber-200 text-xs">
+              <p>
+                Activalo solo cuando tengas todo verificado con tu contador. Si todavía falta algún
+                paso, el sistema no te va a dejar guardar y te lo va a avisar — sin emitir nada.
+              </p>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Si alguna de esas condiciones no se cumple, el sistema te va a mostrar un error
-              al guardar — sin emitir ningún comprobante.
-            </p>
           </div>
 
           <div className="flex gap-3 pt-2">
@@ -448,7 +439,7 @@ export default function OperationalFinanceSettingsTab() {
               className="flex-1 rounded-xl bg-red-600 hover:bg-red-700 px-4 py-2 text-sm font-medium text-white"
               data-testid="confirm-debit-note-activation"
             >
-              Sí, activar Nota de Débito
+              Sí, activar
             </button>
           </div>
         </div>

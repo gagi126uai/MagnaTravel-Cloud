@@ -198,7 +198,7 @@ export default function MessagesPage() {
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white">Mensajes</h1>
           <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
-            Envio de mensajes y vouchers por WhatsApp desde reservas asociadas.
+Mandá mensajes y vouchers a tus clientes por WhatsApp, directo desde la reserva.
           </p>
         </div>
         <form onSubmit={handleSearchSubmit} className="flex w-full gap-2 md:max-w-md">

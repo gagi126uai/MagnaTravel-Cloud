@@ -559,7 +559,7 @@ export default function SettingsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Configuración</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Administración del sistema y preferencias.
+Ajustá cómo funciona el sistema para tu agencia.
           </p>
         </div>
       </header>

@@ -25,7 +25,7 @@ export default function MyApprovalRequestsPage() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Mis solicitudes</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Estado de las aprobaciones que solicitaste.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Cómo vienen los permisos que pediste.</p>
         </div>
       </div>
 

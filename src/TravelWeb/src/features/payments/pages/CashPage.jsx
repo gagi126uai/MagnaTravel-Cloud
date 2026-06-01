@@ -8,7 +8,7 @@ export default function CashPage() {
           Caja
         </h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Ingresos, egresos y ajustes manuales. Esta vista muestra solo movimientos reales de dinero.
+Entradas, salidas y ajustes de plata. Acá ves solo el movimiento real de dinero.
         </p>
       </div>
 

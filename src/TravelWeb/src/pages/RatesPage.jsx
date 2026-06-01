@@ -571,7 +571,7 @@ export default function RatesPage() {
                         Tarifario
                     </h1>
                     <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                        Gestione las tarifas y precios de sus proveedores
+                        Cargá y mantené al día las tarifas de tus operadores y mayoristas.
                     </p>
                 </div>
                 <button onClick={openNewModal}

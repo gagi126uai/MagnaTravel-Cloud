@@ -31,7 +31,7 @@ export default function ApprovalsInboxPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Aprobaciones pendientes</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Revisá y resolvé las solicitudes enviadas por los vendedores.
+            Mirá los pedidos de tus vendedores y aprobalos o rechazalos.
           </p>
         </div>
       </div>
