@@ -123,7 +123,11 @@ public class ReservaSoldToSettleStatesTests
     public async Task FlagOff_TravelingToClosed_BlockedWhenBalancePositive()
     {
         using var context = new AppDbContext(NewDbOptions());
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Traveling, Balance = 500m });
+        // OJO: UpdateStatusAsync RECALCULA el saldo (UpdateBalanceAsync) desde servicios/pagos
+        // ANTES del gate de cierre, asi que setear Balance a mano se pisa. Para tener saldo
+        // POSITIVO real agregamos un servicio vendido (SalePrice 150) sin ningun pago: 150 - 0 = 150.
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Traveling });
+        context.Servicios.Add(ConfirmedService(1, 1));
         await context.SaveChangesAsync();
 
         var service = BuildService(context, soldToSettleEnabled: false);
@@ -291,7 +295,9 @@ public class ReservaSoldToSettleStatesTests
     {
         // El cierre directo Traveling->Closed comparte el gate de balance del cierre clasico.
         using var context = new AppDbContext(NewDbOptions());
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Traveling, Balance = 500m });
+        // El saldo se recalcula desde servicios/pagos al transicionar: servicio vendido sin pago = 150 > 0.
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.Traveling });
+        context.Servicios.Add(ConfirmedService(1, 1));
         await context.SaveChangesAsync();
 
         var service = BuildService(context, soldToSettleEnabled: true);
@@ -334,7 +340,9 @@ public class ReservaSoldToSettleStatesTests
     public async Task FlagOn_ToSettleToClosed_Blocked_WhenBalancePositive()
     {
         using var context = new AppDbContext(NewDbOptions());
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.ToSettle, Balance = 250m });
+        // El saldo se recalcula desde servicios/pagos al transicionar: servicio vendido sin pago = 150 > 0.
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Test", Status = EstadoReserva.ToSettle });
+        context.Servicios.Add(ConfirmedService(1, 1));
         await context.SaveChangesAsync();
 
         var service = BuildService(context, soldToSettleEnabled: true);
