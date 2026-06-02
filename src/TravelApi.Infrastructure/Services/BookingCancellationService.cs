@@ -155,25 +155,15 @@ public class BookingCancellationService
 
         // 5) Inferir Customer y Supplier:
         //    - Customer: el Payer de la reserva.
-        //    - Supplier: la Invoice puede tener uno, pero la entidad Invoice no
-        //      lo expone directamente. Usamos el primer Supplier vinculado a
-        //      ServiciosReservados (si existe). Fallback: requerimos un Supplier
-        //      explicito en el request (futuro: cuando agreguemos
-        //      DraftCancellationRequest.SupplierPublicId).
+        //    - Supplier: lo deducimos del conjunto de operadores DISTINTOS que
+        //      aparecen en TODOS los servicios de la reserva (ver InferSingleSupplierIdAsync).
         if (reserva.PayerId is null)
             throw new InvalidOperationException(
                 $"La reserva {reserva.NumeroReserva} no tiene Payer asignado. No se puede crear cancelacion.");
 
-        // DbSet se llama "Servicios" en AppDbContext aunque la clase sea
-        // ServicioReserva (decision historica del repo).
-        var supplierId = await _db.Servicios
-            .Where(s => s.ReservaId == reserva.Id && s.SupplierId != null)
-            .Select(s => (int?)s.SupplierId!)
-            .FirstOrDefaultAsync(ct);
-        if (supplierId is null)
-            throw new InvalidOperationException(
-                $"La reserva {reserva.NumeroReserva} no tiene servicios con Supplier asignado. " +
-                "Se requiere al menos un servicio con operador para registrar la cancelacion.");
+        // ADR-015 Fase 1: el operador que gobierna el evento fiscal (Mono vs RI,
+        // PenaltyOwnership, INV-126) sale de inferir el unico operador de la reserva.
+        var supplierId = await InferSingleSupplierIdAsync(reserva, ct);
 
         // 6) Calcular AmountPaidAtCancellation: suma de pagos activos
         //    (no soft-deleted y con Status != "Cancelled") de la reserva.
@@ -189,7 +179,7 @@ public class BookingCancellationService
         {
             ReservaId = reserva.Id,
             CustomerId = reserva.PayerId.Value,
-            SupplierId = supplierId.Value,
+            SupplierId = supplierId,
             OriginatingInvoiceId = originatingInvoice.Id,
             Status = BookingCancellationStatus.Drafted,
             Reason = request.Reason.Trim(),
@@ -2847,6 +2837,139 @@ public class BookingCancellationService
             throw new InvalidOperationException(
                 "El modulo de cancelacion/refund no esta habilitado en este ambiente " +
                 "(EnableNewCancellationFlow=false).");
+    }
+
+    /// <summary>
+    /// ADR-015 Fase 1: infiere el UNICO operador (Supplier) que gobierna el evento
+    /// fiscal de la cancelacion. Reune los SupplierId DISTINTOS de las 6 fuentes de
+    /// servicios de la reserva (la tabla generica "Servicios" + las 5 tablas tipadas)
+    /// y decide segun cuantos operadores distintos hay:
+    ///
+    /// <list type="bullet">
+    ///   <item>1 operador  -> se autorresuelve (caso que esta feature desbloquea).</item>
+    ///   <item>0 operadores -> error: la reserva no tiene servicios con operador.</item>
+    ///   <item>2 o mas      -> INV-152: cancelacion multi-operador todavia no soportada.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// <b>Por que bloqueamos multi-operador (no es una limitacion tecnica)</b>: el
+    /// operador elegido FIJA el regimen fiscal de la Nota de Credito (Monotributo vs
+    /// Responsable Inscripto) y su <c>PenaltyOwnership</c>. Elegir mal el operador en
+    /// una reserva con varios = NC con regimen fiscal equivocado. Resolver ese caso
+    /// con un selector seguro es trabajo de Fase 2 (ver ADR-015).
+    /// </para>
+    ///
+    /// <para>
+    /// <b>No-regresion del path generico</b>: una reserva que hoy se cancela via la
+    /// tabla generica con 1 operador sigue resolviendo EXACTAMENTE ese operador,
+    /// porque el conjunto distinto de un solo SupplierId es ese mismo SupplierId.
+    /// </para>
+    /// </summary>
+    private async Task<int> InferSingleSupplierIdAsync(Reserva reserva, CancellationToken ct)
+    {
+        var distinctSupplierIds = await GetDistinctSupplierIdsAsync(reserva.Id, ct);
+
+        if (distinctSupplierIds.Count == 0)
+            throw new InvalidOperationException(
+                $"La reserva {reserva.NumeroReserva} no tiene servicios con Supplier asignado. " +
+                "Se requiere al menos un servicio con operador para registrar la cancelacion.");
+
+        if (distinctSupplierIds.Count > 1)
+        {
+            // Metrica/diagnostico: registramos el bloqueo multi-operador para que
+            // soporte pueda entender por que una reserva no se deja cancelar (que
+            // operadores se detectaron). Los SupplierId son ints, no son PII.
+            // El prefijo "metric:" sigue el mismo patron que cancellation_drafted
+            // (lo extrae el parser de logs como serie temporal).
+            _logger.LogInformation(
+                "metric:cancellation_blocked_multi_operator | ReservaId={ReservaId} SupplierIds={SupplierIds}",
+                reserva.Id,
+                string.Join(",", distinctSupplierIds));
+
+            throw new BusinessInvariantViolationException(
+                "Esta reserva tiene servicios de varios operadores. La cancelacion de " +
+                "reservas con varios operadores todavia no esta disponible. " +
+                "Gestionala manualmente por ahora.",
+                invariantCode: "INV-152");
+        }
+
+        return distinctSupplierIds[0];
+    }
+
+    /// <summary>
+    /// ADR-015 Fase 1: junta los SupplierId DISTINTOS de todos los servicios de la
+    /// reserva. Hay 6 fuentes porque los servicios conviven en 2 modelos: la tabla
+    /// generica historica (<c>ServicioReserva</c>, con SupplierId NULLABLE) y las 5
+    /// tablas tipadas (Hotel/Vuelo/Transfer/Paquete/Asistencia, todas con SupplierId
+    /// NOT NULL). Los servicios tipados NO escriben una fila espejo en la generica,
+    /// asi que hay que consultar cada tabla por separado.
+    ///
+    /// <para>
+    /// Usamos LINQ sobre las propiedades C# (no SQL crudo) para no acoplarnos a los
+    /// nombres de columna legacy: la propiedad <c>ReservaId</c> de las tablas tipadas
+    /// mapea a la columna fisica <c>TravelFileId</c> en AppDbContext, pero EF Core
+    /// resuelve eso por nosotros.
+    /// </para>
+    ///
+    /// <para>
+    /// El dedupe por SupplierId vive aca: un mismo operador en 2 hoteles cuenta 1 vez.
+    /// </para>
+    /// </summary>
+    private async Task<List<int>> GetDistinctSupplierIdsAsync(int reservaId, CancellationToken ct)
+    {
+        var supplierIds = new HashSet<int>();
+
+        // Fuente 1: tabla generica. SupplierId es nullable -> filtramos los NULL.
+        var genericSupplierIds = await _db.Servicios
+            .Where(s => s.ReservaId == reservaId && s.SupplierId != null)
+            .Select(s => s.SupplierId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var id in genericSupplierIds)
+            supplierIds.Add(id);
+
+        // Fuentes 2-6: tablas tipadas. SupplierId es NOT NULL en todas.
+        var hotelSupplierIds = await _db.HotelBookings
+            .Where(h => h.ReservaId == reservaId)
+            .Select(h => h.SupplierId)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var id in hotelSupplierIds)
+            supplierIds.Add(id);
+
+        var flightSupplierIds = await _db.FlightSegments
+            .Where(f => f.ReservaId == reservaId)
+            .Select(f => f.SupplierId)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var id in flightSupplierIds)
+            supplierIds.Add(id);
+
+        var transferSupplierIds = await _db.TransferBookings
+            .Where(t => t.ReservaId == reservaId)
+            .Select(t => t.SupplierId)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var id in transferSupplierIds)
+            supplierIds.Add(id);
+
+        var packageSupplierIds = await _db.PackageBookings
+            .Where(p => p.ReservaId == reservaId)
+            .Select(p => p.SupplierId)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var id in packageSupplierIds)
+            supplierIds.Add(id);
+
+        var assistanceSupplierIds = await _db.AssistanceBookings
+            .Where(a => a.ReservaId == reservaId)
+            .Select(a => a.SupplierId)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var id in assistanceSupplierIds)
+            supplierIds.Add(id);
+
+        return supplierIds.ToList();
     }
 
     // =========================================================================

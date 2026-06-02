@@ -19,6 +19,7 @@
  *   - CONCURRENT_EDIT → banner "alguien mas modifico, recarga".
  *   - INV-ADR014-PERM / INV-ADR013-PERM → "no tenes permiso para esto".
  *   - reclasificacion bloqueada → "ya se emitio, habla con administracion".
+ *   - INV-152 (paso 1) → banner "multiples operadores, gestionar manualmente".
  *
  * Props:
  *   - reserva: objeto de la reserva (necesita publicId, numeroReserva, customerName).
@@ -197,11 +198,21 @@ export default function CancelReservaModal({
       setDraft(createdDraft);
       setStep("confirm");
     } catch (error) {
-      // 409: reserva ya tiene cancelacion activa, flag apagado, etc.
+      // 409: reserva ya tiene cancelacion activa, flag apagado, multi-operador, etc.
       if (error?.status === 409) {
-        setConflictMessage(
-          getApiErrorMessage(error, "No se pudo iniciar la cancelacion. Recarga la pagina y volvé a intentar.")
-        );
+        const errorPayload = error?.payload;
+
+        // INV-152: la reserva tiene servicios de mas de un operador — caso no soportado todavia.
+        // Se muestra un mensaje humano en lugar del generico para que el agente sepa que hacer.
+        if (errorPayload?.invariantCode === "INV-152") {
+          setConflictMessage(
+            "Esta reserva tiene servicios de más de un operador. Por ahora la cancelación de reservas con varios operadores no está disponible desde acá. Gestionala manualmente o pedile ayuda a un administrador."
+          );
+        } else {
+          setConflictMessage(
+            getApiErrorMessage(error, "No se pudo iniciar la cancelacion. Recarga la pagina y volvé a intentar.")
+          );
+        }
       } else {
         showError(getApiErrorMessage(error, "No se pudo iniciar la cancelacion."));
       }

@@ -128,6 +128,29 @@ public class CancellationsControllerTests : IClassFixture<CustomWebApplicationFa
         });
         await db.SaveChangesAsync();
 
+        // ADR-015 Fase 1: la reserva propia necesita AL MENOS un servicio con
+        // Supplier, porque DraftAsync infiere el operador de los servicios. Sin
+        // esto la inferencia no encuentra operador y devuelve 409 en vez de 201.
+        // Usamos un ServicioReserva generico (el caso mas simple) con un Supplier
+        // valido; con un solo operador la inferencia lo autorresuelve.
+        var supplier = new Supplier
+        {
+            Name = "Operador " + suffix,
+            IsActive = true,
+            TaxCondition = "IVA_RESP_INSCRIPTO",
+        };
+        db.Suppliers.Add(supplier);
+        await db.SaveChangesAsync();
+
+        db.Servicios.Add(new ServicioReserva
+        {
+            ReservaId = ownReserva.Id,
+            SupplierId = supplier.Id,
+            ServiceType = "Generico",
+            Description = "Servicio para inferencia de operador en cancelacion",
+        });
+        await db.SaveChangesAsync();
+
         scope.ServiceProvider.GetRequiredService<IUserPermissionResolver>().InvalidateAll();
 
         return new TestSeed(vendedorId, ownReserva.PublicId, ajenaReserva.PublicId);
