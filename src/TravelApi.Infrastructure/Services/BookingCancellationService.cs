@@ -1795,7 +1795,13 @@ public class BookingCancellationService
         CaptureDebitNoteClassification(
             bc, classification, userId, userName,
             userCanClassifyAgencyPenalty: true, // ya validado en la precondicion 3
-            debitNoteFeatureEnabled: true);
+            debitNoteFeatureEnabled: true,
+            // El confirmador diferido sella la auditoria del clasificador SOLO si el BC aun
+            // no tiene clasificador (sin esto el gating B3 rutea a revision manual y la ND
+            // nunca emite). Si ya hay un clasificador previo (ej. clasificado en el Dia 0),
+            // NO se pisa: el confirmador queda registrado en PenaltyConfirmedBy*. Ver
+            // Precondicion 3 + nota anti-clobber en CaptureDebitNoteClassification.
+            sealClassifierAuditWhenMissing: true);
 
         // Paso b: las dos fechas nuevas del diferido (eje fiscal del plazo + soporte).
         bc.OperatorPenaltyConfirmedDate = operatorDate;
@@ -2143,7 +2149,23 @@ public class BookingCancellationService
         bool userCanClassifyAgencyPenalty,
         // B1 (review 2026-06-01): si el flag de la ND esta OFF, este metodo NO debe tocar
         // NINGUN campo ni lanzar excepcion -> ConfirmAsync queda byte-identico a hoy.
-        bool debitNoteFeatureEnabled)
+        bool debitNoteFeatureEnabled,
+        // ADR-014 (fix integracion 2026-06-02 + fix clobber 2026-06-02): SOLO el path
+        // DIFERIDO (ConfirmPenaltyAsync) pasa esto en true. En el diferido, el usuario que
+        // confirma la penalidad el Dia N YA paso el permiso elevado (Precondicion 3). Si el
+        // BC todavia NO tiene clasificador registrado, ese usuario ES el clasificador
+        // autoritativo del concepto y hay que sellar su rastro AUNQUE el concepto no cambie
+        // (sin esto, un BC sembrado con el mismo concepto que trae el confirm dejaria
+        // ConceptClassifiedByUserId en NULL y el gating B3 lo ruteria a revision manual en
+        // vez de emitir la ND).
+        //
+        // OJO (anti-clobber): este modo NO debe pisar un clasificador YA registrado (ej. el
+        // usuario A que clasifico el concepto en el Dia 0 via ConfirmAsync). El confirmador
+        // del Dia N tiene su PROPIA columna de auditoria (PenaltyConfirmedBy*), asi que
+        // colapsar ambos roles en ConceptClassifiedBy* destruiria el dato de A. Por eso el
+        // sellado forzado es CONDICIONAL a que no haya clasificador previo. El path sincrono
+        // Dia 0 lo deja en false (default) y conserva su semantica "sellar solo si cambia".
+        bool sealClassifierAuditWhenMissing = false)
     {
         // (B1) Flag OFF -> short-circuit total. No mutamos ConceptKind/PenaltyStatus/
         //      PenaltyAmountAtEvent/DebitNotePurpose ni la auditoria, y NO lanzamos
@@ -2204,11 +2226,32 @@ public class BookingCancellationService
         EnsureConceptNotLockedByDebitNote(bc, requestedConcept);
 
         // (3) Auditoria del clasificador (B/bloqueante, §3.11): registramos quien clasifico
-        //     el concepto SOLO si cambia respecto del valor actual (evita pisar el rastro de
-        //     una clasificacion previa con un confirm que no toca el concepto).
-        if (bc.ConceptKind != requestedConcept)
+        //     el concepto. Sellamos los 3 campos (ConceptClassifiedByUserId/Name/At) cuando:
+        //
+        //       - el concepto CAMBIA respecto del valor actual (semantica original,
+        //         comportamiento del path sincrono Dia 0); o
+        //       - estamos en modo forzado (path diferido Dia N) Y todavia NO hay un
+        //         clasificador registrado.
+        //
+        //     El segundo caso cierra el bug del flujo diferido: cuando el BC trae el mismo
+        //     concepto que el confirm (ej. seed con ConceptKind=AgencyManagementFee sin
+        //     auditoria previa), conceptChanged=false pero igual hay que sellar al confirmador
+        //     como clasificador, porque si no ConceptClassifiedByUserId quedaria NULL y el
+        //     gating (B3) ruteria a revision manual en vez de emitir la ND.
+        //
+        //     La condicion "&& ConceptClassifiedByUserId is null" es el anti-clobber: si el
+        //     concepto NO cambia pero YA hay un clasificador (ej. el usuario A que clasifico
+        //     en el Dia 0), NO lo pisamos con el confirmador del Dia N. El confirmador ya tiene
+        //     su propia columna (PenaltyConfirmedBy*, mas abajo); colapsar ambos roles aca
+        //     destruiria el dato de A. Y el gating B3 igual pasa porque el campo es != null.
+        var conceptChanged = bc.ConceptKind != requestedConcept;
+        if (conceptChanged)
         {
             bc.ConceptKind = requestedConcept;
+        }
+        if (conceptChanged ||
+            (sealClassifierAuditWhenMissing && bc.ConceptClassifiedByUserId is null))
+        {
             bc.ConceptClassifiedByUserId = userId;
             bc.ConceptClassifiedByUserName = userName;
             bc.ConceptClassifiedAt = DateTime.UtcNow;

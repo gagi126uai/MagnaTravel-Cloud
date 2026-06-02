@@ -334,6 +334,96 @@ public class CancellationDebitNoteCaptureTests
     }
 
     // =====================================================================
+    // (e) Sellado del clasificador en modo forzado (path DIFERIDO, Dia N).
+    //     sealClassifierAuditWhenMissing=true. Cubre el corazon del fix de
+    //     2026-06-02: cerrar el gating B3 sin pisar un clasificador previo.
+    // =====================================================================
+
+    [Fact]
+    public void Capture_ForcedSeal_SameConcept_NoPriorClassifier_SealsCurrentUser()
+    {
+        // Caso real del flujo diferido: el BC trae ConceptKind=AgencyManagementFee (mismo
+        // concepto que confirma el Dia N) pero SIN clasificador registrado. El modo forzado
+        // debe sellar al usuario actual como clasificador, asi el gating B3 puede emitir la ND.
+        var svc = BuildService();
+        var bc = NewDraftBc();
+        bc.ConceptKind = CancellationConceptKind.AgencyManagementFee; // mismo concepto que el confirm
+        Assert.Null(bc.ConceptClassifiedByUserId); // precondicion: sin clasificador previo
+
+        var req = RequestWith(
+            concept: CancellationConceptKind.AgencyManagementFee, // NO cambia el concepto
+            status: PenaltyStatus.Confirmed,
+            amount: 12_000m);
+
+        svc.CaptureDebitNoteClassification(bc, req, "user-confirmador", "Confirmador",
+            userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true,
+            sealClassifierAuditWhenMissing: true);
+
+        // Aunque el concepto no cambio, el modo forzado sello al usuario actual como
+        // clasificador (no habia uno previo) -> el gating B3 (ConceptClassifiedByUserId != null) pasa.
+        Assert.Equal("user-confirmador", bc.ConceptClassifiedByUserId);
+        Assert.Equal("Confirmador", bc.ConceptClassifiedByUserName);
+        Assert.NotNull(bc.ConceptClassifiedAt);
+    }
+
+    [Fact]
+    public void Capture_ForcedSeal_SameConcept_WithPriorClassifier_DoesNotClobber()
+    {
+        // Anti-clobber (fix 2026-06-02): el usuario A clasifico el concepto en el Dia 0.
+        // El usuario B confirma el Dia N con el MISMO concepto en modo forzado. El rastro
+        // del clasificador NO debe pasar de A a B: B queda registrado solo como confirmador.
+        var svc = BuildService();
+        var bc = NewDraftBc();
+        bc.ConceptKind = CancellationConceptKind.AgencyManagementFee;
+        bc.ConceptClassifiedByUserId = "user-A";
+        bc.ConceptClassifiedByUserName = "Usuario A";
+        var classifiedAtDia0 = DateTime.UtcNow.AddDays(-3);
+        bc.ConceptClassifiedAt = classifiedAtDia0;
+
+        var req = RequestWith(
+            concept: CancellationConceptKind.AgencyManagementFee, // NO cambia el concepto
+            status: PenaltyStatus.Confirmed,
+            amount: 12_000m);
+
+        svc.CaptureDebitNoteClassification(bc, req, "user-B", "Usuario B",
+            userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true,
+            sealClassifierAuditWhenMissing: true);
+
+        // El clasificador original (A) se preserva: NO lo piso B.
+        Assert.Equal("user-A", bc.ConceptClassifiedByUserId);
+        Assert.Equal("Usuario A", bc.ConceptClassifiedByUserName);
+        Assert.Equal(classifiedAtDia0, bc.ConceptClassifiedAt);
+
+        // B queda registrado en su PROPIA columna (confirmador), no en la del clasificador.
+        Assert.Equal("user-B", bc.PenaltyConfirmedByUserId);
+        Assert.Equal("Usuario B", bc.PenaltyConfirmedByUserName);
+        Assert.NotNull(bc.PenaltyConfirmedAt);
+    }
+
+    [Fact]
+    public void Capture_NotForced_SameConcept_NoPriorClassifier_DoesNotSeal()
+    {
+        // Path SINCRONO Dia 0 (default sealClassifierAuditWhenMissing=false): si el concepto
+        // no cambia, NO se sella clasificador (comportamiento intacto). Congela que el fix no
+        // toco la semantica del path sincrono.
+        var svc = BuildService();
+        var bc = NewDraftBc();
+        bc.ConceptKind = CancellationConceptKind.AgencyManagementFee; // mismo concepto que el request
+        Assert.Null(bc.ConceptClassifiedByUserId);
+
+        var req = RequestWith(concept: CancellationConceptKind.AgencyManagementFee);
+
+        // Sin pasar el parametro -> default false (como ConfirmAsync del Dia 0).
+        svc.CaptureDebitNoteClassification(bc, req, "user-dia0", "Dia 0",
+            userCanClassifyAgencyPenalty: true, debitNoteFeatureEnabled: true);
+
+        // No cambio el concepto y no estamos en modo forzado -> no se sella clasificador.
+        Assert.Null(bc.ConceptClassifiedByUserId);
+        Assert.Null(bc.ConceptClassifiedByUserName);
+        Assert.Null(bc.ConceptClassifiedAt);
+    }
+
+    // =====================================================================
     // Helpers puros: el default por operador y la guarda anti-reclasificacion.
     // =====================================================================
 
