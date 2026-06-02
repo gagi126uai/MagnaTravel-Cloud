@@ -64,6 +64,33 @@ public class BookingCancellationDto
     /// del approval.
     /// </summary>
     public FiscalLiquidationSummaryDto? FiscalLiquidation { get; set; }
+
+    // ===================================================================
+    // ADR-013/014 (2026-06-02): estado de la penalidad y de la Nota de Debito.
+    //
+    // Se exponen como STRING (nombre del enum) por coherencia con Status, que
+    // ya se serializa con .ToString(). El frontend los usa para mostrar en la
+    // ficha de la reserva si la penalidad quedo Estimated (pendiente de que el
+    // operador confirme el monto) o Confirmed, y en que estado quedo la ND
+    // (NotApplicable / Pending / Issued / Failed / ManualReview).
+    //
+    // Con el flag EnableCancellationDebitNote OFF, estos campos quedan en sus
+    // defaults conservadores (PenaltyStatus=Estimated, DebitNoteStatus=NotApplicable)
+    // exactamente como hoy: agregarlos al DTO NO cambia el comportamiento del backend.
+    // ===================================================================
+
+    /// <summary>
+    /// ADR-013 (R5): estado de la penalidad. "Estimated" = el operador todavia no
+    /// confirmo el monto (NO hay ND); "Confirmed" = monto confirmado (habilita la ND).
+    /// </summary>
+    public string PenaltyStatus { get; set; } = string.Empty;
+
+    /// <summary>
+    /// ADR-013 §3.10: estado observable de la ND. "NotApplicable" (no corresponde ND),
+    /// "Pending" (encolada, esperando CAE), "Issued" (con CAE), "Failed" (rebote ARCA),
+    /// "ManualReview" (el gating ruteo a revision manual).
+    /// </summary>
+    public string DebitNoteStatus { get; set; } = string.Empty;
 }
 
 /// <summary>

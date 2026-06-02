@@ -1221,14 +1221,52 @@ public class BookingCancellationService
         if (changed)
             await _db.SaveChangesAsync(ct);
 
+        // (2-ter) ADR-014 (M-B2, caso DOMINANTE del negocio): penalidad de cargo PROPIO de
+        //     la agencia que quedo ESTIMADA (PenaltyStatus=Estimated), con la NC total ya
+        //     emitida y sin ND. Estos BCs no entran en NINGUNA de las ramas anteriores:
+        //       - el query (1) filtra por DebitNoteStatus in {Pending, Failed}, pero un BC
+        //         estimado tiene DebitNoteStatus=NotApplicable (todavia no aplica ND);
+        //       - la rama huerfana (2-bis) filtra por PenaltyStatus=Confirmed.
+        //     Sin esta rama, el agente que cancelo con un cargo propio cuyo monto el operador
+        //     aun no confirmo NUNCA volveria a verlo en la bandeja -> la ND de ese cargo jamas
+        //     se emitiria. El frontend abre el ConfirmPenaltyModal desde estas filas.
+        //
+        //     SOLO listamos los concepto agency-owned (AgencyManagementFee / AgencyCancellationFee):
+        //     un pass-through (operador retiene la penalidad) NUNCA lleva ND, asi que no tiene
+        //     sentido pedir su confirmacion. NO usamos el helper ConceptIsAgencyOwnedDebitNote
+        //     en el Where porque EF Core no lo traduce a SQL; inlineamos los dos valores del
+        //     enum (mantener en sync con ese helper si cambia la definicion de agency-owned).
+        //
+        //     Es una rama de SOLO LECTURA: no reconcilia ni muta estado (no hay ND que mirar
+        //     todavia). Por eso AsNoTracking y va DESPUES del SaveChanges de las otras ramas.
+        var estimatedAgencyOwnedRows = new List<CancellationDebitNotePendingDto>();
+        var estimatedCandidates = await _db.BookingCancellations
+            .AsNoTracking()
+            .Include(b => b.Reserva)
+            .Where(b => b.CreditNoteInvoiceId != null &&
+                        b.DebitNoteInvoiceId == null &&
+                        b.PenaltyStatus == PenaltyStatus.Estimated &&
+                        (b.ConceptKind == CancellationConceptKind.AgencyManagementFee ||
+                         b.ConceptKind == CancellationConceptKind.AgencyCancellationFee))
+            .ToListAsync(ct);
+
+        foreach (var bc in estimatedCandidates)
+        {
+            estimatedAgencyOwnedRows.Add(MapPendingDebitNoteRow(
+                bc,
+                overrideStatus: CancellationDebitNotePendingDto.EstimatedPendingConfirmationPseudoStatus));
+        }
+
         // (3) Proyectar SOLO los que siguen incompletos despues de reconciliar (los que
         //     pasaron a Issued ya no son problema y salen de la bandeja). Sumamos los
-        //     huerfanos detectados por la segunda rama (ADR-014).
+        //     huerfanos detectados por la segunda rama (ADR-014) y los estimados de cargo
+        //     propio que esperan confirmacion del monto (M-B2).
         var rows = candidates
             .Where(b => b.DebitNoteStatus is DebitNoteStatus.Pending or DebitNoteStatus.Failed)
             .Select(b => MapPendingDebitNoteRow(b))
             .ToList();
         rows.AddRange(orphanRows);
+        rows.AddRange(estimatedAgencyOwnedRows);
         return rows;
     }
 
@@ -3687,6 +3725,9 @@ public class BookingCancellationService
             ArcaConfirmedManuallyAt = bc.ArcaConfirmedManuallyAt,
             ArcaConfirmedManuallyByUserId = bc.ArcaConfirmedManuallyByUserId,
             ArcaErrorMessage = bc.ArcaErrorMessage,
+            // ADR-013/014: estado de la penalidad + de la ND, como string (igual que Status).
+            PenaltyStatus = bc.PenaltyStatus.ToString(),
+            DebitNoteStatus = bc.DebitNoteStatus.ToString(),
         };
     }
 }

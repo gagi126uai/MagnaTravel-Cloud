@@ -20,6 +20,21 @@ public class CancellationDebitNotePendingDto
     /// </summary>
     public const string ConfirmedWithoutDebitNotePseudoStatus = "ConfirmedWithoutDebitNote";
 
+    /// <summary>
+    /// ADR-014 (M-B2, 2026-06-02): pseudo-estado para el CASO DOMINANTE del negocio: la
+    /// cancelacion tiene una penalidad de cargo PROPIO de la agencia que quedo en
+    /// <c>PenaltyStatus=Estimated</c> (el operador todavia NO confirmo el monto), con la NC
+    /// total ya emitida y SIN ND. Estas filas estan esperando que alguien vuelva a confirmar
+    /// el monto definitivo (endpoint confirm-penalty) para recien ahi emitir la ND.
+    ///
+    /// <para>NO existe en el enum <c>DebitNoteStatus</c> (su valor real es
+    /// <c>NotApplicable</c>, porque todavia no aplica una ND mientras la penalidad es estimada):
+    /// es un valor solo-de-lectura que la bandeja proyecta para que el frontend distinga estas
+    /// filas de las Pending/Failed y abra el ConfirmPenaltyModal en vez del reintento de ND.
+    /// Centralizado aca para que el servicio y los tests no dupliquen el literal.</para>
+    /// </summary>
+    public const string EstimatedPendingConfirmationPseudoStatus = "EstimatedPendingConfirmation";
+
     /// <summary>PublicId del BookingCancellation (la UI navega por PublicId, nunca por Id int).</summary>
     public Guid BookingCancellationPublicId { get; set; }
 

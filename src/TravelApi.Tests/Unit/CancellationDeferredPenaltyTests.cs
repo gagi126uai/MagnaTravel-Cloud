@@ -661,4 +661,98 @@ public class CancellationDeferredPenaltyTests
             r.BookingCancellationPublicId == bc.PublicId &&
             r.DebitNoteStatus == CancellationDebitNotePendingDto.ConfirmedWithoutDebitNotePseudoStatus);
     }
+
+    // ============================================================
+    // Bandeja — penalidad ESTIMADA de cargo propio (M-B2, caso dominante)
+    // ============================================================
+
+    [Fact]
+    public async Task EstimatedAgencyOwnedWithCreditNote_AppearsInBandejaForConfirmation()
+    {
+        var h = BuildService();
+        var (_, _, _) = await SeedPostNcAsync(h.Ctx);
+        // Caso dominante: cargo propio de la agencia, penalidad ESTIMADA (el operador todavia
+        // no confirmo el monto), NC total ya emitida, sin ND. Debe aparecer en la bandeja con
+        // el pseudo-estado nuevo para que el frontend abra el ConfirmPenaltyModal.
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.ConceptKind = CancellationConceptKind.AgencyCancellationFee;
+        bc.PenaltyStatus = PenaltyStatus.Estimated;
+        bc.PenaltyAmountAtEvent = 30_000m;
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        Assert.Contains(rows, r =>
+            r.BookingCancellationPublicId == bc.PublicId &&
+            r.DebitNoteStatus == CancellationDebitNotePendingDto.EstimatedPendingConfirmationPseudoStatus);
+    }
+
+    [Fact]
+    public async Task EstimatedAgencyManagementFee_AlsoAppearsInBandeja()
+    {
+        var h = BuildService();
+        var (_, _, _) = await SeedPostNcAsync(h.Ctx);
+        // El otro concepto agency-owned (cargo de gestion) tambien debe listarse.
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.ConceptKind = CancellationConceptKind.AgencyManagementFee;
+        bc.PenaltyStatus = PenaltyStatus.Estimated;
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        Assert.Contains(rows, r =>
+            r.BookingCancellationPublicId == bc.PublicId &&
+            r.DebitNoteStatus == CancellationDebitNotePendingDto.EstimatedPendingConfirmationPseudoStatus);
+    }
+
+    [Fact]
+    public async Task EstimatedPassThrough_DoesNotAppearInBandeja()
+    {
+        var h = BuildService();
+        var (_, _, _) = await SeedPostNcAsync(h.Ctx);
+        // Pass-through (operador retiene la penalidad): NUNCA lleva ND, asi que aunque la
+        // penalidad este Estimated y la NC ya este emitida, NO debe aparecer en la bandeja.
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
+        bc.PenaltyStatus = PenaltyStatus.Estimated;
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        Assert.DoesNotContain(rows, r => r.BookingCancellationPublicId == bc.PublicId);
+    }
+
+    [Fact]
+    public async Task ConfirmedAgencyOwnedWithDebitNoteLinked_DoesNotAppearAsEstimated()
+    {
+        var h = BuildService();
+        var (_, _, original) = await SeedPostNcAsync(h.Ctx);
+        // Una vez emitida y vinculada la ND (DebitNoteInvoiceId seteado), el BC ya NO debe
+        // listarse como "estimado pendiente": el filtro exige DebitNoteInvoiceId == null.
+        var nd = new Invoice
+        {
+            TipoComprobante = 12,
+            PuntoDeVenta = 1,
+            NumeroComprobante = 300,
+            Resultado = "A",
+            CAE = "77777777",
+            ReservaId = original.ReservaId,
+            OriginalInvoiceId = original.Id,
+        };
+        h.Ctx.Invoices.Add(nd);
+        await h.Ctx.SaveChangesAsync();
+
+        var bc = h.Ctx.BookingCancellations.Single();
+        bc.ConceptKind = CancellationConceptKind.AgencyCancellationFee;
+        bc.PenaltyStatus = PenaltyStatus.Confirmed;
+        bc.DebitNoteInvoiceId = nd.Id;
+        bc.DebitNoteStatus = DebitNoteStatus.Issued;
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        Assert.DoesNotContain(rows, r =>
+            r.BookingCancellationPublicId == bc.PublicId &&
+            r.DebitNoteStatus == CancellationDebitNotePendingDto.EstimatedPendingConfirmationPseudoStatus);
+    }
 }

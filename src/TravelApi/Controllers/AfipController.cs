@@ -45,7 +45,11 @@ public class AfipController : ControllerBase
         if (settings == null) return NotFound();
 
         var financeSettings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
-        return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing, financeSettings.EnableSoldToSettleStates));
+        return Ok(MapResponse(
+            settings,
+            financeSettings.EnableMultiCurrencyInvoicing,
+            financeSettings.EnableSoldToSettleStates,
+            financeSettings.EnableCancellationDebitNote));
     }
 
     public class AfipSettingsRequest
@@ -110,7 +114,11 @@ public class AfipController : ControllerBase
             // Los flags operativos no se tocan desde este endpoint (son solo lectura), pero los
             // proyectamos en la respuesta para que el shape sea identico al del GET /afip/settings.
             var financeSettings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
-            return Ok(MapResponse(settings, financeSettings.EnableMultiCurrencyInvoicing, financeSettings.EnableSoldToSettleStates));
+            return Ok(MapResponse(
+                settings,
+                financeSettings.EnableMultiCurrencyInvoicing,
+                financeSettings.EnableSoldToSettleStates,
+                financeSettings.EnableCancellationDebitNote));
         }
         catch (ArgumentException ex)
         {
@@ -122,12 +130,17 @@ public class AfipController : ControllerBase
         }
     }
 
-    private static AfipSettingsResponse MapResponse(AfipSettings settings, bool enableMultiCurrencyInvoicing, bool enableSoldToSettleStates)
+    private static AfipSettingsResponse MapResponse(
+        AfipSettings settings,
+        bool enableMultiCurrencyInvoicing,
+        bool enableSoldToSettleStates,
+        bool enableCancellationDebitNote)
     {
         return new AfipSettingsResponse
         {
             EnableMultiCurrencyInvoicing = enableMultiCurrencyInvoicing,
             EnableSoldToSettleStates = enableSoldToSettleStates,
+            EnableCancellationDebitNote = enableCancellationDebitNote,
 
             Cuit = settings.Cuit,
             PuntoDeVenta = settings.PuntoDeVenta,
