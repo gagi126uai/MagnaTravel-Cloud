@@ -63,14 +63,38 @@ Dos cosas que el revisor obligó a resolver:
   **pero esto lo tenés que validar vos**: ¿querés que ese cargo le quede al cliente como deuda en
   cuenta corriente, o alcanza con emitir el comprobante y cobrarlo por fuera?
 
-## En qué quedó
+## En qué quedó (actualización 2026-06-02: la feature se construyó ENTERA en esta sesión)
 
-- Backend de captura: **terminado, revisado y committeado** (`ee22e57`). Flag apagado, producción intacta.
-- Diseño del flujo diferido: **ADR-014 listo para construir**.
-- Lo que sigue (próxima sesión): programar el backend diferido, después el frontend completo de
-  cancelación, y los tests.
+Lo que arrancó como "diseño" terminó siendo la feature completa de punta a punta. La cancelación con
+Nota de Débito **ya está construida, revisada y en `main`**, toda detrás del flag apagado (producción
+intacta). En orden, lo que se hizo:
 
-## Lo que necesitamos de vos (no urgente, pero destraba "prender" la feature)
+1. **Backend de captura** (`ee22e57`): los 4 fixes del review, revisado, tests verdes.
+2. **ADR-014** (`debf95b`): el diseño del flujo diferido, desafiado dos veces.
+3. **Backend del flujo diferido** (`dc2b998`): el botón "confirmar la penalidad después" que emite la
+   Nota de Débito cuando el operador confirma el monto días más tarde. Revisado por dos revisores.
+4. **Conexión backend↔frontend** (`2c07646`): se descubrió que el sistema no le "contaba" a la pantalla
+   que la feature estaba prendida ni en qué estado estaba el cargo. Se conectó eso.
+5. **Pantalla de cancelación** (`5a20c7a`): no existía nada en la interfaz. Ahora el agente puede cancelar
+   una reserva, elegir si hay penalidad y de quién es, y —el caso más común— dejar el monto como estimado
+   y confirmarlo más tarde desde una bandeja. Revisada dos veces.
+6. **Tests** (`2013d96`): batería de pruebas del flujo (se corren en el servidor).
+
+**El caso real más común quedó cubierto**: cancelás con monto estimado → la cancelación aparece en una
+bandeja "pendiente de confirmar monto" → cuando el operador confirma, lo cargás y recién ahí se emite la
+Nota de Débito.
+
+## Lo que queda (todo opcional; elegiste cerrar acá)
+- **Validarlo en el servidor**: correr los tests con Docker y hacer una prueba real con el flag prendido
+  (nunca se probó encendido).
+- **Deuda fiscal (M2)**: hoy la pantalla asume que el cliente es "Consumidor Final" y el proveedor
+  "Responsable Inscripto". Para casos distintos, conviene que el sistema lo tome del dato real. Idealmente
+  lo valida el contador.
+- **Endurecimientos** menores antes de prender el flag (P1/P2) y una mejora de UX (ver el cargo pendiente
+  desde la ficha de la reserva, no solo desde la bandeja).
+
+## Lo que necesitamos de vos (destraba "prender" la feature en producción)
 - Firma del contador matriculado sobre el esquema diferido.
 - Homologación en ARCA de la Nota de Débito.
-- Tu decisión sobre el saldo (el punto B2 de arriba).
+- Tu decisión sobre el saldo (¿la Nota de Débito le queda al cliente como deuda en cuenta corriente, o
+  solo se emite el comprobante y se cobra por fuera?).
