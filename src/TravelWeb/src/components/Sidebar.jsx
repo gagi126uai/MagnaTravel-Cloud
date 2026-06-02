@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Inbox,
   FileWarning,
+  ReceiptText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -39,6 +40,9 @@ const mainLinks = [
   { to: "/approvals/my-requests", label: "Mis solicitudes", icon: Inbox, requiredPermission: "approvals.request" },
   // FC1.3 Fase 3: bandeja de reconciliacion NC parciales. Mismo permiso que Aprobaciones.
   { to: "/credit-note-reconciliation/inbox", label: "Reconciliacion NC", icon: FileWarning, requiredPermission: "approvals.review" },
+  // ADR-013/014: bandeja de cargos de cancelacion pendientes (ND sin emitir o con monto estimado).
+  // Permiso cobranzas.invoice_annul: back-office fiscal, mismo dominio que el annul de facturas.
+  { to: "/cancellations/debit-notes/inbox", label: "Cargos de cancelacion pendientes", icon: ReceiptText, requiredPermission: "cobranzas.invoice_annul" },
   { to: "/admin", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
   { to: "/settings", label: "Configuración", icon: Settings, requiredPermission: "configuracion.view" },
 ];

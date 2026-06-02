@@ -45,6 +45,8 @@ import MyApprovalRequestsPage from "./features/approvals/pages/MyApprovalRequest
 import MovementsPreviewPage from "./features/movements/pages/MovementsPreviewPage";
 // FC1.3 Fase 3: bandeja de reconciliacion de NC parciales con recibos vivos.
 import CreditNoteReconciliationInboxPage from "./features/creditNoteReconciliation/pages/CreditNoteReconciliationInboxPage";
+// ADR-013/ADR-014: bandeja de cargos de cancelacion pendientes (ND sin emitir o fallida).
+import CancellationDebitNoteInboxPage from "./features/cancellations/pages/CancellationDebitNoteInboxPage";
 
 function FullScreenLoader() {
   return (
@@ -266,6 +268,12 @@ export default function App() {
                     <Route
                       path="/credit-note-reconciliation/inbox"
                       element={hasPermission("approvals.review") ? <CreditNoteReconciliationInboxPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    {/* ADR-013/ADR-014: bandeja de cargos de cancelacion pendientes.
+                        Permiso cobranzas.invoice_annul (back-office fiscal, mismo dominio que annul de facturas). */}
+                    <Route
+                      path="/cancellations/debit-notes/inbox"
+                      element={hasPermission("cobranzas.invoice_annul") ? <CancellationDebitNoteInboxPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route
                       path="/approvals/my-requests"

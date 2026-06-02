@@ -35,6 +35,8 @@ import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
+import CancelReservaModal from "../../cancellations/components/CancelReservaModal";
+import { hasPermission } from "../../../auth";
 
 // Mapa de TipoComprobante AFIP a etiqueta legible.
 //  Facturas: 1=A, 6=B, 11=C, 51=M.
@@ -358,6 +360,17 @@ export default function ReservaDetailPage() {
   // el valor definitivo del flag — evita el salto del boton "Confirmar Reserva" a "Vender".
   const { flags, loadingFlags } = useOperationalFlags();
   const isSoldToSettleEnabled = flags.enableSoldToSettleStates;
+
+  // Permiso de cancelacion: se resuelve client-side desde el store de auth.
+  // NOTA: esto es UI-only. El server-side siempre re-valida el permiso.
+  // Con hasPermission("reservas.cancel"), isAdmin() retorna true para admins (bypass).
+  const canCancelReserva = hasPermission("reservas.cancel");
+  // Flag para mostrar la seccion de cargo propio dentro del modal de cancelacion.
+  const canClassifyAgencyPenalty = hasPermission("cancellations.classify_agency_penalty");
+  const enableCancellationDebitNote = flags.enableCancellationDebitNote;
+
+  const [showCancelModal, setShowCancelModal] = useState(false);
+
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [serviceToEdit, setServiceToEdit] = useState(null);
   const [showPassengerForm, setShowPassengerForm] = useState(false);
@@ -569,6 +582,8 @@ export default function ReservaDetailPage() {
             onConfirm: handleArchiveReserva,
           })
         }
+        canCancelReserva={canCancelReserva}
+        onCancelReserva={() => setShowCancelModal(true)}
       />
 
       <ReservaSummaryStrip reserva={reserva} />
@@ -991,6 +1006,25 @@ export default function ReservaDetailPage() {
         onClose={() => setShowEditDatesModal(false)}
         onSave={handleSaveReservaDates}
       />
+
+      {/* Modal de cancelacion de reserva.
+          Se monta siempre pero permanece cerrado (isOpen=false) hasta que el agente
+          hace click en el boton "Cancelar reserva" del header. Patron identico al
+          modal de ConfirmReserva. */}
+      {reserva && (
+        <CancelReservaModal
+          reserva={reserva}
+          isOpen={showCancelModal}
+          onClose={() => setShowCancelModal(false)}
+          onCancelled={() => {
+            setShowCancelModal(false);
+            // Recargamos la reserva para reflejar el nuevo estado (Cancelled).
+            fetchReserva({ showLoading: false, preserveOnError: true });
+          }}
+          canClassifyAgencyPenalty={canClassifyAgencyPenalty}
+          enableCancellationDebitNote={enableCancellationDebitNote}
+        />
+      )}
     </div>
   );
 }

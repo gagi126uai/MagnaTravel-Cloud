@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil } from "lucide-react";
+import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getStatusConfig, translateStatus } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
@@ -28,10 +28,12 @@ function formatTripDate(value) {
  *   En ese caso ocultamos la botonera de acciones para evitar el parpadeo
  *   "Confirmar Reserva" → "Vender" en reservas en estado Budget.
  *   El resto del header (nombre, numero, estado, fechas) se muestra igual.
+ * - canCancelReserva: si el usuario tiene el permiso reservas.cancel.
+ * - onCancelReserva: callback para abrir el flujo de cancelacion (manejado en ReservaDetailPage).
  * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates
  *   son manejados por el padre (ReservaDetailPage).
  */
-export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert, onEditDates, isSoldToSettleEnabled = false, loadingFlags = false }) {
+export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArchive, onRevert, onEditDates, isSoldToSettleEnabled = false, loadingFlags = false, canCancelReserva = false, onCancelReserva }) {
     const isArchived = reserva.status === 'Archived';
     const canDelete = (reserva.status === 'Budget' || reserva.status === 'Confirmed');
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
@@ -45,6 +47,17 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
 
     // Las fechas se pueden editar en estados activos (no archivada/cancelada).
     const canEditDates = !isArchived && reserva.status !== 'Cancelled';
+
+    // El boton "Cancelar reserva" es visible en estados operativos donde
+    // tiene sentido cancelar: la reserva tiene factura activa y puede tener BC.
+    // La lista NO incluye Budget porque tipicamente no tiene factura todavia.
+    // El backend rechazara con mensaje claro si el estado no es valido.
+    // Solo visible si el usuario tiene el permiso reservas.cancel.
+    const CANCELLABLE_STATUSES = ['Confirmed', 'Sold', 'Traveling', 'ToSettle'];
+    const showCancelButton = canCancelReserva
+        && onCancelReserva
+        && CANCELLABLE_STATUSES.includes(reserva.status)
+        && !isArchived;
     const startLabel = formatTripDate(reserva.startDate);
     const endLabel = formatTripDate(reserva.endDate);
 
@@ -268,6 +281,20 @@ export function ReservaHeader({ reserva, onBack, onStatusChange, onDelete, onArc
 
                     {/* ADMIN ACTIONS */}
                     <div className="flex gap-2 ml-2 pl-4 border-l border-slate-200 dark:border-slate-800">
+                        {/* Boton "Cancelar reserva": visible solo en estados cancelables
+                            y si el usuario tiene el permiso reservas.cancel.
+                            Separado del trash (eliminar) porque cancelar es una accion
+                            fiscal grave: emite NC en AFIP/ARCA y no se puede deshacer. */}
+                        {showCancelButton && (
+                            <button
+                                onClick={onCancelReserva}
+                                data-testid="reserva-action-cancel"
+                                className="p-2.5 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300 rounded-xl transition-colors"
+                                title="Cancelar reserva (emite nota de credito en AFIP/ARCA)"
+                            >
+                                <Ban className="w-5 h-5" />
+                            </button>
+                        )}
                         {canRevert && onRevert && (
                             <button onClick={onRevert} className="p-2.5 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors" title="Revertir estado (requiere autorizacion si no sos admin)">
                                 <Undo2 className="w-5 h-5" />
