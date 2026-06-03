@@ -791,13 +791,11 @@ public class PaymentService : IPaymentService
         return $"RCP-{DateTime.UtcNow:yyyy}-{next:D6}";
     }
 
-    // TODO (P-siguiente, NO P1): unificar esta copia con el calculador de dominio
-    // TravelApi.Domain.Reservations.ReservaMoneyCalculator (que ya usa ReservaService.UpdateBalanceAsync).
-    // OJO: NO es un cambio mecanico. Esta copia hace una suma PLANA sin el filtro CountsForReservaBalance,
-    // asi que para reservas con servicios Cancelados da un numero DISTINTO al calculador. Unificarla
-    // cambiaria el saldo de esas reservas -> esta fuera del scope behavior-preserving de P1. Cuando se
-    // aborde, decidir explicitamente cual criterio es el correcto (con filtro vs plano).
-    // Bloque 3: por eso aca seguimos sumando Asistencia con el criterio LOCAL (plano) de esta copia.
+    // P1.5: el saldo se calcula con la FUENTE UNICA DE VERDAD (ReservaMoneyCalculator),
+    // la misma que usa ReservaService.UpdateBalanceAsync. Antes esta copia sumaba PLANO
+    // (sin el filtro CountsForReservaBalance), por lo que una reserva con servicios Cancelados
+    // mostraba un saldo DISTINTO segun que accion lo recalculara (servicio vs pago vs factura).
+    // Unificado -> el saldo es consistente y correcto sin importar que disparo el recalculo.
     private async Task RecalculateReservaBalanceAsync(int reservaId, CancellationToken cancellationToken)
     {
         var reserva = await _dbContext.Reservas
@@ -813,27 +811,12 @@ public class PaymentService : IPaymentService
         if (reserva == null)
             return;
 
-        reserva.TotalSale =
-            (reserva.FlightSegments?.Sum(f => f.SalePrice) ?? 0) +
-            (reserva.HotelBookings?.Sum(h => h.SalePrice) ?? 0) +
-            (reserva.TransferBookings?.Sum(t => t.SalePrice) ?? 0) +
-            (reserva.PackageBookings?.Sum(p => p.SalePrice) ?? 0) +
-            (reserva.AssistanceBookings?.Sum(a => a.SalePrice) ?? 0) +
-            (reserva.Servicios?.Sum(r => r.SalePrice) ?? 0);
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+        reserva.TotalSale = summary.TotalSale;
+        reserva.TotalCost = summary.TotalCost;
+        reserva.TotalPaid = summary.TotalPaid;
+        reserva.Balance = summary.Balance;
 
-        reserva.TotalCost =
-            (reserva.FlightSegments?.Sum(f => f.NetCost) ?? 0) +
-            (reserva.HotelBookings?.Sum(h => h.NetCost) ?? 0) +
-            (reserva.TransferBookings?.Sum(t => t.NetCost) ?? 0) +
-            (reserva.PackageBookings?.Sum(p => p.NetCost) ?? 0) +
-            (reserva.AssistanceBookings?.Sum(a => a.NetCost) ?? 0) +
-            (reserva.Servicios?.Sum(r => r.NetCost) ?? 0);
-
-        reserva.TotalPaid = reserva.Payments
-            .Where(p => p.Status != "Cancelled" && !p.IsDeleted)
-            .Sum(p => p.Amount);
-
-        reserva.Balance = reserva.TotalSale - reserva.TotalPaid;
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
