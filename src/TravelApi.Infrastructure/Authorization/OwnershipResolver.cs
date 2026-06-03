@@ -57,6 +57,7 @@ public sealed class OwnershipResolver : IOwnershipResolver
             // FC1.2.0 v3 (2026-05-17): nuevas entidades del modulo de cancelacion/refund.
             OwnedEntity.BookingCancellation => await ResolveBookingCancellationResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.ClientCreditEntry => await ResolveClientCreditEntryResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.Attachment => await ResolveAttachmentResponsibleAsync(publicId, legacyId, cancellationToken),
             _ => null,
         };
 
@@ -248,6 +249,33 @@ public sealed class OwnershipResolver : IOwnershipResolver
         return query
             .Where(e => e.BookingCancellation != null && e.BookingCancellation.Reserva != null)
             .Select(e => e.BookingCancellation.Reserva.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// 2026-06-03: ReservaAttachment -> Reserva.ResponsibleUserId. Espeja el
+    /// resolver de Voucher: el adjunto es propiedad logica del responsable de la
+    /// reserva a la que pertenece. Cierra el IDOR del AttachmentsController, donde
+    /// cualquier autenticado podia listar/descargar/renombrar/borrar adjuntos de
+    /// cualquier reserva. Admins/supervisores siguen entrando via bypassPermission
+    /// (ReservasViewAll) resuelto en el filter, no aca.
+    /// </summary>
+    private Task<string?> ResolveAttachmentResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.ReservaAttachments.AsNoTracking().AsQueryable();
+        if (publicId.HasValue)
+        {
+            query = query.Where(a => a.PublicId == publicId.Value);
+        }
+        else
+        {
+            query = query.Where(a => a.Id == legacyId!.Value);
+        }
+        // ReservaAttachment.Reserva es la reserva padre (FK ReservaId NOT NULL en el modelo);
+        // el null-check defiende contra una query incompleta, igual que Voucher.
+        return query
+            .Where(a => a.Reserva != null)
+            .Select(a => a.Reserva!.ResponsibleUserId)
             .FirstOrDefaultAsync(ct);
     }
 }

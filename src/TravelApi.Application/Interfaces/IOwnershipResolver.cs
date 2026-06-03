@@ -31,6 +31,13 @@ public enum OwnedEntity
     /// (Customer no tiene ResponsibleUserId hoy — confirmado por grep 2026-05-17).
     /// </summary>
     ClientCreditEntry,
+
+    /// <summary>
+    /// Adjunto de reserva (documentos sensibles de clientes/pasajeros). Hereda el
+    /// responsable de su <see cref="ReservaAttachment.Reserva"/>, igual que Voucher.
+    /// Cierra el IDOR del AttachmentsController (2026-06-03).
+    /// </summary>
+    Attachment,
 }
 
 /// <summary>

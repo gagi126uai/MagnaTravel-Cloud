@@ -22,6 +22,11 @@ public class UploadExternalVoucherRequest
     public string ExternalOrigin { get; set; } = "Operador externo";
 }
 
+public class EditExternalVoucherRequest
+{
+    public string ExternalOrigin { get; set; } = string.Empty;
+}
+
 public class RejectVoucherRequest
 {
     public string Reason { get; set; } = string.Empty;

@@ -38,6 +38,7 @@ public static class VoucherAuditActions
     public const string Generated = "Generated";
     public const string Issued = "Issued";
     public const string UploadedExternal = "UploadedExternal";
+    public const string ExternalEdited = "ExternalEdited";
     public const string ExceptionalIssue = "ExceptionalIssue";
     public const string Sent = "Sent";
     public const string ExceptionalSend = "ExceptionalSend";

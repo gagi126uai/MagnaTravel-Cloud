@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import { toast } from "sonner";
-import { Download, Eye, File, FileText, Loader2, Paperclip, Trash2, UploadCloud } from "lucide-react";
+import { Check, Download, Eye, File, FileText, Loader2, Paperclip, Pencil, Trash2, UploadCloud, X } from "lucide-react";
 import { api } from "../api";
+import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
 
 function formatFileSize(bytes) {
@@ -23,8 +24,20 @@ function downloadBlob(blob, fileName) {
   window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 }
 
-function DocumentRow({ file, onDelete, onDownload }) {
+/**
+ * Fila de un documento adjunto en la pestaña de documentos de la reserva.
+ * Muestra nombre, tamaño, fecha/usuario de carga, y botones de acción.
+ * Incluye edición inline del nombre: al hacer click en el lápiz, el nombre
+ * se convierte en un input de texto confirmable con Enter o el botón checkmark.
+ */
+function DocumentRow({ file, onDelete, onDownload, onRename }) {
   const [previewUrl, setPreviewUrl] = useState(null);
+
+  // Estado de edición inline del nombre
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingName, setEditingName] = useState("");
+  const [isSavingName, setIsSavingName] = useState(false);
+  const editInputRef = useRef(null);
 
   const id = getPublicId(file);
   const fileName = file.fileName || file.FileName;
@@ -61,6 +74,60 @@ function DocumentRow({ file, onDelete, onDownload }) {
       }
     };
   }, [id, isImage]);
+
+  // Cuando el modo edición se activa, enfocamos el input automáticamente
+  // para que el usuario pueda escribir de inmediato sin un click extra.
+  useEffect(() => {
+    if (isEditing && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleStartEditing = (event) => {
+    event.stopPropagation();
+    setEditingName(fileName);
+    setIsEditing(true);
+  };
+
+  const handleCancelEditing = (event) => {
+    event?.stopPropagation();
+    setIsEditing(false);
+    setEditingName("");
+  };
+
+  const handleConfirmRename = async (event) => {
+    event?.stopPropagation();
+
+    const trimmedName = editingName.trim();
+    if (!trimmedName) {
+      toast.error("El nombre no puede estar vacío.");
+      editInputRef.current?.focus();
+      return;
+    }
+
+    // Si el usuario no cambió nada, simplemente cerramos sin llamar al backend
+    if (trimmedName === fileName) {
+      setIsEditing(false);
+      return;
+    }
+
+    try {
+      setIsSavingName(true);
+      await onRename(id, trimmedName);
+      setIsEditing(false);
+    } finally {
+      setIsSavingName(false);
+    }
+  };
+
+  const handleEditKeyDown = (event) => {
+    if (event.key === "Enter") {
+      handleConfirmRename(event);
+    } else if (event.key === "Escape") {
+      handleCancelEditing(event);
+    }
+  };
 
   const handlePreviewClick = async (event) => {
     event.stopPropagation();
@@ -107,10 +174,48 @@ function DocumentRow({ file, onDelete, onDownload }) {
         )}
       </div>
 
-      <div className="mr-4 min-w-0 flex-1 cursor-pointer" onClick={handlePreviewClick}>
-        <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100" title={fileName}>
-          {fileName}
-        </p>
+      <div className="mr-4 min-w-0 flex-1">
+        {isEditing ? (
+          // Modo edición inline: reemplaza el nombre por un input de texto
+          <div className="flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
+            <input
+              ref={editInputRef}
+              data-testid="document-rename-input"
+              type="text"
+              value={editingName}
+              onChange={(event) => setEditingName(event.target.value)}
+              onKeyDown={handleEditKeyDown}
+              disabled={isSavingName}
+              aria-label="Nuevo nombre del documento"
+              className="min-w-0 flex-1 rounded-md border border-blue-400 bg-white px-2 py-1 text-sm font-medium text-gray-900 outline-none ring-2 ring-blue-200 focus:border-blue-500 disabled:opacity-60 dark:border-blue-600 dark:bg-slate-800 dark:text-gray-100 dark:ring-blue-800"
+            />
+            <button
+              type="button"
+              onClick={handleConfirmRename}
+              disabled={isSavingName}
+              aria-label="Confirmar nuevo nombre"
+              className="rounded-full p-1.5 text-green-600 transition-colors hover:bg-green-50 disabled:opacity-60 dark:hover:bg-green-900/30"
+            >
+              {isSavingName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancelEditing}
+              disabled={isSavingName}
+              aria-label="Cancelar renombrar"
+              className="rounded-full p-1.5 text-gray-500 transition-colors hover:bg-gray-100 disabled:opacity-60 dark:hover:bg-slate-700"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (
+          // Modo normal: muestra el nombre clicable para previsualizar
+          <div className="cursor-pointer" onClick={handlePreviewClick}>
+            <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100" title={fileName}>
+              {fileName}
+            </p>
+          </div>
+        )}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
           <span>{formatFileSize(fileSize)}</span>
           {uploadedAt ? (
@@ -123,7 +228,7 @@ function DocumentRow({ file, onDelete, onDownload }) {
       </div>
 
       <div className="flex items-center gap-1">
-        {(isImage || isPdf) && (
+        {(isImage || isPdf) && !isEditing && (
           <button
             type="button"
             onClick={handlePreviewClick}
@@ -133,28 +238,45 @@ function DocumentRow({ file, onDelete, onDownload }) {
             <Eye className="h-4 w-4" />
           </button>
         )}
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDownload(id, fileName);
-          }}
-          className="rounded-full p-2 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/30"
-          title="Descargar"
-        >
-          <Download className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete(id, fileName);
-          }}
-          className="rounded-full p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
-          title="Eliminar"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+        {/* Botón renombrar: solo visible cuando NO está en modo edición */}
+        {!isEditing && (
+          <button
+            type="button"
+            data-testid="document-rename-button"
+            onClick={handleStartEditing}
+            className="rounded-full p-2 text-gray-500 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/30"
+            title="Renombrar"
+            aria-label="Renombrar documento"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+        )}
+        {!isEditing && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDownload(id, fileName);
+            }}
+            className="rounded-full p-2 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/30"
+            title="Descargar"
+          >
+            <Download className="h-4 w-4" />
+          </button>
+        )}
+        {!isEditing && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(id, fileName);
+            }}
+            className="rounded-full p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+            title="Eliminar"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -203,6 +325,32 @@ export function ReservaDocumentsTab({ reservaId }) {
       toast.error("Error al subir el documento.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  /**
+   * Llama al PATCH /attachments/{publicId} para cambiar el nombre del archivo.
+   * Actualiza el ítem en el estado local con el objeto devuelto por el backend
+   * para evitar un refetch completo (más rápido para el usuario).
+   */
+  const handleRename = async (id, newFileName) => {
+    try {
+      const updated = await api.patch(`/attachments/${id}`, { fileName: newFileName });
+      toast.success("Nombre actualizado.");
+      // Actualizamos solo el ítem modificado en lugar de recargar toda la lista
+      if (updated) {
+        setAttachments((previous) =>
+          previous.map((item) => (getPublicId(item) === id ? updated : item))
+        );
+      } else {
+        // Fallback: si el backend no devuelve el objeto actualizado, recargamos
+        fetchAttachments();
+      }
+    } catch (error) {
+      console.error("Error renaming document:", error);
+      toast.error(getApiErrorMessage(error, "No se pudo cambiar el nombre."));
+      // Re-lanzamos para que DocumentRow sepa que falló y no cierre el input
+      throw error;
     }
   };
 
@@ -324,7 +472,13 @@ export function ReservaDocumentsTab({ reservaId }) {
         ) : (
           <div className="divide-y divide-gray-100 dark:divide-slate-700">
             {attachments.map((file) => (
-              <DocumentRow key={getPublicId(file)} file={file} onDelete={handleDelete} onDownload={handleDownload} />
+              <DocumentRow
+                key={getPublicId(file)}
+                file={file}
+                onDelete={handleDelete}
+                onDownload={handleDownload}
+                onRename={handleRename}
+              />
             ))}
           </div>
         )}

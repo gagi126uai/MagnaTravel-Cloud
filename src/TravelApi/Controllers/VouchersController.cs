@@ -139,6 +139,75 @@ public class VouchersController : ControllerBase
         }
     }
 
+    // Edita un voucher EXTERNO ya cargado: cambia el origen y, opcionalmente, reemplaza el
+    // archivo. Mismo permiso (VouchersUpload) y misma comprobacion de ownership que crear externo.
+    [HttpPatch("api/vouchers/{voucherPublicIdOrLegacyId}/external")]
+    [EnableRateLimiting("uploads")]
+    [RequirePermission(Permissions.VouchersUpload)]
+    [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<VoucherDto>> EditExternalVoucher(
+        string voucherPublicIdOrLegacyId,
+        [FromForm] EditExternalVoucherForm form,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(form.ExternalOrigin))
+        {
+            return BadRequest(new { message = "Debe indicar el origen del voucher externo." });
+        }
+
+        // El archivo es OPCIONAL; pero si lo mandan vacio (0 bytes) es un error del cliente.
+        if (form.File is not null && form.File.Length == 0)
+        {
+            return BadRequest(new { message = "El archivo de voucher esta vacio." });
+        }
+
+        try
+        {
+            Stream? stream = null;
+            if (form.File is not null)
+            {
+                stream = form.File.OpenReadStream();
+            }
+
+            try
+            {
+                var voucher = await _voucherService.EditExternalVoucherAsync(
+                    voucherPublicIdOrLegacyId,
+                    new EditExternalVoucherRequest { ExternalOrigin = form.ExternalOrigin },
+                    stream,
+                    form.File?.FileName,
+                    form.File?.ContentType,
+                    form.File?.Length ?? 0L,
+                    BuildActor(),
+                    cancellationToken);
+                return Ok(voucher);
+            }
+            finally
+            {
+                if (stream is not null)
+                {
+                    await stream.DisposeAsync();
+                }
+            }
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = NormalizeProxyMessage(ex.Message) });
+        }
+    }
+
     [HttpPost("api/vouchers/{voucherPublicIdOrLegacyId}/issue")]
     [RequirePermission(Permissions.VouchersIssue)]
     [RequireOwnership(OwnedEntity.Voucher, "voucherPublicIdOrLegacyId", bypassPermission: Permissions.ReservasViewAll)]
@@ -395,6 +464,12 @@ public class UploadExternalVoucherForm
     public string Scope { get; set; } = "ReservaCompleta";
     public List<string>? PassengerIds { get; set; }
     public string ExternalOrigin { get; set; } = "Operador externo";
+}
+
+public class EditExternalVoucherForm
+{
+    public string ExternalOrigin { get; set; } = string.Empty;
+    public IFormFile? File { get; set; }
 }
 
 public class RecordVoucherSentRequest

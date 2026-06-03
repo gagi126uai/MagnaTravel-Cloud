@@ -29,10 +29,17 @@ public class AttachmentService : IAttachmentService
         [".xlsx"] = new[] { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/zip" }
     };
 
+    // Longitud maxima del FileName visible al usuario. La columna no esta acotada en la
+    // entidad, pero limitamos para evitar etiquetas absurdas y mantener la UI legible.
+    private const int MaxFileNameLength = 200;
+
     private readonly IRepository<ReservaAttachment> _attachmentRepo;
     private readonly IRepository<Reserva> _reservaRepo;
     private readonly IMinioClient _minioClient;
     private readonly ILogger<AttachmentService> _logger;
+    // IAuditService es opcional para no romper construcciones por DI/tests que no lo provean.
+    // Cuando esta presente, el renombre queda registrado en el log de auditoria.
+    private readonly IAuditService? _auditService;
     private readonly string _bucketName;
 
     public AttachmentService(
@@ -40,12 +47,14 @@ public class AttachmentService : IAttachmentService
         IRepository<Reserva> reservaRepo,
         IMinioClient minioClient,
         IConfiguration config,
-        ILogger<AttachmentService> logger)
+        ILogger<AttachmentService> logger,
+        IAuditService? auditService = null)
     {
         _attachmentRepo = attachmentRepo;
         _reservaRepo = reservaRepo;
         _minioClient = minioClient;
         _logger = logger;
+        _auditService = auditService;
         _bucketName = config["Minio:BucketName"] ?? "reservations";
     }
 
@@ -192,6 +201,77 @@ public class AttachmentService : IAttachmentService
         }
     }
 
+    public async Task<AttachmentDto> RenameAttachmentAsync(string attachmentPublicIdOrLegacyId, string newFileName, string modifiedBy, CancellationToken ct)
+    {
+        var attachmentId = await ResolveAttachmentIdAsync(attachmentPublicIdOrLegacyId, ct);
+        return await RenameAttachmentAsync(attachmentId, newFileName, modifiedBy, ct);
+    }
+
+    public async Task<AttachmentDto> RenameAttachmentAsync(int id, string newFileName, string modifiedBy, CancellationToken ct)
+    {
+        var attachment = await _attachmentRepo.GetByIdAsync(id, ct);
+        if (attachment == null) throw new KeyNotFoundException("Attachment not found.");
+
+        // 1) Validar el nombre crudo antes de tocar nada. Vacio/solo-espacios se rechaza.
+        var trimmed = (newFileName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            throw new InvalidOperationException("El nombre del archivo no puede estar vacio.");
+        }
+
+        // 2) Sanear como en el upload (saca path traversal y caracteres invalidos de nombre).
+        var sanitized = SanitizeOriginalFileName(trimmed);
+
+        // 3) Preservar la extension original. El renombre es solo una etiqueta: el archivo
+        //    fisico y su ContentType no cambian, asi que la extension tampoco debe cambiar
+        //    (si lo permitieramos, la descarga abriria un .pdf como si fuera .docx, p.ej.).
+        var originalExtension = Path.GetExtension(attachment.FileName);
+        if (!string.IsNullOrEmpty(originalExtension))
+        {
+            var providedExtension = Path.GetExtension(sanitized);
+            if (!string.Equals(providedExtension, originalExtension, StringComparison.OrdinalIgnoreCase))
+            {
+                // Quitamos la extension que haya escrito el usuario (si la hay) y forzamos la original.
+                var withoutExtension = string.IsNullOrEmpty(providedExtension)
+                    ? sanitized
+                    : sanitized[..^providedExtension.Length];
+                sanitized = $"{withoutExtension}{originalExtension}";
+            }
+        }
+
+        // 4) Validar longitud final (despues de forzar extension, para no pasarnos por agregarla).
+        if (sanitized.Length > MaxFileNameLength)
+        {
+            throw new InvalidOperationException($"El nombre del archivo supera el maximo de {MaxFileNameLength} caracteres.");
+        }
+
+        var previousFileName = attachment.FileName;
+
+        // Si el nombre efectivo no cambio, evitamos un UPDATE y un audit ruidosos.
+        if (string.Equals(previousFileName, sanitized, StringComparison.Ordinal))
+        {
+            return MapToDto(attachment);
+        }
+
+        attachment.FileName = sanitized;
+        await _attachmentRepo.UpdateAsync(attachment, ct);
+
+        if (_auditService is not null)
+        {
+            // Auditamos solo metadato no sensible (nombres de etiqueta), nunca contenido del archivo.
+            await _auditService.LogBusinessEventAsync(
+                action: "Rename",
+                entityName: nameof(ReservaAttachment),
+                entityId: attachment.Id.ToString(),
+                details: $"Adjunto de la reserva {attachment.ReservaId} renombrado de '{previousFileName}' a '{sanitized}'.",
+                userId: modifiedBy,
+                userName: modifiedBy,
+                ct: ct);
+        }
+
+        return MapToDto(attachment);
+    }
+
     public async Task DeleteAttachmentAsync(string attachmentPublicIdOrLegacyId, CancellationToken ct)
     {
         var attachmentId = await ResolveAttachmentIdAsync(attachmentPublicIdOrLegacyId, ct);
@@ -244,6 +324,19 @@ public class AttachmentService : IAttachmentService
         }
 
         return resolved ?? throw new KeyNotFoundException("Attachment not found.");
+    }
+
+    private static AttachmentDto MapToDto(ReservaAttachment attachment)
+    {
+        return new AttachmentDto
+        {
+            PublicId = attachment.PublicId,
+            FileName = attachment.FileName,
+            FileSize = attachment.FileSize,
+            ContentType = attachment.ContentType ?? string.Empty,
+            UploadedBy = attachment.UploadedBy ?? string.Empty,
+            UploadedAt = attachment.UploadedAt
+        };
     }
 
     private static string SanitizeOriginalFileName(string fileName)

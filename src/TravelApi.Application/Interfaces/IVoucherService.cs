@@ -18,6 +18,21 @@ public interface IVoucherService
         long fileSize,
         OperationActor actor,
         CancellationToken cancellationToken);
+    /// <summary>
+    /// Edita un voucher EXTERNO ya cargado: actualiza el origen (ExternalOrigin) y,
+    /// opcionalmente, reemplaza el archivo almacenado. Solo aplica a vouchers externos
+    /// y solo si el voucher esta en un estado editable (no anulado). Si <paramref name="stream"/>
+    /// es null, se conserva el archivo actual.
+    /// </summary>
+    Task<VoucherDto> EditExternalVoucherAsync(
+        string voucherPublicIdOrLegacyId,
+        EditExternalVoucherRequest request,
+        Stream? stream,
+        string? fileName,
+        string? contentType,
+        long fileSize,
+        OperationActor actor,
+        CancellationToken cancellationToken);
     Task<VoucherDto> IssueVoucherAsync(string voucherPublicIdOrLegacyId, IssueVoucherRequest request, OperationActor actor, CancellationToken cancellationToken);
     Task<VoucherDto> ApproveVoucherIssueAsync(string voucherPublicIdOrLegacyId, OperationActor actor, CancellationToken cancellationToken);
     Task<VoucherDto> RejectVoucherIssueAsync(string voucherPublicIdOrLegacyId, RejectVoucherRequest request, OperationActor actor, CancellationToken cancellationToken);

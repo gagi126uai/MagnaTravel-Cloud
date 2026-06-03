@@ -191,6 +191,93 @@ public class OwnershipResolverTests
         Assert.False(await resolver.IsOwnerAsync("user-2", OwnedEntity.Voucher, voucher.PublicId.ToString()));
     }
 
+    // 2026-06-03: cierre IDOR AttachmentsController. Attachment hereda el
+    // ResponsibleUserId via su Reserva padre, igual que Voucher. Estos tests son
+    // la garantia a nivel resolver de que un usuario que no es responsable (y sin
+    // bypass) NO pasa el chequeo de ownership al descargar/renombrar/borrar adjuntos.
+
+    [Fact]
+    public async Task Attachment_resolves_via_parent_reserva()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, "user-1");
+
+        var attachment = new ReservaAttachment
+        {
+            Id = 600,
+            PublicId = Guid.NewGuid(),
+            ReservaId = reserva.Id,
+            FileName = "pasaporte.pdf",
+            StoredFileName = "stored-pasaporte.pdf",
+        };
+        ctx.ReservaAttachments.Add(attachment);
+        await ctx.SaveChangesAsync();
+
+        var resolver = new OwnershipResolver(ctx);
+
+        Assert.True(await resolver.IsOwnerAsync("user-1", OwnedEntity.Attachment, attachment.PublicId.ToString()));
+        // Usuario que NO es responsable de la reserva: denegado (sin bypass).
+        Assert.False(await resolver.IsOwnerAsync("user-2", OwnedEntity.Attachment, attachment.PublicId.ToString()));
+    }
+
+    [Fact]
+    public async Task Attachment_with_legacy_reserva_without_responsible_returns_false()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, responsibleUserId: null);
+
+        var attachment = new ReservaAttachment
+        {
+            Id = 601,
+            PublicId = Guid.NewGuid(),
+            ReservaId = reserva.Id,
+            FileName = "doc.pdf",
+            StoredFileName = "stored-doc.pdf",
+        };
+        ctx.ReservaAttachments.Add(attachment);
+        await ctx.SaveChangesAsync();
+
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync("user-1", OwnedEntity.Attachment, attachment.PublicId.ToString());
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task Attachment_not_found_returns_false()
+    {
+        await using var ctx = BuildContext();
+        var resolver = new OwnershipResolver(ctx);
+
+        var result = await resolver.IsOwnerAsync("user-1", OwnedEntity.Attachment, Guid.NewGuid().ToString());
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task Attachment_lookup_by_legacy_id_works()
+    {
+        await using var ctx = BuildContext();
+        var reserva = await SeedReservaAsync(ctx, "user-1");
+
+        var attachment = new ReservaAttachment
+        {
+            Id = 602,
+            PublicId = Guid.NewGuid(),
+            ReservaId = reserva.Id,
+            FileName = "voucher.pdf",
+            StoredFileName = "stored-voucher.pdf",
+        };
+        ctx.ReservaAttachments.Add(attachment);
+        await ctx.SaveChangesAsync();
+
+        var resolver = new OwnershipResolver(ctx);
+
+        Assert.True(await resolver.IsOwnerAsync("user-1", OwnedEntity.Attachment, "602"));
+        Assert.False(await resolver.IsOwnerAsync("user-2", OwnedEntity.Attachment, "602"));
+    }
+
     [Fact]
     public async Task Passenger_resolves_via_parent_reserva()
     {

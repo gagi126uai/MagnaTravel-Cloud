@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Ban, CheckCircle2, Download, Eye, FilePlus2, FileText, Loader2, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Download, Eye, FilePlus2, FileText, Loader2, Pencil, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
@@ -224,6 +224,14 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
   const [voucherToRevoke, setVoucherToRevoke] = useState(null);
   const [revokeReason, setRevokeReason] = useState("");
   const [revokingId, setRevokingId] = useState(null);
+
+  // Modal de edición de voucher externo
+  // Solo aplica a vouchers con externalOrigin que no estén revocados.
+  const [isEditExternalModalOpen, setIsEditExternalModalOpen] = useState(false);
+  const [voucherToEdit, setVoucherToEdit] = useState(null);
+  const [editExternalOrigin, setEditExternalOrigin] = useState("");
+  const [editExternalFile, setEditExternalFile] = useState(null);
+  const [isSavingExternal, setIsSavingExternal] = useState(false);
 
   const outstandingBalance = Number(reserva?.balance ?? 0) > 0;
   const activeVouchers = useMemo(() => vouchers.filter((voucher) => voucher.status !== "Revoked"), [vouchers]);
@@ -460,6 +468,74 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
     }
   };
 
+  /**
+   * Abre el modal precargado con los datos actuales del voucher externo.
+   * Solo se llama para vouchers que tienen externalOrigin y no están revocados.
+   */
+  const openEditExternalModal = (voucher) => {
+    setVoucherToEdit(voucher);
+    setEditExternalOrigin(voucher.externalOrigin || "");
+    setEditExternalFile(null);
+    setIsEditExternalModalOpen(true);
+  };
+
+  const closeEditExternalModal = () => {
+    // No dejamos cerrar el modal a mitad de un guardado (la X y el backdrop usan
+    // este mismo handler): evita estado inconsistente y el toast llegando con el
+    // modal ya cerrado.
+    if (isSavingExternal) return;
+    setIsEditExternalModalOpen(false);
+    setVoucherToEdit(null);
+    setEditExternalOrigin("");
+    setEditExternalFile(null);
+  };
+
+  /**
+   * Envía el PATCH /vouchers/{voucherPublicId}/external con multipart/form-data.
+   * externalOrigin siempre se envía; file solo si el usuario eligió uno nuevo.
+   * Si no elige archivo, el backend conserva el existente.
+   */
+  const handleEditExternalSubmit = async () => {
+    if (!editExternalOrigin.trim()) {
+      toast.error("El campo Origen es obligatorio.");
+      return;
+    }
+
+    // Validacion de tamaño en el cliente para dar feedback inmediato (el backend
+    // tambien valida). Mismo limite que la carga de documentos: 25 MB.
+    if (editExternalFile && editExternalFile.size > 25 * 1024 * 1024) {
+      toast.error("El archivo no puede superar los 25 MB.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("externalOrigin", editExternalOrigin.trim());
+    // Solo adjuntamos el archivo si el usuario eligió uno nuevo;
+    // de lo contrario el backend conserva el archivo original.
+    if (editExternalFile) {
+      formData.append("file", editExternalFile);
+    }
+
+    try {
+      setIsSavingExternal(true);
+      const updated = await api.patch(`/vouchers/${voucherToEdit.publicId}/external`, formData);
+      toast.success("Documento externo actualizado.");
+      if (updated) {
+        const normalized = normalizeVoucher(updated);
+        setVouchers((previous) =>
+          previous.map((v) => (v.publicId === normalized.publicId ? normalized : v))
+        );
+      } else {
+        await fetchVouchers();
+      }
+      closeEditExternalModal();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "No se pudo actualizar el documento externo."));
+    } finally {
+      setIsSavingExternal(false);
+    }
+  };
+
   const handleDownload = async (voucher) => {
     try {
       setDownloadingId(voucher.publicId);
@@ -664,6 +740,21 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                       {downloadingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                       Descargar
                     </button>
+
+                    {/* Botón Editar: solo para vouchers externos no revocados.
+                        Los vouchers generados por el sistema no tienen externalOrigin. */}
+                    {voucher.externalOrigin && voucher.status !== "Revoked" ? (
+                      <button
+                        type="button"
+                        data-testid="voucher-edit-external-button"
+                        onClick={() => openEditExternalModal(voucher)}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 px-4 py-2.5 text-sm font-bold text-amber-700 transition hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900/20"
+                      >
+                        <Pencil className="h-4 w-4" />
+                        Editar
+                      </button>
+                    ) : null}
+
                     {voucher.status === "Draft" ? (
                       <button
                         type="button"
@@ -972,6 +1063,76 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
             >
               {revokingId === voucherToRevoke?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Anular Documento
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL DE EDICIÓN DE VOUCHER EXTERNO */}
+      <Modal
+        isOpen={isEditExternalModalOpen}
+        onClose={closeEditExternalModal}
+        title="Editar Documento Externo"
+      >
+        <div className="space-y-5">
+          <div>
+            <label
+              htmlFor="edit-external-origin"
+              className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400"
+            >
+              Origen <span className="text-rose-500">*</span>
+            </label>
+            <input
+              id="edit-external-origin"
+              data-testid="voucher-edit-external-origin-input"
+              type="text"
+              value={editExternalOrigin}
+              onChange={(event) => setEditExternalOrigin(event.target.value)}
+              disabled={isSavingExternal}
+              placeholder="Ej. Despegar, Aerolíneas..."
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="edit-external-file"
+              className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400"
+            >
+              Reemplazar Archivo
+            </label>
+            {/* El archivo es opcional: si no se elige uno, el backend conserva el actual */}
+            <input
+              id="edit-external-file"
+              data-testid="voucher-edit-external-file-input"
+              type="file"
+              onChange={(event) => setEditExternalFile(event.target.files?.[0] || null)}
+              accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+              disabled={isSavingExternal}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-slate-700 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:file:bg-slate-800 dark:file:text-slate-200"
+            />
+            <p className="mt-1.5 text-xs font-medium text-slate-400">
+              Dejá vacío para conservar el archivo actual.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={closeEditExternalModal}
+              disabled={isSavingExternal}
+              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 disabled:opacity-60 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleEditExternalSubmit}
+              disabled={isSavingExternal}
+              className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-amber-700 disabled:opacity-60"
+            >
+              {isSavingExternal ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Guardar Cambios
             </button>
           </div>
         </div>

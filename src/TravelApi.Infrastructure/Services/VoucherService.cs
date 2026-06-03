@@ -284,6 +284,120 @@ public class VoucherService : IVoucherService
         }
     }
 
+    public async Task<VoucherDto> EditExternalVoucherAsync(
+        string voucherPublicIdOrLegacyId,
+        EditExternalVoucherRequest request,
+        Stream? stream,
+        string? fileName,
+        string? contentType,
+        long fileSize,
+        OperationActor actor,
+        CancellationToken cancellationToken)
+    {
+        // Mismo permiso que crear un voucher externo: quien puede subir externos puede editarlos.
+        await EnsureActorCanAsync(actor, Permissions.VouchersUpload, cancellationToken);
+
+        var voucher = await LoadVoucherGraphAsync(voucherPublicIdOrLegacyId, cancellationToken);
+        if (voucher.Reserva is null)
+        {
+            throw new InvalidOperationException("El voucher no tiene reserva asociada.");
+        }
+
+        // Guarda 1: esta operacion es exclusiva de vouchers EXTERNOS. El marcador autoritativo
+        // es Source (lo setea el endpoint de carga externa); editar un voucher generado por el
+        // sistema desde aca corromperia su trazabilidad fiscal/operativa.
+        if (voucher.Source != VoucherSources.External)
+        {
+            throw new InvalidOperationException("Solo se pueden editar vouchers externos (cargados manualmente).");
+        }
+
+        // Guarda 2: estado editable. Criterio conservador acordado: solo se bloquea el voucher
+        // anulado (Revoked); un voucher anulado es un documento muerto y no admite cambios.
+        // Los externos nacen en estado UploadedExternal (no pasan por emision), por lo que en la
+        // practica el unico estado a bloquear es Revoked.
+        if (voucher.Status == VoucherStatuses.Revoked)
+        {
+            throw new InvalidOperationException("El voucher esta anulado y no se puede editar.");
+        }
+
+        // Guarda 3: el origen es obligatorio y no puede quedar vacio.
+        var normalizedOrigin = request.ExternalOrigin?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedOrigin))
+        {
+            throw new InvalidOperationException("Debe indicar el origen del voucher externo.");
+        }
+
+        var previousOrigin = voucher.ExternalOrigin;
+        var replacedFile = false;
+        string? previousStoredFileName = null;
+
+        // Reemplazo de archivo OPCIONAL. Si no viene stream, se conserva el archivo actual.
+        if (stream is not null)
+        {
+            var safeFileName = SanitizeOriginalFileName(fileName ?? string.Empty);
+            var normalizedContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType.Trim();
+
+            await using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer, cancellationToken);
+
+            // Mismas validaciones de integridad/tipo que la carga externa original.
+            ValidateVoucherUpload(safeFileName, normalizedContentType, buffer.ToArray(), fileSize);
+            buffer.Position = 0;
+
+            var extension = Path.GetExtension(safeFileName).ToLowerInvariant();
+            var stored = await _fileStoragePort.SaveAsync(
+                buffer,
+                $"vouchers/external/{DateTime.UtcNow:yyyy}/{Guid.NewGuid():N}{extension}",
+                safeFileName,
+                normalizedContentType,
+                cancellationToken);
+
+            // Guardamos la referencia anterior para borrarla DESPUES de persistir el nuevo archivo.
+            previousStoredFileName = voucher.StoredFileName;
+
+            voucher.FileName = stored.FileName;
+            voucher.StoredFileName = stored.StoredFileName;
+            voucher.ContentType = stored.ContentType;
+            voucher.FileSize = stored.FileSize;
+            replacedFile = true;
+        }
+
+        voucher.ExternalOrigin = normalizedOrigin;
+
+        var auditDetails = replacedFile
+            ? $"Origen: '{previousOrigin}' -> '{normalizedOrigin}'. Archivo reemplazado."
+            : $"Origen: '{previousOrigin}' -> '{normalizedOrigin}'.";
+
+        AddVoucherAudit(
+            voucher,
+            voucher.Reserva,
+            VoucherAuditActions.ExternalEdited,
+            actor,
+            auditDetails,
+            null,
+            null,
+            null);
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // El archivo viejo se borra recien despues de confirmar el guardado en DB. Si la DB
+        // fallara, el archivo anterior sigue siendo el referenciado y no perdemos el adjunto.
+        // El borrado es best-effort: si MinIO falla, queda un huerfano (no rompemos la operacion).
+        if (replacedFile && !string.IsNullOrWhiteSpace(previousStoredFileName))
+        {
+            try
+            {
+                await _fileStoragePort.DeleteAsync(previousStoredFileName, cancellationToken);
+            }
+            catch
+            {
+                // Huerfano tolerado: el voucher ya quedo consistente apuntando al archivo nuevo.
+            }
+        }
+
+        return await GetVoucherDtoAsync(voucher.Id, cancellationToken);
+    }
+
     public async Task<VoucherDto> IssueVoucherAsync(
         string voucherPublicIdOrLegacyId,
         IssueVoucherRequest request,
