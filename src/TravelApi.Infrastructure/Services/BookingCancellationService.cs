@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
@@ -135,16 +136,47 @@ public class BookingCancellationService
 
         var originatingInvoice = activeInvoices[0];
 
-        // 3) INV-081: una sola cancelacion activa por reserva. El UNIQUE de la
-        //    BD ya bloquea, pero validamos antes para devolver un mensaje claro
-        //    (sin esto el caller se come una DbUpdateException criptica).
-        var existingBc = await _db.BookingCancellations
-            .Where(b => b.ReservaId == reserva.Id)
-            .FirstOrDefaultAsync(ct);
-        if (existingBc != null)
-            throw new BusinessInvariantViolationException(
-                $"La reserva {reserva.NumeroReserva} ya tiene una cancelacion ({existingBc.Status}).",
-                invariantCode: "INV-081");
+        // 3) INV-081: una sola cancelacion ACTIVA por reserva.
+        //
+        //    REGLA REAL (no "una fila por reserva"): INV-081 protege contra DOS
+        //    cancelaciones ACTIVAS simultaneas sobre la misma reserva. Una fila
+        //    muerta (un draft que nunca llego a confirmarse, o un abort) NO es una
+        //    cancelacion activa y NO debe trabar la reserva para siempre.
+        //
+        //    Bug que arregla (B1, 2026-06-03): el front hace draft -> confirm en
+        //    dos llamadas. Si el confirm falla por red/AFIP/500, quedaba un BC
+        //    huerfano y la reserva NO se podia volver a cancelar nunca mas (ni con
+        //    abort, porque AbortAsync solo MARCA Status=Aborted, no borra la fila,
+        //    y tanto este check como el UNIQUE total de la BD seguian viendo la fila).
+        //
+        //    REGLA MENTAL CENTRAL (fiscal): un BC es LIBERABLE para re-cancelar SOLO
+        //    si no dejo ninguna nota de credito viva (CAE aprobado). Si dejo una NC
+        //    viva, liberarlo arriesga una SEGUNDA NC sobre la misma factura =
+        //    incidente fiscal grave. Ante la duda, NO liberamos (rechazamos).
+        //
+        //    Resolucion de la fila existente (ver TryResolveExistingBcAsync):
+        //      a) Draft "puro" (Drafted + sin NC + sin ND) -> REUSAR esa misma fila
+        //         (reintento idempotente del confirm).
+        //      b) Aborted -> el vendedor abandono ese intento; creamos un BC NUEVO.
+        //      c) ArcaRejected SIN NC viva (CreditNoteInvoiceId null) -> AFIP rechazo
+        //         la NC, no quedo comprobante vivo -> auto-abortamos esa fila y creamos
+        //         un BC NUEVO (el vendedor corrige el dato y reintenta desde el modal).
+        //      d) Cualquier otro estado (AwaitingFiscalConfirmation, ClientCreditApplied,
+        //         Closed, AbandonedByOperator, ManualReview*, o un ArcaRejected que por
+        //         algun camino tuviera NC viva) -> rechazo INV-081.
+        //
+        //    El UNIQUE parcial de la BD (migracion B1_AddBookingCancellationPartialUniqueIndexes)
+        //    excluye Status=6 (Aborted), por eso tras (b)/(c) el INSERT de mas abajo
+        //    no colisiona: en (c) primero movemos la fila vieja a Aborted=6.
+        var reuseDto = await TryResolveExistingBcAsync(reserva, userId, userName, ct);
+        if (reuseDto is not null)
+            return reuseDto; // caso (a): devolvimos el draft existente, no creamos fila nueva.
+
+        // PreviousBcPublicId: si hubo una fila previa liberada (Aborted preexistente
+        // o ArcaRejected auto-abortada), guardamos su PublicId para registrar el
+        // linaje de intentos en la auditoria del BC nuevo (FIX 3). Null si es el
+        // primer intento de cancelacion de la reserva.
+        var previousBcPublicId = await ResolvePreviousBcPublicIdAsync(reserva.Id, ct);
 
         // 4) MIG2 (plan v3): si la Invoice original ya esta anulada (Succeeded),
         //    no tiene sentido cancelar.
@@ -200,7 +232,42 @@ public class BookingCancellationService
         };
 
         _db.BookingCancellations.Add(bc);
-        await _db.SaveChangesAsync(ct);
+
+        // FIX 2 (B1, 2026-06-03): el INSERT puede colisionar bajo concurrencia.
+        // Dos requests (doble click, retry de red, dos vendedores) pueden pasar el
+        // SELECT de existingBc viendo null/Aborted y ambos intentan insertar. El
+        // UNIQUE parcial de la BD serializa: uno gana, el otro recibe un 23505
+        // (unique_violation) que EF envuelve en DbUpdateException. Sin este catch
+        // sube como 500. Lo convertimos en una respuesta determinista: re-resolvemos
+        // el BC ganador y aplicamos la MISMA politica (draft puro -> idempotente;
+        // cualquier otra cosa -> INV-081 limpio). Nunca un 500.
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            _logger.LogWarning(ex,
+                "DraftAsync race: el INSERT del BC para la reserva {ReservaPublicId} colisiono con el " +
+                "UNIQUE parcial (otro request gano la carrera). Re-resolvemos el BC ganador.",
+                reserva.PublicId);
+
+            // Sacamos del ChangeTracker la entidad perdedora: quedo en estado Added
+            // y un proximo SaveChanges la reintentaria. EF Detached la descarta.
+            _db.Entry(bc).State = EntityState.Detached;
+
+            var winnerDto = await TryResolveExistingBcAsync(reserva, userId, userName, ct);
+            if (winnerDto is not null)
+                return winnerDto; // el ganador quedo en Drafted puro -> idempotencia real.
+
+            // El ganador no es reusable (paso a Confirm, o cualquier estado fiscal) ->
+            // INV-081 limpio, no 500. TryResolveExistingBcAsync ya tira INV-081 para
+            // los estados no liberables; si llegamos aca el ganador estaba Aborted y
+            // (carrera muy improbable) volvio a desaparecer -> rechazamos conservador.
+            throw new BusinessInvariantViolationException(
+                $"La reserva {reserva.NumeroReserva} ya tiene una cancelacion activa creada por otra operacion simultanea.",
+                invariantCode: "INV-081");
+        }
 
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.BookingCancellationDrafted,
@@ -212,6 +279,10 @@ public class BookingCancellationService
                 ReservaPublicId = reserva.PublicId,
                 bc.Reason,
                 bc.AmountPaidAtCancellation,
+                // Linaje de intentos (FIX 3): si esta cancelacion nace tras liberar un
+                // BC previo (Aborted o ArcaRejected auto-abortado), dejamos la referencia
+                // al PublicId anterior para poder reconstruir la cadena de reintentos.
+                PreviousBcPublicId = previousBcPublicId,
             }),
             userId: userId,
             userName: userName,
@@ -229,6 +300,178 @@ public class BookingCancellationService
 
         return await MapToDtoAsync(bc.Id, ct)
             ?? throw new InvalidOperationException("BC no encontrada despues de crearla. Estado inconsistente.");
+    }
+
+    /// <summary>
+    /// B1 (2026-06-03): resuelve que hacer con la cancelacion PREEXISTENTE de la
+    /// reserva antes de crear una nueva. Es el corazon de la politica de reintento
+    /// de INV-081 y la unica fuente de verdad sobre que estados son "liberables".
+    ///
+    /// <para>Devuelve un DTO NO-NULL solo en el caso (a) (draft puro reusable): el
+    /// caller debe devolver ese DTO y NO crear fila nueva. Devuelve null cuando NO
+    /// hay fila previa, o cuando la fila previa quedo liberada para crear una NUEVA
+    /// (Aborted preexistente, o ArcaRejected auto-abortado aca dentro). Tira
+    /// <see cref="BusinessInvariantViolationException"/> INV-081 para los estados
+    /// no liberables.</para>
+    ///
+    /// <para><b>Regla fiscal dura</b>: un BC es liberable para re-cancelar SOLO si no
+    /// dejo ninguna nota de credito viva (CAE aprobado). Por eso ArcaRejected exige
+    /// <c>CreditNoteInvoiceId is null</c> antes de liberarse: si por cualquier camino
+    /// tuviera una NC viva, lo tratamos como no liberable (rechazo). Esto blinda
+    /// contra una segunda NC sobre la misma factura.</para>
+    /// </summary>
+    private async Task<BookingCancellationDto?> TryResolveExistingBcAsync(
+        Reserva reserva,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        var existingBc = await _db.BookingCancellations
+            .Where(b => b.ReservaId == reserva.Id)
+            .OrderByDescending(b => b.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (existingBc is null)
+            return null; // primer intento de cancelacion de la reserva.
+
+        // Caso (a): draft puro sin nada fiscal emitido -> reusar la misma fila.
+        // El triple check (Status + sin NC + sin ND) es defensivo: si por cualquier
+        // camino una fila quedara en Drafted con un comprobante vinculado, NO la
+        // tratamos como reusable.
+        var isReusableDraft =
+            existingBc.Status == BookingCancellationStatus.Drafted
+            && existingBc.CreditNoteInvoiceId is null
+            && existingBc.DebitNoteInvoiceId is null;
+
+        if (isReusableDraft)
+        {
+            _logger.LogInformation(
+                "DraftAsync reuse: BC {BcPublicId} ya estaba en Drafted sin comprobantes para " +
+                "la reserva {ReservaPublicId}. Devolvemos el draft existente (reintento idempotente).",
+                existingBc.PublicId, reserva.PublicId);
+
+            // FIX 3: auditoria de negocio del reuse (antes solo habia LogInformation).
+            await _auditService.LogBusinessEventAsync(
+                action: AuditActions.BookingCancellationDraftReused,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: existingBc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    existingBc.PublicId,
+                    ReservaPublicId = reserva.PublicId,
+                }),
+                userId: userId,
+                userName: userName,
+                ct: ct);
+
+            return await MapToDtoAsync(existingBc.Id, ct)
+                ?? throw new InvalidOperationException(
+                    "BC existente no encontrada al reutilizar el draft. Estado inconsistente.");
+        }
+
+        // Caso (b): Aborted preexistente -> la fila vieja queda como rastro; el caller
+        // crea un BC NUEVO (el UNIQUE parcial Status<>6 no la ve, no hay colision).
+        if (existingBc.Status == BookingCancellationStatus.Aborted)
+            return null;
+
+        // Caso (c): ArcaRejected SIN NC viva -> AFIP rechazo la NC (CAE no aprobado),
+        // no quedo comprobante fiscal vivo. Decision de negocio (dueno, 2026-06-03):
+        // la reserva DEBE poder volver a cancelarse por la via normal. Auto-abortamos
+        // la fila vieja (asi el UNIQUE parcial la deja salir y queda traza del intento
+        // fallido) y devolvemos null para que el caller cree el BC nuevo.
+        //
+        // BLINDAJE FISCAL: SOLO si CreditNoteInvoiceId is null. Un ArcaRejected con NC
+        // viva (situacion teorica, no deberia ocurrir porque el rechazo implica que no
+        // hubo CAE) cae al rechazo INV-081 de abajo: jamas liberamos algo con NC viva.
+        if (existingBc.Status == BookingCancellationStatus.ArcaRejected
+            && existingBc.CreditNoteInvoiceId is null)
+        {
+            await AutoAbortArcaRejectedAsync(existingBc, reserva, userId, userName, ct);
+            return null;
+        }
+
+        // Caso (d): cualquier otro estado = cancelacion REALMENTE activa o con efecto
+        // fiscal en juego (AwaitingFiscalConfirmation, AwaitingOperatorRefund,
+        // ClientCreditApplied, Closed, AbandonedByOperator, ManualReview*, o un
+        // ArcaRejected con NC viva) -> rechazo INV-081.
+        //
+        // ManualReviewRejected=11 (decision B1 2026-06-03): lo dejamos RECHAZANDO,
+        // NO liberable. Razon: a ese estado se llega cuando un admin rechaza la
+        // liquidacion de una NC parcial; la remediacion disenada es ResetToDraftAsync
+        // (vuelve el MISMO BC a Drafted) o AbortAsync explicito, no crear un BC nuevo
+        // por la espalda. Ademas no esta garantizado server-side que un
+        // ManualReviewRejected no tenga CreditNoteInvoiceId vivo en todos los caminos
+        // futuros de la Fase 2 (NC parcial real). Ante la duda fiscal, rechazamos:
+        // el vendedor/admin usa el flujo de remediacion explicito de ese estado.
+        throw new BusinessInvariantViolationException(
+            $"La reserva {reserva.NumeroReserva} ya tiene una cancelacion activa ({existingBc.Status}).",
+            invariantCode: "INV-081");
+    }
+
+    /// <summary>
+    /// B1 (2026-06-03, FIX 1): transiciona un BC <c>ArcaRejected</c> (sin NC viva) a
+    /// <c>Aborted</c> para destrabar la reserva. Deja traza de auditoria del intento
+    /// fallido. NO emite nada fiscal (es un cambio de estado interno + ClosedAt).
+    /// Precondicion ya verificada por el caller: <c>CreditNoteInvoiceId is null</c>.
+    /// </summary>
+    private async Task AutoAbortArcaRejectedAsync(
+        BookingCancellation arcaRejectedBc,
+        Reserva reserva,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        arcaRejectedBc.Status = BookingCancellationStatus.Aborted;
+        arcaRejectedBc.ClosedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationAutoAbortedArcaRejected,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: arcaRejectedBc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                arcaRejectedBc.PublicId,
+                ReservaPublicId = reserva.PublicId,
+                previousStatus = nameof(BookingCancellationStatus.ArcaRejected),
+                arcaErrorMessage = arcaRejectedBc.ArcaErrorMessage,
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_arca_rejected_auto_aborted | BcPublicId={BcPublicId} ReservaPublicId={ReservaPublicId} UserId={UserId}",
+            arcaRejectedBc.PublicId, reserva.PublicId, userId);
+    }
+
+    /// <summary>
+    /// B1 (2026-06-03, FIX 3): devuelve el PublicId del BC mas reciente de la reserva
+    /// (post-resolucion: a esta altura del flujo ya es Aborted, porque (a) reuso y
+    /// retorno, (b)/(c) lo dejaron en Aborted). Se usa para registrar el linaje de
+    /// intentos en la auditoria del BC nuevo. Devuelve null si la reserva no tenia
+    /// ningun BC previo (primer intento).
+    /// </summary>
+    private async Task<Guid?> ResolvePreviousBcPublicIdAsync(int reservaId, CancellationToken ct)
+    {
+        return await _db.BookingCancellations
+            .Where(b => b.ReservaId == reservaId)
+            .OrderByDescending(b => b.Id)
+            .Select(b => (Guid?)b.PublicId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// B1 (2026-06-03, FIX 2): detecta unique_violation (SQLSTATE 23505) de PostgreSQL
+    /// dentro de un SaveChanges* de EF Core. EF envuelve el error de Npgsql en
+    /// DbUpdateException. Mismo patron que <c>InvoiceService.IsUniqueConstraintViolation</c>
+    /// (el interceptor de invariantes solo traduce 23514/CHECK, no 23505/UNIQUE, asi
+    /// que cada service maneja sus propias colisiones de unique).
+    /// </summary>
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
+    {
+        return ex.InnerException is PostgresException pg
+            && pg.SqlState == PostgresErrorCodes.UniqueViolation;
     }
 
     public async Task<BookingCancellationDto> ConfirmAsync(

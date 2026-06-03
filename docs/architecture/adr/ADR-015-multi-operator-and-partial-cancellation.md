@@ -1,6 +1,7 @@
 # ADR-015 — Cancelación multi-operador y cancelación parcial (rediseño del flujo de cancelación)
 
-- **Status**: Proposed (Round 1, plan por fases — NO implementado).
+- **Status**: ⏸️ **EN PAUSA (2026-06-02)** — Solo la **Fase 1 (inferencia de operador + bloqueo multi-operador, commit `464339c`) fue construida y se conserva** (es motor fiscal necesario). Las **Fases 2 (multi-operador) y 3 (cancelación parcial) quedan EN PAUSA**: el dueño redefinió el rumbo del flujo de cancelación hacia "experiencia simple + IA" (ver `docs/producto/vision-copiloto-ia-2026-06-02.md` y `vision-cancelacion-2026-06-02.md`). El MOTOR fiscal de este ADR sigue siendo válido como referencia, pero la CAPA DE EXPERIENCIA (modales/bandejas/decisiones fiscales al vendedor) NO se construye con este enfoque. Multi-operador y cancelación parcial se resolverán DENTRO del copiloto IA (cancelación = caso de uso del copiloto), cuando se necesiten. NO construir Fases 2/3 como están escritas acá sin revalidar contra la visión nueva.
+- **Status original**: Proposed (Round 1, plan por fases — NO implementado).
 - **Date**: 2026-06-02.
 - **Author(s)**: software-architect agent.
 - **Driver de negocio**: Gaston (dueño) — "arreglar todos estos bugs". Respuestas de negocio: multi-operador es **frecuente** (no marginal); necesita **cancelación parcial** (a veces solo un servicio); tracking del refund del operador "mezcla / no seguro" (sin definir).

@@ -1271,17 +1271,42 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(b => b.EstimatedRefundAmount).HasPrecision(18, 2);
             entity.Property(b => b.ReceivedRefundAmount).HasPrecision(18, 2);
 
-            // INV-081: una sola cancelacion por reserva. Adicionalmente el CHECK
-            // de Reservas.Status garantiza que el valor PendingOperatorRefund
-            // sea valido (ver migracion SQL).
-            entity.HasIndex(b => b.ReservaId).IsUnique();
+            // INV-081: una sola cancelacion ACTIVA por reserva.
+            //
+            // PARCIAL (B1 fix, 2026-06-03): el filtro EXCLUYE los BC Aborted
+            // (Status=6). Un draft abortado es una fila muerta de auditoria, NO
+            // una cancelacion activa; no debe trabar la reserva para siempre. Sin
+            // el filtro, un confirm fallido (red/AFIP) dejaba un BC huerfano y la
+            // reserva quedaba IMPOSIBLE de re-cancelar (el INSERT del retry chocaba
+            // con este UNIQUE). El guard aplicativo en DraftAsync (caso a: reusa el
+            // draft puro; caso b: permite uno nuevo si el previo esta Aborted) es la
+            // primera linea; este indice es el backstop a nivel BD bajo concurrencia.
+            //
+            // Por que NO excluimos tambien los Drafted: DraftAsync REUSA el draft
+            // puro existente (no inserta otra fila), entonces nunca hay dos Drafted
+            // activos compitiendo por el mismo ReservaId. Mantener Drafted DENTRO
+            // del unique es un backstop extra contra doble-INSERT por doble-click.
+            //
+            // EF Core traduce HasFilter a "CREATE UNIQUE INDEX ... WHERE <sql>".
+            // El literal usa la columna fisica "Status" (int) y el valor 6 = Aborted.
+            entity.HasIndex(b => b.ReservaId)
+                  .IsUnique()
+                  .HasFilter("\"Status\" <> 6");
 
             // INV-100 (review BR4, 2026-05-14): la factura original que se anula no
             // puede pertenecer a dos cancelaciones distintas. Sin este UNIQUE seria
             // posible reabrir una cancelacion sobre la misma factura A y generar
             // dos NCs huerfanas — incidente fiscal grave.
+            //
+            // PARCIAL (B1 fix, 2026-06-03): mismo motivo y mismo filtro que el indice
+            // de ReservaId. Cuando DraftAsync permite recrear sobre una reserva con un
+            // BC Aborted (caso b), el BC nuevo apunta a la MISMA factura activa, asi
+            // que este indice tambien debe ignorar los Aborted o el INSERT del retry
+            // chocaria aca. Sigue garantizando: como maximo una cancelacion NO-abortada
+            // por factura (la proteccion anti-doble-NC se mantiene intacta).
             entity.HasIndex(b => b.OriginatingInvoiceId)
                   .IsUnique()
+                  .HasFilter("\"Status\" <> 6")
                   .HasDatabaseName("IX_BookingCancellations_OriginatingInvoiceId");
 
             entity.HasOne(b => b.Reserva)

@@ -45,3 +45,9 @@ tests_corecompile.txt
 # Si en el futuro se quiere compartir otros archivos, agregar excepciones aca.
 .claude/*
 !.claude/CLAUDE.MD
+
+# Memoria local de agentes y artefactos de scouting/tests — no se versionan.
+src/.claude/
+.pi/
+context.md
+**/TestResults/

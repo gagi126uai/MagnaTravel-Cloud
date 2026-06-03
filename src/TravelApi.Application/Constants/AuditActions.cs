@@ -42,6 +42,23 @@ public static class AuditActions
     public const string BookingCancellationAborted = "BookingCancellationAborted";
 
     /// <summary>
+    /// B1 (2026-06-03): un segundo <c>DraftAsync</c> sobre una reserva que ya tenia
+    /// un draft "puro" (Drafted, sin NC ni ND) NO creo una fila nueva: reuso el draft
+    /// existente (reintento idempotente del flujo draft -> confirm). Sirve para distinguir
+    /// en auditoria cuantos drafts se reusaron vs cuantos se crearon de cero.
+    /// </summary>
+    public const string BookingCancellationDraftReused = "BookingCancellationDraftReused";
+
+    /// <summary>
+    /// B1 (2026-06-03): un BC que estaba en <c>ArcaRejected</c> (AFIP rechazo la NC,
+    /// CAE no aprobado, sin nota de credito viva) se auto-abortio para permitir que el
+    /// vendedor vuelva a cancelar la reserva por la via normal. El detalle JSON incluye
+    /// el PublicId del BC liberado. Es seguro porque un ArcaRejected sin
+    /// <c>CreditNoteInvoiceId</c> no dejo ningun comprobante fiscal vivo.
+    /// </summary>
+    public const string BookingCancellationAutoAbortedArcaRejected = "BookingCancellationAutoAbortedArcaRejected";
+
+    /// <summary>
     /// FC1.2.1: AFIP devolvio CAE para la NC; el BC paso a
     /// <c>AwaitingOperatorRefund</c> automaticamente via callback Hangfire.
     /// </summary>

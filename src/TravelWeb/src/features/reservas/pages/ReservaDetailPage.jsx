@@ -365,9 +365,6 @@ export default function ReservaDetailPage() {
   // NOTA: esto es UI-only. El server-side siempre re-valida el permiso.
   // Con hasPermission("reservas.cancel"), isAdmin() retorna true para admins (bypass).
   const canCancelReserva = hasPermission("reservas.cancel");
-  // Flag para mostrar la seccion de cargo propio dentro del modal de cancelacion.
-  const canClassifyAgencyPenalty = hasPermission("cancellations.classify_agency_penalty");
-  const enableCancellationDebitNote = flags.enableCancellationDebitNote;
 
   const [showCancelModal, setShowCancelModal] = useState(false);
 
@@ -1021,8 +1018,6 @@ export default function ReservaDetailPage() {
             // Recargamos la reserva para reflejar el nuevo estado (Cancelled).
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
-          canClassifyAgencyPenalty={canClassifyAgencyPenalty}
-          enableCancellationDebitNote={enableCancellationDebitNote}
         />
       )}
     </div>
