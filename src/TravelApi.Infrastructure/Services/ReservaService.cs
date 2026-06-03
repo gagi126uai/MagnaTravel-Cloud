@@ -12,6 +12,7 @@ using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services.Reservations;
@@ -1210,6 +1211,19 @@ public class ReservaService : IReservaService
 
         var dto = _mapper.Map<ReservaDto>(file);
         ApplyEconomicFlags(dto, settings);
+
+        // P3 (cuadre de facturacion): cuanto se facturo NETO al cliente (facturas + ND - NC,
+        // solo comprobantes con CAE vivo y no anulados) y cuanto queda disponible respecto de
+        // lo vendido (TotalSale, la fuente unica). La UI usa estos numeros para avisar si se
+        // factura de mas. La cuenta vive en ReservaInvoicingCuadreCalculator (probada, un solo lugar).
+        var cuadre = ReservaInvoicingCuadreCalculator.Calculate(
+            file.TotalSale,
+            file.Invoices.Select(i => new CuadreInvoiceLine(
+                i.TipoComprobante,
+                i.ImporteTotal,
+                IsLive: i.Resultado == "A" && i.AnnulmentStatus != AnnulmentStatus.Succeeded)));
+        dto.FacturadoNeto = cuadre.FacturadoNeto;
+        dto.DisponibleParaFacturar = cuadre.Disponible;
 
         // Sugerencia de fechas computadas desde los servicios cargados — la UI las
         // usa para pre-rellenar inputs cuando StartDate/EndDate estan en null.

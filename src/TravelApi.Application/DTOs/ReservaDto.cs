@@ -29,6 +29,14 @@ public class ReservaDto
     public decimal TotalSale { get; set; }
     public decimal TotalPaid { get; set; }
     public decimal Balance { get; set; }
+
+    // P3 (cuadre de facturacion): cuanto se le facturo NETO al cliente por esta reserva
+    // (facturas + ND - NC, solo comprobantes con CAE vivo) y cuanto QUEDA por facturar
+    // respecto de lo vendido (TotalSale). La UI los usa para avisar si se factura de mas.
+    // Se calculan en el backend (fuente unica) para no duplicar la regla en el frontend.
+    public decimal FacturadoNeto { get; set; }
+    public decimal DisponibleParaFacturar { get; set; }
+
     public int AdultCount { get; set; }
     public int ChildCount { get; set; }
     public int InfantCount { get; set; }
