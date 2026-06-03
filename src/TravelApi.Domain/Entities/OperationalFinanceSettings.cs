@@ -455,6 +455,35 @@ public class OperationalFinanceSettings
     [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
     public decimal CancellationDebitNoteFourEyesThreshold { get; set; } = 2_000_000m;
 
+    // ============================================================
+    // ADR-016 F0a (Base del copiloto de IA, 2026-06-03): flag MAESTRO del copiloto.
+    // Default conservador (OFF), igual que todos los flags nuevos. En F0a este flag
+    // NO tiene caller todavia (el cerebro existe pero nadie lo invoca); el piloto que
+    // lo consume llega en F1. Por eso aca NO hay validacion cruzada: el flag del piloto
+    // (EnableAiUpcomingClientAlerts) todavia no existe.
+    // ============================================================
+
+    /// <summary>
+    /// ADR-016 F0a (2026-06-03): feature flag MAESTRO del copiloto de IA.
+    ///
+    /// <para><b>Con OFF (default)</b>: el copiloto no existe. El cerebro de IA esta registrado
+    /// en DI pero NADIE lo invoca, asi que el comportamiento es byte-identico a hoy y CERO
+    /// datos salen del sistema hacia la nube. Es la posicion segura.</para>
+    ///
+    /// <para><b>Con ON</b>: habilita que los modulos que se enchufen al cerebro (a partir de F1:
+    /// el enriquecimiento de alertas "cliente por vencer") puedan llamar a la IA. El primer
+    /// caller real NO se construye en F0a.</para>
+    ///
+    /// <para><b>Config aparte (env)</b>: la conexion al proveedor (base_url, API key, modelo)
+    /// vive en variables de entorno (<c>Ai__*</c>), NO en esta tabla. La API key es un secreto
+    /// y nunca va a la DB. Prender este flag sin esa config hace que el cerebro degrade elegante
+    /// (no rompe nada, solo no genera texto IA).</para>
+    ///
+    /// <para>Default <c>false</c>. Editable desde el panel admin (PUT operational-finance) y
+    /// expuesto read-only en <c>GET /afip/settings</c>, igual que los demas flags.</para>
+    /// </summary>
+    public bool EnableAiCopilot { get; set; } = false;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

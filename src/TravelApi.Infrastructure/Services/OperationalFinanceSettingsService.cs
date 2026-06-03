@@ -92,6 +92,16 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.EnableCancellationDebitNote = request.EnableCancellationDebitNote.Value;
         }
 
+        // ADR-016 F0a (Base del copiloto de IA, 2026-06-03): persistimos el flag maestro del
+        // copiloto. Update CONDICIONAL (patch-like, criterio B-002): solo se aplica si el request
+        // trae valor. Es un flag de comportamiento puro y en F0a NO tiene dependencias con otros
+        // flags (el flag del piloto que lo consumiria llega en F1), por eso NO hay validacion
+        // cruzada para este flag mas abajo.
+        if (request.EnableAiCopilot.HasValue)
+        {
+            entity.EnableAiCopilot = request.EnableAiCopilot.Value;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -229,6 +239,8 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             EnableSoldToSettleStates = entity.EnableSoldToSettleStates,
             // ADR-013: el GET expone el flag de emision de Nota de Debito en cancelacion.
             EnableCancellationDebitNote = entity.EnableCancellationDebitNote,
+            // ADR-016 F0a: el GET expone el flag maestro del copiloto de IA.
+            EnableAiCopilot = entity.EnableAiCopilot,
         };
     }
 }

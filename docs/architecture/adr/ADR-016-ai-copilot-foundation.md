@@ -1,6 +1,7 @@
 # ADR-016 — Base del Copiloto de IA (cerebro configurable + piloto "cliente por vencer")
 
-- **Status**: Proposed (Round 1 — NO implementado). Requiere `software-architect-reviewer` antes de construir.
+- **Status**: ✅ **Ajustado y listo para construir F0a (2026-06-03)** — pasó por `software-architect-reviewer` (veredicto "Adjust before building": diseño sólido, sin reescritura; ajustes de secuenciación + 2 decisiones cerradas). Ver §0bis "Decisiones y ajustes post-review".
+- **Status original**: Proposed (Round 1 — NO implementado).
 - **Date**: 2026-06-02.
 - **Author(s)**: software-architect agent.
 - **Driver de negocio**: Gaston (dueño). Visión aprobada en `docs/producto/vision-copiloto-ia-2026-06-02.md`: un copiloto de IA transversal construido como UN solo cerebro central reutilizable, que aprende del cliente vía supervisión humana. Arrancamos por UN caso de uso piloto de bajo riesgo.
@@ -11,6 +12,28 @@
   - `BnaExchangeRateService.cs` — patrón de integración HTTP externa con degradación elegante (referencia para resiliencia).
 
 > **Aviso de alcance.** Esto diseña la BASE: la capa de IA configurable + el primer piloto + el esqueleto del loop de aprendizaje. NO diseña el chat, ni "ayudame con esto" contextual, ni la clasificación fiscal de cancelación. Esos se enchufan al cerebro después, caso por caso.
+
+---
+
+## 0bis. Decisiones y ajustes post-review (2026-06-03)
+
+Cierre del review de `software-architect-reviewer` (veredicto: *Adjust before building*). El diseño no se reescribe; se ajusta secuenciación y alcance del primer merge, y se cierran 2 preguntas abiertas.
+
+### Decisiones del dueño (Gaston)
+- **Proveedor del piloto = Groq** (cierra §6.4). Razón: el piloto manda PII de clientes (nombre + saldo) a la nube; Groq no usa los datos para entrenar. La visión ya reservaba la privacidad por defecto. Cambiar de proveedor sigue siendo env + restart, sin código.
+- **Definición del piloto = ENRIQUECER** las alertas existentes con una frase IA, NO que la IA detecte sola los vencimientos (confirma §3.1 / §6.1). Bajo riesgo: el QUÉ alertar lo sigue decidiendo la query determinística.
+- **Audiencia (§6.2)**: se difiere a F1 (no bloquea F0). Default propuesto: solo-Admin (como hoy las alertas), a confirmar antes de F1.
+- Preguntas §6.3 (loop), §6.5 (cadencia), §6.6 (chip de prioridad) diferidas. Recomendación: **sin chip de prioridad en el piloto** (menos output = menos a validar).
+
+### Ajustes de arquitectura (del review)
+- **F0 se parte en F0a + F0b** (ver §8 actualizado). F0a = spike mínimo y validable contra Groq real ANTES de invertir en toda la robustez. F0b = endurecimiento (breaker, métricas persistentes, auditoría, truncado).
+- **Precondición P1 — `AiChatResult` con vocabulario NEUTRO** (no formato OpenAI): expone `Text`, `ApproxTokens`, `WasTruncated`, `RawFinishReason` (string opaco). El mapeo desde el JSON estilo OpenAI vive DENTRO de `OpenAiCompatibleChatProvider`. Esto hace real el aislamiento que promete R4.
+- **Precondición P2 — cuota cross-process**: el circuit breaker y el contador de uso son **per-process** y eso es suficiente MIENTRAS el único caller sea el job del worker. Queda escrito como precondición dura: **antes de sumar cualquier caller inline (ej. chat en la API), el rate-limit/contador debe moverse a un store compartido (DB/cache)**. No construir el breaker compartido ahora, pero NO diseñar asumiendo que el contador en memoria alcanza para 2 procesos.
+- **Precondición P3 — idempotencia atómica del job (F1)**: el job debe marcar el ítem "en proceso/fresco" de forma atómica ANTES de llamar a la IA (no después), para que una re-ejecución solapada de Hangfire no gaste 2 llamadas de cuota. Mismo patrón que `ProcessPartialCreditNoteJob`.
+- **`AiFeedbackExample` NO se construye en F0/F1.** Se reserva el CONCEPTO (capability como eje del few-shot transversal) pero la tabla se materializa recién en F3, con la UI de captura de F2 ya definida. Migración aditiva → esperar no cuesta; congelar un esquema mal cuesta.
+- **Sin esqueleto de inyección few-shot en F0/F1**: solo el contrato de método. La interfaz prevé el futuro; la implementación no paga por él todavía.
+- **Frescura (F1)**: invalidar el texto IA cuando cambian los campos que entraron al prompt (Balance/StartDate), no solo por TTL temporal.
+- **Test obligatorio (no opcional) en F1**: assert de que el prompt NO contiene PII prohibida (CUIT, datos de pago).
 
 ---
 
@@ -232,7 +255,9 @@ La visión pide que las correcciones humanas se guarden por cliente (agencia) co
 
 ## 8. Plan de implementación (incremental, detrás de flag)
 
-1. **F0 — Cerebro base (sin piloto):** interfaces `IAiChatProvider` / `IAiAssistantService` + DTOs en Application; `OpenAiCompatibleChatProvider` + `AiAssistantService` en Infrastructure; registro en `Program.cs` (`AddHttpClient` typed); config de env + `.env.example` + entrada en `deploy.sh required_secrets` (opcional/condicional); flag `EnableAiCopilot` en `OperationalFinanceSettings` (default false) + exposición read-only en `/afip/settings`. Resiliencia + validación estricta + métricas. Un test de "smoke" con un fake provider (no llamar a la nube en tests).
+1. **F0a — Spike validable (cerebro mínimo, sin piloto):** interfaces `IAiChatProvider` / `IAiAssistantService` + DTOs en Application (`AiChatResult` con vocabulario NEUTRO, P1); `OpenAiCompatibleChatProvider` mínimo (un POST a `{baseUrl}/chat/completions`, timeout, mapeo del JSON OpenAI a `AiChatResult` dentro del provider) + `AiAssistantService` con SOLO deserialización estricta + 1 reintento + degradación elegante; registro en `Program.cs` (`AddHttpClient` typed); config de env (`Ai__ApiKey/BaseUrl/Model/...`, default Groq) + `.env.example`; flag `EnableAiCopilot` en `OperationalFinanceSettings` (default false) + exposición read-only en `/afip/settings`. Smoke con `FakeAiChatProvider` en CI (NO llamar a la nube) + smoke MANUAL real contra Groq en staging. **Sin breaker, sin métricas persistentes, sin few-shot.** Flag OFF = byte-idéntico.
+   - **Objetivo de F0a:** probar que el cerebro habla con Groq real desde el VPS y que el cambio de proveedor por env funciona, ANTES de invertir en robustez sobre un contrato no validado.
+1b. **F0b — Endurecimiento del cerebro:** circuit breaker liviano (per-process, con la nota P2 documentada como limitación), contador/métrica de uso persistente + auditoría de invocaciones (§2.7), truncado defensivo de salida, reintentos completos (429 con Retry-After, 5xx). Se mergea cuando F0a probó el contrato real.
 2. **F1 — Piloto backend:** flag `EnableAiUpcomingClientAlerts` (+ validación cruzada: requiere `EnableAiCopilot`); mapper minimizado datos→prompt; job de enriquecimiento; persistencia del enriquecimiento + frescura; adjuntar a la respuesta de alertas.
 3. **F2 — Piloto frontend:** mostrar la frase IA (+ chip si aplica) gateado por flags vía `OperationalFlagsContext`; estados de UX (§3.4); etiqueta "IA".
 4. **F3 — Loop (mínimo):** entidad `AiFeedbackExample` + captura de Accepted/Edited/Rejected. (Inyección few-shot: F4, opcional según respuesta §6.3.)

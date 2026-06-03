@@ -37,4 +37,10 @@ public class AfipSettingsResponse
     // para no obligar al frontend a pegarle a un segundo endpoint.
     // Con OFF (default) la rama de ND es UI muerta y el backend es byte-identico a hoy.
     public bool EnableCancellationDebitNote { get; set; }
+
+    // Flag operativo SOLO LECTURA (ADR-016 F0a). El frontend lo usara (a partir de F2) para
+    // mostrar/ocultar el bloque de texto generado por IA en las alertas. Vive en
+    // OperationalFinanceSettings; se proyecta aca igual que los demas flags para no obligar al
+    // frontend a pegarle a un segundo endpoint. Con OFF (default) no hay nada de copiloto en UI.
+    public bool EnableAiCopilot { get; set; }
 }

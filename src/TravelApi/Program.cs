@@ -24,6 +24,8 @@ using Hangfire.PostgreSql;
 using TravelApi.Filters;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Contracts.Auth;
+using TravelApi.Application.Ai;
+using TravelApi.Infrastructure.Ai;
 
 using TravelApi.Authorization;
 using TravelApi.Infrastructure.Authorization;
@@ -59,6 +61,16 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
     builder.Host.UseSerilog(); // Use Serilog for logging
+
+    // ADR-016 F0a: lee un entero de config probando primero la forma con ':' y luego la
+    // forma con '__' (variables de entorno), igual que el patron de secretos del repo.
+    // Si no esta o no parsea, devuelve el default. Evita repetir el doble-lookup + TryParse
+    // en cada setting numerico del cerebro de IA.
+    static int ReadIntConfig(IConfiguration configuration, string colonKey, string envKey, int defaultValue)
+    {
+        var raw = configuration[colonKey] ?? configuration[envKey];
+        return int.TryParse(raw, out var parsed) ? parsed : defaultValue;
+    }
 
     static bool IsPlaceholderSecret(string? value)
     {
@@ -414,6 +426,35 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<IAfipService, AfipService>();
+
+// ============================================================
+// ADR-016 F0a — Cerebro del copiloto de IA (detras del flag EnableAiCopilot, default OFF).
+//
+// IMPORTANTE: registrar estos servicios NO los invoca. Con el flag OFF, nadie llama a
+// IAiAssistantService, asi que el cerebro queda inerte y el comportamiento es byte-identico.
+// El arranque NO hace NINGUNA llamada a la IA (no hay hosted service ni warmup aca).
+//
+// La config del proveedor (base_url, key, modelo, timeout...) se lee de variables de entorno
+// con el patron del repo (["Ai:X"] ?? ["Ai__X"]). La API KEY es un SECRETO: solo por env,
+// nunca a la DB, nunca logueada. Cambiar de proveedor = editar .env + restart, cero codigo
+// (la unica implementacion del provider es OpenAI-compatible y esta 100% parametrizada).
+// ============================================================
+var aiConnectionOptions = new AiConnectionOptions
+{
+    // Default del modelo VOLATIL documentado en .env.example; aca solo damos un fallback inerte.
+    BaseUrl = builder.Configuration["Ai:BaseUrl"] ?? builder.Configuration["Ai__BaseUrl"] ?? string.Empty,
+    ApiKey = builder.Configuration["Ai:ApiKey"] ?? builder.Configuration["Ai__ApiKey"] ?? string.Empty,
+    Model = builder.Configuration["Ai:Model"] ?? builder.Configuration["Ai__Model"] ?? string.Empty,
+    TimeoutSeconds = ReadIntConfig(builder.Configuration, "Ai:TimeoutSeconds", "Ai__TimeoutSeconds", defaultValue: 15),
+    MaxTokens = ReadIntConfig(builder.Configuration, "Ai:MaxTokens", "Ai__MaxTokens", defaultValue: 512),
+    MaxRetries = ReadIntConfig(builder.Configuration, "Ai:MaxRetries", "Ai__MaxRetries", defaultValue: 2),
+};
+// Singleton: la config no cambia en runtime (cambiar de proveedor implica restart, por diseno).
+builder.Services.AddSingleton(aiConnectionOptions);
+// Typed HttpClient para el provider (mismo patron que IAfipService). El timeout efectivo lo
+// controla el provider por llamada via CancellationToken; el del HttpClient queda holgado.
+builder.Services.AddHttpClient<IAiChatProvider, OpenAiCompatibleChatProvider>();
+builder.Services.AddScoped<IAiAssistantService, AiAssistantService>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IApprovalRequestService, ApprovalRequestService>();

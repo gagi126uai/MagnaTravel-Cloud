@@ -43,6 +43,11 @@ required_secrets=(
   MINIO_ROOT_PASSWORD
 )
 
+# Ai__ApiKey (copiloto de IA, ADR-016 F0a) NO va aca a proposito. El copiloto arranca
+# APAGADO (flag EnableAiCopilot=false) y la mayoria de los installs no lo usan; bloquear
+# el deploy por una key que nadie va a usar seria un falso positivo. Agregar Ai__ApiKey a
+# required_secrets SOLO cuando un install concreto vaya a prender el copiloto en prod.
+
 for secret_name in "${required_secrets[@]}"; do
   require_secret "$secret_name"
 done

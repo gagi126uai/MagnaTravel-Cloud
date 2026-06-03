@@ -49,7 +49,8 @@ public class AfipController : ControllerBase
             settings,
             financeSettings.EnableMultiCurrencyInvoicing,
             financeSettings.EnableSoldToSettleStates,
-            financeSettings.EnableCancellationDebitNote));
+            financeSettings.EnableCancellationDebitNote,
+            financeSettings.EnableAiCopilot));
     }
 
     public class AfipSettingsRequest
@@ -118,7 +119,8 @@ public class AfipController : ControllerBase
                 settings,
                 financeSettings.EnableMultiCurrencyInvoicing,
                 financeSettings.EnableSoldToSettleStates,
-                financeSettings.EnableCancellationDebitNote));
+                financeSettings.EnableCancellationDebitNote,
+                financeSettings.EnableAiCopilot));
         }
         catch (ArgumentException ex)
         {
@@ -134,13 +136,15 @@ public class AfipController : ControllerBase
         AfipSettings settings,
         bool enableMultiCurrencyInvoicing,
         bool enableSoldToSettleStates,
-        bool enableCancellationDebitNote)
+        bool enableCancellationDebitNote,
+        bool enableAiCopilot)
     {
         return new AfipSettingsResponse
         {
             EnableMultiCurrencyInvoicing = enableMultiCurrencyInvoicing,
             EnableSoldToSettleStates = enableSoldToSettleStates,
             EnableCancellationDebitNote = enableCancellationDebitNote,
+            EnableAiCopilot = enableAiCopilot,
 
             Cuit = settings.Cuit,
             PuntoDeVenta = settings.PuntoDeVenta,

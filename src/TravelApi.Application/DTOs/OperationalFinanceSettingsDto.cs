@@ -125,4 +125,22 @@ public class OperationalFinanceSettingsDto
     /// el PUT = no se modifica el valor actual. Solo se persiste si viene con valor.</para>
     /// </summary>
     public bool? EnableCancellationDebitNote { get; set; }
+
+    /// <summary>
+    /// ADR-016 F0a (Base del copiloto de IA, 2026-06-03): feature flag maestro del copiloto.
+    /// El admin lo prende/apaga desde el panel de Configuracion.
+    ///
+    /// <para>Es un flag de COMPORTAMIENTO: con OFF (default) el copiloto no existe y nada sale
+    /// hacia la nube. NO tiene validacion cruzada en F0a porque el flag del piloto que lo
+    /// consume (EnableAiUpcomingClientAlerts) todavia no existe; esa cruzada llega en F1.</para>
+    ///
+    /// <para>OJO: este flag NO incluye la API key ni el proveedor (eso va por variables de
+    /// entorno <c>Ai__*</c>, fuera de la DB). Prender el flag sin esa config hace que el cerebro
+    /// degrade elegante, no rompe nada.</para>
+    ///
+    /// <para>Nullable y patch-like (mismo criterio B-002 que el resto del DTO): enviar null
+    /// u omitir el campo en el PUT = no se modifica el valor actual. Solo se persiste si viene
+    /// con valor.</para>
+    /// </summary>
+    public bool? EnableAiCopilot { get; set; }
 }
