@@ -1678,11 +1678,13 @@ public class AfipService : IAfipService
         }
     }
 
-    // TODO: unificar las 3 copias del cálculo de saldo (PaymentService/AfipService/ReservaService).
-    // Igual que la copia de PaymentService: suma plana SIN el filtro CountsForReservaBalance que sí
-    // aplica ReservaService.UpdateBalanceAsync (deuda pre-existente para los otros tipos).
-    // Bloque 3: solo SUMAMOS Asistencia con el criterio LOCAL de esta copia para evitar que el saldo
-    // descuadre en silencio tras emitir factura/NC. NO se toca el tratamiento de los otros 4 tipos.
+    // TODO (P-siguiente, NO P1): unificar esta copia con el calculador de dominio
+    // TravelApi.Domain.Reservations.ReservaMoneyCalculator (que ya usa ReservaService.UpdateBalanceAsync).
+    // OJO: NO es un cambio mecanico. Igual que la copia de PaymentService, esta hace una suma PLANA sin
+    // el filtro CountsForReservaBalance, asi que para reservas con servicios Cancelados da un numero
+    // DISTINTO al calculador. Unificarla cambiaria el saldo de esas reservas -> fuera del scope
+    // behavior-preserving de P1. Cuando se aborde, decidir cual criterio es el correcto.
+    // Bloque 3: por eso aca seguimos sumando Asistencia con el criterio LOCAL (plano) de esta copia.
     private async Task RecalculateReservaBalanceAsync(int reservaId)
     {
         var reserva = await _context.Reservas
