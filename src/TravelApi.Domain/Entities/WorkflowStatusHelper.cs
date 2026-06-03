@@ -1,3 +1,5 @@
+using System;
+
 namespace TravelApi.Domain.Entities;
 
 public static class WorkflowStatuses
@@ -42,5 +44,22 @@ public static class WorkflowStatusHelper
     public static bool CountsForSupplierDebt(string workflowStatus)
     {
         return workflowStatus == WorkflowStatuses.Confirmado;
+    }
+
+    // Indica si un servicio genera DEUDA con el proveedor segun su TIPO (label de la lista
+    // de servicios del proveedor) y su estado crudo. Regla de negocio (confirmada por el
+    // dueño): SOLO genera deuda cuando el operador CONFIRMO el servicio; "Solicitado"
+    // todavia NO es deuda. Los vuelos mapean por codigo IATA (HK/TK/KK/KL = confirmado);
+    // el resto de los servicios, por el mapeo generico (texto que contiene "confirm"/"emit").
+    // Esta es la UNICA definicion de la regla: SupplierService la reusa en vez de una lista
+    // de estados escrita a mano (antes: "Confirmado"/"Emitido"/"HK"/"TK"/"KK"/"KL" plano,
+    // que no distinguia tipo y se le escapaban variantes de texto como "confirmado" en
+    // minusculas).
+    public static bool CountsForSupplierDebtByType(string? serviceType, string? status)
+    {
+        string mapped = string.Equals(serviceType, "Vuelo", StringComparison.OrdinalIgnoreCase)
+            ? MapFlightStatus(status ?? string.Empty)
+            : MapGenericStatus(status ?? string.Empty);
+        return CountsForSupplierDebt(mapped);
     }
 }

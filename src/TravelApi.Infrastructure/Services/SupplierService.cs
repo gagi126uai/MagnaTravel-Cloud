@@ -336,9 +336,9 @@ public class SupplierService : ISupplierService
         var servicesQuery = BuildSupplierServicesQuery(id);
         var paymentsQuery = BuildSupplierPaymentsQuery(id);
 
-        var totalPurchases = await servicesQuery
-            .Where(item => item.Status == "Confirmado" || item.Status == "Emitido" || item.Status == "HK" || item.Status == "TK" || item.Status == "KK" || item.Status == "KL")
-            .SumAsync(item => (decimal?)item.NetCost, cancellationToken) ?? 0m;
+        // P2: misma REGLA OFICIAL UNICA que el resto del calculo de deuda (antes esta era
+        // la segunda copia de la lista de estados escrita a mano, que podia discrepar).
+        var totalPurchases = await CalculateSupplierConfirmedPurchasesAsync(id, cancellationToken);
         var totalPaid = await paymentsQuery.SumAsync(item => (decimal?)item.Amount, cancellationToken) ?? 0m;
         var serviceCount = await servicesQuery.CountAsync(cancellationToken);
         var paymentCount = await paymentsQuery.CountAsync(cancellationToken);
@@ -780,11 +780,25 @@ public class SupplierService : ISupplierService
         };
     }
 
+    // Total de compras CONFIRMADAS a un proveedor: la suma de NetCost de los servicios que
+    // generan deuda segun la REGLA OFICIAL UNICA (WorkflowStatusHelper.CountsForSupplierDebtByType:
+    // solo confirmados; vuelos por codigo IATA, resto por texto). Es la UNICA definicion de
+    // "cuanto le debemos a este proveedor por servicios confirmados": la usan TANTO el resumen
+    // de cuenta del proveedor COMO el calculo de deuda, para que no haya dos numeros distintos
+    // (antes cada uno tenia su propia lista de estados escrita a mano). Se materializa y filtra
+    // en memoria (volumen chico por proveedor) porque la regla por tipo no es traducible a SQL.
+    private async Task<decimal> CalculateSupplierConfirmedPurchasesAsync(int supplierId, CancellationToken cancellationToken)
+    {
+        var rows = await BuildSupplierServicesQuery(supplierId).ToListAsync(cancellationToken);
+        return rows
+            .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))
+            .Sum(r => r.NetCost);
+    }
+
     private async Task<decimal> CalculateSupplierDebt(int supplierId, CancellationToken cancellationToken)
     {
-        var totalPurchases = await BuildSupplierServicesQuery(supplierId)
-            .Where(item => item.Status == "Confirmado" || item.Status == "Emitido" || item.Status == "HK" || item.Status == "TK" || item.Status == "KK" || item.Status == "KL")
-            .SumAsync(item => (decimal?)item.NetCost, cancellationToken) ?? 0m;
+        // P2: la deuda usa la REGLA OFICIAL UNICA (ver CalculateSupplierConfirmedPurchasesAsync).
+        var totalPurchases = await CalculateSupplierConfirmedPurchasesAsync(supplierId, cancellationToken);
 
         var totalPaid = await _dbContext.SupplierPayments
             .Where(payment => payment.SupplierId == supplierId)
