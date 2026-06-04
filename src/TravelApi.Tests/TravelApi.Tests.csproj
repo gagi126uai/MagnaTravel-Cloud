@@ -23,6 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Copiar el config de paralelismo de xunit al output para que el runner lo lea. -->
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TravelApi\TravelApi.csproj" />
     <ProjectReference Include="..\TravelApi.Domain\TravelApi.Domain.csproj" />
     <ProjectReference Include="..\TravelApi.Application\TravelApi.Application.csproj" />

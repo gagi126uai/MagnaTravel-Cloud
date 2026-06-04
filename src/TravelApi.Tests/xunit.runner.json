@@ -1,0 +1,6 @@
+{
+  "$schema": "https://xunit.net/schema/current/xunit.runner.schema.json",
+  "_comment": "Tope de paralelismo para la bateria de integracion. Cada test class de integracion levanta su PROPIO contenedor Postgres (Testcontainers). El default de xunit (maxParallelThreads = N de cores) arrancaba ~30 contenedores casi simultaneos en el VPS (7.76 GB), saturaba CPU/IO y los primeros tests HTTP cortaban a los 100s (HttpClient.Timeout). Con 4 hilos arrancan ~4 contenedores a la vez: suaviza el burst y elimina esos timeouts flaky. Subir el numero si la maquina tiene mas RAM/cores.",
+  "maxParallelThreads": 4,
+  "parallelizeTestCollections": true
+}
