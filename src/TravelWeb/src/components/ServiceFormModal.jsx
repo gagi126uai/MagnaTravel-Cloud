@@ -487,6 +487,16 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
     const nights = calculateNights(form.checkIn, form.checkOut);
     const days = nights > 0 ? nights + 1 : 0;
 
+    // "Mas detalles del hotel" plegado por defecto para que el alta tipica (hotel, ciudad,
+    // fechas, precio) quede corta. Se abre solo si YA hay datos avanzados cargados (ej. al
+    // editar un hotel con pais/estrellas/regimen) para no esconder informacion existente.
+    const hasAdvancedData = Boolean(
+        form.country || form.address || form.starRating ||
+        (form.adults && form.adults !== 2) || (form.children && form.children !== 0) ||
+        form.roomingAssignments
+    );
+    const [showDetails, setShowDetails] = useState(hasAdvancedData);
+
     const searchHotels = useCallback(async (query) => {
         if (!query || query.length < 3) {
             setHotelGroups([]);
@@ -673,8 +683,9 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 )}
             </div>
 
-            {/* === DATOS DEL HOTEL (CAMPOS MANUALES) ===
-                Siempre visibles. Se pueden completar a mano o vienen autocomplete desde la tarifa. */}
+            {/* === ESENCIAL: lo minimo para cargar un hotel rapido ===
+                Nombre, ciudad, fechas y habitaciones. Las fechas y habitaciones mueven el
+                total que paga el cliente (PricingForm), por eso quedan SIEMPRE visibles. */}
 
             {/* Nombre y ciudad son OBLIGATORIOS — el backend los requiere en HotelBooking */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -704,122 +715,30 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 </div>
             </div>
 
-            {/* Pais y direccion — opcionales, util para el voucher del pasajero */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                    <label className={labelClass}>Pais</label>
-                    <input
-                        className={inputClass}
-                        placeholder="Argentina, Mexico..."
-                        value={form.country || ""}
-                        onChange={(event) => setForm({ ...form, country: event.target.value })}
-                        disabled={disabled}
-                        data-testid="hotel-country"
-                    />
-                </div>
-                <div>
-                    <label className={labelClass}>Direccion</label>
-                    <input
-                        className={inputClass}
-                        placeholder="Av. Libertador 1234..."
-                        value={form.address || ""}
-                        onChange={(event) => setForm({ ...form, address: event.target.value })}
-                        disabled={disabled}
-                        data-testid="hotel-address"
-                    />
-                </div>
-            </div>
-
-            {/* Categoria, tipo de habitacion y regimen de comidas */}
+            {/* Check-in/out + habitaciones: ESENCIAL. Estos tres campos recalculan el total
+                (noches x habitaciones x precio por noche), por eso van arriba y visibles. */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                    <label className={labelClass}>Estrellas</label>
-                    {/* Numero entre 1 y 5, o vacio si no se sabe */}
-                    <input
-                        type="number"
-                        min="1"
-                        max="5"
-                        className={inputClass}
-                        placeholder="3"
-                        value={form.starRating || ""}
-                        onChange={(event) => {
-                            const value = parseInt(event.target.value, 10);
-                            setForm({ ...form, starRating: Number.isNaN(value) ? null : Math.min(Math.max(value, 1), 5) });
-                        }}
-                        disabled={disabled}
-                        data-testid="hotel-star-rating"
-                    />
+                    <label className={labelClass}>Check-In</label>
+                    <div className="relative">
+                        <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input type="date" className={`${inputClass} pl-10`} value={form.checkIn || ""} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} disabled={disabled} />
+                    </div>
                 </div>
                 <div>
-                    <label className={labelClass}>Tipo de Habitacion</label>
-                    <select
-                        className={inputClass}
-                        value={form.roomType || "Doble"}
-                        onChange={(event) => setForm({ ...form, roomType: event.target.value })}
-                        disabled={disabled}
-                        data-testid="hotel-room-type"
-                    >
-                        <option value="Single">Single</option>
-                        <option value="Doble">Doble</option>
-                        <option value="Triple">Triple</option>
-                        <option value="Cuadruple">Cuadruple</option>
-                        <option value="Familiar">Familiar</option>
-                    </select>
+                    <label className={labelClass}>Check-Out</label>
+                    <div className="relative">
+                        <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input type="date" className={`${inputClass} pl-10`} value={form.checkOut || ""} onChange={(e) => setForm({ ...form, checkOut: e.target.value })} disabled={disabled} />
+                    </div>
                 </div>
                 <div>
-                    <label className={labelClass}>Regimen</label>
-                    {/* Regimen = que comidas incluye la estadía */}
-                    <select
-                        className={inputClass}
-                        value={form.mealPlan || "Desayuno"}
-                        onChange={(event) => setForm({ ...form, mealPlan: event.target.value })}
-                        disabled={disabled}
-                        data-testid="hotel-meal-plan"
-                    >
-                        <option value="Solo Alojamiento">Solo Alojamiento</option>
-                        <option value="Desayuno">Desayuno</option>
-                        <option value="Media Pension">Media Pension</option>
-                        <option value="Pension Completa">Pension Completa</option>
-                        <option value="All Inclusive">All Inclusive</option>
-                    </select>
+                    <label className={labelClass}>Habitaciones</label>
+                    <input type="number" min="1" className={inputClass} value={form.rooms || 1} onChange={(e) => setForm({ ...form, rooms: parseInt(e.target.value, 10) || 1 })} disabled={disabled} />
                 </div>
             </div>
 
-            {/* Check-in/out y ocupacion de la habitacion */}
-            <div className="grid grid-cols-2 gap-4">
-                <div className="grid grid-cols-2 gap-2">
-                    <div>
-                        <label className={labelClass}>Check-In</label>
-                        <div className="relative">
-                            <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                            <input type="date" className={`${inputClass} pl-10`} value={form.checkIn || ""} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} disabled={disabled} />
-                        </div>
-                    </div>
-                    <div>
-                        <label className={labelClass}>Check-Out</label>
-                        <div className="relative">
-                            <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                            <input type="date" className={`${inputClass} pl-10`} value={form.checkOut || ""} onChange={(e) => setForm({ ...form, checkOut: e.target.value })} disabled={disabled} />
-                        </div>
-                    </div>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                    <div>
-                        <label className={labelClass}>Hab.</label>
-                        <input type="number" className={inputClass} value={form.rooms || 1} onChange={(e) => setForm({ ...form, rooms: parseInt(e.target.value, 10) || 1 })} disabled={disabled} />
-                    </div>
-                    <div>
-                        <label className={labelClass}>Adt.</label>
-                        <input type="number" className={inputClass} value={form.adults || 2} onChange={(e) => setForm({ ...form, adults: parseInt(e.target.value, 10) || 1 })} disabled={disabled} />
-                    </div>
-                    <div>
-                        <label className={labelClass}>Chd.</label>
-                        <input type="number" className={inputClass} value={form.children || 0} onChange={(e) => setForm({ ...form, children: parseInt(e.target.value, 10) || 0 })} disabled={disabled} />
-                    </div>
-                </div>
-            </div>
-
-            {/* Resumen de noches/dias calculados automaticamente */}
+            {/* Resumen de noches/dias calculados automaticamente — feedback en vivo de las fechas */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Noches</div>
@@ -835,13 +754,126 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 </div>
             </div>
 
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                <RoomingPlanner
-                    rooms={form.rooms || 1}
-                    reservaPax={reservaPax}
-                    value={form.roomingAssignments}
-                    onChange={(val) => setForm((current) => ({ ...current, roomingAssignments: val }))}
-                />
+            {/* === MAS DETALLES (PLEGABLE) ===
+                Todo lo accesorio que NO afecta el total: pais/direccion (voucher), categoria,
+                tipo de habitacion, regimen, ocupacion y rooming. Plegado por defecto para que
+                el alta tipica quede corta; se abre solo si ya hay datos cargados. */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700">
+                <button
+                    type="button"
+                    onClick={() => setShowDetails((v) => !v)}
+                    className="flex w-full items-center justify-between p-3 text-left text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/50"
+                    data-testid="hotel-more-details-toggle"
+                >
+                    <span>Mas detalles del hotel (opcional)</span>
+                    {showDetails ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                </button>
+
+                {showDetails && (
+                    <div className="space-y-4 border-t border-slate-200 p-4 dark:border-slate-700">
+                        {/* Pais y direccion — opcionales, util para el voucher del pasajero */}
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                                <label className={labelClass}>Pais</label>
+                                <input
+                                    className={inputClass}
+                                    placeholder="Argentina, Mexico..."
+                                    value={form.country || ""}
+                                    onChange={(event) => setForm({ ...form, country: event.target.value })}
+                                    disabled={disabled}
+                                    data-testid="hotel-country"
+                                />
+                            </div>
+                            <div>
+                                <label className={labelClass}>Direccion</label>
+                                <input
+                                    className={inputClass}
+                                    placeholder="Av. Libertador 1234..."
+                                    value={form.address || ""}
+                                    onChange={(event) => setForm({ ...form, address: event.target.value })}
+                                    disabled={disabled}
+                                    data-testid="hotel-address"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Categoria, tipo de habitacion y regimen de comidas */}
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                            <div>
+                                <label className={labelClass}>Estrellas</label>
+                                {/* Numero entre 1 y 5, o vacio si no se sabe */}
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="5"
+                                    className={inputClass}
+                                    placeholder="3"
+                                    value={form.starRating || ""}
+                                    onChange={(event) => {
+                                        const value = parseInt(event.target.value, 10);
+                                        setForm({ ...form, starRating: Number.isNaN(value) ? null : Math.min(Math.max(value, 1), 5) });
+                                    }}
+                                    disabled={disabled}
+                                    data-testid="hotel-star-rating"
+                                />
+                            </div>
+                            <div>
+                                <label className={labelClass}>Tipo de Habitacion</label>
+                                <select
+                                    className={inputClass}
+                                    value={form.roomType || "Doble"}
+                                    onChange={(event) => setForm({ ...form, roomType: event.target.value })}
+                                    disabled={disabled}
+                                    data-testid="hotel-room-type"
+                                >
+                                    <option value="Single">Single</option>
+                                    <option value="Doble">Doble</option>
+                                    <option value="Triple">Triple</option>
+                                    <option value="Cuadruple">Cuadruple</option>
+                                    <option value="Familiar">Familiar</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className={labelClass}>Regimen</label>
+                                {/* Regimen = que comidas incluye la estadía */}
+                                <select
+                                    className={inputClass}
+                                    value={form.mealPlan || "Desayuno"}
+                                    onChange={(event) => setForm({ ...form, mealPlan: event.target.value })}
+                                    disabled={disabled}
+                                    data-testid="hotel-meal-plan"
+                                >
+                                    <option value="Solo Alojamiento">Solo Alojamiento</option>
+                                    <option value="Desayuno">Desayuno</option>
+                                    <option value="Media Pension">Media Pension</option>
+                                    <option value="Pension Completa">Pension Completa</option>
+                                    <option value="All Inclusive">All Inclusive</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* Ocupacion: adultos y ninos (no afectan el total; sirven para el voucher y rooming) */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className={labelClass}>Adultos</label>
+                                <input type="number" min="1" className={inputClass} value={form.adults || 2} onChange={(e) => setForm({ ...form, adults: parseInt(e.target.value, 10) || 1 })} disabled={disabled} />
+                            </div>
+                            <div>
+                                <label className={labelClass}>Ninos</label>
+                                <input type="number" min="0" className={inputClass} value={form.children || 0} onChange={(e) => setForm({ ...form, children: parseInt(e.target.value, 10) || 0 })} disabled={disabled} />
+                            </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <RoomingPlanner
+                                rooms={form.rooms || 1}
+                                reservaPax={reservaPax}
+                                value={form.roomingAssignments}
+                                onChange={(val) => setForm((current) => ({ ...current, roomingAssignments: val }))}
+                            />
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
