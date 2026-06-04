@@ -106,4 +106,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.AddSingleton<IBackgroundJobClient>(new Mock<IBackgroundJobClient>().Object);
         });
     }
+
+    /// <summary>
+    /// Red de seguridad anti-flaky: el default de HttpClient corta a los 100s. Estos tests
+    /// usan InMemory (no levantan contenedor propio), pero corren en paralelo con los tests
+    /// de Postgres real; bajo contencion de arranque de esos contenedores, una request podia
+    /// colgarse mas de 100s y abortar. Subimos el timeout a 5 min: si el host esta saturado,
+    /// la request espera en vez de morir. El throttle de PostgresIntegrationFixture ya ataca
+    /// la causa; esto es el cinturon ademas de los tiradores.
+    /// </summary>
+    protected override void ConfigureClient(System.Net.Http.HttpClient client)
+    {
+        base.ConfigureClient(client);
+        client.Timeout = TimeSpan.FromMinutes(5);
+    }
 }

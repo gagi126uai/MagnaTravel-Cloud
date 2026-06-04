@@ -62,6 +62,22 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
     /// </summary>
     private const string PostgresImage = "postgres:16";
 
+    /// <summary>
+    /// Throttle GLOBAL del arranque de contenedores. Cada test class de integracion
+    /// que usa este fixture levanta su PROPIO Postgres en <see cref="InitializeAsync"/>.
+    /// xunit corre muchas collections en paralelo y, como <c>StartAsync()</c> es async,
+    /// el tope de hilos de xunit NO lo gatea: liberaba el hilo en cada <c>await</c> y
+    /// arrancaba ~30 contenedores casi simultaneos en el VPS (7.76 GB). Esa tormenta
+    /// saturaba CPU/IO/Docker y mataba por inanicion a los tests HTTP (InMemory) que
+    /// corren en paralelo -> cortaban a los 100s (HttpClient.Timeout).
+    ///
+    /// El semaforo limita a 4 arranques SIMULTANEOS. Solo gatea el StartAsync (el tramo
+    /// caro: pull/boot/healthcheck); apenas el contenedor esta listo se libera, asi la
+    /// EJECUCION de los tests sigue 100% paralela. Subir el numero si la maquina tiene
+    /// mas RAM/cores.
+    /// </summary>
+    private static readonly SemaphoreSlim StartupThrottle = new(4, 4);
+
     private readonly PostgreSqlContainer _container;
 
     public PostgresIntegrationFixture()
@@ -86,7 +102,17 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
+        // Throttle del arranque (ver StartupThrottle): max 4 contenedores booteando a la
+        // vez. Liberamos apenas el contenedor esta listo — NO retenemos durante el test.
+        await StartupThrottle.WaitAsync();
+        try
+        {
+            await _container.StartAsync();
+        }
+        finally
+        {
+            StartupThrottle.Release();
+        }
 
         await using var ctx = CreateDbContext();
 
