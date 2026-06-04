@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { hasPermission, isAdmin } from "../auth";
@@ -479,11 +479,15 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
  * El tarifario NUNCA es obligatorio. hotelName y city son los unicos campos requeridos.
  */
 function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPax, isBudget }) {
-    const [searchQuery, setSearchQuery] = useState(form.hotelName || "");
     const [hotelGroups, setHotelGroups] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showResults, setShowResults] = useState(false);
     const [expandedHotel, setExpandedHotel] = useState(null);
+    // El campo "Nombre del Hotel" ES el buscador (busca + carga). Al ELEGIR una tarifa el
+    // padre setea form.hotelName, lo que volveria a disparar la busqueda; este flag salta
+    // ese ciclo para que no reaparezca el dropdown solo.
+    const skipNextSearch = useRef(false);
+    const blurTimer = useRef(null);
     const nights = calculateNights(form.checkIn, form.checkOut);
     const days = nights > 0 ? nights + 1 : 0;
 
@@ -537,20 +541,32 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
         }
     }, [form.supplierId]);
 
-    // Busqueda con debounce: espera 500ms despues del ultimo tecleo antes de disparar la API
+    // Busqueda con debounce: espera 400ms despues del ultimo tecleo en "Nombre del Hotel".
+    // Si acabamos de ELEGIR una tarifa, saltamos un ciclo (skipNextSearch) para no reabrir
+    // el dropdown. Menos de 3 caracteres: no busca y oculta resultados.
     useEffect(() => {
-        const timer = setTimeout(() => {
-            if (searchQuery && searchQuery !== form.hotelName) searchHotels(searchQuery);
-        }, 500);
+        if (skipNextSearch.current) {
+            skipNextSearch.current = false;
+            return;
+        }
+        const query = form.hotelName || "";
+        if (query.trim().length < 3) {
+            setHotelGroups([]);
+            setShowResults(false);
+            return;
+        }
+        const timer = setTimeout(() => searchHotels(query), 400);
         return () => clearTimeout(timer);
-    }, [searchQuery, searchHotels, form.hotelName]);
+    }, [form.hotelName, searchHotels]);
 
-    // Al seleccionar una tarifa del buscador, se pasan los datos al padre via onRateSelect.
-    // handleRateSelect en el padre autocompleta hotelName, city, roomType, mealPlan y precios.
-    // Los campos quedan editables — la tarifa es un punto de partida, no un candado.
+    // limpiar el timer de blur al desmontar
+    useEffect(() => () => clearTimeout(blurTimer.current), []);
+
+    // Al seleccionar una tarifa del buscador, se pasan los datos al padre via onRateSelect
+    // (autocompleta hotelName, city, proveedor, precios). Los campos quedan editables.
     const handleSelectRate = (rate) => {
+        skipNextSearch.current = true; // el padre cambiara form.hotelName: no re-buscar
         onRateSelect(rate);
-        setSearchQuery(rate.hotelName || rate.productName);
         setShowResults(false);
         setExpandedHotel(null);
     };
@@ -595,113 +611,119 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 )}
             </div>
 
-            {/* === BUSCADOR DE TARIFARIO (ATAJO OPCIONAL) ===
-                No es obligatorio. Sirve para autocompletar los campos de abajo a partir
-                de una tarifa existente. El usuario puede ignorarlo y tipear todo a mano. */}
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50/20 p-3 dark:border-indigo-900/30 dark:bg-indigo-950/10">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-indigo-500 dark:text-indigo-400">
-                    Autocompletar desde tarifario (opcional)
-                </p>
-                <div className="relative">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                    <input
-                        type="text"
-                        className={`${inputClass} pl-10`}
-                        placeholder="Busca por nombre de hotel o destino..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onFocus={() => searchQuery.length >= 3 && setShowResults(true)}
-                        disabled={disabled}
-                        data-testid="hotel-rate-search"
-                    />
-                    {loading && <RefreshCw className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-indigo-500" />}
-                </div>
-
-                {/* Banner informativo cuando hay una tarifa seleccionada */}
-                {form.rateId && (
-                    <div className="mt-2 flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                        <p className="text-xs text-indigo-700 dark:text-indigo-300">
-                            Datos autocomplete desde tarifario. Podes editar cualquier campo.
-                        </p>
-                    </div>
-                )}
-
-                {showResults && hotelGroups.length > 0 && (
-                    <div className="absolute z-50 mt-1 max-h-[300px] w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
-                        <div className="mb-2 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Resultados encontrados</div>
-                        {hotelGroups.map((group) => (
-                            <div key={group.key} className="mb-2 overflow-hidden rounded-xl border border-slate-100 dark:border-slate-700">
-                                <button
-                                    type="button"
-                                    onClick={() => setExpandedHotel(expandedHotel === group.key ? null : group.key)}
-                                    className="flex w-full items-center justify-between bg-slate-50/50 p-3 text-left hover:bg-indigo-50/50 dark:bg-slate-900/30 dark:hover:bg-indigo-900/20"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="rounded-lg bg-white p-2 shadow-sm dark:bg-slate-800">
-                                            <Building2 className="h-4 w-4 text-indigo-500" />
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-bold text-slate-900 dark:text-white">{group.hotelName}</div>
-                                            <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                                                <MapPin className="h-3 w-3" />
-                                                {group.city}
-                                                {group.starRating && (
-                                                    <span className="flex items-center gap-0.5 text-amber-500">
-                                                        <Star className="h-3 w-3 fill-current" />
-                                                        {group.starRating}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {expandedHotel === group.key ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-                                </button>
-
-                                {expandedHotel === group.key && (
-                                    <div className="divide-y divide-slate-100 bg-white dark:divide-slate-700 dark:bg-slate-800">
-                                        {group.rates.map((rate) => (
-                                            <button
-                                                key={rate.publicId}
-                                                type="button"
-                                                onClick={() => handleSelectRate(rate)}
-                                                className="flex w-full items-center justify-between p-3 text-left transition-colors hover:bg-emerald-50/50 dark:hover:bg-emerald-900/10"
-                                            >
-                                                <div className="flex-1">
-                                                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{rate.roomType || "Habitacion Estandar"}</div>
-                                                    <div className="text-[10px] text-slate-500">{rate.mealPlan || "Solo Alojamiento"} • {rate.supplierName}</div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <div className="text-xs font-bold text-emerald-600">{formatMoney(rate.salePrice)}</div>
-                                                    <div className="text-[9px] text-slate-400">por noche/unidad</div>
-                                                </div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
             {/* === ESENCIAL: lo minimo para cargar un hotel rapido ===
                 Nombre, ciudad, fechas y habitaciones. Las fechas y habitaciones mueven el
                 total que paga el cliente (PricingForm), por eso quedan SIEMPRE visibles. */}
 
             {/* Nombre y ciudad son OBLIGATORIOS — el backend los requiere en HotelBooking */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
+                {/* === NOMBRE DEL HOTEL = BUSCADOR + CARGA EN UN SOLO CAMPO ===
+                    Escribis el hotel: si esta en tu tarifario aparecen las opciones (por
+                    proveedor y precio) para elegir y autocompletar todo; si no esta, ese
+                    texto queda como el hotel nuevo y cargas el resto a mano. El dropdown va
+                    ANCLADO a este campo (contenedor relative) para no escaparse. */}
+                <div className="relative">
                     <label className={labelClass}>Nombre del Hotel *</label>
-                    <input
-                        className={inputClass}
-                        placeholder="Sheraton Buenos Aires..."
-                        value={form.hotelName || ""}
-                        onChange={(event) => setForm({ ...form, hotelName: event.target.value })}
-                        disabled={disabled}
-                        data-testid="hotel-name"
-                        required
-                    />
+                    <div className="relative">
+                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input
+                            className={`${inputClass} pl-10`}
+                            placeholder="Escribi el hotel (lo busca en tu tarifario)..."
+                            value={form.hotelName || ""}
+                            onChange={(event) => { skipNextSearch.current = false; setForm({ ...form, hotelName: event.target.value }); }}
+                            onFocus={() => { clearTimeout(blurTimer.current); if ((form.hotelName || "").trim().length >= 3 && hotelGroups.length > 0) setShowResults(true); }}
+                            onBlur={() => { blurTimer.current = setTimeout(() => setShowResults(false), 120); }}
+                            disabled={disabled}
+                            data-testid="hotel-name"
+                            required
+                            autoComplete="off"
+                        />
+                        {loading && <RefreshCw className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-indigo-500" />}
+                    </div>
+
+                    {/* Banner cuando se eligio una tarifa del tarifario */}
+                    {form.rateId && (
+                        <div className="mt-2 flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                            <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                                Datos traidos del tarifario. Podes editar cualquier campo.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Dropdown anclado al campo (top-full): resultados del tarifario.
+                        onMouseDown preventDefault mantiene el foco en el input al clickear
+                        adentro (expandir / elegir), asi no se cierra solo. */}
+                    {showResults && hotelGroups.length > 0 && (
+                        <div
+                            className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[280px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-800"
+                            onMouseDown={(e) => e.preventDefault()}
+                        >
+                            <div className="mb-2 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">En tu tarifario</div>
+                            {hotelGroups.map((group) => (
+                                <div key={group.key} className="mb-2 overflow-hidden rounded-xl border border-slate-100 dark:border-slate-700">
+                                    <button
+                                        type="button"
+                                        onClick={() => setExpandedHotel(expandedHotel === group.key ? null : group.key)}
+                                        className="flex w-full items-center justify-between bg-slate-50/50 p-3 text-left hover:bg-indigo-50/50 dark:bg-slate-900/30 dark:hover:bg-indigo-900/20"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="rounded-lg bg-white p-2 shadow-sm dark:bg-slate-800">
+                                                <Building2 className="h-4 w-4 text-indigo-500" />
+                                            </div>
+                                            <div>
+                                                <div className="text-sm font-bold text-slate-900 dark:text-white">{group.hotelName}</div>
+                                                <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                                    <MapPin className="h-3 w-3" />
+                                                    {group.city}
+                                                    {group.starRating && (
+                                                        <span className="flex items-center gap-0.5 text-amber-500">
+                                                            <Star className="h-3 w-3 fill-current" />
+                                                            {group.starRating}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {expandedHotel === group.key ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                                    </button>
+
+                                    {expandedHotel === group.key && (
+                                        <div className="divide-y divide-slate-100 bg-white dark:divide-slate-700 dark:bg-slate-800">
+                                            {group.rates.map((rate) => (
+                                                <button
+                                                    key={rate.publicId}
+                                                    type="button"
+                                                    onClick={() => handleSelectRate(rate)}
+                                                    className="flex w-full items-center justify-between p-3 text-left transition-colors hover:bg-emerald-50/50 dark:hover:bg-emerald-900/10"
+                                                >
+                                                    <div className="flex-1">
+                                                        <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{rate.roomType || "Habitacion Estandar"}</div>
+                                                        {/* el proveedor de la tarifa, bien visible: al elegir queda vinculado */}
+                                                        <div className="text-[10px] text-slate-500">{rate.mealPlan || "Solo Alojamiento"} • <span className="font-semibold text-indigo-500">{rate.supplierName}</span></div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-xs font-bold text-emerald-600">{formatMoney(rate.salePrice)}</div>
+                                                        <div className="text-[9px] text-slate-400">por noche/unidad</div>
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Hint "hotel nuevo": hay texto pero no aparecio en el tarifario */}
+                    {showResults && !loading && hotelGroups.length === 0 && (form.hotelName || "").trim().length >= 3 && (
+                        <div
+                            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300"
+                            onMouseDown={(e) => e.preventDefault()}
+                        >
+                            No esta en tu tarifario. Segui cargando los datos (ciudad, fechas, precio): se agrega como hotel nuevo.
+                        </div>
+                    )}
                 </div>
                 <div>
                     <label className={labelClass}>Ciudad *</label>
