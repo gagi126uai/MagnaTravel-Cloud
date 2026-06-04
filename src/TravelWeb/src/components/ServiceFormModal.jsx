@@ -124,18 +124,20 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
     const [loading, setLoading] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
 
+    // PRODUCTO-PRIMERO: se busca por nombre del producto (sin exigir proveedor antes).
+    // Mostramos TODOS los operadores que lo venden; al elegir uno queda vinculado el
+    // proveedor (handleRateSelect). supplierId queda como prop por compatibilidad pero NO
+    // gatea la busqueda.
     const searchRates = useCallback(async () => {
-        if (!supplierId) {
+        if (!search || search.trim().length < 2) {
             setRates([]);
             return;
         }
-
         setLoading(true);
         try {
             const params = new URLSearchParams();
             params.append("serviceType", serviceType);
-            params.append("supplierId", supplierId);
-            if (search) params.append("query", search);
+            params.append("query", search);
             const data = await api.get(`/rates/search?${params}`);
             setRates(data || []);
         } catch {
@@ -143,28 +145,32 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
         } finally {
             setLoading(false);
         }
-    }, [search, serviceType, supplierId]);
+    }, [search, serviceType]);
 
+    // Busqueda con debounce de 350ms mientras el dropdown esta abierto.
     useEffect(() => {
-        if (showDropdown && supplierId) searchRates();
-    }, [showDropdown, supplierId, searchRates]);
+        if (!showDropdown) return;
+        const timer = setTimeout(() => searchRates(), 350);
+        return () => clearTimeout(timer);
+    }, [showDropdown, searchRates]);
 
     return (
         <div className="relative">
-            <label className={labelClass}>{serviceType === "Hotel" ? "Seleccionar Hotel" : "Seleccionar tarifa"}</label>
+            <label className={labelClass}>Buscar en el tarifario (opcional)</label>
             <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input
                     type="text"
                     className={`${inputClass} border-indigo-200 bg-indigo-50/20 pl-10 dark:border-indigo-900/50`}
-                    placeholder={`Buscar en tarifario de ${serviceType}...`}
+                    placeholder={`Escribi el ${serviceType.toLowerCase()} (busca en cualquier proveedor)...`}
                     value={search}
                     onChange={(event) => {
                         setSearch(event.target.value);
                         setShowDropdown(true);
                     }}
                     onFocus={() => setShowDropdown(true)}
-                    disabled={disabled || !supplierId}
+                    onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+                    disabled={disabled}
                 />
                 {loading ? (
                     <div className="absolute right-3 top-2.5">
@@ -173,11 +179,14 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
                 ) : null}
             </div>
 
-            {showDropdown && supplierId ? (
-                <div className="absolute z-30 mt-1 max-h-68 w-full overflow-y-auto overflow-x-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
+            {showDropdown && search.trim().length >= 2 ? (
+                <div
+                    className="absolute left-0 right-0 top-full z-50 mt-1 max-h-68 overflow-y-auto overflow-x-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800"
+                    onMouseDown={(e) => e.preventDefault()}
+                >
                     {rates.length === 0 ? (
                         <div className="p-4 text-center text-sm text-slate-500">
-                            {loading ? "Buscando tarifas..." : "No se encontraron tarifas para este proveedor."}
+                            {loading ? "Buscando..." : "No esta en tu tarifario. Cargá los datos a mano abajo."}
                         </div>
                     ) : (
                         rates.map((rate) => {
@@ -208,7 +217,9 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
                                             </span>
                                         ) : null}
                                     </div>
-                                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                        {/* proveedor de la tarifa, bien visible: al elegir queda vinculado */}
+                                        {rate.supplierName ? <span className="font-semibold text-indigo-500">{rate.supplierName}</span> : null}
                                         {rate.city ? <span>{rate.city}</span> : null}
                                         {rate.roomType ? <span>{rate.roomType}</span> : null}
                                         {rate.airline ? <span>{rate.airline}</span> : null}
@@ -1503,13 +1514,42 @@ function GenericServiceForm({ form, setForm, suppliers, disabled }) {
     );
 }
 
-function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled, onManualPriceChange }) {
+function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled, onManualPriceChange, isHotel, hotelQuantity, onUnitPriceEdit }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
+    // La Ganancia siempre se muestra sobre el TOTAL (salePrice/netCost), tanto en hotel
+    // como en el resto.
     const margin = canSeeCost ? (form.salePrice || 0) - (form.netCost || 0) : null;
 
-    // Con permiso: 3 columnas (Costo Neto, Precio Venta, Ganancia).
-    // Sin permiso: 1 columna centrada (solo Precio Venta).
+    // Con permiso: 3 columnas (Costo, Venta, Ganancia). Sin permiso: 1 columna (solo Venta).
     const gridClass = canSeeCost ? "grid grid-cols-3 gap-4" : "grid grid-cols-1 gap-4";
+
+    // En HOTEL los inputs son POR NOCHE (unitNetCost / unitSalePrice). El total lo calcula
+    // el effect del orquestador (por-noche x noches x habitaciones), por eso las fechas
+    // mueven el total tambien cuando se carga a mano. En el resto, los inputs SON el total.
+    const netValue = isHotel ? (form.unitNetCost || 0) : (form.netCost || 0);
+    const saleValue = isHotel ? (form.unitSalePrice || 0) : (form.salePrice || 0);
+    const netLabel = isHotel ? "Costo por noche *" : "Costo Neto *";
+    const saleLabel = isHotel ? "Venta por noche *" : "Precio Venta *";
+
+    const handleNet = (value) => {
+        if (isHotel) {
+            // editar el por-noche destraba el recalculo automatico del total
+            onUnitPriceEdit?.();
+            setForm({ ...form, unitNetCost: value, unitCommission: roundMoney((form.unitSalePrice || 0) - value) });
+        } else {
+            onManualPriceChange?.("netCost");
+            setForm({ ...form, netCost: value, commission: roundMoney((form.salePrice || 0) - value) });
+        }
+    };
+    const handleSale = (value) => {
+        if (isHotel) {
+            onUnitPriceEdit?.();
+            setForm({ ...form, unitSalePrice: value, unitCommission: roundMoney(value - (form.unitNetCost || 0)) });
+        } else {
+            onManualPriceChange?.("salePrice");
+            setForm({ ...form, salePrice: value, commission: roundMoney(value - (form.netCost || 0)) });
+        }
+    };
 
     return (
         <div className="space-y-4 rounded-xl border border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100 p-4 dark:border-slate-700 dark:from-slate-800 dark:to-slate-800/50">
@@ -1531,19 +1571,15 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
             <div className={gridClass}>
                 {canSeeCost ? (
                     <div>
-                        <label className={labelClass}>Costo Neto *</label>
+                        <label className={labelClass}>{netLabel}</label>
                         <div className="relative">
                             <span className="absolute left-3 top-2.5 text-slate-500">$</span>
                             <input
                                 type="number"
                                 step="0.01"
                                 className={`${inputClass} pl-6`}
-                                value={form.netCost || 0}
-                                onChange={(event) => {
-                                    const netCost = parseFloat(event.target.value) || 0;
-                                    onManualPriceChange?.("netCost");
-                                    setForm({ ...form, netCost, commission: roundMoney((form.salePrice || 0) - netCost) });
-                                }}
+                                value={netValue}
+                                onChange={(event) => handleNet(parseFloat(event.target.value) || 0)}
                                 required
                                 disabled={disabled}
                             />
@@ -1551,19 +1587,15 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                     </div>
                 ) : null}
                 <div>
-                    <label className={labelClass}>Precio Venta *</label>
+                    <label className={labelClass}>{saleLabel}</label>
                     <div className="relative">
                         <span className="absolute left-3 top-2.5 text-slate-500">$</span>
                         <input
                             type="number"
                             step="0.01"
                             className={`${inputClass} pl-6`}
-                            value={form.salePrice || 0}
-                            onChange={(event) => {
-                                const salePrice = parseFloat(event.target.value) || 0;
-                                onManualPriceChange?.("salePrice");
-                                setForm({ ...form, salePrice, commission: roundMoney(salePrice - (form.netCost || 0)) });
-                            }}
+                            value={saleValue}
+                            onChange={(event) => handleSale(parseFloat(event.target.value) || 0)}
                             required
                             disabled={disabled}
                         />
@@ -1578,6 +1610,19 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                     </div>
                 ) : null}
             </div>
+
+            {/* HOTEL: total derivado del por-noche, bien visible (es lo que paga el cliente). */}
+            {isHotel && hotelQuantity > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-indigo-100 bg-white/70 px-3 py-2 text-sm dark:border-indigo-900/30 dark:bg-slate-900/40">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Total ({hotelQuantity} noche{hotelQuantity === 1 ? "" : "s"}/unid.)
+                    </span>
+                    <span className="flex items-center gap-3">
+                        {canSeeCost ? <span className="text-xs text-slate-500">Costo {formatMoney(form.netCost)}</span> : null}
+                        <span className="font-black text-indigo-600 dark:text-indigo-400">Venta {formatMoney(form.salePrice)}</span>
+                    </span>
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -2143,6 +2188,9 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                             commissionPercent={commissionPercent}
                             onRecalculate={applyCommission}
                             disabled={isLocked}
+                            isHotel={serviceType === "Hotel"}
+                            hotelQuantity={getHotelQuantity(form)}
+                            onUnitPriceEdit={() => setManualHotelPricing({ netCost: false, salePrice: false })}
                             onManualPriceChange={(field) => {
                                 if (serviceType === "Hotel") {
                                     setManualHotelPricing((current) => ({ ...current, [field]: true }));
