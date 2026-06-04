@@ -113,6 +113,7 @@ const buildGenericServicePayload = (form, serviceToEdit) => ({
     returnDate: toOptionalIsoDate(form.returnDate),
     salePrice: Number(form.salePrice) || 0,
     netCost: Number(form.netCost) || 0,
+    tax: Number(form.tax) || 0,
     rateId: form.rateId || form.ratePublicId || null,
 });
 
@@ -1519,9 +1520,22 @@ function GenericServiceForm({ form, setForm, suppliers, disabled }) {
 
 function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled, onManualPriceChange, isHotel, hotelQuantity, onUnitPriceEdit }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
-    // La Ganancia siempre se muestra sobre el TOTAL (salePrice/netCost), tanto en hotel
-    // como en el resto.
-    const margin = canSeeCost ? (form.salePrice || 0) - (form.netCost || 0) : null;
+    // Ganancia = Venta - Costo - Impuesto (el impuesto esta INCLUIDO en el costo: no suma al
+    // precio del cliente, te baja el margen). Se muestra sobre los TOTALES.
+    const taxTotal = Number(form.tax) || 0;
+    const margin = canSeeCost ? (form.salePrice || 0) - (form.netCost || 0) - taxTotal : null;
+    // % del impuesto sobre el costo total (para mostrarlo; editable en el input de %).
+    const taxPct = (form.netCost || 0) > 0 ? roundMoney((taxTotal / form.netCost) * 100) : 0;
+
+    const handleTax = (value) => {
+        const tax = roundMoney(value);
+        setForm({ ...form, tax, commission: roundMoney((form.salePrice || 0) - (form.netCost || 0) - tax) });
+    };
+    const handleTaxPct = (pct) => {
+        // base = costo total; impuesto = costo * % / 100
+        const tax = roundMoney(((form.netCost || 0) * (Number(pct) || 0)) / 100);
+        setForm({ ...form, tax, commission: roundMoney((form.salePrice || 0) - (form.netCost || 0) - tax) });
+    };
 
     // Con permiso: 3 columnas (Costo, Venta, Ganancia). Sin permiso: 1 columna (solo Venta).
     const gridClass = canSeeCost ? "grid grid-cols-3 gap-4" : "grid grid-cols-1 gap-4";
@@ -1541,7 +1555,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
             setForm({ ...form, unitNetCost: value, unitCommission: roundMoney((form.unitSalePrice || 0) - value) });
         } else {
             onManualPriceChange?.("netCost");
-            setForm({ ...form, netCost: value, commission: roundMoney((form.salePrice || 0) - value) });
+            setForm({ ...form, netCost: value, commission: roundMoney((form.salePrice || 0) - value - taxTotal) });
         }
     };
     const handleSale = (value) => {
@@ -1550,7 +1564,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
             setForm({ ...form, unitSalePrice: value, unitCommission: roundMoney(value - (form.unitNetCost || 0)) });
         } else {
             onManualPriceChange?.("salePrice");
-            setForm({ ...form, salePrice: value, commission: roundMoney(value - (form.netCost || 0)) });
+            setForm({ ...form, salePrice: value, commission: roundMoney(value - (form.netCost || 0) - taxTotal) });
         }
     };
 
@@ -1614,6 +1628,45 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                 ) : null}
             </div>
 
+            {/* Impuesto INCLUIDO en el costo: se puede cargar en plata o en % del costo. Baja la
+                ganancia, NO sube lo que paga el cliente. Solo visible para quien ve costos. */}
+            {canSeeCost ? (
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className={labelClass}>Impuesto ($)</label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                className={`${inputClass} pl-6`}
+                                value={taxTotal}
+                                onChange={(event) => handleTax(parseFloat(event.target.value) || 0)}
+                                disabled={disabled}
+                                data-testid="service-tax-amount"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className={labelClass}>Impuesto (% del costo)</label>
+                        <div className="relative">
+                            <span className="absolute right-3 top-2.5 text-slate-500">%</span>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                className={`${inputClass} pr-8`}
+                                value={taxPct}
+                                onChange={(event) => handleTaxPct(parseFloat(event.target.value) || 0)}
+                                disabled={disabled}
+                                data-testid="service-tax-pct"
+                            />
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
             {/* HOTEL: total derivado del por-noche, bien visible (es lo que paga el cliente). */}
             {isHotel && hotelQuantity > 0 ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-indigo-100 bg-white/70 px-3 py-2 text-sm dark:border-indigo-900/30 dark:bg-slate-900/40">
@@ -1647,6 +1700,8 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
         netCost: 0,
         salePrice: 0,
         commission: 0,
+        // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Ganancia = Venta - Costo - Impuesto.
+        tax: 0,
         unitNetCost: 0,
         unitSalePrice: 0,
         unitCommission: 0,
@@ -1724,17 +1779,15 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                         next.salePrice = roundMoney(prev.unitSalePrice * qty);
                     }
 
-                    if (prev.unitCommission > 0) {
-                        next.commission = roundMoney(prev.unitCommission * qty);
-                    } else {
-                        next.commission = roundMoney((next.salePrice || 0) - (next.netCost || 0));
-                    }
+                    // Ganancia = Venta - Costo - Impuesto. El impuesto es un total (no por noche),
+                    // por eso se resta del total ya calculado, no se multiplica por las noches.
+                    next.commission = roundMoney((next.salePrice || 0) - (next.netCost || 0) - (prev.tax || 0));
 
                     return next;
                 });
             }
         }
-    }, [form.checkIn, form.checkOut, form.rooms, form.unitNetCost, form.unitSalePrice, form.unitCommission, manualHotelPricing.netCost, manualHotelPricing.salePrice, serviceType]);
+    }, [form.checkIn, form.checkOut, form.rooms, form.unitNetCost, form.unitSalePrice, form.unitCommission, form.tax, manualHotelPricing.netCost, manualHotelPricing.salePrice, serviceType]);
 
     // Cada vez que el modal se abre (isOpen cambia a true), reseteamos el tilde
     // para que no quede marcado de la apertura anterior.
@@ -1945,6 +1998,16 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 : getServiceCreateEndpoint(reservaId, serviceType);
 
             const payload = isGenericEdit ? buildGenericServicePayload(form, serviceToEdit) : { ...form };
+
+            // Ganancia canonica: pase lo que pase en el form (boton "Aplicar %", elegir una
+            // tarifa, escribir a mano), la ganancia que se guarda es SIEMPRE venta - costo -
+            // impuesto. Asi lo que se persiste coincide exacto con lo que el usuario ve en
+            // pantalla y el impuesto nunca queda sin descontar.
+            if (!isGenericEdit) {
+                const tax = roundMoney(Number(form.tax) || 0);
+                payload.tax = tax;
+                payload.commission = roundMoney((Number(form.salePrice) || 0) - (Number(form.netCost) || 0) - tax);
+            }
 
             if (!isGenericEdit && serviceType === "Aereo") {
                 // POR QUE NO usamos toIsoDate() / toISOString() acá:

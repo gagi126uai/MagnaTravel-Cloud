@@ -63,6 +63,7 @@ public static class CostMasking
         if (dto is null) return;
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
+        dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
         // HotelBookingDto no expone Commission al frontend (verificado 2026-05-09).
         // Si en el futuro se agrega, enmascarar aca tambien.
     }
@@ -85,6 +86,7 @@ public static class CostMasking
         if (dto is null) return;
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
+        dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
     }
 
     /// <summary>
@@ -100,6 +102,7 @@ public static class CostMasking
         if (dto is null) return;
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
+        dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
     }
 
     /// <summary>
@@ -115,6 +118,7 @@ public static class CostMasking
         if (dto is null) return;
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
+        dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
     }
 
     /// <summary>
@@ -131,5 +135,6 @@ public static class CostMasking
         if (dto is null) return;
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
+        dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
     }
 }

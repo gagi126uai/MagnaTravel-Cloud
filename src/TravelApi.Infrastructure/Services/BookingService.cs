@@ -111,6 +111,7 @@ public class BookingService : IBookingService
         assistance.NetCost = rate.NetCost;
         assistance.SalePrice = rate.SalePrice;
         assistance.Commission = rate.Commission;
+        assistance.Tax = rate.Tax; // impuesto incluido (igual que Flight): se congela del tarifario
 
         // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
         // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
@@ -212,7 +213,7 @@ public class BookingService : IBookingService
         // CanSeeCost se evalua una sola vez (mismo caller para toda la lista).
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) dto.NetCost = 0m;
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
         }
         return dtos;
     }
@@ -454,7 +455,7 @@ public class BookingService : IBookingService
         // usuario logueado. Enmascaramos para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) dto.NetCost = 0m;
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
         }
         return dtos;
     }
@@ -666,7 +667,7 @@ public class BookingService : IBookingService
         // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) dto.NetCost = 0m;
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
         }
         return dtos;
     }
@@ -714,6 +715,7 @@ public class BookingService : IBookingService
             package.NetCost = rate.NetCost;
             package.SalePrice = rate.SalePrice;
             package.Commission = rate.Commission;
+            package.Tax = rate.Tax; // impuesto incluido (igual que Flight): se congela del tarifario
             // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
             // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
             package.Currency = rate.Currency;
@@ -852,7 +854,7 @@ public class BookingService : IBookingService
         // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) dto.NetCost = 0m;
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
         }
         return dtos;
     }
@@ -907,6 +909,7 @@ public class BookingService : IBookingService
             transfer.NetCost = rate.NetCost;
             transfer.SalePrice = rate.SalePrice;
             transfer.Commission = rate.Commission;
+            transfer.Tax = rate.Tax; // impuesto incluido (igual que Flight): se congela del tarifario
             // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
             // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
             transfer.Currency = rate.Currency;
@@ -1085,7 +1088,7 @@ public class BookingService : IBookingService
         // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) dto.NetCost = 0m;
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
         }
         return dtos;
     }

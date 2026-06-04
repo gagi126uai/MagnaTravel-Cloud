@@ -41,7 +41,11 @@ public record CreateHotelRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
     string? RoomingAssignments = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado"
+    string WorkflowStatus = "Solicitado",
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). El front lo manda ya restado
+    // en la Commission (SalePrice - NetCost - Tax). Opcional con default 0 para no romper los
+    // callers posicionales existentes que no lo enviaban. Ver HotelBooking.Tax.
+    decimal Tax = 0
 );
 
 public record UpdateHotelRequest(
@@ -51,7 +55,10 @@ public record UpdateHotelRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
     string? RoomingAssignments = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado"
+    string WorkflowStatus = "Solicitado",
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
+    // no romper los callers posicionales existentes. Ver HotelBooking.Tax.
+    decimal Tax = 0
 );
 
 public record CreateTransferRequest(
@@ -61,7 +68,10 @@ public record CreateTransferRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
-    string? ConfirmationNumber = null
+    string? ConfirmationNumber = null,
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
+    // no romper los callers posicionales existentes. Ver TransferBooking.Tax.
+    decimal Tax = 0
 );
 
 public record UpdateTransferRequest(
@@ -71,7 +81,10 @@ public record UpdateTransferRequest(
     string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado"
+    string WorkflowStatus = "Solicitado",
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
+    // no romper los callers posicionales existentes. Ver TransferBooking.Tax.
+    decimal Tax = 0
 );
 
 // Bloque 3: Asistencia al viajero (seguro). Espeja a CreateHotelRequest/UpdateHotelRequest:
@@ -86,7 +99,10 @@ public record CreateAssistanceRequest(
     string? PolicyNumber = null, string? PlanType = null, string? CoverageLimit = null,
     string? CoverageZone = null, string? ConfirmationNumber = null, string? Notes = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado"
+    string WorkflowStatus = "Solicitado",
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
+    // no romper los callers posicionales existentes. Ver AssistanceBooking.Tax.
+    decimal Tax = 0
 );
 
 public record UpdateAssistanceRequest(
@@ -98,7 +114,10 @@ public record UpdateAssistanceRequest(
     string? PolicyNumber = null, string? PlanType = null, string? CoverageLimit = null,
     string? CoverageZone = null, string? ConfirmationNumber = null, string? Notes = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado"
+    string WorkflowStatus = "Solicitado",
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
+    // no romper los callers posicionales existentes. Ver AssistanceBooking.Tax.
+    decimal Tax = 0
 );
 
 public record CreatePackageRequest(
@@ -109,7 +128,10 @@ public record CreatePackageRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
-    string? ConfirmationNumber = null
+    string? ConfirmationNumber = null,
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
+    // no romper los callers posicionales existentes. Ver PackageBooking.Tax.
+    decimal Tax = 0
 );
 
 public record UpdatePackageRequest(
@@ -119,5 +141,8 @@ public record UpdatePackageRequest(
     int Adults, int Children, string? Itinerary, string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado"
+    string WorkflowStatus = "Solicitado",
+    // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
+    // no romper los callers posicionales existentes. Ver PackageBooking.Tax.
+    decimal Tax = 0
 );

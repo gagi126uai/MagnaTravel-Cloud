@@ -1266,28 +1266,29 @@ public class ReservaService : IReservaService
             {
                 s.NetCost = 0m;
                 s.Commission = 0m;
+                s.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
             }
         }
 
         if (dto.HotelBookings is not null)
         {
-            foreach (var b in dto.HotelBookings) b.NetCost = 0m;
+            foreach (var b in dto.HotelBookings) { b.NetCost = 0m; b.Tax = 0m; }
         }
         if (dto.FlightSegments is not null)
         {
-            foreach (var f in dto.FlightSegments) f.NetCost = 0m;
+            foreach (var f in dto.FlightSegments) { f.NetCost = 0m; f.Tax = 0m; }
         }
         if (dto.PackageBookings is not null)
         {
-            foreach (var p in dto.PackageBookings) p.NetCost = 0m;
+            foreach (var p in dto.PackageBookings) { p.NetCost = 0m; p.Tax = 0m; }
         }
         if (dto.TransferBookings is not null)
         {
-            foreach (var t in dto.TransferBookings) t.NetCost = 0m;
+            foreach (var t in dto.TransferBookings) { t.NetCost = 0m; t.Tax = 0m; }
         }
         if (dto.AssistanceBookings is not null)
         {
-            foreach (var a in dto.AssistanceBookings) a.NetCost = 0m;
+            foreach (var a in dto.AssistanceBookings) { a.NetCost = 0m; a.Tax = 0m; }
         }
     }
 

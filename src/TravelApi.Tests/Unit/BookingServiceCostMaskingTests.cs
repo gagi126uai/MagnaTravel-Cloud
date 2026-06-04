@@ -447,4 +447,86 @@ public class BookingServiceCostMaskingTests
         var stored = await context.TransferBookings.SingleAsync();
         Assert.Equal(70m, stored.NetCost);
     }
+
+    // ============================= TAX (impuesto incluido en el costo) =============================
+    // El impuesto es un componente del costo del proveedor: revelarlo deja inferir margen/costo.
+    // Mismo contrato que NetCost: sin cobranzas.see_cost -> 0 en el DTO; con permiso -> valor real.
+    // Lo persistido nunca se altera.
+
+    [Fact]
+    public async Task CreateHotelAsync_UserWithoutSeeCost_MasksTax()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
+        var service = CreateServiceForUser(context, mapper, canSeeCost: false);
+
+        var request = BuildCreateHotel(supplier.PublicId.ToString(), 250m) with { Tax = 40m };
+        var created = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
+
+        Assert.Equal(0m, created.Tax); // impuesto oculto
+        var stored = await context.HotelBookings.SingleAsync();
+        Assert.Equal(40m, stored.Tax); // pero NO se altera lo persistido
+    }
+
+    [Fact]
+    public async Task CreateHotelAsync_UserWithSeeCost_KeepsTax()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
+        var service = CreateServiceForUser(context, mapper, canSeeCost: true);
+
+        var request = BuildCreateHotel(supplier.PublicId.ToString(), 250m) with { Tax = 40m };
+        var created = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
+
+        Assert.Equal(40m, created.Tax); // sin regresion para quien ve costos
+    }
+
+    [Fact]
+    public async Task GetHotelsAsync_UserWithoutSeeCost_MasksTaxInList()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
+        var seeAll = CreateServiceForUser(context, mapper, canSeeCost: true);
+        await seeAll.CreateHotelAsync(reserva.Id, BuildCreateHotel(supplier.PublicId.ToString(), 250m) with { Tax = 40m }, CancellationToken.None);
+
+        var noCost = CreateServiceForUser(context, mapper, canSeeCost: false);
+        var list = (await noCost.GetHotelsAsync(reserva.Id, CancellationToken.None)).ToList();
+
+        Assert.All(list, dto => Assert.Equal(0m, dto.Tax));
+    }
+
+    [Fact]
+    public async Task CreateTransferAsync_UserWithoutSeeCost_MasksTax()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
+        var service = CreateServiceForUser(context, mapper, canSeeCost: false);
+
+        var request = BuildCreateTransfer(supplier.PublicId.ToString(), 70m) with { Tax = 12m };
+        var created = await service.CreateTransferAsync(reserva.Id, request, CancellationToken.None);
+
+        Assert.Equal(0m, created.Tax);
+        var stored = await context.TransferBookings.SingleAsync();
+        Assert.Equal(12m, stored.Tax);
+    }
+
+    [Fact]
+    public async Task CreatePackageAsync_UserWithoutSeeCost_MasksTax()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
+        var service = CreateServiceForUser(context, mapper, canSeeCost: false);
+
+        var request = BuildCreatePackage(supplier.PublicId.ToString(), 900m) with { Tax = 60m };
+        var created = await service.CreatePackageAsync(reserva.Id, request, CancellationToken.None);
+
+        Assert.Equal(0m, created.Tax);
+        var stored = await context.PackageBookings.SingleAsync();
+        Assert.Equal(60m, stored.Tax);
+    }
 }

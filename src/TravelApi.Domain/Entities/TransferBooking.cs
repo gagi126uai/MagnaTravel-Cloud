@@ -59,6 +59,16 @@ public class TransferBooking : IHasPublicId
     public decimal Commission { get; set; }
 
     /// <summary>
+    /// Impuestos incluidos en el costo (mismo criterio que <see cref="FlightSegment.Tax"/> y
+    /// <see cref="Rate.Tax"/>): NO suma al precio que paga el cliente (SalePrice ya es el total),
+    /// es un componente del costo. La ganancia/Commission = SalePrice - NetCost - Tax.
+    /// Default 0 = sin impuesto informado (las filas previas a este campo quedan en 0, lo que deja
+    /// la Commission inalterada porque SalePrice - NetCost - 0 = SalePrice - NetCost).
+    /// </summary>
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal Tax { get; set; }
+
+    /// <summary>
     /// Moneda en que se COTIZO el servicio (copiada del tarifario al crearlo).
     /// Es metadato de TRAZABILIDAD: NO se usa todavia en calculos de saldo, pagos ni factura.
     /// Null = legacy / no informado (se asume ARS por compatibilidad hacia atras).
