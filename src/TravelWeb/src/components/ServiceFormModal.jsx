@@ -560,14 +560,16 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
             {/* Proveedor y estado del servicio */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Proveedor (opcional)</label>
+                    <label className={labelClass}>Proveedor *</label>
                     <select
                         className={inputClass}
                         value={form.supplierId || ""}
                         onChange={(event) => setForm({ ...form, supplierId: event.target.value })}
                         disabled={disabled}
+                        required
+                        data-testid="hotel-supplier"
                     >
-                        <option value="">Sin proveedor vinculado</option>
+                        <option value="">Seleccionar proveedor...</option>
                         {suppliers.map((supplier) => (
                             <option key={supplier.publicId || supplier.PublicId} value={supplier.publicId || supplier.PublicId}>
                                 {supplier.name}
@@ -1794,6 +1796,11 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
             const newForm = {
                 ...prev,
                 rateId: rate.publicId?.toString() || "",
+                // BUG CENTRAL (2026-06-04): elegir una tarifa NO vinculaba el proveedor.
+                // Cada tarifa pertenece a un proveedor (Rate.SupplierId); al elegirla, el
+                // operador queda seteado. Editable despues (el agente puede venderlo via otro
+                // operador). Si la tarifa no trae proveedor, se conserva el ya elegido.
+                supplierId: rate.supplierPublicId?.toString() || prev.supplierId || "",
                 unitNetCost: rate.netCost,
                 unitSalePrice: rate.salePrice,
                 unitCommission: rate.commission ?? Math.max((rate.salePrice || 0) - (rate.netCost || 0), 0),
