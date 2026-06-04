@@ -361,6 +361,15 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
         // "No service for type 'IFiscalLiquidationCalculator'".
         services.AddScoped<IFiscalLiquidationCalculator, FiscalLiquidationCalculator>();
 
+        // FC1.3.3: BookingCancellationService tambien pide IAdminUserCountService (cuenta
+        // admins activos para el bypass GR-005 de 4-ojos). La implementacion real depende de
+        // UserManager<ApplicationUser> (todo el stack de Identity), que este fixture minimo no
+        // arma. Registramos un stub: los tests que se resuelven por DI (AuditLogPresence,
+        // ClientCreditService, OperatorRefundService, CancellationFlowE2E) NO ejercitan el
+        // 4-ojos de la NC parcial; los que si lo hacen construyen el service a mano con su
+        // propio mock. Devolver 0 (default del Mock) es coherente con esos tests manuales.
+        services.AddSingleton(new Mock<IAdminUserCountService>().Object);
+
         // BookingCancellationService implementa AMBAS interfaces (split BR-04).
         // Registramos la clase concreta + ambas interfaces como factory que
         // resuelve la misma instancia dentro del scope.

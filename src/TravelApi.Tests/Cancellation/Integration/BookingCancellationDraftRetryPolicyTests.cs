@@ -370,6 +370,17 @@ public sealed class BookingCancellationDraftRetryPolicyTests
         var (service, ctx, _) = BuildService();
         var seed = await SeedReservaAsync(ctx);
         var ncId = await SeedLiveCreditNoteAsync(ctx, seed);
+
+        // Una NC total VIVA anula la factura original: si la dejaramos activa, la
+        // reserva tendria DOS comprobantes activos (FC + NC) y el guard de multi-factura
+        // (INV-100, OnePerReservaInvoicePolicy) dispararia antes que el blindaje que este
+        // test verifica. Anulamos la original para que quede UNA sola factura activa (la NC)
+        // y el flujo llegue de verdad al caso (d) de TryResolveExistingBcAsync: ArcaRejected
+        // con NC viva -> rechazo INV-081.
+        var original = await ctx.Invoices.FirstAsync(i => i.Id == seed.InvoiceId);
+        original.AnnulmentStatus = AnnulmentStatus.Succeeded;
+        await ctx.SaveChangesAsync();
+
         var rejected = await SeedBcAsync(
             ctx, seed, BookingCancellationStatus.ArcaRejected, creditNoteInvoiceId: ncId);
 
@@ -432,7 +443,19 @@ public sealed class BookingCancellationDraftRetryPolicyTests
             AmountPaidAtCancellation = 1000m,
             EstimatedRefundAmount = 1000m,
             ReceivedRefundAmount = 0m,
-            FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
+            // AwaitingFiscalConfirmation esta fuera de Drafted/Aborted -> el CHECK
+            // chk_BookingCancellations_fiscalsnapshot_consistent exige snapshot completo.
+            FiscalSnapshot = new FiscalSnapshot
+            {
+                Source = ExchangeRateSource.Manual,
+                ExchangeRateAtOriginalInvoice = 1m,
+                CurrencyAtEvent = "ARS",
+                ManualJustification = "Seed colision OriginatingInvoiceId",
+                FetchedAt = DateTime.UtcNow,
+                AgencyTaxConditionAtEvent = "MONOTRIBUTISTA",
+                SupplierTaxConditionAtEvent = "IVA_RESP_INSCRIPTO",
+                CustomerTaxConditionAtEvent = "CONSUMIDOR_FINAL",
+            },
             IsLegacyPreCancellationModel = false,
         });
         await ctx.SaveChangesAsync();
