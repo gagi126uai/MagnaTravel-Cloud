@@ -519,10 +519,13 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
         }
         setLoading(true);
         try {
+            // El HOTEL manda, NO el operador: buscamos por nombre en TODOS los proveedores
+            // (un mismo hotel puede venderse por varios operadores). Antes filtraba por el
+            // operador ya elegido, asi que un hotel que existia con OTRO operador no aparecia
+            // y decia "no existe". El operador sale despues de la tarifa elegida (o a mano).
             const params = new URLSearchParams({
                 serviceType: "Hotel",
                 query: query,
-                supplierId: form.supplierId || "",
             });
             const data = await api.get(`/rates/search?${params}`);
 
@@ -550,7 +553,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
         } finally {
             setLoading(false);
         }
-    }, [form.supplierId]);
+    }, []);
 
     // Busqueda con debounce: espera 400ms despues del ultimo tecleo en "Nombre del Hotel".
     // Si acabamos de ELEGIR una tarifa, saltamos un ciclo (skipNextSearch) para no reabrir
