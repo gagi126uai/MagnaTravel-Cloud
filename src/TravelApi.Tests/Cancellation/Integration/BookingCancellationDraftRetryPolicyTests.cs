@@ -199,10 +199,20 @@ public sealed class BookingCancellationDraftRetryPolicyTests
             AmountPaidAtCancellation = 1000m,
             EstimatedRefundAmount = 1000m,
             ReceivedRefundAmount = 0m,
+            // El CHECK chk_BookingCancellations_fiscalsnapshot_consistent exige un snapshot
+            // COHERENTE (Source != Unset, TC > 0, Currency != null) para cualquier Status
+            // fuera de Drafted/Aborted. Estos tests siembran BCs en estados intermedios, asi
+            // que el snapshot va completo (ARS, TC=1) para no chocar contra el CHECK.
             FiscalSnapshot = new FiscalSnapshot
             {
-                Source = ExchangeRateSource.Unset,
-                FetchedAt = default,
+                Source = ExchangeRateSource.Manual,
+                ExchangeRateAtOriginalInvoice = 1m,
+                CurrencyAtEvent = "ARS",
+                ManualJustification = "Seed retry policy",
+                FetchedAt = DateTime.UtcNow,
+                AgencyTaxConditionAtEvent = "MONOTRIBUTISTA",
+                SupplierTaxConditionAtEvent = "IVA_RESP_INSCRIPTO",
+                CustomerTaxConditionAtEvent = "CONSUMIDOR_FINAL",
             },
             IsLegacyPreCancellationModel = false,
         };

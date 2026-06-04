@@ -352,6 +352,15 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
             .Returns(Task.CompletedTask);
         services.AddSingleton(invoiceMock.Object);
 
+        // FC1.3: BookingCancellationService pide IFiscalLiquidationCalculator en el
+        // ctor (no es opcional). El calculator real es PURO (solo depende de ILogger,
+        // ya registrado como NullLogger arriba) y no toca BD, asi que registramos la
+        // implementacion real — no hace falta mock. Sin esto, cualquier test que
+        // resuelva IBookingCancellationService por DI (AuditLogPresenceTests,
+        // CancellationFlowE2ETests, OperatorRefundConcurrencyTests) rompe con
+        // "No service for type 'IFiscalLiquidationCalculator'".
+        services.AddScoped<IFiscalLiquidationCalculator, FiscalLiquidationCalculator>();
+
         // BookingCancellationService implementa AMBAS interfaces (split BR-04).
         // Registramos la clase concreta + ambas interfaces como factory que
         // resuelve la misma instancia dentro del scope.

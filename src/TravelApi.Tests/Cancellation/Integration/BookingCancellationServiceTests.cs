@@ -214,20 +214,30 @@ public sealed class BookingCancellationServiceTests
     }
 
     [Fact]
-    public async Task DraftAsync_BcExistenteParaReserva_RechazaInvariant_INV081()
+    public async Task DraftAsync_DraftPuroExistente_ReutilizaElMismoBc_NoCreaOtro()
     {
+        // B1 (commit 464339c / f644eea): un segundo DraftAsync sobre una reserva que ya
+        // tiene un draft PURO (Status Drafted, sin comprobantes vivos) ya NO rechaza con
+        // INV-081 — REUTILIZA el draft existente (TryResolveExistingBcAsync). INV-081 queda
+        // reservado para el caso real peligroso (BC no liberable / con NC viva), cubierto en
+        // BookingCancellationDraftRetryPolicyTests. Aca verificamos el reuse: mismo PublicId
+        // y una sola fila en la tabla.
         var (service, ctx, _, _) = BuildService();
         var seed = await SeedScenarioAsync(ctx);
 
-        await service.DraftAsync(
+        var first = await service.DraftAsync(
             new DraftCancellationRequest(seed.ReservaPublicId, "Primer intento"),
             "user-vendor", null, CancellationToken.None);
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
-            service.DraftAsync(
-                new DraftCancellationRequest(seed.ReservaPublicId, "Segundo intento"),
-                "user-vendor", null, CancellationToken.None));
-        Assert.Equal("INV-081", ex.InvariantCode);
+        var second = await service.DraftAsync(
+            new DraftCancellationRequest(seed.ReservaPublicId, "Segundo intento"),
+            "user-vendor", null, CancellationToken.None);
+
+        Assert.Equal(first.PublicId, second.PublicId);
+
+        var count = await ctx.BookingCancellations
+            .CountAsync(bc => bc.ReservaId == seed.ReservaId);
+        Assert.Equal(1, count);
     }
 
     [Fact]

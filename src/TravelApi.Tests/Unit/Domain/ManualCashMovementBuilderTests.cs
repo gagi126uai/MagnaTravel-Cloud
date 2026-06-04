@@ -182,7 +182,12 @@ public class ManualCashMovementBuilderTests
         Assert.Contains("PhysicalCash", movement.Description);
         Assert.Equal("user-cashier", movement.CreatedBy);
         Assert.Equal(entry.BookingCancellation!.ReservaId, movement.RelatedReservaId);
-        Assert.Equal(withdrawal.Id, movement.ClientCreditWithdrawalId);
+        // Bug fix FC1.2.3 (27506d9, 2026-05-18): el builder setea la NAVIGATION
+        // (ClientCreditWithdrawal) y deja el FK escalar null, porque en T3 el
+        // withdrawal todavia no tiene Id (== 0 hasta SaveChanges). EF resuelve la FK
+        // al persistir en orden topologico. En este Unit sin BD el escalar queda null.
+        Assert.Same(withdrawal, movement.ClientCreditWithdrawal);
+        Assert.Null(movement.ClientCreditWithdrawalId);
         Assert.Null(movement.OperatorRefundReceivedId);
         Assert.Null(movement.RelatedSupplierId);
     }
@@ -310,7 +315,10 @@ public class ManualCashMovementBuilderTests
 
         var movement = ManualCashMovementBuilder.BuildExpenseForWithdrawal(withdrawal, entry, "user");
         Assert.Null(movement.RelatedReservaId);
-        Assert.Equal(withdrawal.Id, movement.ClientCreditWithdrawalId);
+        // Trazabilidad por la NAVIGATION (ver nota del fix 27506d9 mas arriba): el FK
+        // escalar queda null en Unit; EF lo resuelve al persistir.
+        Assert.Same(withdrawal, movement.ClientCreditWithdrawal);
+        Assert.Null(movement.ClientCreditWithdrawalId);
     }
 
     [Fact]
