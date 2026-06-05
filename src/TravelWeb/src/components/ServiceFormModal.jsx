@@ -243,11 +243,69 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
  * Formulario de servicio Aereo.
  * Carga todos los datos operativos del vuelo: rutas, fechas+hora, PNR, tickets, equipaje.
  * La comision NO se muestra — va oculta en el payload (regla de negocio del dueño).
+ *
+ * Flujo "servicio primero":
+ *   - Al CREAR: muestra solo el buscador. Los campos aparecen cuando el usuario elige
+ *     una tarifa del tarifario (form.rateId) o toca "Cargar a mano" (showManualFields).
+ *   - Al EDITAR (isEditing=true): los campos aparecen directamente sin buscador de por medio.
  */
-function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
+function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+    // Controla si el usuario ya eligio "cargar a mano" (sin pasar por el tarifario).
+    // Una vez revelado, NO se puede volver a ocultar en la misma sesion del modal.
+    const [showManualFields, setShowManualFields] = useState(false);
+
+    // Los campos se muestran si:
+    //   (a) estamos editando un servicio existente, O
+    //   (b) el usuario eligio una tarifa del tarifario, O
+    //   (c) el usuario hizo click en "Cargar a mano"
+    const shouldShowFields = isEditing || !!form.rateId || showManualFields;
+
     return (
         <div className="space-y-4">
-            {/* Proveedor y estado */}
+            {/* === BUSCADOR PRIMERO ===
+                El agente escribe la aerolínea o ruta y elige del tarifario.
+                Al elegir, el proveedor queda vinculado automaticamente (handleRateSelect).
+                Si el servicio no esta en el tarifario, usa el boton de abajo. */}
+            <div>
+                <label className={labelClass}>Aerolinea / ruta</label>
+                <RateSelector
+                    serviceType={form.serviceType || "Aereo"}
+                    supplierId={form.supplierId}
+                    onSelect={(rate) => {
+                        onRateSelect(rate);
+                        // Al elegir del tarifario, revelamos automaticamente los campos manuales
+                        setShowManualFields(true);
+                    }}
+                    disabled={disabled}
+                />
+            </div>
+
+            {/* Boton para revelar campos sin pasar por el tarifario */}
+            {!shouldShowFields && (
+                <button
+                    type="button"
+                    onClick={() => setShowManualFields(true)}
+                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    data-testid="flight-load-manual"
+                >
+                    No está en mi tarifario — cargar a mano
+                </button>
+            )}
+
+            {/* Todos los campos del vuelo: se muestran solo cuando corresponde (ver shouldShowFields) */}
+            {shouldShowFields && (
+            <>
+            {/* Banner cuando se eligio una tarifa del tarifario */}
+            {form.rateId && (
+                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                        Datos traidos del tarifario. Podes editar cualquier campo.
+                    </p>
+                </div>
+            )}
+
+            {/* Proveedor y estado — van DESPUES del buscador (el buscador ya vincula el proveedor al elegir) */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -271,8 +329,6 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     </div>
                 )}
             </div>
-
-            <RateSelector serviceType={form.serviceType || "Aereo"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
 
             {/* Aerolinea: codigo IATA (ej. "AR") y nombre (ej. "Aerolineas Argentinas") */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -477,6 +533,8 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     data-testid="flight-notes"
                 />
             </div>
+            </>
+            )}
         </div>
     );
 }
@@ -733,7 +791,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                     {/* Hint "hotel nuevo": hay texto pero no aparecio en el tarifario */}
                     {showResults && !loading && hotelGroups.length === 0 && (form.hotelName || "").trim().length >= 3 && (
                         <div
-                            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300"
+                            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 shadow-lg dark:border-amber-900/40 dark:bg-amber-950 dark:text-amber-300"
                             onMouseDown={(e) => e.preventDefault()}
                         >
                             No esta en tu tarifario. Segui cargando los datos (ciudad, fechas, precio): se agrega como hotel nuevo.
@@ -922,11 +980,60 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
  * Formulario de servicio Traslado.
  * Cubre in/out aeropuerto, ciudad a ciudad, etc.
  * Si es ida y vuelta, se habilita el campo de fecha/hora de retorno.
+ *
+ * Flujo "servicio primero": igual que FlightForm, los campos se revelan
+ * cuando el usuario elige del tarifario o toca "Cargar a mano".
  */
-function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
+function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+    // Controla la revelacion progresiva de campos al crear un traslado nuevo.
+    const [showManualFields, setShowManualFields] = useState(false);
+
+    // Mostrar campos si ya estamos editando, si hay tarifa elegida, o si el usuario eligio manual.
+    const shouldShowFields = isEditing || !!form.rateId || showManualFields;
+
     return (
         <div className="space-y-4">
-            {/* Proveedor y estado */}
+            {/* === BUSCADOR PRIMERO ===
+                El agente escribe el trayecto (ej. "Aeropuerto-Hotel Cancún") y elige del tarifario.
+                Al elegir, el proveedor queda vinculado automaticamente. */}
+            <div>
+                <label className={labelClass}>Trayecto</label>
+                <RateSelector
+                    serviceType={form.serviceType || "Traslado"}
+                    supplierId={form.supplierId}
+                    onSelect={(rate) => {
+                        onRateSelect(rate);
+                        setShowManualFields(true);
+                    }}
+                    disabled={disabled}
+                />
+            </div>
+
+            {/* Boton para revelar campos sin pasar por el tarifario */}
+            {!shouldShowFields && (
+                <button
+                    type="button"
+                    onClick={() => setShowManualFields(true)}
+                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    data-testid="transfer-load-manual"
+                >
+                    No está en mi tarifario — cargar a mano
+                </button>
+            )}
+
+            {shouldShowFields && (
+            <>
+            {/* Banner de tarifa elegida del tarifario */}
+            {form.rateId && (
+                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                        Datos traidos del tarifario. Podes editar cualquier campo.
+                    </p>
+                </div>
+            )}
+
+            {/* Proveedor y estado — van DESPUES del buscador */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -950,8 +1057,6 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
                     </div>
                 )}
             </div>
-
-            <RateSelector serviceType={form.serviceType || "Traslado"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
 
             {/* Puntos de recogida y entrega */}
             <div className="grid grid-cols-2 gap-4">
@@ -1087,6 +1192,8 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
                     data-testid="transfer-notes"
                 />
             </div>
+            </>
+            )}
         </div>
     );
 }
@@ -1095,11 +1202,59 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
  * Formulario de servicio Paquete turistico.
  * Incluye: nombre, destino, fechas, adultos/menores, que servicios incluye el paquete,
  * itinerario (texto libre) y numero de confirmacion.
+ *
+ * Flujo "servicio primero": el agente busca el paquete en el tarifario antes de ver
+ * los campos de detalle. Al editar (isEditing=true) los campos aparecen directo.
  */
-function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
+function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+    // Controla la revelacion progresiva de campos al crear un paquete nuevo.
+    const [showManualFields, setShowManualFields] = useState(false);
+
+    const shouldShowFields = isEditing || !!form.rateId || showManualFields;
+
     return (
         <div className="space-y-4">
-            {/* Proveedor y estado */}
+            {/* === BUSCADOR PRIMERO ===
+                El agente escribe el nombre del paquete y elige del tarifario.
+                Al elegir, packageName y proveedor quedan vinculados automaticamente. */}
+            <div>
+                <label className={labelClass}>Nombre del paquete</label>
+                <RateSelector
+                    serviceType={form.serviceType || "Paquete"}
+                    supplierId={form.supplierId}
+                    onSelect={(rate) => {
+                        onRateSelect(rate);
+                        setShowManualFields(true);
+                    }}
+                    disabled={disabled}
+                />
+            </div>
+
+            {/* Boton para revelar campos sin pasar por el tarifario */}
+            {!shouldShowFields && (
+                <button
+                    type="button"
+                    onClick={() => setShowManualFields(true)}
+                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    data-testid="package-load-manual"
+                >
+                    No está en mi tarifario — cargar a mano
+                </button>
+            )}
+
+            {shouldShowFields && (
+            <>
+            {/* Banner de tarifa elegida del tarifario */}
+            {form.rateId && (
+                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                        Datos traidos del tarifario. Podes editar cualquier campo.
+                    </p>
+                </div>
+            )}
+
+            {/* Proveedor y estado — van DESPUES del buscador */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Proveedor *</label>
@@ -1123,8 +1278,6 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
                     </div>
                 )}
             </div>
-
-            <RateSelector serviceType={form.serviceType || "Paquete"} supplierId={form.supplierId} onSelect={onRateSelect} disabled={disabled} />
 
             {/* Nombre del paquete y destino */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1253,6 +1406,8 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
                     data-testid="package-notes"
                 />
             </div>
+            </>
+            )}
         </div>
     );
 }
@@ -1262,11 +1417,59 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
  * Carga los datos de la poliza: aseguradora, plan, cobertura, vigencia y pasajeros cubiertos.
  * La comision NO se muestra — regla de negocio del dueño, igual que los otros tipos.
  * validFrom/validTo se tratan como fechas date-only (sin hora), igual que checkIn/checkOut en Hotel.
+ *
+ * Flujo "servicio primero": el agente busca el plan de asistencia en el tarifario.
+ * Al editar (isEditing=true) los campos aparecen directo.
  */
-function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget }) {
+function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+    // Controla la revelacion progresiva de campos al crear una asistencia nueva.
+    const [showManualFields, setShowManualFields] = useState(false);
+
+    const shouldShowFields = isEditing || !!form.rateId || showManualFields;
+
     return (
         <div className="space-y-4">
-            {/* Aseguradora/proveedor y estado de la asistencia */}
+            {/* === BUSCADOR PRIMERO ===
+                El agente busca el plan o asistencia en el tarifario (ej. "Assist Card Plus").
+                Al elegir, la aseguradora/proveedor queda vinculada automaticamente. */}
+            <div>
+                <label className={labelClass}>Plan / asistencia</label>
+                <RateSelector
+                    serviceType={form.serviceType || "Asistencia"}
+                    supplierId={form.supplierId}
+                    onSelect={(rate) => {
+                        onRateSelect(rate);
+                        setShowManualFields(true);
+                    }}
+                    disabled={disabled}
+                />
+            </div>
+
+            {/* Boton para revelar campos sin pasar por el tarifario */}
+            {!shouldShowFields && (
+                <button
+                    type="button"
+                    onClick={() => setShowManualFields(true)}
+                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    data-testid="assistance-load-manual"
+                >
+                    No está en mi tarifario — cargar a mano
+                </button>
+            )}
+
+            {shouldShowFields && (
+            <>
+            {/* Banner de tarifa elegida del tarifario */}
+            {form.rateId && (
+                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                        Datos traidos del tarifario. Podes editar cualquier campo.
+                    </p>
+                </div>
+            )}
+
+            {/* Aseguradora/proveedor y estado — van DESPUES del buscador */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Aseguradora / Proveedor *</label>
@@ -1306,14 +1509,6 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
                     </div>
                 )}
             </div>
-
-            {/* Selector de tarifa del tarifario de asistencias */}
-            <RateSelector
-                serviceType={form.serviceType || "Asistencia"}
-                supplierId={form.supplierId}
-                onSelect={onRateSelect}
-                disabled={disabled}
-            />
 
             {/* Datos identificatorios de la poliza */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1456,11 +1651,21 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
                     data-testid="assistance-notes"
                 />
             </div>
+            </>
+            )}
         </div>
     );
 }
 
-function GenericServiceForm({ form, setForm, suppliers, disabled }) {
+/**
+ * Formulario generico para excursiones, servicios "Otro" y cualquier tipo no tipificado.
+ * Recibe isEditing para saltear el revelado progresivo cuando se edita un servicio existente.
+ *
+ * El RateSelector usa el serviceType del form (puede ser "Excursion", "Otro", etc.)
+ * para buscar en el tarifario. Si el tipo no matchea ningun resultado, el usuario
+ * carga los datos a mano con el boton de abajo.
+ */
+function GenericServiceForm({ form, setForm, suppliers, onRateSelect, disabled, isEditing }) {
     const baseTypeOptions = [
         ...SERVICE_TYPES.map(({ value, label }) => ({ value, label })),
         { value: "Otro", label: "Otro" },
@@ -1471,8 +1676,54 @@ function GenericServiceForm({ form, setForm, suppliers, disabled }) {
         ? baseTypeOptions
         : [{ value: currentType, label: currentType }, ...baseTypeOptions];
 
+    // Controla la revelacion progresiva de campos al crear un servicio generico nuevo.
+    const [showManualFields, setShowManualFields] = useState(false);
+
+    const shouldShowFields = isEditing || !!form.rateId || showManualFields;
+
     return (
         <div className="space-y-4">
+            {/* === BUSCADOR PRIMERO ===
+                Busca en el tarifario segun el tipo de servicio elegido (ej. "Excursion").
+                Si no hay tarifa, el usuario usa el boton para cargar a mano. */}
+            <div>
+                <label className={labelClass}>Nombre de la excursion</label>
+                <RateSelector
+                    serviceType={currentType}
+                    supplierId={form.supplierId}
+                    onSelect={(rate) => {
+                        onRateSelect?.(rate);
+                        setShowManualFields(true);
+                    }}
+                    disabled={disabled}
+                />
+            </div>
+
+            {/* Boton para revelar campos sin pasar por el tarifario */}
+            {!shouldShowFields && (
+                <button
+                    type="button"
+                    onClick={() => setShowManualFields(true)}
+                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    data-testid="generic-load-manual"
+                >
+                    No está en mi tarifario — cargar a mano
+                </button>
+            )}
+
+            {shouldShowFields && (
+            <>
+            {/* Banner de tarifa elegida del tarifario */}
+            {form.rateId && (
+                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                        Datos traidos del tarifario. Podes editar cualquier campo.
+                    </p>
+                </div>
+            )}
+
+            {/* Tipo y proveedor — van DESPUES del buscador */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                     <label className={labelClass}>Tipo de servicio *</label>
@@ -1514,6 +1765,8 @@ function GenericServiceForm({ form, setForm, suppliers, disabled }) {
                     <input className={inputClass} value={form.confirmationNumber || ""} onChange={(event) => setForm({ ...form, confirmationNumber: event.target.value })} disabled={disabled} />
                 </div>
             </div>
+            </>
+            )}
         </div>
     );
 }
@@ -1543,8 +1796,11 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
     // En HOTEL los inputs son POR NOCHE (unitNetCost / unitSalePrice). El total lo calcula
     // el effect del orquestador (por-noche x noches x habitaciones), por eso las fechas
     // mueven el total tambien cuando se carga a mano. En el resto, los inputs SON el total.
-    const netValue = isHotel ? (form.unitNetCost || 0) : (form.netCost || 0);
-    const saleValue = isHotel ? (form.unitSalePrice || 0) : (form.salePrice || 0);
+    // Mostramos SIEMPRE redondeado a 2 decimales. En hotel el por-noche se deriva de
+    // total/qty y puede dar infinitos decimales (650/7 = 92,857142...). Redondeamos solo
+    // la VISTA: el valor preciso sigue en form.unitNetCost para que el total no se desvie.
+    const netValue = roundMoney(isHotel ? (form.unitNetCost || 0) : (form.netCost || 0));
+    const saleValue = roundMoney(isHotel ? (form.unitSalePrice || 0) : (form.salePrice || 0));
     const netLabel = isHotel ? "Costo por noche *" : "Costo Neto *";
     const saleLabel = isHotel ? "Venta por noche *" : "Precio Venta *";
 
@@ -2009,6 +2265,15 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 payload.commission = roundMoney((Number(form.salePrice) || 0) - (Number(form.netCost) || 0) - tax);
             }
 
+            // Guard explícito de proveedor para tipos que lo exigen (Aéreo, Traslado, Paquete, Asistencia).
+            // Hotel ya tiene su propio guard arriba. El genérico lo admite vacío a propósito
+            // porque puede representar servicios sin proveedor definido.
+            // NO alcanza con el `required` del <select> porque el campo puede estar oculto
+            // (shouldShowFields=false) y los campos ocultos el browser no los valida.
+            if (!isGenericEdit && serviceType !== "Hotel" && !form.supplierId) {
+                throw new Error("Elegí un proveedor (buscá en el tarifario o cargá a mano).");
+            }
+
             if (!isGenericEdit && serviceType === "Aereo") {
                 // POR QUE NO usamos toIsoDate() / toISOString() acá:
                 //   La hora de un vuelo es la "hora de pared" del aeropuerto (hora local),
@@ -2212,8 +2477,26 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                                 onClick={() => {
                                     if (!serviceToEdit) {
                                         setServiceType(value);
+                                        // Al cambiar de TIPO limpiamos la tarifa y los precios para
+                                        // evitar "bleed": una tarifa de Aéreo no aplica a Traslado.
+                                        // El proveedor también se limpia porque pertenece a la tarifa
+                                        // del tipo anterior. Los datos de identidad del viajero
+                                        // (pasajeros, fechas de viaje) NO se borran porque el usuario
+                                        // puede necesitarlos en el nuevo tipo.
                                         setManualHotelPricing({ netCost: false, salePrice: false });
-                                        setForm((prev) => ({ ...prev, serviceType: value }));
+                                        setForm((prev) => ({
+                                            ...prev,
+                                            serviceType: value,
+                                            rateId: "",
+                                            supplierId: "",
+                                            netCost: 0,
+                                            salePrice: 0,
+                                            commission: 0,
+                                            unitNetCost: 0,
+                                            unitSalePrice: 0,
+                                            unitCommission: 0,
+                                            description: "",
+                                        }));
                                     }
                                 }}
                                 disabled={!!serviceToEdit}
@@ -2238,14 +2521,16 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                         </div>
                     ) : null}
 
-                    {isGenericEdit ? <GenericServiceForm form={form} setForm={setForm} suppliers={sortedSuppliers} disabled={isLocked} /> : null}
-                    {!isGenericEdit && serviceType === "Aereo" ? <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
+                    {/* isEditing=true en todos los sub-forms cuando hay un servicio en edicion,
+                        para que los campos aparezcan directamente sin gatear por el buscador */}
+                    {isGenericEdit ? <GenericServiceForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isEditing={!!serviceToEdit} /> : null}
+                    {!isGenericEdit && serviceType === "Aereo" ? <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
                     {!isGenericEdit && serviceType === "Hotel" ? (
                         <HotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} reservaPax={reservaPax} isBudget={isBudget} />
                     ) : null}
-                    {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
-                    {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
-                    {!isGenericEdit && serviceType === "Asistencia" ? <AssistanceForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} /> : null}
+                    {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
+                    {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
+                    {!isGenericEdit && serviceType === "Asistencia" ? <AssistanceForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
 
                     {showPricingForm ? (
                         <PricingForm
