@@ -141,7 +141,7 @@ export default function PaymentsHomePage() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <AlertList
           title="Reservas con salida proxima y deuda"
-          items={alerts?.UrgentTrips || []}
+          items={alerts?.urgentTrips || []}
           emptyText="No hay reservas urgentes con deuda al momento."
           icon={CalendarClock}
           renderItem={(trip) => (
@@ -170,7 +170,7 @@ export default function PaymentsHomePage() {
 
         <AlertList
           title="Deuda con proveedores"
-          items={alerts?.SupplierDebts || []}
+          items={alerts?.supplierDebts || []}
           emptyText="No hay deudas relevantes con proveedores."
           icon={ShieldAlert}
           renderItem={(supplier) => (

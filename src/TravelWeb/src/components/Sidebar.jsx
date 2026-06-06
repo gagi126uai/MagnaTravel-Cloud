@@ -54,7 +54,10 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onClo
 
   const linksWithBadges = mainLinks.map((link) => {
     if (link.to === "/alerts") {
-      return { ...link, badge: alerts?.TotalCount };
+      // La API /alerts serializa en camelCase; leer totalCount (no TotalCount).
+      // Nota: /alerts no existe en mainLinks (código muerto), pero dejamos el mapeo
+      // por consistencia en caso de que se agregue la ruta en el futuro.
+      return { ...link, badge: alerts?.totalCount };
     }
     if (link.to === "/approvals/inbox") {
       return { ...link, badge: pendingApprovals };

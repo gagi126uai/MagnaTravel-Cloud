@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, DollarSign, FileWarning, GitBranch, Settings2, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, BookOpen, CalendarClock, DollarSign, FileWarning, GitBranch, Settings2, ShieldAlert, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { Button } from "./ui/button";
@@ -21,6 +21,15 @@ const defaultSettings = {
   // cancelación nuevo (EnableNewCancellationFlow) ya esté activo en la base de datos.
   // Si no está activo, el backend responde con un error 400 explicando la pre-condición.
   enableCancellationDebitNote: false,
+  // OFF por defecto: el tarifario se arma de forma manual. Con ON, el vendedor puede buscar un
+  // producto al cargar un servicio y, si no existe, crearlo en el acto (find-or-create).
+  // Ver: ServiceInlineCard + ADR-017.
+  enableCatalogFindOrCreate: false,
+  // OFF por defecto: la campanita no muestra avisos de fechas límite. Con ON, cada vendedor
+  // recibe avisos de señas y emisión pendientes de sus reservas; los admins ven todos.
+  enableServiceDeadlineAlerts: false,
+  // Días de anticipación para los avisos de fechas límite (el DTO valida Range(1,60): fuera de rango = 400).
+  serviceDeadlineAlertDays: 7,
 };
 
 export default function OperationalFinanceSettingsTab() {
@@ -109,6 +118,10 @@ export default function OperationalFinanceSettingsTab() {
       await api.put("/settings/operational-finance", {
         ...form,
         upcomingUnpaidReservationAlertDays: Number(form.upcomingUnpaidReservationAlertDays || 0),
+        // serviceDeadlineAlertDays: convertido a número. Ojo: el DTO valida [Range(1,60)] →
+        // fuera de rango el server devuelve 400 con mensaje (no clamp silencioso); el
+        // min/max del input cubre el caso típico.
+        serviceDeadlineAlertDays: Number(form.serviceDeadlineAlertDays || 7),
       });
       showSuccess("Configuración operativa guardada.");
     } catch (error) {
@@ -237,6 +250,80 @@ export default function OperationalFinanceSettingsTab() {
                 </div>
               </div>
             </label>
+
+            {/* Tarifario find-or-create.
+                Flag de catálogo (ADR-017): con ON el vendedor puede buscar un producto al cargar un
+                servicio y crearlo si no existe. Comportamiento puro de UI, sin impacto fiscal directo. */}
+            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={form.enableCatalogFindOrCreate}
+                onChange={(event) => updateField("enableCatalogFindOrCreate", event.target.checked)}
+                className="mt-1 rounded border-slate-300"
+                disabled={loading}
+                data-testid="toggle-catalog-find-or-create"
+                aria-label="Tarifario que se arma solo desde las ventas"
+              />
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                  <BookOpen className="w-4 h-4 text-indigo-500" aria-hidden="true" />
+                  Tarifario que se arma solo desde las ventas
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Al cargar un servicio, el vendedor busca el producto y, si no existe, lo crea ahí mismo.
+                  Queda guardado con su operador y un precio de referencia para la próxima venta.
+                  Apagado, todo sigue como hasta ahora.
+                </div>
+              </div>
+            </label>
+
+            {/* Avisos de fechas límite (señar y emitir).
+                Con ON aparecen avisos en la campanita: seña al operador (Hotel/Paquete) y
+                emisión de aéreo (Ticketing). Cada vendedor ve los suyos; los admins ven todos. */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+              <label className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={form.enableServiceDeadlineAlerts}
+                  onChange={(event) => updateField("enableServiceDeadlineAlerts", event.target.checked)}
+                  className="mt-1 rounded border-slate-300"
+                  disabled={loading}
+                  data-testid="toggle-service-deadline-alerts"
+                  aria-label="Avisos de fechas límite (señar y emitir)"
+                />
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                    <CalendarClock className="w-4 h-4 text-amber-500" aria-hidden="true" />
+                    Avisos de fechas límite (señar y emitir)
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    La campanita avisa cuando se acerca o ya pasó una fecha límite de seña al operador
+                    o de emisión de un aéreo. Cada vendedor ve los avisos de sus reservas; los admins ven todos.
+                  </div>
+                </div>
+              </label>
+
+              {/* Campo numérico de días de anticipación — siempre habilitado (independiente del toggle) */}
+              <div>
+                <label
+                  htmlFor="service-deadline-alert-days"
+                  className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
+                >
+                  Días de anticipación del aviso
+                </label>
+                <input
+                  id="service-deadline-alert-days"
+                  type="number"
+                  min="1"
+                  max="60"
+                  value={form.serviceDeadlineAlertDays}
+                  onChange={(event) => updateField("serviceDeadlineAlertDays", event.target.value)}
+                  className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
+                  disabled={loading}
+                  data-testid="input-deadline-alert-days"
+                />
+              </div>
+            </div>
           </div>
 
           {/* ================================================================

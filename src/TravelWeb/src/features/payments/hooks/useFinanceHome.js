@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../../../api";
 import { showError } from "../../../alerts";
 
-const emptyAlerts = { UrgentTrips: [], SupplierDebts: [], TotalCount: 0 };
+// La API /alerts serializa camelCase (AlertsResponse.cs). Las claves deben coincidir exactamente.
+// serviceDeadlines y costsToConfirm se incluyen para no romper consumidores de fases siguientes.
+const emptyAlerts = {
+  urgentTrips: [],
+  supplierDebts: [],
+  serviceDeadlines: [],
+  costsToConfirm: [],
+  totalCount: 0,
+};
 
 export function useFinanceHome() {
   const [loading, setLoading] = useState(true);
