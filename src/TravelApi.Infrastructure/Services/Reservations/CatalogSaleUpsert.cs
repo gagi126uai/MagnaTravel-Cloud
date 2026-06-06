@@ -34,6 +34,15 @@ public static class CatalogSaleUpsert
     {
         if (supplierId <= 0) return;
 
+        // ADR-017 F1.4 (cierre del pendiente F1.3, decision del dueño 1 "negativos invalidos"): un costo
+        // (neto o impuesto) NEGATIVO no tiene sentido de negocio (no existe una compra a valor negativo) y
+        // envenenaria LastNetCost para el proximo vendedor. El path de BookingService ya rechaza negativos
+        // antes (EnsureNonNegativeCost -> 400), pero QuoteService.ConvertToFileAsync NO valida los costos de
+        // los items del presupuesto. Como este es el UNICO escritor de RateSupplierSale, lo blindamos aca:
+        // un negativo se saltea silenciosamente (la conversion ya quedo commiteada; la reconciliacion R7
+        // detecta el faltante). El 0 SI es valido y se upsertea normal.
+        if (unit.UnitNetCost < 0m || unit.UnitTax < 0m) return;
+
         var soldAtUtc = DateTime.SpecifyKind(soldAt, DateTimeKind.Utc);
 
         if (!db.Database.IsRelational())

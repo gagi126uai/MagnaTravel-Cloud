@@ -28,6 +28,12 @@ public class HotelBookingDto
     /// Null = legacy / no informado. NO se usa todavia en calculos de saldo.
     /// </summary>
     public string? Currency { get; set; }
+    /// <summary>
+    /// ADR-017 F1.4 (§2.5): fecha limite de seña/pago al operador (date-only, null = sin fecha). Se expone
+    /// para que la fila/ficha pinte la etiqueta de vencimiento en F2; el dato debe viajar aunque todavia no
+    /// haya UI. NO es un dato de costo.
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
     /// <summary>"TariffAtBookingTime" if a Rate was applied; "Manual" otherwise.</summary>
     public string SnapshotSource { get; set; } = "Manual";
     public string SourceKind { get; set; } = "Hotel";

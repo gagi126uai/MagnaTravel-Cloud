@@ -528,6 +528,16 @@ public class OperationalFinanceSettings
     /// </summary>
     public int StaleCostReferenceDays { get; set; } = 60;
 
+    /// <summary>
+    /// ADR-017 F1.4 (§2.5/§2.6, 2026-06-06): ventana en DIAS dentro de la cual una fecha limite de
+    /// servicio (seña/pago al operador, emision de ticket) entra al bucket de alertas <c>ServiceDeadlines</c>.
+    /// Un deadline se avisa cuando <c>deadline &lt;= hoy + ServiceDeadlineAlertDays</c> (los ya vencidos
+    /// tambien se avisan, con <c>isOverdue=true</c>). Default 7 (mismo orden que
+    /// <see cref="UpcomingUnpaidReservationAlertDays"/>). Solo importa con el flag
+    /// <see cref="EnableServiceDeadlineAlerts"/> ON; editable desde el panel admin.
+    /// </summary>
+    public int ServiceDeadlineAlertDays { get; set; } = 7;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

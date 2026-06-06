@@ -8,7 +8,12 @@ namespace TravelApi.Application.Interfaces;
 /// </summary>
 /// <param name="UserId">Id del usuario (claim NameIdentifier). Puede ser null si el token no lo trae.</param>
 /// <param name="IsAdmin">True si el caller tiene el rol "Admin".</param>
-public sealed record AlertCallerContext(string? UserId, bool IsAdmin);
+/// <param name="CanSeeCost">
+/// ADR-017 F1.4 (§2.8/D8b): true si el caller puede ver costos (rol Admin o permiso
+/// <c>cobranzas.see_cost</c>). Gatea el bucket <c>CostsToConfirm</c> server-side. Default false
+/// (fail-closed): los callers/tests que no lo seteen quedan sin ver el bucket de costos.
+/// </param>
+public sealed record AlertCallerContext(string? UserId, bool IsAdmin, bool CanSeeCost = false);
 
 public interface IAlertService
 {

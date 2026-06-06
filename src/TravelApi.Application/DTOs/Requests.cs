@@ -50,7 +50,11 @@ public record CreateFlightRequest(
     // ignora a proposito: la asigna el service segun el flag (ver MappingProfile).
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
-    NewCatalogProductRequest? NewCatalogProduct = null
+    NewCatalogProductRequest? NewCatalogProduct = null,
+    // ADR-017 F1.4 (§2.2/§2.6): fecha limite de EMISION del ticket, opcional. La API la acepta y persiste
+    // aun con el flag OFF (precedente Currency traceability); sin UI que la cargue no cambia nada observable.
+    // El map la IGNORA (ver MappingProfile) y la asigna el service normalizada a medianoche Kind=Utc.
+    DateTime? TicketingDeadline = null
 );
 
 public record UpdateFlightRequest(
@@ -88,7 +92,10 @@ public record CreateHotelRequest(
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
     // Para Hotel exige City (D6).
-    NewCatalogProductRequest? NewCatalogProduct = null
+    NewCatalogProductRequest? NewCatalogProduct = null,
+    // ADR-017 F1.4 (§2.2/§2.6): fecha limite de seña/pago al operador, opcional. La API la acepta y
+    // persiste aun con el flag OFF; el map la IGNORA y la asigna el service normalizada a medianoche Kind=Utc.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record UpdateHotelRequest(
@@ -192,7 +199,10 @@ public record CreatePackageRequest(
     // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta. Obligatoria con flag ON, ignorada con OFF.
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
-    NewCatalogProductRequest? NewCatalogProduct = null
+    NewCatalogProductRequest? NewCatalogProduct = null,
+    // ADR-017 F1.4 (§2.2/§2.6): fecha limite de seña/pago al operador, opcional. La API la acepta y
+    // persiste aun con el flag OFF; el map la IGNORA y la asigna el service normalizada a medianoche Kind=Utc.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record UpdatePackageRequest(

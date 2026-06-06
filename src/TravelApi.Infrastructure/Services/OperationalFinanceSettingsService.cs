@@ -118,6 +118,12 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
         {
             entity.StaleCostReferenceDays = request.StaleCostReferenceDays.Value;
         }
+        // ADR-017 F1.4: ventana de las alertas de fechas limite. Clamp 1..60 igual que
+        // UpcomingUnpaidReservationAlertDays (defensa adicional al [Range] del DTO).
+        if (request.ServiceDeadlineAlertDays.HasValue)
+        {
+            entity.ServiceDeadlineAlertDays = Math.Clamp(request.ServiceDeadlineAlertDays.Value, 1, 60);
+        }
 
         entity.UpdatedAt = DateTime.UtcNow;
 
@@ -262,6 +268,8 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             EnableCatalogFindOrCreate = entity.EnableCatalogFindOrCreate,
             EnableServiceDeadlineAlerts = entity.EnableServiceDeadlineAlerts,
             StaleCostReferenceDays = entity.StaleCostReferenceDays,
+            // ADR-017 F1.4: el GET expone la ventana de alertas para que el panel la muestre/edite.
+            ServiceDeadlineAlertDays = entity.ServiceDeadlineAlertDays,
         };
     }
 }

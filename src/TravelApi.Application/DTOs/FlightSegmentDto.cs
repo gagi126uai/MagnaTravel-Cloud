@@ -41,6 +41,11 @@ public class FlightSegmentDto
     /// Null = legacy / no informado. NO se usa todavia en calculos de saldo.
     /// </summary>
     public string? Currency { get; set; }
+    /// <summary>
+    /// ADR-017 F1.4 (§2.5): fecha limite de EMISION del ticket (date-only, null = sin fecha). Se expone para
+    /// que la fila/ficha pinte la etiqueta de vencimiento en F2. NO es un dato de costo.
+    /// </summary>
+    public DateTime? TicketingDeadline { get; set; }
     public bool IsPriceSynced { get; set; } = true;
     public string SourceKind { get; set; } = "Flight";
     public string WorkflowStatus { get; set; } = "Solicitado";

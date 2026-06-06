@@ -177,4 +177,16 @@ public class OperationalFinanceSettingsDto
     /// </summary>
     [Range(1, 3650, ErrorMessage = "StaleCostReferenceDays debe estar entre 1 y 3650.")]
     public int? StaleCostReferenceDays { get; set; }
+
+    /// <summary>
+    /// ADR-017 F1.4 (§2.5, 2026-06-06): ventana en DIAS de las alertas de fechas limite de servicio.
+    /// Editable desde el panel admin. Solo tiene efecto observable con <see cref="EnableServiceDeadlineAlerts"/>
+    /// ON (el bucket de alertas es F3).
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor actual.
+    /// Rango razonable 1..60 (mismo que <c>UpcomingUnpaidReservationAlertDays</c>); el [Range] solo se evalua
+    /// si viene valor.</para>
+    /// </summary>
+    [Range(1, 60, ErrorMessage = "ServiceDeadlineAlertDays debe estar entre 1 y 60.")]
+    public int? ServiceDeadlineAlertDays { get; set; }
 }

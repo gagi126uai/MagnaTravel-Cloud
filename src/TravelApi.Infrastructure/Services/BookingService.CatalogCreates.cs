@@ -102,6 +102,8 @@ public partial class BookingService
             hotel.ReservaId = reservaId;
             hotel.SupplierId = supplierId;
             hotel.Currency = currency;
+            // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
+            hotel.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
             var divisor = CatalogUnitization.HotelDivisor(hotel.Nights, hotel.Rooms);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -197,6 +199,8 @@ public partial class BookingService
             flight.Currency = currency;
             flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
             flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
+            // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
+            flight.TicketingDeadline = NormalizeDeadlineDate(req.TicketingDeadline);
 
             var divisor = CatalogUnitization.FlightDivisor(flight.PassengerCount ?? 1);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -330,6 +334,8 @@ public partial class BookingService
             package.ReservaId = reservaId;
             package.SupplierId = supplierId;
             package.Currency = currency;
+            // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
+            package.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
             var divisor = CatalogUnitization.PackageDivisor(package.Adults, package.Children);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(

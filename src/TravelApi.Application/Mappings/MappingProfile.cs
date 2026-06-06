@@ -63,6 +63,10 @@ public class MappingProfile : Profile
             // del tarifario (byte-identico a hoy); con flag ON la asigna el service desde el request
             // (regla "request manda"). Sin este Ignore, el campo nuevo del request cambiaria el OFF.
             .ForMember(dest => dest.Currency, opt => opt.Ignore())
+            // ADR-017 F1.4 (§2.2): el deadline lo asigna el service NORMALIZADO a medianoche Kind=Utc
+            // (NormalizeDeadlineDate). Si se mapeara por convencion entraria con Kind=Unspecified y Npgsql
+            // rebotaria al escribir en la columna timestamp with time zone.
+            .ForMember(dest => dest.TicketingDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
             
         // Fuga 3 (ADR-017 §2.7, F1b): NetCost/Tax/Commission NO se mapean automaticamente
@@ -99,6 +103,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
             // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
             .ForMember(dest => dest.Currency, opt => opt.Ignore())
+            // ADR-017 F1.4 (§2.2): el deadline lo asigna el service normalizado a medianoche Kind=Utc. Ver Flight.
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
@@ -153,6 +159,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
             // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
             .ForMember(dest => dest.Currency, opt => opt.Ignore())
+            // ADR-017 F1.4 (§2.2): el deadline lo asigna el service normalizado a medianoche Kind=Utc. Ver Flight.
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
             

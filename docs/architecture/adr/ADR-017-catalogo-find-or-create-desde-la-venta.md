@@ -397,6 +397,8 @@ Settings nuevos (no flags, `int` editables en panel admin): `ServiceDeadlineAler
 
 Dos flags y no uno: las fechas límite son independientes del find-or-create y pueden prenderse antes (riesgo mucho menor). Evita acoplar el rollout.
 
+**N1 — el bucket `CostsToConfirm` cuelga del flag del catálogo, NO del de deadlines (decisión del dueño, 2026-06-06).** La marca "costo a confirmar" (D7) solo la produce el path catálogo (§2.3.b.3-bis), así que el bucket `CostsToConfirm` en `/alerts` se activa con `EnableCatalogFindOrCreate` (además del permiso `cobranzas.see_cost`, §2.8/D8b), **no** con `EnableServiceDeadlineAlerts`. Consecuencia operativa: al prender el catálogo, a los callers con `cobranzas.see_cost` les empieza a aparecer `costsToConfirm` en `/alerts` aunque `EnableServiceDeadlineAlerts` siga OFF (y `serviceDeadlines` ausente). Con ambos flags en su default `false` el endpoint sigue byte-idéntico (objeto histórico de 3 claves camelCase). El casing del contrato es camelCase en todos los paths (DTO tipado `AlertsResponse`, no `Dictionary<string,object>`).
+
 ### 2.7 Tapar las fugas preexistentes: costos en tarifario (D3) + `/alerts` sin gating (M-R2-1) + update que destruye el costo (round 3) — fase F1b, sin flag
 
 Verificado: `GET /api/rates/search` (RatesController.cs:84-97 → `SearchAsync`, RateService.cs:318-356) devuelve `NetCost` y `Tax` a cualquier usuario logueado. La ficha nueva NO consume ese endpoint (usa `catalog-search`, que nace enmascarado), pero la fuga existe HOY con el RateSelector actual y el dueño ordenó taparla.
