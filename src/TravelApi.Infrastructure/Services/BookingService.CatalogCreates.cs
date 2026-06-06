@@ -153,6 +153,9 @@ public partial class BookingService
             await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, hotel.CreatedAt, ct);
 
             var dto = _mapper.Map<HotelBookingDto>(hotel);
+            // Pill "creado en esta venta": el rate vinculado ya esta en memoria (recien creado o existente),
+            // se usa directo en vez de re-consultar dentro de la transaccion Serializable.
+            dto.ProductCreatedInSale = rate?.CreatedInSale ?? false;
             await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -251,6 +254,8 @@ public partial class BookingService
             await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, flight.CreatedAt, ct);
 
             var dto = _mapper.Map<FlightSegmentDto>(flight);
+            // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
+            dto.ProductCreatedInSale = rate?.CreatedInSale ?? false;
             await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -323,6 +328,8 @@ public partial class BookingService
             await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, transfer.CreatedAt, ct);
 
             var dto = _mapper.Map<TransferBookingDto>(transfer);
+            // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
+            dto.ProductCreatedInSale = rate?.CreatedInSale ?? false;
             await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -390,6 +397,8 @@ public partial class BookingService
             await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, package.CreatedAt, ct);
 
             var dto = _mapper.Map<PackageBookingDto>(package);
+            // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
+            dto.ProductCreatedInSale = rate?.CreatedInSale ?? false;
             await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -457,6 +466,8 @@ public partial class BookingService
             await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, assistance.CreatedAt, ct);
 
             var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+            // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
+            dto.ProductCreatedInSale = rate?.CreatedInSale ?? false;
             await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);

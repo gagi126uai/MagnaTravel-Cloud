@@ -64,6 +64,10 @@ public static class CostMasking
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
         dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
+        // ADR-017 (decision del dueño, guia UX linea 81): quien no ve costos tampoco ve MARCAS de costo.
+        // La pill "costo a confirmar" revela que el costo es dudoso/desconocido -> se oculta como false.
+        // ProductCreatedInSale NO se enmascara: no es dato de costo, lo ven todos.
+        dto.CostToConfirm = false;
         // HotelBookingDto no expone Commission al frontend (verificado 2026-05-09).
         // Si en el futuro se agrega, enmascarar aca tambien.
     }
@@ -87,6 +91,7 @@ public static class CostMasking
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
         dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
+        dto.CostToConfirm = false; // Marca de costo: se oculta igual que en Hotel (ver MaskHotelAsync).
     }
 
     /// <summary>
@@ -103,6 +108,7 @@ public static class CostMasking
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
         dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
+        dto.CostToConfirm = false; // Marca de costo: se oculta igual que en Hotel (ver MaskHotelAsync).
     }
 
     /// <summary>
@@ -119,6 +125,7 @@ public static class CostMasking
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
         dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
+        dto.CostToConfirm = false; // Marca de costo: se oculta igual que en Hotel (ver MaskHotelAsync).
     }
 
     /// <summary>
@@ -136,6 +143,7 @@ public static class CostMasking
         if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
         dto.NetCost = 0m;
         dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
+        dto.CostToConfirm = false; // Marca de costo: se oculta igual que en Hotel (ver MaskHotelAsync).
     }
 
     /// <summary>

@@ -418,6 +418,7 @@ export default function ReservaDetailPage() {
     handleStatusChange,
     handleDeleteService,
     handleDeletePassenger,
+    handleServiceUpdated,
     allServices,
     capacity,
   } = useReservaDetail(publicId, navigate);
@@ -695,6 +696,18 @@ export default function ReservaDetailPage() {
               <ServiceList
                 services={allServices}
                 serviceCollectionErrors={serviceCollectionErrors}
+                reservaId={publicId}
+                isCatalogFindOrCreateEnabled={isCatalogFindOrCreateEnabled}
+                onServiceConfirmed={(servicioActualizado, recordKind) => {
+                  // El DTO devuelto por confirm-cost no trae recordKind (lo agrega el front al normalizar).
+                  // ServiceList lo pasa como segundo argumento para saber en qué colección hacer el upsert.
+                  if (recordKind) {
+                    handleServiceUpdated(servicioActualizado, recordKind);
+                  } else {
+                    // Fallback defensivo: si no viene recordKind, recargamos silencioso
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                  }
+                }}
                 onAddService={() => {
                   if (isCatalogFindOrCreateEnabled) {
                     // Ficha en línea (ADR-017): se abre debajo de la lista, sin modal

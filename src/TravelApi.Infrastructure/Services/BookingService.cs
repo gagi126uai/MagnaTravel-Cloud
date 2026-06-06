@@ -320,7 +320,8 @@ public partial class BookingService : IBookingService
         // CanSeeCost se evalua una sola vez (mismo caller para toda la lista).
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
+            // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
         return dtos;
     }
@@ -341,6 +342,7 @@ public partial class BookingService : IBookingService
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
         var dto = _mapper.Map<FlightSegmentDto>(flight);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
         await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
     }
@@ -396,6 +398,23 @@ public partial class BookingService : IBookingService
         => deadline.HasValue
             ? DateTime.SpecifyKind(deadline.Value.Date, DateTimeKind.Utc)
             : (DateTime?)null;
+
+    /// <summary>
+    /// ADR-017 (pill violeta "creado en esta venta"): resuelve si el producto del tarifario vinculado al
+    /// servicio nacio inline durante una venta (<see cref="Rate.CreatedInSale"/>).
+    ///
+    /// POR QUE existe: los paths de entidad suelta (byId/create/update/status) cargan el booking con
+    /// <c>FindAsync</c>, que NO trae la nav Rate -> el MapFrom del MappingProfile (que mira <c>src.Rate</c>)
+    /// daria false aunque el valor real sea true. Esta query puntual por PK es la fuente confiable.
+    /// Los listados NO la necesitan: usan ProjectTo, que joinea la nav en SQL.
+    /// NO es dato de costo: el resultado lo ven todos (no se enmascara).
+    /// </summary>
+    private async Task<bool> ResolveProductCreatedInSaleAsync(int? rateId, CancellationToken ct)
+    {
+        if (!rateId.HasValue) return false;
+        return await _db.Set<Rate>().AsNoTracking()
+            .AnyAsync(r => r.Id == rateId.Value && r.CreatedInSale, ct);
+    }
 
     public async Task<FlightSegmentDto> CreateFlightAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
     {
@@ -464,6 +483,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<FlightSegmentDto>(flight);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
         // B1.15: el response de POST exponia el costo del proveedor a usuarios sin
         // permiso. Enmascaramos NetCost igual que Hotel.
         await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
@@ -561,6 +581,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<FlightSegmentDto>(flight);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
         // B1.15: el response de PUT exponia el costo del proveedor a usuarios sin
         // permiso. Enmascaramos NetCost igual que Hotel.
         await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
@@ -614,7 +635,8 @@ public partial class BookingService : IBookingService
         // usuario logueado. Enmascaramos para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
+            // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
         return dtos;
     }
@@ -632,6 +654,7 @@ public partial class BookingService : IBookingService
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
         var dto = _mapper.Map<HotelBookingDto>(hotel);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
         // B1.15: el byId tambien exponia NetCost sin enmascarar. Lo alineamos con
         // Create/Update que ya enmascaraban.
         await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
@@ -692,6 +715,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<HotelBookingDto>(hotel);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
         // B1.15 Fase 0.2: enmascarar NetCost si el caller no tiene cobranzas.see_cost.
         // Antes el response de POST exponia el costo del proveedor a usuarios sin permiso.
         await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
@@ -798,6 +822,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<HotelBookingDto>(hotel);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
         // B1.15 Fase 0.2: enmascarar NetCost si el caller no tiene cobranzas.see_cost.
         // Antes el response de PUT exponia el costo del proveedor a usuarios sin permiso.
         await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
@@ -850,7 +875,8 @@ public partial class BookingService : IBookingService
         // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
+            // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
         return dtos;
     }
@@ -869,6 +895,7 @@ public partial class BookingService : IBookingService
         if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
         var dto = _mapper.Map<PackageBookingDto>(package);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
         await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
     }
@@ -928,6 +955,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<PackageBookingDto>(package);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
         // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
         await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1004,6 +1032,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<PackageBookingDto>(package);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
         // B1.15: enmascarar NetCost en el response de PUT (igual que Hotel).
         await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1055,7 +1084,8 @@ public partial class BookingService : IBookingService
         // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
+            // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
         return dtos;
     }
@@ -1074,6 +1104,7 @@ public partial class BookingService : IBookingService
         if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
         var dto = _mapper.Map<TransferBookingDto>(transfer);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
         await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
     }
@@ -1142,6 +1173,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<TransferBookingDto>(transfer);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
         // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
         await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1225,6 +1257,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<TransferBookingDto>(transfer);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
         // B1.15: enmascarar NetCost en el response de PUT (igual que Hotel).
         await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1310,7 +1343,8 @@ public partial class BookingService : IBookingService
         // Seguridad B1.15: enmascaramos NetCost para quien no tiene cobranzas.see_cost.
         if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
         {
-            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; }
+            // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
+            foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
         return dtos;
     }
@@ -1329,6 +1363,7 @@ public partial class BookingService : IBookingService
         if (assistance == null || assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada");
 
         var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);
         await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
     }
@@ -1381,6 +1416,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);
         // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
         await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1457,6 +1493,7 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
 
         var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);
         // B1.15: enmascarar NetCost en el response de PUT (igual que Hotel).
         await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1517,6 +1554,7 @@ public partial class BookingService : IBookingService
         await _hotelRepo.UpdateAsync(hotel, ct);
         if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         var dto = _mapper.Map<HotelBookingDto>(hotel);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
         // Mismo enmascarado de NetCost que Create/Update: si el caller no es Admin
         // y no tiene cobranzas.see_cost, el costo neto vuelve en 0. El PATCH /status
         // lo consume la cuenta corriente del proveedor, donde un vendedor sin permiso
@@ -1548,6 +1586,7 @@ public partial class BookingService : IBookingService
         await _transferRepo.UpdateAsync(transfer, ct);
         if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         var dto = _mapper.Map<TransferBookingDto>(transfer);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
         await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1576,6 +1615,7 @@ public partial class BookingService : IBookingService
         await _packageRepo.UpdateAsync(package, ct);
         if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         var dto = _mapper.Map<PackageBookingDto>(package);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
         await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1607,6 +1647,7 @@ public partial class BookingService : IBookingService
         await _flightRepo.UpdateAsync(flight, ct);
         if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         var dto = _mapper.Map<FlightSegmentDto>(flight);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
         await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
@@ -1635,6 +1676,7 @@ public partial class BookingService : IBookingService
         await _assistanceRepo.UpdateAsync(assistance, ct);
         if (assistance.SupplierId > 0) await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
         var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
         await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;

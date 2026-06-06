@@ -1,10 +1,29 @@
-import React from 'react';
+/**
+ * Lista de servicios contratados de una reserva.
+ *
+ * Muestra los servicios en dos layouts:
+ *   - Desktop: tabla con columnas (Tipo, Descripción, Fecha/Estancia, Estado, Costo, Precio Venta, [Avisos], Acciones)
+ *   - Mobile: tarjetas apiladas con la información clave
+ *
+ * Feature gateada por flag EnableCatalogFindOrCreate:
+ *   - Flag OFF: render IDÉNTICO al anterior (ni una clase distinta, ni el gate de permisos cambia)
+ *   - Flag ON: agrega columna "Avisos" (deadline), pill violeta "creado en venta",
+ *              pill ámbar "A confirmar" y botón "Confirmar costo" (este último solo para cobranzas.see_cost)
+ *
+ * El gate de costo (quién ve el costo neto) cambia según el flag:
+ *   - Flag OFF: isAdmin() (comportamiento original)
+ *   - Flag ON:  hasPermission("cobranzas.see_cost") (admin sigue pasando porque admin tiene todo)
+ */
+
+import React, { useCallback } from 'react';
 import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2 } from "lucide-react";
-import { isAdmin } from "../../../auth";
+import { isAdmin, hasPermission } from "../../../auth";
 import {
     SERVICE_RECORD_KIND,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
+import { DeadlinePill } from "./DeadlinePill";
+import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
 
 /**
  * Icono representativo del tipo de servicio en la lista.
@@ -28,9 +47,85 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
     return <Package className={`${className} text-violet-500`} />;
 }
 
-export function ServiceList({ services, serviceCollectionErrors = {}, onAddService, onEditService, onDeleteService }) {
-    const admin = isAdmin();
+/**
+ * Pill violeta que indica que el producto fue creado durante la venta
+ * (es un producto nuevo en el catálogo, no uno preexistente).
+ *
+ * Solo visible con flag ON. La ven todos (no requiere permiso especial).
+ * La condición: productCreatedInSale === true en el DTO del servicio.
+ */
+function PillCreadoEnVenta({ service }) {
+    if (!service.productCreatedInSale) return null;
+
+    // Texto varía por tipo: "Asistencia creada en venta" (femenino) vs el resto "creado en venta"
+    const textosPorTipo = {
+        [SERVICE_RECORD_KIND.HOTEL]: "Hotel creado en venta",
+        [SERVICE_RECORD_KIND.FLIGHT]: "Aéreo creado en venta",
+        [SERVICE_RECORD_KIND.TRANSFER]: "Traslado creado en venta",
+        [SERVICE_RECORD_KIND.PACKAGE]: "Paquete creado en venta",
+        [SERVICE_RECORD_KIND.ASSISTANCE]: "Asistencia creada en venta",
+    };
+
+    const texto = textosPorTipo[service.recordKind];
+    if (!texto) return null;
+
+    return (
+        <span
+            className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+            data-testid="pill-created-in-sale"
+        >
+            {texto}
+        </span>
+    );
+}
+
+/**
+ * Props:
+ *   services                    — lista de servicios normalizados
+ *   serviceCollectionErrors     — objeto { tipoKey: mensajeError } para mostrar errores de carga
+ *   onAddService                — callback para agregar un servicio nuevo
+ *   onEditService               — callback(service) para editar un servicio existente
+ *   onDeleteService             — callback(service) para eliminar un servicio
+ *   reservaId                   — publicId de la reserva (necesario para los endpoints confirm-cost)
+ *   isCatalogFindOrCreateEnabled — flag del servidor; cuando es false, el render es IDÉNTICO al original
+ *   onServiceConfirmed          — callback(servicioActualizado) cuando confirm-cost tiene éxito;
+ *                                  el padre actualiza el estado de la reserva con el DTO devuelto
+ */
+export function ServiceList({
+    services,
+    serviceCollectionErrors = {},
+    onAddService,
+    onEditService,
+    onDeleteService,
+    reservaId,
+    isCatalogFindOrCreateEnabled = false,
+    onServiceConfirmed,
+}) {
+    // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
+    // Con flag ON se usa hasPermission("cobranzas.see_cost") — admin pasa igual (bypass en hasPermission).
+    const mostrarCosto = isCatalogFindOrCreateEnabled
+        ? hasPermission("cobranzas.see_cost")
+        : isAdmin();
+
+    // Solo quien ve costos Y tiene flag ON puede interactuar con confirm-cost.
+    const puedeConfirmarCosto = isCatalogFindOrCreateEnabled && mostrarCosto;
+
     const collectionErrorMessages = Object.values(serviceCollectionErrors).filter(Boolean);
+
+    /**
+     * Fábrica de callbacks confirm-cost por servicio.
+     * El DTO que devuelve el backend NO tiene recordKind (lo agrega el frontend al normalizar).
+     * Por eso necesitamos pasarle el recordKind original del servicio al padre para que
+     * pueda hacer el upsert en la colección correcta del snapshot de la reserva.
+     */
+    const crearCallbackConfirmado = useCallback((recordKind) => {
+        return (servicioActualizado) => {
+            if (onServiceConfirmed) {
+                // Pasamos el recordKind junto al DTO para que el padre sepa en qué colección insertar
+                onServiceConfirmed(servicioActualizado, recordKind);
+            }
+        };
+    }, [onServiceConfirmed]);
 
     return (
         <div>
@@ -74,8 +169,12 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Descripción</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha / Estancia</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
-                                    {admin && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Costo Neto</th>}
+                                    {mostrarCosto && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Costo Neto</th>}
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Precio Venta</th>
+                                    {/* Columna Avisos: solo existe con flag ON. Con flag OFF ni el th se renderiza. */}
+                                    {isCatalogFindOrCreateEnabled && (
+                                        <th className="pb-3 text-xs uppercase text-slate-400 font-medium pr-4">Avisos</th>
+                                    )}
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Acciones</th>
                                 </tr>
                             </thead>
@@ -102,6 +201,10 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                             <td className="py-4 align-middle">
                                                 <div className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-1">{svc.name}</div>
                                                 <div className="flex flex-wrap gap-2 mt-1">
+                                                    {/* Pill violeta "creado en venta": solo con flag ON, la ven todos */}
+                                                    {isCatalogFindOrCreateEnabled && (
+                                                        <PillCreadoEnVenta service={svc} />
+                                                    )}
                                                     {svc.pnr && (
                                                         <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded font-mono font-bold">PNR: {svc.pnr}</span>
                                                     )}
@@ -148,21 +251,45 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap">
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                                                    svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 
+                                                    svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
                                                     svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
                                                     'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
                                                 }`}>
                                                     {svc.workflowStatus || 'Solicitado'}
                                                 </span>
                                             </td>
-                                            {admin && (
+
+                                            {/* Celda de costo: dos ramas completamente separadas para garantizar
+                                                que flag OFF = markup IDÉNTICO al de HEAD (sin diferencia de clase ni de elemento).
+                                                - Rama flag ON + see_cost + tipo específico: td con align-top y CostConfirmCell
+                                                - Rama genérica/flag OFF: td EXACTAMENTE igual al td original de HEAD */}
+                                            {mostrarCosto && puedeConfirmarCosto && !isGeneric ? (
+                                                // Flag ON + see_cost + tipo específico: celda con pill y botón de confirmación
+                                                <td className="py-4 align-top text-right pr-4">
+                                                    <CostConfirmCell
+                                                        service={svc}
+                                                        reservaId={reservaId}
+                                                        onConfirmado={crearCallbackConfirmado(svc.recordKind)}
+                                                    />
+                                                </td>
+                                            ) : mostrarCosto ? (
+                                                // Flag OFF o genérico: td IDÉNTICO al HEAD (align-middle, sin span extra)
                                                 <td className="py-4 align-middle text-right text-xs text-slate-500 font-mono pr-4">
                                                     ${netCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                 </td>
-                                            )}
+                                            ) : null}
+
                                             <td className="py-4 align-middle text-right text-xs font-bold text-slate-900 dark:text-white font-mono pr-4">
                                                 ${(svc.salePrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                             </td>
+
+                                            {/* Columna Avisos: solo con flag ON. Traslado/Asistencia/Genérico muestran "—" */}
+                                            {isCatalogFindOrCreateEnabled && (
+                                                <td className="py-4 align-middle pr-4 whitespace-nowrap">
+                                                    <DeadlinePill service={svc} mostrarGuion={true} />
+                                                </td>
+                                            )}
+
                                             <td className="py-4 align-middle text-right pr-4">
                                                 <div className="flex justify-end gap-1 transition-opacity">
                                                     <button onClick={() => onEditService(svc)} className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
@@ -188,6 +315,18 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                             const displayType = svc.displayType || svc._type || 'Servicio';
                             const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
 
+                            // Pills de avisos para mobile: violeta + deadline (si alguna aplica)
+                            // Solo con flag ON; sin deadline no hay "—" en mobile (solo omitimos)
+                            const tienePillCreadoEnVenta = isCatalogFindOrCreateEnabled && svc.productCreatedInSale;
+                            // Decidimos si hay una deadline para mostrar en mobile (misma lógica que DeadlinePill)
+                            const esHotelOPaquete = svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE;
+                            const tieneDeadlineHotelOPaquete = esHotelOPaquete && Boolean(svc.operatorPaymentDeadline);
+                            const tieneDeadlineVuelo = svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && Boolean(svc.ticketingDeadline);
+                            const tieneDeadlineMobile = isCatalogFindOrCreateEnabled &&
+                                svc.workflowStatus !== "Cancelado" &&
+                                (tieneDeadlineHotelOPaquete || tieneDeadlineVuelo);
+                            const mostrarLineaPills = tienePillCreadoEnVenta || tieneDeadlineMobile;
+
                             return (
                                 <div key={serviceKey} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
                                     <div className="flex justify-between mb-2">
@@ -201,7 +340,7 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                             )}
                                         </div>
                                         <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
-                                            svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' : 
+                                            svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' :
                                             svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30' :
                                             'bg-amber-100 text-amber-700 dark:bg-amber-900/30'
                                         }`}>
@@ -209,6 +348,15 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                         </span>
                                     </div>
                                     <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>
+
+                                    {/* Línea de pills (violeta + deadline): solo si hay al menos una pill */}
+                                    {mostrarLineaPills && (
+                                        <div className="flex flex-wrap gap-2 mt-1 mb-1">
+                                            {tienePillCreadoEnVenta && <PillCreadoEnVenta service={svc} />}
+                                            {tieneDeadlineMobile && <DeadlinePill service={svc} mostrarGuion={false} />}
+                                        </div>
+                                    )}
+
                                     <div className="flex justify-between items-end">
                                         <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
                                             <span>
@@ -222,7 +370,20 @@ export function ServiceList({ services, serviceCollectionErrors = {}, onAddServi
                                             </span>
                                             <div className="flex gap-2 items-center mt-1">
                                                 <span className="font-bold text-slate-900 dark:text-white">Venta: ${(svc.salePrice || 0).toLocaleString()}</span>
-                                                {admin && <span className="text-[9px] opacity-70">Costo: ${netCost.toLocaleString()}</span>}
+                                                {/* Costo en mobile: gateado igual que en desktop */}
+                                                {mostrarCosto && (
+                                                    puedeConfirmarCosto && !isGeneric ? (
+                                                        // Con flag ON + see_cost: celda interactiva
+                                                        <CostConfirmCellMobile
+                                                            service={svc}
+                                                            reservaId={reservaId}
+                                                            onConfirmado={crearCallbackConfirmado(svc.recordKind)}
+                                                        />
+                                                    ) : (
+                                                        // Sin flag o sin permiso: número simple
+                                                        <span className="text-[9px] opacity-70">Costo: ${netCost.toLocaleString()}</span>
+                                                    )
+                                                )}
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2">

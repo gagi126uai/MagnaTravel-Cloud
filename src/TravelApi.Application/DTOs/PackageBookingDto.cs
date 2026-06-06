@@ -47,6 +47,16 @@ public class PackageBookingDto
     /// para que la fila/ficha pinte la etiqueta de vencimiento en F2. NO es un dato de costo.
     /// </summary>
     public DateTime? OperatorPaymentDeadline { get; set; }
+    /// <summary>
+    /// ADR-017 (pill ambar "costo a confirmar", D7). Marca de costo: se enmascara a false para callers
+    /// sin cobranzas.see_cost (ver comentario completo en <see cref="HotelBookingDto.CostToConfirm"/>).
+    /// </summary>
+    public bool CostToConfirm { get; set; }
+    /// <summary>
+    /// ADR-017 (pill violeta "creado en esta venta"): Rate.CreatedInSale del producto vinculado.
+    /// NO es dato de costo, lo ven todos (ver <see cref="HotelBookingDto.ProductCreatedInSale"/>).
+    /// </summary>
+    public bool ProductCreatedInSale { get; set; }
     public bool IsPriceSynced { get; set; } = true;
     public string SourceKind { get; set; } = "Package";
     public string WorkflowStatus { get; set; } = "Solicitado";

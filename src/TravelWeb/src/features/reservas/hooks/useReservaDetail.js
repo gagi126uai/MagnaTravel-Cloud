@@ -23,6 +23,43 @@ const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
     assistanceBookings: (reservaId) => `/reservas/${reservaId}/assistances`,
 });
 
+/**
+ * Reemplaza un servicio en el snapshot local de la reserva sin hacer fetch.
+ * Usado por confirm-cost: el backend devuelve el DTO actualizado y lo insertamos
+ * directamente en la colección correcta (por recordKind), manteniendo el orden.
+ *
+ * Si el servicio no se encuentra en la colección (caso raro), se hace un upsert al final.
+ */
+function upsertServiceInReservaSnapshot(reserva, servicioActualizado, recordKind) {
+    if (!reserva || !servicioActualizado) return reserva;
+
+    const collectionKey = getReservationCollectionKeyForRecordKind(recordKind);
+    if (!collectionKey || !Array.isArray(reserva[collectionKey])) return reserva;
+
+    const servicioId = String(
+        servicioActualizado.publicId ||
+        servicioActualizado.PublicId ||
+        servicioActualizado.id ||
+        servicioActualizado.Id ||
+        ""
+    );
+
+    const coleccionActual = reserva[collectionKey];
+    const existeEnColeccion = coleccionActual.some((item) => {
+        const itemId = String(item.publicId || item.PublicId || item.id || item.Id || "");
+        return itemId === servicioId;
+    });
+
+    const coleccionActualizada = existeEnColeccion
+        ? coleccionActual.map((item) => {
+            const itemId = String(item.publicId || item.PublicId || item.id || item.Id || "");
+            return itemId === servicioId ? servicioActualizado : item;
+        })
+        : [...coleccionActual, servicioActualizado];
+
+    return { ...reserva, [collectionKey]: coleccionActualizada };
+}
+
 function removeServiceFromReservaSnapshot(reserva, service) {
     if (!reserva || !service) {
         return reserva;
@@ -463,6 +500,63 @@ export function useReservaDetail(reservaId, navigate) {
         };
     }, [reserva]);
 
+    /**
+     * Reemplaza un servicio en el estado local de la reserva con el DTO actualizado
+     * devuelto por confirm-cost. No dispara un fetch; la UI se actualiza instantáneamente.
+     *
+     * También ajusta totalCost del snapshot para que la tarjeta "Inversión (Costo)"
+     * (ReservaSummaryStrip) muestre el total correcto sin necesidad de hacer un fetch.
+     * Solo ajusta el costo; salePrice y balance NO se tocan (confirm-cost no los modifica).
+     *
+     * Patrón copiado del path de inyección de fetchReserva (~:309-313), que ya hace
+     * el mismo cálculo de delta para evitar un totalizador desactualizado.
+     *
+     * @param {object} servicioActualizado — DTO devuelto por POST .../confirm-cost
+     * @param {string} recordKind — tipo del servicio ("hotel", "flight", etc.)
+     */
+    const handleServiceUpdated = useCallback((servicioActualizado, recordKind) => {
+        setReservaSnapshot((currentReserva) => {
+            // Buscar el servicio anterior en el snapshot usando los mismos fallbacks de id
+            // que usa upsertServiceInReservaSnapshot (publicId / PublicId / id / Id)
+            const collectionKey = getReservationCollectionKeyForRecordKind(recordKind);
+            const servicioId = String(
+                servicioActualizado.publicId ||
+                servicioActualizado.PublicId ||
+                servicioActualizado.id ||
+                servicioActualizado.Id ||
+                ""
+            );
+
+            const servicioViejo = collectionKey && Array.isArray(currentReserva?.[collectionKey])
+                ? currentReserva[collectionKey].find((item) => {
+                    const itemId = String(item.publicId || item.PublicId || item.id || item.Id || "");
+                    return itemId === servicioId;
+                })
+                : null;
+
+            // Hacer el upsert del servicio en la colección correspondiente
+            const reservaConServicioActualizado = upsertServiceInReservaSnapshot(
+                currentReserva,
+                servicioActualizado,
+                recordKind
+            );
+
+            // Si encontramos el servicio viejo, ajustamos totalCost por la diferencia.
+            // Si no lo encontramos (caso agregar), no tocamos el total: el comportamiento
+            // es el mismo que antes de este fix (sin ajuste).
+            if (!servicioViejo || !reservaConServicioActualizado) {
+                return reservaConServicioActualizado;
+            }
+
+            const deltaCosto = (servicioActualizado.netCost || 0) - (servicioViejo.netCost || 0);
+
+            return {
+                ...reservaConServicioActualizado,
+                totalCost: (reservaConServicioActualizado.totalCost || 0) + deltaCosto,
+            };
+        });
+    }, [setReservaSnapshot]);
+
     return {
         reserva,
         loading,
@@ -474,6 +568,7 @@ export function useReservaDetail(reservaId, navigate) {
         handleStatusChange,
         handleDeleteService,
         handleDeletePassenger,
+        handleServiceUpdated,
         allServices,
         capacity,
         // Backwards compat

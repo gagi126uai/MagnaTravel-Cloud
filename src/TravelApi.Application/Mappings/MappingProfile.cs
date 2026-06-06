@@ -54,6 +54,11 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
             .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
             .ForMember(dest => dest.WorkflowStatus, opt => opt.MapFrom(src => TravelApi.Domain.Entities.WorkflowStatusHelper.MapFlightStatus(src.Status)))
+            // ADR-017 (pill "creado en esta venta"): derivado de la nav Rate. SOLO es correcto cuando la nav
+            // viene cargada (los listados con ProjectTo la joinean solos en SQL). En los paths de entidad
+            // suelta (byId/create/update/status, cargados con FindAsync SIN nav) el BookingService lo
+            // re-resuelve con ResolveProductCreatedInSaleAsync. CostToConfirm mapea por convencion (mismo nombre).
+            .ForMember(dest => dest.ProductCreatedInSale, opt => opt.MapFrom(src => src.Rate != null && src.Rate.CreatedInSale))
             .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)));
             
         CreateMap<CreateFlightRequest, FlightSegment>()
@@ -100,6 +105,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
             .ForMember(dest => dest.WorkflowStatus, opt => opt.MapFrom(src => TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(src.Status)))
             .ForMember(dest => dest.SnapshotSource, opt => opt.MapFrom(src => src.RateId.HasValue ? "TariffAtBookingTime" : "Manual"))
+            // ADR-017 (pill "creado en esta venta"): ver nota en el map de FlightSegment de arriba.
+            .ForMember(dest => dest.ProductCreatedInSale, opt => opt.MapFrom(src => src.Rate != null && src.Rate.CreatedInSale))
             .ForMember(dest => dest.RoomingAssignments, opt => opt.MapFrom(src => src.RoomingAssignmentsJson));
 
 
@@ -133,6 +140,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
             .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
             .ForMember(dest => dest.WorkflowStatus, opt => opt.MapFrom(src => TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(src.Status)))
+            // ADR-017 (pill "creado en esta venta"): ver nota en el map de FlightSegment de arriba.
+            .ForMember(dest => dest.ProductCreatedInSale, opt => opt.MapFrom(src => src.Rate != null && src.Rate.CreatedInSale))
             .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)));
 
         CreateMap<CreateTransferRequest, TransferBooking>()
@@ -161,6 +170,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
             .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
             .ForMember(dest => dest.WorkflowStatus, opt => opt.MapFrom(src => TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(src.Status)))
+            // ADR-017 (pill "creado en esta venta"): ver nota en el map de FlightSegment de arriba.
+            .ForMember(dest => dest.ProductCreatedInSale, opt => opt.MapFrom(src => src.Rate != null && src.Rate.CreatedInSale))
             .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)));
             
         CreateMap<CreatePackageRequest, PackageBooking>()
@@ -197,6 +208,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : string.Empty))
             .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
             .ForMember(dest => dest.WorkflowStatus, opt => opt.MapFrom(src => TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(src.Status)))
+            // ADR-017 (pill "creado en esta venta"): ver nota en el map de FlightSegment de arriba.
+            .ForMember(dest => dest.ProductCreatedInSale, opt => opt.MapFrom(src => src.Rate != null && src.Rate.CreatedInSale))
             .ForMember(dest => dest.SnapshotSource, opt => opt.MapFrom(src => src.RateId.HasValue ? "TariffAtBookingTime" : "Manual"));
 
         CreateMap<CreateAssistanceRequest, AssistanceBooking>()

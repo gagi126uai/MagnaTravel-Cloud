@@ -1247,11 +1247,70 @@ public class ReservaService : IReservaService
         dto.SuggestedStartDate = suggestedStart;
         dto.SuggestedEndDate = suggestedEnd;
 
+        // ADR-017 (pill "creado en esta venta"): el detalle NO incluye la nav Rate de los servicios
+        // (a proposito: incluirla cambiaria campos preexistentes como RatePublicId/IsPriceSynced en
+        // este response). Se resuelve aparte con UNA query batcheada sobre los RateId cargados.
+        await StampProductCreatedInSaleAsync(file, dto, CancellationToken.None);
+
         // B1.15 Fase 2a (Decision 4): mascara de costos para roles sin
         // cobranzas.see_cost. Admin bypass.
         await ApplyCostMaskingAsync(dto, CancellationToken.None);
 
         return dto;
+    }
+
+    /// <summary>
+    /// ADR-017 (pill violeta "creado en esta venta"): marca en cada servicio tipado del detalle si su
+    /// producto del tarifario nacio inline durante una venta (<see cref="Rate.CreatedInSale"/>).
+    ///
+    /// COMO: junta los RateId de las 5 colecciones tipadas ya cargadas en la entidad, consulta UNA sola
+    /// vez cuales de esos rates tienen CreatedInSale=true, y estampa el flag en los DTOs matcheando por
+    /// PublicId (entidad y DTO comparten el PublicId). Sin servicios con rate, no consulta nada.
+    /// NO es dato de costo: se estampa para todos los callers (no se enmascara).
+    /// El servicio generico (ServicioReserva) queda afuera: esta excluido del catalogo (ADR-017 §2.3.c).
+    /// </summary>
+    private async Task StampProductCreatedInSaleAsync(Reserva file, ReservaDto dto, CancellationToken ct)
+    {
+        var rateIds = new HashSet<int>();
+        foreach (var h in file.HotelBookings) if (h.RateId.HasValue) rateIds.Add(h.RateId.Value);
+        foreach (var f in file.FlightSegments) if (f.RateId.HasValue) rateIds.Add(f.RateId.Value);
+        foreach (var t in file.TransferBookings) if (t.RateId.HasValue) rateIds.Add(t.RateId.Value);
+        foreach (var p in file.PackageBookings) if (p.RateId.HasValue) rateIds.Add(p.RateId.Value);
+        foreach (var a in file.AssistanceBookings) if (a.RateId.HasValue) rateIds.Add(a.RateId.Value);
+        if (rateIds.Count == 0) return;
+
+        var createdInSaleIds = (await _context.Rates
+            .AsNoTracking()
+            .Where(r => rateIds.Contains(r.Id) && r.CreatedInSale)
+            .Select(r => r.Id)
+            .ToListAsync(ct)).ToHashSet();
+        if (createdInSaleIds.Count == 0) return;
+
+        foreach (var itemDto in dto.HotelBookings)
+        {
+            var entity = file.HotelBookings.FirstOrDefault(h => h.PublicId == itemDto.PublicId);
+            itemDto.ProductCreatedInSale = entity?.RateId is int hotelRateId && createdInSaleIds.Contains(hotelRateId);
+        }
+        foreach (var itemDto in dto.FlightSegments)
+        {
+            var entity = file.FlightSegments.FirstOrDefault(f => f.PublicId == itemDto.PublicId);
+            itemDto.ProductCreatedInSale = entity?.RateId is int flightRateId && createdInSaleIds.Contains(flightRateId);
+        }
+        foreach (var itemDto in dto.TransferBookings)
+        {
+            var entity = file.TransferBookings.FirstOrDefault(t => t.PublicId == itemDto.PublicId);
+            itemDto.ProductCreatedInSale = entity?.RateId is int transferRateId && createdInSaleIds.Contains(transferRateId);
+        }
+        foreach (var itemDto in dto.PackageBookings)
+        {
+            var entity = file.PackageBookings.FirstOrDefault(p => p.PublicId == itemDto.PublicId);
+            itemDto.ProductCreatedInSale = entity?.RateId is int packageRateId && createdInSaleIds.Contains(packageRateId);
+        }
+        foreach (var itemDto in dto.AssistanceBookings)
+        {
+            var entity = file.AssistanceBookings.FirstOrDefault(a => a.PublicId == itemDto.PublicId);
+            itemDto.ProductCreatedInSale = entity?.RateId is int assistanceRateId && createdInSaleIds.Contains(assistanceRateId);
+        }
     }
 
     /// <summary>
@@ -1285,25 +1344,27 @@ public class ReservaService : IReservaService
             }
         }
 
+        // ADR-017 (guia UX linea 81): CostToConfirm es MARCA de costo -> quien no ve costos tampoco la ve.
+        // ProductCreatedInSale NO se toca: no es dato de costo, lo ven todos.
         if (dto.HotelBookings is not null)
         {
-            foreach (var b in dto.HotelBookings) { b.NetCost = 0m; b.Tax = 0m; }
+            foreach (var b in dto.HotelBookings) { b.NetCost = 0m; b.Tax = 0m; b.CostToConfirm = false; }
         }
         if (dto.FlightSegments is not null)
         {
-            foreach (var f in dto.FlightSegments) { f.NetCost = 0m; f.Tax = 0m; }
+            foreach (var f in dto.FlightSegments) { f.NetCost = 0m; f.Tax = 0m; f.CostToConfirm = false; }
         }
         if (dto.PackageBookings is not null)
         {
-            foreach (var p in dto.PackageBookings) { p.NetCost = 0m; p.Tax = 0m; }
+            foreach (var p in dto.PackageBookings) { p.NetCost = 0m; p.Tax = 0m; p.CostToConfirm = false; }
         }
         if (dto.TransferBookings is not null)
         {
-            foreach (var t in dto.TransferBookings) { t.NetCost = 0m; t.Tax = 0m; }
+            foreach (var t in dto.TransferBookings) { t.NetCost = 0m; t.Tax = 0m; t.CostToConfirm = false; }
         }
         if (dto.AssistanceBookings is not null)
         {
-            foreach (var a in dto.AssistanceBookings) { a.NetCost = 0m; a.Tax = 0m; }
+            foreach (var a in dto.AssistanceBookings) { a.NetCost = 0m; a.Tax = 0m; a.CostToConfirm = false; }
         }
     }
 

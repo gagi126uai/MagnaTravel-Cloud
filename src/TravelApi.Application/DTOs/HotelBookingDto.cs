@@ -37,6 +37,21 @@ public class HotelBookingDto
     /// haya UI. NO es un dato de costo.
     /// </summary>
     public DateTime? OperatorPaymentDeadline { get; set; }
+    /// <summary>
+    /// ADR-017 (pill ambar "costo a confirmar", D7): el costo de este servicio quedo pendiente de
+    /// confirmacion (producto nuevo sin costo conocido o costo de referencia viejo). SEGURIDAD: es una
+    /// MARCA de costo — para callers sin cobranzas.see_cost se enmascara a false (guia UX linea 81:
+    /// quien no ve costos no ve montos NI marcas de costo). CostToConfirmReason NO se expone (interno).
+    /// Con flag EnableCatalogFindOrCreate OFF nadie la setea -> false (mismo patron aditivo que
+    /// OperatorPaymentDeadline en F1.4: el campo viaja siempre, el valor es neutro con flag OFF).
+    /// </summary>
+    public bool CostToConfirm { get; set; }
+    /// <summary>
+    /// ADR-017 (pill violeta "creado en esta venta"): true si el producto del tarifario vinculado a este
+    /// servicio nacio inline durante una venta (Rate.CreatedInSale). NO es dato de costo: lo ven todos,
+    /// no se enmascara. Con flag OFF no se crean rates asi -> false. Falso si el servicio no tiene Rate.
+    /// </summary>
+    public bool ProductCreatedInSale { get; set; }
     /// <summary>"TariffAtBookingTime" if a Rate was applied; "Manual" otherwise.</summary>
     public string SnapshotSource { get; set; } = "Manual";
     public string SourceKind { get; set; } = "Hotel";

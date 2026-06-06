@@ -43,6 +43,17 @@ public class AssistanceBookingDto
     /// </summary>
     public string? Currency { get; set; }
 
+    /// <summary>
+    /// ADR-017 (pill ambar "costo a confirmar", D7). Marca de costo: se enmascara a false para callers
+    /// sin cobranzas.see_cost (ver comentario completo en <see cref="HotelBookingDto.CostToConfirm"/>).
+    /// </summary>
+    public bool CostToConfirm { get; set; }
+    /// <summary>
+    /// ADR-017 (pill violeta "creado en esta venta"): Rate.CreatedInSale del producto vinculado.
+    /// NO es dato de costo, lo ven todos (ver <see cref="HotelBookingDto.ProductCreatedInSale"/>).
+    /// </summary>
+    public bool ProductCreatedInSale { get; set; }
+
     /// <summary>"TariffAtBookingTime" si se aplico una tarifa; "Manual" en caso contrario.</summary>
     public string SnapshotSource { get; set; } = "Manual";
 

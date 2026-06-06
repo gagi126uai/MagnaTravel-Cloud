@@ -51,6 +51,9 @@ public partial class BookingService
             }
 
             var dto = _mapper.Map<HotelBookingDto>(hotel);
+            // Pill "creado en esta venta": el front reemplaza la fila con este response; sin el stamp la
+            // pill desapareceria al confirmar (la nav Rate no viene cargada y el map daria false).
+            dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
             await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -82,6 +85,7 @@ public partial class BookingService
             }
 
             var dto = _mapper.Map<FlightSegmentDto>(flight);
+            dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
             await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -113,6 +117,7 @@ public partial class BookingService
             }
 
             var dto = _mapper.Map<TransferBookingDto>(transfer);
+            dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
             await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -144,6 +149,7 @@ public partial class BookingService
             }
 
             var dto = _mapper.Map<PackageBookingDto>(package);
+            dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
             await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
@@ -176,6 +182,7 @@ public partial class BookingService
             }
 
             var dto = _mapper.Map<AssistanceBookingDto>(assistance);
+            dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);
             await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
             return dto;
         }, ct);
