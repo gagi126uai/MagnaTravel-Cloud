@@ -8,7 +8,12 @@
  *
  * Solucion: un unico fetch compartido para toda la zona autenticada.
  * El provider va DENTRO de PrivateRoute (no en main.jsx) porque
- * GET /afip/settings requiere que el usuario ya este logueado.
+ * el endpoint de flags requiere que el usuario ya este logueado.
+ *
+ * Fuente de datos: GET /settings/operational-flags ([Authorize] plano, solo booleanos).
+ * ANTES leia /afip/settings, que (a) no proyectaba enableCatalogFindOrCreate y
+ * (b) exige permiso de facturacion -> los vendedores recibian 403 y quedaban
+ * con todos los flags en false. Bug encontrado por Gaston el 2026-06-06.
  *
  * Garantia de fallback: si el fetch falla (red caida, 403, timeout),
  * los flags quedan en false y la UI cae al comportamiento base sin romperse.
@@ -32,6 +37,9 @@ const defaultFlags = {
     // OFF = render idéntico a hoy (modal viejo ServiceFormModal).
     // ON  = muestra la ficha de carga en línea (ServiceInlineCard) + buscador de catálogo.
     enableCatalogFindOrCreate: false,
+    // ADR-017: avisos de fechas límite (campanita). El front no lo necesita para gatear
+    // (el server omite los buckets con flag OFF), pero lo leemos por completitud.
+    enableServiceDeadlineAlerts: false,
 };
 
 const OperationalFlagsContext = createContext(undefined);
@@ -50,20 +58,17 @@ export function OperationalFlagsProvider({ children }) {
 
         const fetchFlags = async () => {
             try {
-                const data = await api.get("/afip/settings");
+                // Endpoint liviano de solo-booleanos, accesible para CUALQUIER usuario
+                // logueado (los vendedores no tienen permiso de facturación y por eso
+                // /afip/settings les daba 403 → flags siempre false).
+                const data = await api.get("/settings/operational-flags");
                 if (!cancelled && data) {
                     setFlags({
                         enableSoldToSettleStates: Boolean(data.enableSoldToSettleStates),
                         enableMultiCurrencyInvoicing: Boolean(data.enableMultiCurrencyInvoicing),
-                        // ADR-013: si el endpoint /afip/settings llegara a exponer este flag
-                        // en el futuro, ya lo leemos. Por ahora el backend no lo proyecta
-                        // en AfipSettingsResponse (solo en /settings/operational-finance),
-                        // así que data.enableCancellationDebitNote será undefined → false.
                         enableCancellationDebitNote: Boolean(data.enableCancellationDebitNote),
-                        // ADR-017: flag del tarifario find-or-create.
-                        // Si el backend no lo expone en /afip/settings todavía,
-                        // data.enableCatalogFindOrCreate será undefined → false (seguro).
                         enableCatalogFindOrCreate: Boolean(data.enableCatalogFindOrCreate),
+                        enableServiceDeadlineAlerts: Boolean(data.enableServiceDeadlineAlerts),
                     });
                 }
             } catch {
