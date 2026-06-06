@@ -6,13 +6,19 @@ public class FlightSegmentDto
     public Guid SupplierPublicId { get; set; }
     public string SupplierName { get; set; } = string.Empty;
     public Guid? RatePublicId { get; set; }
-    public string AirlineCode { get; set; } = string.Empty;
+    /// <summary>
+    /// ADR-018: identidad visible del vuelo cargado por la ficha "producto-primero" (el texto que vio
+    /// el vendedor). Null en filas viejas/modal viejo: ahi la fila se muestra con AirlineCode/FlightNumber.
+    /// </summary>
+    public string? ProductName { get; set; }
+    // ADR-018: campos estructurados pasan a nullable (la ficha puede omitirlos). Null = no informado.
+    public string? AirlineCode { get; set; }
     public string? AirlineName { get; set; }
-    public string FlightNumber { get; set; } = string.Empty;
-    public string Origin { get; set; } = string.Empty;
+    public string? FlightNumber { get; set; }
+    public string? Origin { get; set; }
     // Ciudad legible del origen/destino (ej. "Miami") ademas del codigo IATA (ej. "MIA").
     public string? OriginCity { get; set; }
-    public string Destination { get; set; } = string.Empty;
+    public string? Destination { get; set; }
     public string? DestinationCity { get; set; }
     public DateTime DepartureTime { get; set; }
     public DateTime ArrivalTime { get; set; }

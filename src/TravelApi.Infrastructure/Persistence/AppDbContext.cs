@@ -567,10 +567,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.Property(s => s.ReservaId).HasColumnName("TravelFileId");
             entity.Property(s => s.ServicioReservaId).HasColumnName("ReservationId");
-            entity.Property(s => s.AirlineCode).HasMaxLength(3).IsRequired();
-            entity.Property(s => s.FlightNumber).HasMaxLength(10).IsRequired();
-            entity.Property(s => s.Origin).HasMaxLength(3).IsRequired();
-            entity.Property(s => s.Destination).HasMaxLength(3).IsRequired();
+            // ADR-018 (2026-06-06): los 4 campos estructurados dejan de ser NOT NULL. La ficha
+            // "producto-primero" identifica el vuelo con ProductName (un solo texto) y no carga
+            // aerolinea/nro/origen/destino por separado. Se mantiene el HasMaxLength.
+            entity.Property(s => s.AirlineCode).HasMaxLength(3).IsRequired(false);
+            entity.Property(s => s.FlightNumber).HasMaxLength(10).IsRequired(false);
+            entity.Property(s => s.Origin).HasMaxLength(3).IsRequired(false);
+            entity.Property(s => s.Destination).HasMaxLength(3).IsRequired(false);
+            entity.Property(s => s.ProductName).HasMaxLength(200);
             entity.Property(s => s.Status).HasMaxLength(2);
 
             entity.HasOne(s => s.Reserva)

@@ -496,6 +496,215 @@ public class BookingServiceTests
         Assert.Equal(80m, storedTransfer.SalePrice);
     }
 
+    // === Ficha F2: campos estructurados que antes el front metia a la fuerza en Notes ===
+    // Direction/ServiceMode (Traslado) y OccupancyBase (Paquete) ahora tienen columna propia.
+    // Verifican el viaje request -> entidad -> DTO en alta y edicion, y que NO pisan la nota real.
+
+    [Fact]
+    public async Task CreateTransferAsync_PersistsDirectionAndServiceMode()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Transfer Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0040", Name = "Reserva test" };
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new CreateTransferRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            PickupLocation: "Aeropuerto",
+            DropoffLocation: "Hotel centro",
+            PickupDateTime: DateTime.UtcNow.Date.AddDays(10),
+            FlightNumber: null,
+            VehicleType: "Sedan",
+            Passengers: 2,
+            IsRoundTrip: false,
+            ReturnDateTime: null,
+            NetCost: 50m,
+            SalePrice: 80m,
+            Commission: 30m,
+            Notes: "nota real del usuario",
+            Direction: "in",
+            ServiceMode: "private");
+
+        var created = await service.CreateTransferAsync(reserva.Id, request, CancellationToken.None);
+
+        // El DTO de salida expone los campos nuevos.
+        Assert.Equal("in", created.Direction);
+        Assert.Equal("private", created.ServiceMode);
+        // La nota real del usuario NO se pisa con los campos estructurados (era el bug que motivo el cambio).
+        Assert.Equal("nota real del usuario", created.Notes);
+
+        var stored = await context.TransferBookings.SingleAsync();
+        Assert.Equal("in", stored.Direction);
+        Assert.Equal("private", stored.ServiceMode);
+        Assert.Equal("nota real del usuario", stored.Notes);
+    }
+
+    [Fact]
+    public async Task UpdateTransferAsync_PersistsDirectionAndServiceMode()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Transfer Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0041", Name = "Reserva test" };
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        await service.CreateTransferAsync(reserva.Id, new CreateTransferRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            PickupLocation: "Aeropuerto",
+            DropoffLocation: "Hotel centro",
+            PickupDateTime: DateTime.UtcNow.Date.AddDays(10),
+            FlightNumber: null,
+            VehicleType: "Sedan",
+            Passengers: 2,
+            IsRoundTrip: false,
+            ReturnDateTime: null,
+            NetCost: 50m,
+            SalePrice: 80m,
+            Commission: 30m,
+            Notes: null,
+            Direction: "in",
+            ServiceMode: "private"), CancellationToken.None);
+
+        var stored = await context.TransferBookings.SingleAsync();
+
+        var updated = await service.UpdateTransferAsync(reserva.Id, stored.Id, new UpdateTransferRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            PickupLocation: "Aeropuerto",
+            DropoffLocation: "Hotel centro",
+            PickupDateTime: DateTime.UtcNow.Date.AddDays(10),
+            FlightNumber: null,
+            VehicleType: "Sedan",
+            Passengers: 2,
+            IsRoundTrip: false,
+            ReturnDateTime: null,
+            ConfirmationNumber: null,
+            NetCost: 50m,
+            SalePrice: 80m,
+            Commission: 30m,
+            Status: "Solicitado",
+            Notes: null,
+            Direction: "out",
+            ServiceMode: "shared"), CancellationToken.None);
+
+        Assert.Equal("out", updated.Direction);
+        Assert.Equal("shared", updated.ServiceMode);
+
+        var reloaded = await context.TransferBookings.SingleAsync();
+        Assert.Equal("out", reloaded.Direction);
+        Assert.Equal("shared", reloaded.ServiceMode);
+    }
+
+    [Fact]
+    public async Task CreatePackageAsync_PersistsOccupancyBase()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Package Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0042", Name = "Reserva test" };
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new CreatePackageRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            PackageName: "Caribe 7 noches",
+            Destination: "Punta Cana",
+            StartDate: DateTime.UtcNow.Date.AddDays(30),
+            EndDate: DateTime.UtcNow.Date.AddDays(37),
+            IncludesHotel: true,
+            IncludesFlight: true,
+            IncludesTransfer: false,
+            IncludesExcursions: false,
+            IncludesMeals: false,
+            Adults: 2,
+            Children: 0,
+            Itinerary: null,
+            NetCost: 1000m,
+            SalePrice: 1500m,
+            Commission: 500m,
+            Notes: "nota real del usuario",
+            OccupancyBase: "double");
+
+        var created = await service.CreatePackageAsync(reserva.Id, request, CancellationToken.None);
+
+        Assert.Equal("double", created.OccupancyBase);
+        Assert.Equal("nota real del usuario", created.Notes);
+
+        var stored = await context.PackageBookings.SingleAsync();
+        Assert.Equal("double", stored.OccupancyBase);
+        Assert.Equal("nota real del usuario", stored.Notes);
+    }
+
+    [Fact]
+    public async Task UpdatePackageAsync_PersistsOccupancyBase()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Package Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0043", Name = "Reserva test" };
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        await service.CreatePackageAsync(reserva.Id, new CreatePackageRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            PackageName: "Caribe 7 noches",
+            Destination: "Punta Cana",
+            StartDate: DateTime.UtcNow.Date.AddDays(30),
+            EndDate: DateTime.UtcNow.Date.AddDays(37),
+            IncludesHotel: true,
+            IncludesFlight: true,
+            IncludesTransfer: false,
+            IncludesExcursions: false,
+            IncludesMeals: false,
+            Adults: 2,
+            Children: 0,
+            Itinerary: null,
+            NetCost: 1000m,
+            SalePrice: 1500m,
+            Commission: 500m,
+            Notes: null,
+            OccupancyBase: "double"), CancellationToken.None);
+
+        var stored = await context.PackageBookings.SingleAsync();
+
+        var updated = await service.UpdatePackageAsync(reserva.Id, stored.Id, new UpdatePackageRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            PackageName: "Caribe 7 noches",
+            Destination: "Punta Cana",
+            StartDate: DateTime.UtcNow.Date.AddDays(30),
+            EndDate: DateTime.UtcNow.Date.AddDays(37),
+            IncludesHotel: true,
+            IncludesFlight: true,
+            IncludesTransfer: false,
+            IncludesExcursions: false,
+            IncludesMeals: false,
+            Adults: 2,
+            Children: 0,
+            Itinerary: null,
+            ConfirmationNumber: null,
+            NetCost: 1000m,
+            SalePrice: 1500m,
+            Commission: 500m,
+            Status: "Solicitado",
+            Notes: null,
+            OccupancyBase: "triple"), CancellationToken.None);
+
+        Assert.Equal("triple", updated.OccupancyBase);
+
+        var reloaded = await context.PackageBookings.SingleAsync();
+        Assert.Equal("triple", reloaded.OccupancyBase);
+    }
+
     // === Bloque 2: campos nuevos de Vuelo (confirmacion + pasajeros del segmento) ===
     // Verifican el viaje completo request -> entidad -> DTO de los 2 campos que se
     // sumaron a FlightSegment, sin romper el snapshot de precios ni el masking.

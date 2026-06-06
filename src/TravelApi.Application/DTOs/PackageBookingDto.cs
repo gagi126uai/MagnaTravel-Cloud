@@ -7,13 +7,18 @@ public class PackageBookingDto
     public string SupplierName { get; set; } = string.Empty;
     public Guid? RatePublicId { get; set; }
     public string PackageName { get; set; } = string.Empty;
-    public string Destination { get; set; } = string.Empty;
+    // ADR-018: Destination pasa a nullable (la ficha "producto-primero" identifica con PackageName).
+    public string? Destination { get; set; }
     public DateTime StartDate { get; set; }
-    public DateTime EndDate { get; set; }
+    // ADR-018: EndDate nullable. Null = la ficha no cargo fecha de fin (evita pintar 0001-01-01 en el front).
+    public DateTime? EndDate { get; set; }
     public int Nights { get; set; }
     // Pasajeros del paquete, separados por categoria (editables).
     public int Adults { get; set; } = 2;
     public int Children { get; set; } = 0;
+    // Ficha F2: base de ocupacion ("double"/"triple"/etc). Se expone para que la ficha de edicion lo
+    // recupere y lo reenvie sin pisarlo (round-trip). Null en filas legacy.
+    public string? OccupancyBase { get; set; }
     // Que incluye el paquete: se exponen para que el detalle muestre los mismos
     // checkboxes que ya viajan en el request de alta/edicion.
     public bool IncludesHotel { get; set; } = true;

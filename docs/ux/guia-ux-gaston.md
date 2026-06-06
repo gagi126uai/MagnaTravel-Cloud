@@ -93,6 +93,13 @@ Ronda 1:
 - **Botón "Confirmar costo": en la misma fila** del servicio, al lado del costo (solo quien ve costos).
 - **Etiqueta "costo a confirmar": pegada al costo**, texto corto "A confirmar", ámbar (solo quien ve costos).
 
+Ronda 4 (2026-06-06):
+- **Paquete: agregar campo "Fecha de fin"** (junto a "Salida"). Sin fecha de fin el sistema no sabe cuándo termina el viaje (se auto-cerraría o marcaría vencido antes de tiempo). Con la fecha de fin, el cierre automático funciona bien. (El backend igual deja EndDate opcional por seguridad/otros caminos, pero el form lo pide.)
+
+Ronda 3 (identidad de los servicios no-Hotel, 2026-06-06):
+- **Vuelo / Traslado / Paquete se identifican con UN SOLO CAMPO de búsqueda** (Ruta/aerolínea · Trayecto · Nombre del paquete), no con campos estructurados separados (origen/destino/aerolínea/nº de vuelo) como la pantalla vieja. Más simple, fiel al dibujo. Lo fino va en "Más detalles". El sistema resuelve por detrás los datos que necesita (sin sumar campos al vendedor). Asistencia: el plan también es un solo campo.
+- **Consecuencia técnica (para el equipo):** los campos estructurados que hoy el backend exige (FlightSegment Origin/Destination/AirlineCode/FlightNumber/CabinClass; TransferBooking PickupLocation/DropoffLocation/VehicleType; PackageBooking Destination/EndDate) deben volverse OPCIONALES para el camino del catálogo, y el nombre del producto (texto del buscador) pasa a ser la identidad visible de la fila. Diseño a cargo del architect.
+
 Ronda 2:
 - **Si falla Guardar:** la ficha queda abierta con TODO lo cargado intacto + cartel rojo arriba de los botones ("No se pudo guardar. Revisá la conexión y probá de nuevo"); reintenta en el mismo botón. (Nunca se pierde lo cargado.)
 - **Aviso de confirmar costo en CERO: ventana que frena** ("¿Seguro? Va a quedar costo $0 como sugerencia para todos" · Volver / Sí, confirmar). No cartel pasivo.

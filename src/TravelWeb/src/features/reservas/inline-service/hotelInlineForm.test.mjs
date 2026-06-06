@@ -100,11 +100,12 @@ function buildHotelPayload(form, canSeeCost) {
 
 /**
  * Lógica del fallback B1: decide si un servicio a editar debe usar la ficha inline o el modal.
- * En F2 parte 1, solo Hotel usa la ficha; el resto usa el modal viejo.
+ * F2 parte 2: todos los tipos específicos usan la ficha; solo "generic" va al modal viejo.
  */
 function debeUsarFichaInline(service, isCatalogFindOrCreateEnabled) {
     if (!isCatalogFindOrCreateEnabled) return false;
-    return service?.recordKind === "hotel";
+    // El genérico no tiene endpoint propio por tipo y no tiene buscador de catálogo
+    return service?.recordKind !== "generic";
 }
 
 // ─── Tests: cálculo de noches ─────────────────────────────────────────────────
@@ -344,24 +345,24 @@ test("debeUsarFichaInline: Hotel con flag ON → usa ficha inline", () => {
     assert.equal(debeUsarFichaInline(service, true), true);
 });
 
-test("debeUsarFichaInline: Aereo con flag ON → usa modal viejo (fallback B1)", () => {
+test("debeUsarFichaInline: Aereo con flag ON → usa ficha inline (F2 parte 2)", () => {
     const service = { recordKind: "flight" };
-    assert.equal(debeUsarFichaInline(service, true), false);
+    assert.equal(debeUsarFichaInline(service, true), true);
 });
 
-test("debeUsarFichaInline: Traslado con flag ON → usa modal viejo (fallback B1)", () => {
+test("debeUsarFichaInline: Traslado con flag ON → usa ficha inline (F2 parte 2)", () => {
     const service = { recordKind: "transfer" };
-    assert.equal(debeUsarFichaInline(service, true), false);
+    assert.equal(debeUsarFichaInline(service, true), true);
 });
 
-test("debeUsarFichaInline: Paquete con flag ON → usa modal viejo (fallback B1)", () => {
+test("debeUsarFichaInline: Paquete con flag ON → usa ficha inline (F2 parte 2)", () => {
     const service = { recordKind: "package" };
-    assert.equal(debeUsarFichaInline(service, true), false);
+    assert.equal(debeUsarFichaInline(service, true), true);
 });
 
-test("debeUsarFichaInline: Asistencia con flag ON → usa modal viejo (fallback B1)", () => {
+test("debeUsarFichaInline: Asistencia con flag ON → usa ficha inline (F2 parte 2)", () => {
     const service = { recordKind: "assistance" };
-    assert.equal(debeUsarFichaInline(service, true), false);
+    assert.equal(debeUsarFichaInline(service, true), true);
 });
 
 test("debeUsarFichaInline: Generico con flag ON → usa modal viejo (fallback B1)", () => {

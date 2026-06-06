@@ -19,17 +19,23 @@ public class PackageBooking : IHasPublicId
     public int? RateId { get; set; }
     public Rate? Rate { get; set; }
 
-    // Datos del Paquete
+    // Datos del Paquete. PackageName sigue siendo obligatorio: es la IDENTIDAD visible del paquete
+    // (la ficha "producto-primero" siempre lo llena con el texto que tipeo el vendedor).
     [Required]
     [MaxLength(200)]
     public string PackageName { get; set; } = string.Empty;
-    
-    [Required]
+
+    // ADR-018 (2026-06-06): Destination deja de ser obligatorio. La ficha "producto-primero"
+    // identifica el paquete con PackageName y NO pide un destino aparte. Null = no informado.
     [MaxLength(100)]
-    public string Destination { get; set; } = string.Empty;
-    
+    public string? Destination { get; set; }
+
     public DateTime StartDate { get; set; }
-    public DateTime EndDate { get; set; }
+
+    // ADR-018 (2026-06-06): EndDate pasa a nullable. Cuando la ficha no lo manda, NO se inventa una
+    // fecha: los calculos lo coalescen a StartDate (Nights = 0, schedule usa StartDate como fin).
+    public DateTime? EndDate { get; set; }
+
     public int Nights { get; set; }
     
     // Qué incluye
@@ -41,7 +47,16 @@ public class PackageBooking : IHasPublicId
     
     public int Adults { get; set; } = 2;
     public int Children { get; set; } = 0;
-    
+
+    /// <summary>
+    /// Ficha F2 (guia-ux-gaston): base de ocupacion que define la tarifa por persona del paquete
+    /// ("double" = base doble, "triple" = base triple, etc). Metadato operativo, NO afecta costos ni
+    /// saldo (el precio ya viene en SalePrice). Null = legacy / no informado. Antes el front lo metia
+    /// a la fuerza en Notes (pisaba la nota real).
+    /// </summary>
+    [MaxLength(20)]
+    public string? OccupancyBase { get; set; }
+
     [MaxLength(2000)]
     public string? Itinerary { get; set; } // Descripción del itinerario
     

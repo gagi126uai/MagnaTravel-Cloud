@@ -6,10 +6,21 @@ public class TransferBookingDto
     public Guid SupplierPublicId { get; set; }
     public string SupplierName { get; set; } = string.Empty;
     public Guid? RatePublicId { get; set; }
-    public string PickupLocation { get; set; } = string.Empty;
-    public string DropoffLocation { get; set; } = string.Empty;
+    /// <summary>
+    /// ADR-018: identidad visible del traslado cargado por la ficha "producto-primero". Null en filas
+    /// viejas/modal viejo: ahi la fila se muestra con la ruta Pickup -> Dropoff o el tipo de vehiculo.
+    /// </summary>
+    public string? ProductName { get; set; }
+    // ADR-018: estructurados pasan a nullable (la ficha puede omitirlos). Null = no informado.
+    public string? PickupLocation { get; set; }
+    public string? DropoffLocation { get; set; }
     public DateTime PickupDateTime { get; set; }
     public string VehicleType { get; set; } = "Private";
+    // Ficha F2: sentido del traslado ("in" = llegada / "out" = salida). Se expone para que la ficha
+    // de edicion lo recupere y lo reenvie sin pisarlo (round-trip). Null en filas legacy.
+    public string? Direction { get; set; }
+    // Ficha F2: modalidad ("private" = privado / "shared" = compartido). Round-trip igual que Direction.
+    public string? ServiceMode { get; set; }
     public int Passengers { get; set; } = 1;
     public bool IsRoundTrip { get; set; }
     public DateTime? ReturnDateTime { get; set; }

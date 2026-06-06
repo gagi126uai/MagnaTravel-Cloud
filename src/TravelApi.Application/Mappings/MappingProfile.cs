@@ -86,6 +86,11 @@ public class MappingProfile : Profile
             // Ignore(), una edicion desde el modal viejo (que no manda el campo) borraria el deadline
             // en silencio. En F1.1 el handler aun no lo asigna, asi que el deadline queda intacto.
             .ForMember(dest => dest.TicketingDeadline, opt => opt.Ignore())
+            // ADR-018 (anti-clobber): ProductName NO se mapea por convencion en el UPDATE. El modal viejo
+            // edita estos vuelos pero NO manda ProductName (llega null) -> el map lo borraria y la identidad
+            // del servicio revertiria a "Vuelo "/ruta. La ficha inline (producto-primero) SIEMPRE reenvia el
+            // texto, asi que el service lo asigna a mano solo cuando viene con valor (ver UpdateFlightAsync).
+            .ForMember(dest => dest.ProductName, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
 
         CreateMap<HotelBooking, HotelBookingDto>()
@@ -144,7 +149,11 @@ public class MappingProfile : Profile
             // Fuga 3 (F1b): costos asignados a mano segun permiso (ver UpdateFlightRequest arriba).
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
-            .ForMember(dest => dest.Commission, opt => opt.Ignore());
+            .ForMember(dest => dest.Commission, opt => opt.Ignore())
+            // ADR-018 (anti-clobber): ProductName NO se mapea por convencion en el UPDATE (ver UpdateFlightRequest
+            // arriba). El modal viejo edita estos traslados sin mandar ProductName -> null borraria la identidad.
+            // El service lo asigna a mano solo cuando viene con valor (ver UpdateTransferAsync).
+            .ForMember(dest => dest.ProductName, opt => opt.Ignore());
 
         CreateMap<PackageBooking, PackageBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -162,7 +171,9 @@ public class MappingProfile : Profile
             // ADR-017 F1.4 (§2.2): el deadline lo asigna el service normalizado a medianoche Kind=Utc. Ver Flight.
             .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
-            .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
+            // ADR-018: EndDate puede venir null (ficha "producto-primero"). Se coalesce a StartDate
+            // para que Nights quede en 0 sin inventar fecha (NO se persiste una fecha de fin falsa).
+            .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => ((src.EndDate ?? src.StartDate) - src.StartDate).Days));
             
         CreateMap<UpdatePackageRequest, PackageBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
@@ -174,7 +185,9 @@ public class MappingProfile : Profile
             // ADR-017 F1.1 (§2.2, R12): deadline anti-clobber (ver UpdateFlightRequest arriba).
             .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
-            .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
+            // ADR-018: EndDate puede venir null (ficha "producto-primero"). Se coalesce a StartDate
+            // para que Nights quede en 0 sin inventar fecha (NO se persiste una fecha de fin falsa).
+            .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => ((src.EndDate ?? src.StartDate) - src.StartDate).Days));
 
         // AssistanceBooking (Bloque 3). Espejo de HotelBooking: el DTO NO expone Commission
         // (queda solo en la entidad). WorkflowStatus se deriva del Status crudo igual que Hotel.

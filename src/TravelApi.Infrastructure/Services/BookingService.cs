@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Interfaces;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services.Reservations;
@@ -413,6 +414,10 @@ public partial class BookingService : IBookingService
         flight.ReservaId = reservaId;
         flight.SupplierId = supplierId;
 
+        // ADR-018 (§2): CabinClass tiene default de negocio. Si la ficha lo manda vacio, coalescemos a
+        // "Economy" (mismo criterio que el path catalogo) para no persistir "" en vez del default.
+        if (string.IsNullOrWhiteSpace(flight.CabinClass)) flight.CabinClass = "Economy";
+
         // B1 (zona horaria): la hora de vuelo es "hora local del aeropuerto" (la que figura
         // en el ticket), NO un instante UTC. La guardamos tal cual la cargo el usuario para
         // que el voucher la muestre sin corrimiento. Ver NormalizeAirportWallClock.
@@ -442,8 +447,10 @@ public partial class BookingService : IBookingService
             flight.Status = "Solicitado";
 
         // Guard: si la reserva esta en Operativo/Closed, el servicio nuevo debe estar confirmado
+        // ADR-018: la identidad visible se deriva de ServiceDisplayName (ProductName si la ficha
+        // "producto-primero" no cargo aerolinea/numero), para no mostrar "Vuelo " vacio en el mensaje.
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, $"Vuelo {flight.AirlineCode}{flight.FlightNumber}", flight.Status, ct);
+            _db, reservaId, $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}", flight.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
         await _flightRepo.AddAsync(flight, ct);
@@ -493,6 +500,12 @@ public partial class BookingService : IBookingService
         _mapper.Map(req, flight);
         flight.SupplierId = supplierId;
 
+        // ADR-018 (anti-clobber): el map IGNORA ProductName. La ficha inline reenvia el texto que vio el
+        // vendedor (round-trip) y ahi lo actualizamos; el modal viejo NO lo manda (null/vacio) y entonces
+        // PRESERVAMOS el valor persistido, para que la identidad del servicio no revierta a "Vuelo "/ruta.
+        if (!string.IsNullOrWhiteSpace(req.ProductName))
+            flight.ProductName = req.ProductName.Trim();
+
         // ADR-017 F1.4 (§2.2, R12 — anti-clobber): el map IGNORA TicketingDeadline, asi que tras el map el
         // valor persistido sigue intacto. Solo lo tocamos si el request DECLARA que trae el bloque de
         // deadlines (ficha nueva). El modal viejo manda DeadlinesSpecified=false y el deadline se preserva;
@@ -524,7 +537,8 @@ public partial class BookingService : IBookingService
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
             flight.Status = "Solicitado";
 
-        var label = $"Vuelo {flight.AirlineCode}{flight.FlightNumber}";
+        // ADR-018: identidad visible via ServiceDisplayName (ProductName si no hay aerolinea/numero).
+        var label = $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}";
         // Guard 1: en reserva Operativo/Closed el servicio debe quedar confirmado
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, flight.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
@@ -1085,6 +1099,10 @@ public partial class BookingService : IBookingService
         transfer.ReservaId = reservaId;
         transfer.SupplierId = supplierId;
 
+        // ADR-018 (§2): VehicleType tiene default de negocio. Si la ficha lo manda vacio, coalescemos a
+        // "Sedan" (mismo criterio que el path catalogo) para no persistir "" en vez del default.
+        if (string.IsNullOrWhiteSpace(transfer.VehicleType)) transfer.VehicleType = "Sedan";
+
         // B1 (zona horaria): la hora del traslado es hora local (la que ve el pasajero en el
         // itinerario), NO un instante UTC. Se guarda tal cual, sin corrimiento. ReturnDateTime
         // es opcional (solo round-trip). Ver NormalizeAirportWallClock.
@@ -1159,6 +1177,12 @@ public partial class BookingService : IBookingService
 
         _mapper.Map(req, transfer);
         transfer.SupplierId = supplierId;
+
+        // ADR-018 (anti-clobber): el map IGNORA ProductName. La ficha inline reenvia el texto del vendedor
+        // (round-trip) y lo actualizamos; el modal viejo NO lo manda (null/vacio) y PRESERVAMOS el persistido,
+        // para que la identidad del traslado no revierta a "Transfer "/ruta.
+        if (!string.IsNullOrWhiteSpace(req.ProductName))
+            transfer.ProductName = req.ProductName.Trim();
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (transfer.NetCost, transfer.Tax, transfer.Commission) = await ResolveUpdateCostFieldsAsync(
@@ -1568,7 +1592,8 @@ public partial class BookingService : IBookingService
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, flight.ReservaId, ct))
             newStatus = "Solicitado";
 
-        var label = $"Vuelo {flight.AirlineCode}{flight.FlightNumber}";
+        // ADR-018: identidad visible via ServiceDisplayName (ProductName si no hay aerolinea/numero).
+        var label = $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, flight.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, flight.ReservaId, label, oldStatus, newStatus, ct);

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -330,10 +331,12 @@ public static class ReservaCapacityRules
 
         var flights = await db.FlightSegments.AsNoTracking()
             .Where(f => f.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(f.Status))
-            .Select(f => new { f.AirlineCode, f.FlightNumber, f.Status })
+            // ADR-018: traemos ProductName para que la identidad caiga en el si la ficha "producto-primero"
+            // no cargo aerolinea/numero (sino el mensaje mostraria "Vuelo " vacio).
+            .Select(f => new { f.ProductName, f.AirlineCode, f.FlightNumber, f.Status })
             .ToListAsync(ct);
         foreach (var f in flights)
-            unconfirmed.Add($"Vuelo {f.AirlineCode}{f.FlightNumber} ({f.Status})");
+            unconfirmed.Add($"Vuelo {ServiceDisplayName.ForFlight(f.ProductName, f.AirlineCode, f.FlightNumber)} ({f.Status})");
 
         var assistances = await db.AssistanceBookings.AsNoTracking()
             .Where(b => b.ReservaId == reservaId && !ConfirmedServiceStatuses.Contains(b.Status))

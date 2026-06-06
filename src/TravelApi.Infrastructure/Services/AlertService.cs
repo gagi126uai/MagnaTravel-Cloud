@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Time;
 
@@ -236,6 +237,8 @@ public class AlertService : IAlertService
                 flight.FlightNumber,
                 flight.Origin,
                 flight.Destination,
+                // ADR-018: identidad de la ficha "producto-primero"; fallback cuando los estructurados son null.
+                flight.ProductName,
                 Deadline = flight.TicketingDeadline!.Value
             }).ToListAsync(ct);
 
@@ -249,17 +252,27 @@ public class AlertService : IAlertService
         {
             var earliest = group.Min(r => r.Deadline);
             var sample = group.First();
+            // ADR-018: si la ficha "producto-primero" no cargo origen/destino, mostramos el ProductName
+            // en vez de "Aereo -". Orden: ruta cargada -> ProductName -> aerolinea+numero.
+            var groupedIdentity = ServiceDisplayName.FirstNonBlank(
+                ServiceDisplayName.RouteOrEmpty(sample.Origin, sample.Destination),
+                sample.ProductName,
+                $"{sample.AirlineCode}{sample.FlightNumber}".Trim());
             alerts.Add(BuildDeadlineAlert(
                 sample.PublicId, sample.NumeroReserva, "Aereo",
-                $"Aereo {sample.Origin}-{sample.Destination} (PNR {group.Key.Pnr})",
+                $"Aereo {groupedIdentity} (PNR {group.Key.Pnr})",
                 "Ticketing", earliest, today));
         }
 
         foreach (var row in flightRows.Where(r => !PnrUsable(r.PNR)))
         {
+            // ADR-018: identidad = ProductName si no hay aerolinea/numero; la ruta va entre parentesis solo si esta.
+            var identity = ServiceDisplayName.ForFlight(row.ProductName, row.AirlineCode, row.FlightNumber);
+            var route = ServiceDisplayName.RouteOrEmpty(row.Origin, row.Destination);
+            var label = string.IsNullOrEmpty(route) ? $"Aereo {identity}" : $"Aereo {identity} ({route})";
             alerts.Add(BuildDeadlineAlert(
                 row.PublicId, row.NumeroReserva, "Aereo",
-                $"Aereo {row.AirlineCode}{row.FlightNumber} ({row.Origin}-{row.Destination})",
+                label,
                 "Ticketing", row.Deadline, today));
         }
 
@@ -308,9 +321,11 @@ public class AlertService : IAlertService
                   && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Closed
                   && r.Status != EstadoReserva.PendingOperatorRefund
                   && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
-            select new { r.PublicId, r.NumeroReserva, f.AirlineCode, f.FlightNumber, f.CostToConfirmReason }).ToListAsync(ct);
+            select new { r.PublicId, r.NumeroReserva, f.ProductName, f.AirlineCode, f.FlightNumber, f.CostToConfirmReason }).ToListAsync(ct);
+        // ADR-018: label = ProductName si la ficha "producto-primero" no cargo aerolinea/numero.
         alerts.AddRange(flight.Select(x =>
-            BuildCostToConfirmAlert(x.PublicId, x.NumeroReserva, "Aereo", x.AirlineCode + x.FlightNumber, x.CostToConfirmReason)));
+            BuildCostToConfirmAlert(x.PublicId, x.NumeroReserva, "Aereo",
+                ServiceDisplayName.ForFlight(x.ProductName, x.AirlineCode, x.FlightNumber), x.CostToConfirmReason)));
 
         // Traslado
         var transfer = await (

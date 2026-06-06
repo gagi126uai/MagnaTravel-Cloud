@@ -126,15 +126,18 @@ export function normalizeReservaServices(reserva) {
   }
 
   const flightSegments = (reserva.flightSegments || []).map((flight) => {
-    const route = firstNonEmpty(
+    // ADR-018 §4-ter: la identidad visible del vuelo es productName (snapshot del texto del buscador).
+    // Para servicios anteriores a ADR-018 (productName null), derivamos de los campos estructurados.
+    const routeEstructurada = firstNonEmpty(
       [flight.origin, flight.destination].filter(Boolean).join(" > "),
       flight.description
     );
-    const flightName = firstNonEmpty(
+    const nombreEstructurado = firstNonEmpty(
       [flight.airlineName || flight.airlineCode, flight.flightNumber].filter(Boolean).join(" "),
-      route,
+      routeEstructurada,
       "Vuelo"
     );
+    const flightName = firstNonEmpty(flight.productName, nombreEstructurado);
 
     return normalizeService(flight, SERVICE_RECORD_KIND.FLIGHT, {
       date: flight.departureTime,
@@ -149,30 +152,37 @@ export function normalizeReservaServices(reserva) {
     })
   );
 
-  const transferBookings = (reserva.transferBookings || []).map((transfer) =>
-    normalizeService(transfer, SERVICE_RECORD_KIND.TRANSFER, {
+  const transferBookings = (reserva.transferBookings || []).map((transfer) => {
+    // ADR-018 §4-ter: la identidad visible del traslado es productName.
+    // Para servicios anteriores a ADR-018 (productName null), derivamos de los campos estructurados.
+    const nombreEstructurado = firstNonEmpty(
+      [transfer.pickupLocation, transfer.dropoffLocation].filter(Boolean).join(" > "),
+      transfer.description,
+      "Traslado"
+    );
+    return normalizeService(transfer, SERVICE_RECORD_KIND.TRANSFER, {
       date: transfer.pickupDateTime,
-      name: firstNonEmpty(
-        [transfer.pickupLocation, transfer.dropoffLocation].filter(Boolean).join(" > "),
-        transfer.description,
-        "Traslado"
-      ),
-    })
-  );
+      name: firstNonEmpty(transfer.productName, nombreEstructurado),
+    });
+  });
 
   const packageBookings = (reserva.packageBookings || []).map((packageBooking) =>
+    // ADR-018 §4-ter: packageName es el campo canónico para paquetes (ya existía antes del ADR).
+    // Fallback a description para servicios legacy.
     normalizeService(packageBooking, SERVICE_RECORD_KIND.PACKAGE, {
       date: packageBooking.startDate,
       name: firstNonEmpty(packageBooking.packageName, packageBooking.description, "Paquete"),
     })
   );
 
-  // Asistencias/seguros: el nombre se arma con la aseguradora + nro de poliza si existe
+  // Asistencias/seguros: ADR-018 §4-ter — planType es el campo canónico de identidad.
+  // Para servicios anteriores a ADR-018 (planType null), usamos supplierName/policyNumber como fallback.
   const assistanceBookings = (reserva.assistanceBookings || []).map((assistance) =>
     normalizeService(assistance, SERVICE_RECORD_KIND.ASSISTANCE, {
       // La "fecha" representativa de la asistencia es el inicio de vigencia
       date: assistance.validFrom,
       name: firstNonEmpty(
+        assistance.planType,
         assistance.supplierName,
         assistance.policyNumber ? `Poliza ${assistance.policyNumber}` : "",
         "Asistencia"

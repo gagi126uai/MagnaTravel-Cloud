@@ -707,12 +707,11 @@ export default function ReservaDetailPage() {
                   }
                 }}
                 onEditService={(service) => {
-                  // B1 — Parte 1 solo implementa Hotel en la ficha inline.
-                  // Para cualquier otro tipo (Aereo, Traslado, Paquete, Asistencia, Generico)
-                  // seguimos usando el modal viejo AUNQUE el flag esté ON.
-                  // Cuando cada tipo se implemente en F2 parte 2, se sumará acá.
-                  const esHotel = service?.recordKind === "hotel";
-                  if (isCatalogFindOrCreateEnabled && esHotel) {
+                  // F2 parte 2: la ficha inline maneja los 5 tipos específicos.
+                  // El único tipo que sigue en el modal viejo es "generic" (ServicioReserva),
+                  // porque no tiene un endpoint propio por tipo ni buscador de catálogo.
+                  const esGenerico = service?.recordKind === "generic";
+                  if (isCatalogFindOrCreateEnabled && !esGenerico) {
                     setServiceToEditInline(service);
                     setShowInlineCard(true);
                   } else {

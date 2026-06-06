@@ -30,8 +30,11 @@ public record ConfirmCostRequest(
     decimal? Tax = null);
 
 public record CreateFlightRequest(
-    string SupplierId, string AirlineCode, string? AirlineName, string FlightNumber,
-    string Origin, string? OriginCity, string Destination, string? DestinationCity,
+    // ADR-018: AirlineCode/FlightNumber/Origin/Destination pasan a opcionales (string?). La ficha
+    // "producto-primero" identifica el vuelo con ProductName (un solo texto) y puede omitirlos; el
+    // modal viejo los sigue mandando. Siguen siendo posicionales (no llevan default).
+    string SupplierId, string? AirlineCode, string? AirlineName, string? FlightNumber,
+    string? Origin, string? OriginCity, string? Destination, string? DestinationCity,
     DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, string? PNR,
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes,
     string? RateId = null,
@@ -54,12 +57,16 @@ public record CreateFlightRequest(
     // ADR-017 F1.4 (§2.2/§2.6): fecha limite de EMISION del ticket, opcional. La API la acepta y persiste
     // aun con el flag OFF (precedente Currency traceability); sin UI que la cargue no cambia nada observable.
     // El map la IGNORA (ver MappingProfile) y la asigna el service normalizada a medianoche Kind=Utc.
-    DateTime? TicketingDeadline = null
+    DateTime? TicketingDeadline = null,
+    // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor en la ficha. Fuente UNICA de
+    // FlightSegment.ProductName (se copia al crear, no se re-deriva del Rate). Opcional al final.
+    string? ProductName = null
 );
 
 public record UpdateFlightRequest(
-    string SupplierId, string AirlineCode, string? AirlineName, string FlightNumber,
-    string Origin, string? OriginCity, string Destination, string? DestinationCity,
+    // ADR-018: estructurados opcionales (ver CreateFlightRequest).
+    string SupplierId, string? AirlineCode, string? AirlineName, string? FlightNumber,
+    string? Origin, string? OriginCity, string? Destination, string? DestinationCity,
     DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage,
     string? TicketNumber, string? PNR,
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes,
@@ -73,7 +80,11 @@ public record UpdateFlightRequest(
     // UpdateHotelRequest: Ignore() en el map + handler de persistencia gobernado por
     // DeadlinesSpecified, que llega en F1.4. En F1.1 solo estructura.
     DateTime? TicketingDeadline = null,
-    bool DeadlinesSpecified = false
+    bool DeadlinesSpecified = false,
+    // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor. La ficha inline lo reenvia en la
+    // edicion (round-trip), pero el modal viejo NO lo manda (llega null): por eso el map lo IGNORA y el
+    // service lo asigna a mano solo si viene con valor (anti-clobber, ver UpdateFlightAsync). Opcional al final.
+    string? ProductName = null
 );
 
 public record CreateHotelRequest(
@@ -126,7 +137,9 @@ public record UpdateHotelRequest(
 );
 
 public record CreateTransferRequest(
-    string SupplierId, string PickupLocation, string DropoffLocation,
+    // ADR-018: PickupLocation/DropoffLocation pasan a opcionales (string?). La ficha "producto-primero"
+    // identifica el traslado con ProductName (un solo texto) y puede omitirlos; el modal viejo los manda.
+    string SupplierId, string? PickupLocation, string? DropoffLocation,
     DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
@@ -139,11 +152,20 @@ public record CreateTransferRequest(
     // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta. Obligatoria con flag ON, ignorada con OFF.
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
-    NewCatalogProductRequest? NewCatalogProduct = null
+    NewCatalogProductRequest? NewCatalogProduct = null,
+    // Ficha F2: sentido del traslado ("in" = llegada / "out" = salida). Metadato operativo opcional,
+    // no afecta costos. Opcional al final para no romper callers posicionales. Ver TransferBooking.Direction.
+    string? Direction = null,
+    // Ficha F2: modalidad ("private" = privado / "shared" = compartido). Ver TransferBooking.ServiceMode.
+    string? ServiceMode = null,
+    // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor. Fuente UNICA de
+    // TransferBooking.ProductName (se copia al crear, no se re-deriva del Rate). Opcional al final.
+    string? ProductName = null
 );
 
 public record UpdateTransferRequest(
-    string SupplierId, string PickupLocation, string DropoffLocation,
+    // ADR-018: estructurados opcionales (ver CreateTransferRequest).
+    string SupplierId, string? PickupLocation, string? DropoffLocation,
     DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
     string? ConfirmationNumber,
@@ -152,7 +174,16 @@ public record UpdateTransferRequest(
     string WorkflowStatus = "Solicitado",
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver TransferBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // Ficha F2: sentido del traslado ("in"/"out"). El front siempre lo reenvia en la edicion (round-trip),
+    // por eso se mapea por convencion (sin Ignore): null pisa, igual que Notes. Ver TransferBooking.Direction.
+    string? Direction = null,
+    // Ficha F2: modalidad ("private"/"shared"). Ver TransferBooking.ServiceMode.
+    string? ServiceMode = null,
+    // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor. La ficha inline lo reenvia en la
+    // edicion (round-trip), pero el modal viejo NO lo manda (llega null): por eso el map lo IGNORA y el
+    // service lo asigna a mano solo si viene con valor (anti-clobber, ver UpdateTransferAsync). Opcional al final.
+    string? ProductName = null
 );
 
 // Bloque 3: Asistencia al viajero (seguro). Espeja a CreateHotelRequest/UpdateHotelRequest:
@@ -193,8 +224,11 @@ public record UpdateAssistanceRequest(
 );
 
 public record CreatePackageRequest(
-    string SupplierId, string PackageName, string Destination,
-    DateTime StartDate, DateTime EndDate,
+    // ADR-018: Destination pasa a opcional (string?) y EndDate a DateTime?. La ficha "producto-primero"
+    // identifica el paquete con PackageName (sigue obligatorio) y puede omitir destino y fecha de fin.
+    // EndDate sigue siendo posicional: un caller que pasa un DateTime convierte implicito a DateTime?.
+    string SupplierId, string PackageName, string? Destination,
+    DateTime StartDate, DateTime? EndDate,
     bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
     int Adults, int Children, string? Itinerary,
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
@@ -210,12 +244,16 @@ public record CreatePackageRequest(
     NewCatalogProductRequest? NewCatalogProduct = null,
     // ADR-017 F1.4 (§2.2/§2.6): fecha limite de seña/pago al operador, opcional. La API la acepta y
     // persiste aun con el flag OFF; el map la IGNORA y la asigna el service normalizada a medianoche Kind=Utc.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Ficha F2: base de ocupacion ("double"/"triple"/etc). Metadato operativo opcional, no afecta costos.
+    // Opcional al final para no romper callers posicionales. Ver PackageBooking.OccupancyBase.
+    string? OccupancyBase = null
 );
 
 public record UpdatePackageRequest(
-    string SupplierId, string PackageName, string Destination,
-    DateTime StartDate, DateTime EndDate,
+    // ADR-018: Destination opcional (string?) y EndDate a DateTime? (ver CreatePackageRequest).
+    string SupplierId, string PackageName, string? Destination,
+    DateTime StartDate, DateTime? EndDate,
     bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
     int Adults, int Children, string? Itinerary, string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
@@ -228,5 +266,9 @@ public record UpdatePackageRequest(
     // UpdateHotelRequest: Ignore() en el map + handler de persistencia gobernado por
     // DeadlinesSpecified, que llega en F1.4. En F1.1 solo estructura.
     DateTime? OperatorPaymentDeadline = null,
-    bool DeadlinesSpecified = false
+    bool DeadlinesSpecified = false,
+    // Ficha F2: base de ocupacion ("double"/"triple"/etc). El front siempre lo reenvia en la edicion
+    // (round-trip), por eso se mapea por convencion (sin Ignore): null pisa, igual que Notes.
+    // Ver PackageBooking.OccupancyBase.
+    string? OccupancyBase = null
 );

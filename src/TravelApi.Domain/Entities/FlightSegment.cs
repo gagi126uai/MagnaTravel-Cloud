@@ -15,28 +15,36 @@ public class FlightSegment : IHasPublicId
     public int SupplierId { get; set; }
     public Supplier? Supplier { get; set; }
     
-    // Datos del vuelo
-    [Required]
+    /// <summary>
+    /// ADR-018 (2026-06-06): nombre del producto tal como lo VIO/tipeo el vendedor en la ficha
+    /// "producto-primero" (ej. "AEP-IGR LATAM"). Es la IDENTIDAD visible del segmento. Snapshot:
+    /// se copia al crear y NO se re-deriva del Rate despues (preserva el principio de ADR-017 §6,
+    /// igual que <see cref="HotelBooking.HotelName"/>). Null = carga por el modal viejo (la fila
+    /// se sigue mostrando con la derivacion estructurada AirlineCode/FlightNumber/ruta).
+    /// </summary>
+    [MaxLength(200)]
+    public string? ProductName { get; set; }
+
+    // Datos del vuelo. ADR-018: estos 4 campos estructurados dejan de ser obligatorios. La ficha
+    // "producto-primero" identifica el vuelo con un solo texto (ProductName) y NO pide aerolinea/
+    // nro/origen/destino por separado; el modal viejo los sigue mandando. Null = no informado.
     [MaxLength(3)]
-    public string AirlineCode { get; set; } = string.Empty; // AA, AR, LA
-    
+    public string? AirlineCode { get; set; } // AA, AR, LA
+
     [MaxLength(100)]
     public string? AirlineName { get; set; } // American Airlines
-    
-    [Required]
+
     [MaxLength(10)]
-    public string FlightNumber { get; set; } = string.Empty; // 900
-    
-    [Required]
+    public string? FlightNumber { get; set; } // 900
+
     [MaxLength(3)]
-    public string Origin { get; set; } = string.Empty; // MIA
-    
+    public string? Origin { get; set; } // MIA
+
     [MaxLength(100)]
     public string? OriginCity { get; set; } // Miami
-    
-    [Required]
+
     [MaxLength(3)]
-    public string Destination { get; set; } = string.Empty; // EZE
+    public string? Destination { get; set; } // EZE
     
     [MaxLength(100)]
     public string? DestinationCity { get; set; } // Buenos Aires

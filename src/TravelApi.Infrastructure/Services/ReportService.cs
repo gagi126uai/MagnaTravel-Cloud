@@ -512,14 +512,19 @@ public class ReportService : IReportService
             .Select(h => new { Destination = h.City, h.SalePrice, h.NetCost, Passengers = h.Adults + h.Children })
             .ToListAsync(cancellationToken);
 
+        // ADR-018 (§4-ter, R-D3): los servicios cargados con la ficha "producto-primero" dejan Destination
+        // en null. Sin coalescer, el filtro de mas abajo (Where !IsNullOrWhiteSpace) los EXCLUIRIA del
+        // ranking y su revenue desapareceria del reporte. Por eso caemos al nombre del producto
+        // (PackageName / ProductName) — misma regla que ServiceDisplayName, replicada aca porque la
+        // proyeccion corre en SQL y no puede invocar el helper de C#. Decision de negocio: no perder revenue.
         var packageDestinations = await _dbContext.Set<PackageBooking>()
             .Where(p => p.CreatedAt >= dateFrom && p.CreatedAt <= dateTo)
-            .Select(p => new { p.Destination, p.SalePrice, NetCost = p.NetCost, Passengers = p.Adults + p.Children })
+            .Select(p => new { Destination = p.Destination ?? p.PackageName, p.SalePrice, NetCost = p.NetCost, Passengers = p.Adults + p.Children })
             .ToListAsync(cancellationToken);
 
         var flightDestinations = await _dbContext.Set<FlightSegment>()
             .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo)
-            .Select(f => new { Destination = f.DestinationCity ?? f.Destination, f.SalePrice, f.NetCost, Passengers = 1 })
+            .Select(f => new { Destination = f.DestinationCity ?? f.Destination ?? f.ProductName, f.SalePrice, f.NetCost, Passengers = 1 })
             .ToListAsync(cancellationToken);
 
         var allBookings = hotelDestinations

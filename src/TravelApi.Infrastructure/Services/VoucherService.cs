@@ -8,6 +8,7 @@ using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -1213,8 +1214,13 @@ public class VoucherService : IVoucherService
                 column.Item().Element(x => ComposeSimpleTable(x, "Vuelos", new[] { "Vuelo", "Ruta", "Salida", "PNR" },
                     reserva.FlightSegments.Select(f => new[]
                     {
-                        $"{f.AirlineCode} {f.FlightNumber}",
-                        $"{f.OriginCity ?? f.Origin} -> {f.DestinationCity ?? f.Destination}",
+                        // ADR-018: con la ficha "producto-primero" los estructurados pueden ser null.
+                        // Titulo = ProductName, si no la aerolinea+numero. Ruta = la ruta si esta cargada,
+                        // si no el ProductName (evita mostrar " -> " vacio).
+                        ServiceDisplayName.FirstNonBlank(f.ProductName, $"{f.AirlineCode} {f.FlightNumber}".Trim()),
+                        ServiceDisplayName.FirstNonBlank(
+                            ServiceDisplayName.RouteOrEmpty(f.OriginCity ?? f.Origin, f.DestinationCity ?? f.Destination),
+                            f.ProductName),
                         f.DepartureTime.ToString("dd/MM/yyyy HH:mm"),
                         f.PNR ?? "---"
                     })));
@@ -1224,7 +1230,10 @@ public class VoucherService : IVoucherService
                     reserva.TransferBookings.Select(t => new[]
                     {
                         t.VehicleType,
-                        $"{t.PickupLocation} -> {t.DropoffLocation}",
+                        // ADR-018: Ruta = pickup -> dropoff si ambos estan; si no, el ProductName (evita " -> ").
+                        ServiceDisplayName.FirstNonBlank(
+                            ServiceDisplayName.RouteOrEmpty(t.PickupLocation, t.DropoffLocation),
+                            t.ProductName),
                         t.PickupDateTime.ToString("dd/MM/yyyy HH:mm"),
                         // Sin codigo => mostramos el estado real del servicio en vez de "Pendiente".
                         t.ConfirmationNumber ?? t.Status ?? "-"
@@ -1235,8 +1244,9 @@ public class VoucherService : IVoucherService
                     reserva.PackageBookings.Select(p => new[]
                     {
                         p.PackageName,
-                        p.Destination,
-                        $"{FormatDate(p.StartDate)} - {FormatDate(p.EndDate)}",
+                        // ADR-018: Destination puede ser null; rango usa EndDate ?? StartDate (no inventa fecha).
+                        p.Destination ?? "",
+                        $"{FormatDate(p.StartDate)} - {FormatDate(p.EndDate ?? p.StartDate)}",
                         // Sin codigo => mostramos el estado real del servicio en vez de "Pendiente".
                         p.ConfirmationNumber ?? p.Status ?? "-"
                     })));
@@ -1328,7 +1338,9 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Vuelos</h2><div class='table-container'><table><thead><tr><th>Vuelo</th><th>Origen</th><th>Destino</th><th>Salida</th><th>Clase</th><th>PNR</th></tr></thead><tbody>");
         foreach (var f in reserva.FlightSegments)
         {
-            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml($"{f.AirlineCode} {f.FlightNumber}")}</td><td>{EscapeHtml(f.OriginCity ?? f.Origin)}</td><td>{EscapeHtml(f.DestinationCity ?? f.Destination)}</td><td>{f.DepartureTime:dd/MM/yyyy HH:mm}</td><td>{EscapeHtml(f.CabinClass)}</td><td style='font-family:monospace;font-weight:700'>{EscapeHtml(f.PNR ?? "---")}</td></tr>");
+            // ADR-018: titulo del vuelo = ProductName si la ficha "producto-primero" no cargo aerolinea/numero.
+            var flightTitle = ServiceDisplayName.FirstNonBlank(f.ProductName, $"{f.AirlineCode} {f.FlightNumber}".Trim());
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(flightTitle)}</td><td>{EscapeHtml(f.OriginCity ?? f.Origin)}</td><td>{EscapeHtml(f.DestinationCity ?? f.Destination)}</td><td>{f.DepartureTime:dd/MM/yyyy HH:mm}</td><td>{EscapeHtml(f.CabinClass)}</td><td style='font-family:monospace;font-weight:700'>{EscapeHtml(f.PNR ?? "---")}</td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }
@@ -1340,7 +1352,10 @@ public class VoucherService : IVoucherService
         html.AppendLine("<h2>Traslados</h2><div class='table-container'><table><thead><tr><th>Tipo de Servicio</th><th>Recogida</th><th>Destino</th><th>Fecha y Hora</th><th>Confirmación</th></tr></thead><tbody>");
         foreach (var t in reserva.TransferBookings)
         {
-            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(t.VehicleType)}</td><td>{EscapeHtml(t.PickupLocation)}</td><td>{EscapeHtml(t.DropoffLocation)}</td><td>{t.PickupDateTime:dd/MM/yyyy HH:mm}</td><td style='font-weight:600'>{EscapeHtml(t.ConfirmationNumber ?? t.Status ?? "-")}</td></tr>");
+            // ADR-018: si la ficha "producto-primero" no cargo Pickup/Dropoff, mostramos el ProductName
+            // en la columna "Recogida" para que la identidad del traslado no quede en blanco.
+            var transferPickup = ServiceDisplayName.FirstNonBlank(t.PickupLocation, t.ProductName);
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(t.VehicleType)}</td><td>{EscapeHtml(transferPickup)}</td><td>{EscapeHtml(t.DropoffLocation)}</td><td>{t.PickupDateTime:dd/MM/yyyy HH:mm}</td><td style='font-weight:600'>{EscapeHtml(t.ConfirmationNumber ?? t.Status ?? "-")}</td></tr>");
         }
         html.AppendLine("</tbody></table></div>");
     }
@@ -1353,7 +1368,9 @@ public class VoucherService : IVoucherService
         foreach (var p in reserva.PackageBookings)
         {
             var isConfirmed = p.Status == "Confirmed" || p.Status == "Confirmado";
-            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(p.PackageName)}</td><td>{EscapeHtml(p.Destination)}</td><td>{p.StartDate:dd/MM/yyyy} - {p.EndDate:dd/MM/yyyy}</td><td>{p.Nights}</td>");
+            // ADR-018: Destination puede ser null (EscapeHtml lo tolera); el rango usa EndDate ?? StartDate.
+            var packageEnd = p.EndDate ?? p.StartDate;
+            html.AppendLine($"<tr><td style='font-weight:600'>{EscapeHtml(p.PackageName)}</td><td>{EscapeHtml(p.Destination)}</td><td>{p.StartDate:dd/MM/yyyy} - {packageEnd:dd/MM/yyyy}</td><td>{p.Nights}</td>");
             html.AppendLine($"<td><span class='status-pill {(isConfirmed ? "status-confirmed" : "status-pending")}'>{EscapeHtml(p.Status ?? "-")}</span></td></tr>");
         }
         html.AppendLine("</tbody></table></div>");

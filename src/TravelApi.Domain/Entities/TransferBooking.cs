@@ -19,14 +19,22 @@ public class TransferBooking : IHasPublicId
     public int? RateId { get; set; }
     public Rate? Rate { get; set; }
 
-    // Datos del Transfer
-    [Required]
+    /// <summary>
+    /// ADR-018 (2026-06-06): nombre del producto tal como lo VIO/tipeo el vendedor en la ficha
+    /// "producto-primero" (ej. "Traslado privado EZE-Hotel"). Es la IDENTIDAD visible del traslado.
+    /// Snapshot: se copia al crear y NO se re-deriva del Rate (igual que <see cref="FlightSegment.ProductName"/>).
+    /// Null = carga por el modal viejo (la fila se muestra con la ruta Pickup->Dropoff o el vehiculo).
+    /// </summary>
     [MaxLength(200)]
-    public string PickupLocation { get; set; } = string.Empty;
-    
-    [Required]
+    public string? ProductName { get; set; }
+
+    // Datos del Transfer. ADR-018: Pickup/Dropoff dejan de ser obligatorios (la ficha
+    // "producto-primero" usa un solo texto = ProductName). Null = no informado.
     [MaxLength(200)]
-    public string DropoffLocation { get; set; } = string.Empty;
+    public string? PickupLocation { get; set; }
+
+    [MaxLength(200)]
+    public string? DropoffLocation { get; set; }
     
     public DateTime PickupDateTime { get; set; }
     
@@ -35,7 +43,23 @@ public class TransferBooking : IHasPublicId
     
     [MaxLength(50)]
     public string VehicleType { get; set; } = "Sedan"; // Sedan, Van, Minibus, Bus
-    
+
+    /// <summary>
+    /// Ficha F2 (guia-ux-gaston): sentido del traslado. "in" = llegada (del aeropuerto al hotel),
+    /// "out" = salida (del hotel al aeropuerto). Metadato operativo, NO afecta costos ni saldo.
+    /// Null = legacy / no informado. Antes el front lo metia a la fuerza en Notes (pisaba la nota real).
+    /// </summary>
+    [MaxLength(20)]
+    public string? Direction { get; set; }
+
+    /// <summary>
+    /// Ficha F2 (guia-ux-gaston): modalidad del servicio. "private" = privado, "shared" = compartido.
+    /// Metadato operativo, NO afecta costos ni saldo. Null = legacy / no informado.
+    /// Antes el front lo metia a la fuerza en Notes (pisaba la nota real).
+    /// </summary>
+    [MaxLength(20)]
+    public string? ServiceMode { get; set; }
+
     public int Passengers { get; set; } = 1;
     
     public bool IsRoundTrip { get; set; } = false;

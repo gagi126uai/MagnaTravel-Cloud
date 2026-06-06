@@ -74,6 +74,16 @@ public partial class BookingService
         if (tax < 0m) throw new ArgumentException("El impuesto no puede ser menor a cero.");
     }
 
+    /// <summary>
+    /// ADR-018 (§4-bis): resuelve el nombre de producto que se guarda como identidad visible del
+    /// servicio (FlightSegment/TransferBooking.ProductName). Fuente UNICA = lo que el vendedor vio:
+    /// el texto explicito del request manda; si no vino (path producto NUEVO sin ProductName), cae al
+    /// nombre del producto de catalogo que se esta creando. NUNCA se re-deriva del Rate despues
+    /// (eso romperia el snapshot de ADR-017 §6). Devuelve null si no hay ninguno (carga manual).
+    /// </summary>
+    private static string? ResolveCatalogProductName(string? requestProductName, NewCatalogProductRequest? newProduct)
+        => !string.IsNullOrWhiteSpace(requestProductName) ? requestProductName.Trim() : newProduct?.Name;
+
     // ============================================================ HOTEL ============================================================
 
     private async Task<HotelBookingDto> CreateHotelWithCatalogAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
@@ -201,6 +211,12 @@ public partial class BookingService
             flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
             // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
             flight.TicketingDeadline = NormalizeDeadlineDate(req.TicketingDeadline);
+            // ADR-018 (§4-bis): la identidad visible = el texto que vio el vendedor. Fuente unica = req.ProductName;
+            // si no vino (path producto NUEVO), caemos al nombre del producto de catalogo. NUNCA se re-deriva del
+            // Rate despues (preserva el snapshot de ADR-017 §6).
+            flight.ProductName = ResolveCatalogProductName(req.ProductName, req.NewCatalogProduct);
+            // ADR-018 (§2): CabinClass NO se relaja (tiene default de negocio). Si la ficha lo omite, se coalesce.
+            if (string.IsNullOrWhiteSpace(flight.CabinClass)) flight.CabinClass = "Economy";
 
             var divisor = CatalogUnitization.FlightDivisor(flight.PassengerCount ?? 1);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -222,8 +238,9 @@ public partial class BookingService
 
             if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
                 flight.Status = "Solicitado";
+            // ADR-018: identidad visible via ServiceDisplayName (ProductName si la ficha no cargo aerolinea/numero).
             var statusBlock = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-                _db, reservaId, $"Vuelo {flight.AirlineCode}{flight.FlightNumber}", flight.Status, ct);
+                _db, reservaId, $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}", flight.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
 
             await _flightRepo.AddAsync(flight, ct);
@@ -269,6 +286,10 @@ public partial class BookingService
             transfer.PickupDateTime = NormalizeAirportWallClock(transfer.PickupDateTime);
             if (transfer.ReturnDateTime.HasValue)
                 transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
+            // ADR-018 (§4-bis): identidad visible = texto del vendedor (ver Flight).
+            transfer.ProductName = ResolveCatalogProductName(req.ProductName, req.NewCatalogProduct);
+            // ADR-018 (§2): VehicleType NO se relaja (tiene default de negocio). Si la ficha lo omite, se coalesce.
+            if (string.IsNullOrWhiteSpace(transfer.VehicleType)) transfer.VehicleType = "Sedan";
 
             var divisor = CatalogUnitization.TransferDivisor();
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(

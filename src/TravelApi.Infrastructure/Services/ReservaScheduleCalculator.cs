@@ -63,9 +63,12 @@ public static class ReservaScheduleCalculator
             .Select(p => p.StartDate)
             .ToListAsync(ct));
 
+        // ADR-018: EndDate del paquete puede ser null (ficha "producto-primero"). Se coalesce a
+        // StartDate — mismo patron que el transfer (ReturnDateTime ?? PickupDateTime) de mas arriba —
+        // para no inventar una fecha de fin ni romper el List<DateTime>.
         endDates.AddRange(await db.PackageBookings
             .Where(p => p.ReservaId == reservaId)
-            .Select(p => p.EndDate)
+            .Select(p => p.EndDate ?? p.StartDate)
             .ToListAsync(ct));
 
         // Asistencia (seguro): su vigencia ValidFrom/ValidTo entra al min/max de fechas igual

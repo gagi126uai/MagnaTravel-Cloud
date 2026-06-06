@@ -70,3 +70,119 @@ test("visual service types map to technical record kinds for create validation",
   assert.equal(getRecordKindForServiceType("Paquete"), SERVICE_RECORD_KIND.PACKAGE);
   assert.equal(getRecordKindForServiceType("Otro"), SERVICE_RECORD_KIND.GENERIC);
 });
+
+// ─── Tests ADR-018: display de la fila prefiere campos de identidad ───────────
+
+test("ADR-018: vuelo con productName → la fila muestra productName", () => {
+  // ADR-018 §4-ter: la identidad visible del vuelo es productName (snapshot del buscador).
+  const [service] = normalizeReservaServices({
+    flightSegments: [
+      {
+        publicId: "flight-adr018",
+        productName: "AEP–IGR LATAM",
+        // campos estructurados null (creado desde la ficha inline)
+        origin: null,
+        destination: null,
+        airlineCode: null,
+        flightNumber: null,
+        departureTime: "2026-08-12T00:00:00Z",
+      },
+    ],
+  });
+  assert.equal(service.name, "AEP–IGR LATAM");
+});
+
+test("ADR-018: vuelo legacy (productName null) → la fila sigue derivando del estructurado", () => {
+  // Para vuelos creados antes de ADR-018, productName es null → fallback a origin/destination.
+  const [service] = normalizeReservaServices({
+    flightSegments: [
+      {
+        publicId: "flight-legacy",
+        productName: null,
+        origin: "AEP",
+        destination: "IGR",
+        airlineCode: "LA",
+        flightNumber: "4101",
+        departureTime: "2026-08-12T00:00:00Z",
+      },
+    ],
+  });
+  // El nombre derivado incluye la aerolínea/vuelo o la ruta — no debe ser vacío
+  assert.ok(service.name.length > 0, "el nombre legacy no debe quedar vacío");
+  assert.notEqual(service.name, "Vuelo", "no debe caer al default genérico cuando hay datos estructurados");
+});
+
+test("ADR-018: traslado con productName → la fila muestra productName", () => {
+  const [service] = normalizeReservaServices({
+    transferBookings: [
+      {
+        publicId: "transfer-adr018",
+        productName: "EZE → Sheraton Tigre",
+        pickupLocation: null,
+        dropoffLocation: null,
+        pickupDateTime: "2026-08-12T09:00:00Z",
+      },
+    ],
+  });
+  assert.equal(service.name, "EZE → Sheraton Tigre");
+});
+
+test("ADR-018: traslado legacy (productName null) → fallback a pickup/dropoff", () => {
+  const [service] = normalizeReservaServices({
+    transferBookings: [
+      {
+        publicId: "transfer-legacy",
+        productName: null,
+        pickupLocation: "EZE",
+        dropoffLocation: "Hotel",
+        pickupDateTime: "2026-08-12T09:00:00Z",
+      },
+    ],
+  });
+  assert.ok(service.name.includes("EZE"), "el nombre legacy debe incluir el pickup");
+});
+
+test("ADR-018: paquete con packageName → la fila muestra packageName", () => {
+  const [service] = normalizeReservaServices({
+    packageBookings: [
+      {
+        publicId: "package-adr018",
+        packageName: "Iguazú 7 noches",
+        destination: null,
+        startDate: "2026-08-12T00:00:00Z",
+      },
+    ],
+  });
+  assert.equal(service.name, "Iguazú 7 noches");
+});
+
+test("ADR-018: asistencia con planType → la fila muestra planType", () => {
+  const [service] = normalizeReservaServices({
+    assistanceBookings: [
+      {
+        publicId: "assistance-adr018",
+        planType: "AC 150 Americas Plata",
+        supplierName: null,
+        policyNumber: null,
+        validFrom: "2026-08-12T00:00:00Z",
+      },
+    ],
+  });
+  assert.equal(service.name, "AC 150 Americas Plata");
+});
+
+test("ADR-018: asistencia legacy (planType null) → fallback a supplierName/policyNumber", () => {
+  const [service] = normalizeReservaServices({
+    assistanceBookings: [
+      {
+        publicId: "assistance-legacy",
+        planType: null,
+        supplierName: "Assist Card",
+        policyNumber: "V-123456",
+        validFrom: "2026-08-12T00:00:00Z",
+      },
+    ],
+  });
+  // Debe usar supplierName como fallback (segundo en la cadena)
+  assert.equal(service.name, "Assist Card");
+});
