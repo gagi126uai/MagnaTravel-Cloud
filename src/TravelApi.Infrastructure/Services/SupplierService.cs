@@ -32,18 +32,50 @@ public class SupplierService : ISupplierService
     private readonly IAuditService? _auditService;
     private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor? _httpContextAccessor;
     private readonly ILogger<SupplierService>? _logger;
+    // ADR-017 F1b (cuenta corriente del proveedor): resolver de permisos para enmascarar
+    // montos de costo/deuda segun cobranzas.see_cost. Opcional (default null) para no
+    // romper instancias existentes; sin el, el masking es fail-closed (oculta los montos),
+    // igual que CostMasking en RateService/QuoteService/BookingService.
+    private readonly IUserPermissionResolver? _permissionResolver;
 
     public SupplierService(
         AppDbContext dbContext,
         IAuditService? auditService = null,
         Microsoft.AspNetCore.Http.IHttpContextAccessor? httpContextAccessor = null,
-        ILogger<SupplierService>? logger = null)
+        ILogger<SupplierService>? logger = null,
+        IUserPermissionResolver? permissionResolver = null)
     {
         _dbContext = dbContext;
         _auditService = auditService;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
+        _permissionResolver = permissionResolver;
     }
+
+    // ===================================================================
+    // ADR-017 F1b — fix de seguridad SIN flag: la cuenta corriente del
+    // proveedor (gateada solo por proveedores.view, permiso que el rol
+    // Vendedor tiene seeded) devolvia CurrentBalance/TotalPurchases del
+    // proveedor y NetCost por servicio. Con eso un vendedor sin
+    // cobranzas.see_cost reconstruia la deuda a operadores y el costo de
+    // cada servicio (y de ahi el margen de la agencia).
+    //
+    // Decision del dueño (2026-06-05, docs/ux/guia-ux-gaston.md): el
+    // vendedor SIGUE viendo la lista de proveedores y sus servicios
+    // (nombres, fechas, estados, confirmaciones), pero los montos de
+    // costo/deuda solo con el permiso. SalePrice NUNCA se enmascara (D1:
+    // es un monto de VENTA, no de costo).
+    //
+    // Lo persistido en DB no se toca: solo se anula en el DTO de salida.
+    // ===================================================================
+
+    /// <summary>
+    /// Devuelve true si el caller actual puede ver montos de costo/deuda del
+    /// proveedor. Admin siempre puede (bypass por rol dentro de CanSeeCostAsync);
+    /// sin HttpContext/resolver (tests, jobs) es fail-closed: NO puede.
+    /// </summary>
+    private Task<bool> CanSeeSupplierCostFiguresAsync(CancellationToken cancellationToken)
+        => CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, cancellationToken);
 
     public async Task<PagedResponse<SupplierListItemDto>> GetSuppliersAsync(SupplierListQuery query, CancellationToken cancellationToken)
     {
@@ -81,15 +113,39 @@ public class SupplierService : ISupplierService
                 CreatedAt = supplier.CreatedAt
             });
 
-        return await itemsQuery.ToPagedResponseAsync(query, cancellationToken);
+        var page = await itemsQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // ADR-017 F1b: CurrentBalance es la deuda de la agencia con el proveedor.
+        // Sin cobranzas.see_cost se anula; el resto del item (nombre, contacto,
+        // estado) sigue visible — decision del dueño.
+        if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
+        {
+            foreach (var item in page.Items)
+            {
+                item.CurrentBalance = 0m;
+            }
+        }
+
+        return page;
     }
 
     public async Task<Supplier> GetSupplierAsync(int id, CancellationToken cancellationToken)
     {
-        var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
+        // ADR-017 F1b: AsNoTracking a proposito. Este metodo solo alimenta el GET
+        // de lectura del controller, y para enmascarar CurrentBalance hay que mutar
+        // la instancia devuelta — si estuviera trackeada, un SaveChanges posterior
+        // en el mismo scope podria persistir el 0 enmascarado a la DB.
+        var supplier = await _dbContext.Suppliers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (supplier == null)
         {
             throw new KeyNotFoundException("Proveedor no encontrado");
+        }
+
+        if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
+        {
+            supplier.CurrentBalance = 0m; // deuda con el proveedor: solo con see_cost
         }
 
         return supplier;
@@ -161,6 +217,18 @@ public class SupplierService : ISupplierService
         existing.IsActive = supplier.IsActive;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // ADR-017 F1b: la respuesta del PUT tambien ecoa CurrentBalance. Un rol con
+        // proveedores.edit pero sin cobranzas.see_cost podria leer la deuda por aca.
+        // Primero se DESVINCULA la entidad del change tracker y recien despues se
+        // anula el monto: si siguiera trackeada, otro SaveChanges en el mismo scope
+        // persistiria el 0 enmascarado a la DB (el update real ya quedo guardado arriba).
+        if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
+        {
+            _dbContext.Entry(existing).State = EntityState.Detached;
+            existing.CurrentBalance = 0m;
+        }
+
         return existing;
     }
 
@@ -343,7 +411,7 @@ public class SupplierService : ISupplierService
         var serviceCount = await servicesQuery.CountAsync(cancellationToken);
         var paymentCount = await paymentsQuery.CountAsync(cancellationToken);
 
-        return new SupplierAccountOverviewDto
+        var overview = new SupplierAccountOverviewDto
         {
             Supplier = supplier,
             Summary = new SupplierAccountSummaryDto
@@ -355,6 +423,19 @@ public class SupplierService : ISupplierService
                 PaymentCount = paymentCount
             }
         };
+
+        // ADR-017 F1b: TODO el resumen es plata del lado costo/deuda (compras al
+        // proveedor, pagos egresos, saldo). Sin cobranzas.see_cost se anula completo;
+        // los CONTADORES (cuantos servicios/pagos) no son montos y quedan visibles.
+        if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
+        {
+            overview.Supplier.CurrentBalance = 0m;
+            overview.Summary.TotalPurchases = 0m;
+            overview.Summary.TotalPaid = 0m;
+            overview.Summary.Balance = 0m;
+        }
+
+        return overview;
     }
 
     public async Task<PagedResponse<SupplierAccountServiceListItemDto>> GetSupplierAccountServicesAsync(
@@ -382,7 +463,20 @@ public class SupplierService : ISupplierService
         }
 
         servicesQuery = ApplySupplierAccountServiceOrdering(servicesQuery, query);
-        return await servicesQuery.ToPagedResponseAsync(query, cancellationToken);
+        var page = await servicesQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // ADR-017 F1b: NetCost es el costo del servicio con el proveedor — sin
+        // cobranzas.see_cost se anula. SalePrice NO se toca (D1: es venta, el
+        // vendedor lo ve siempre). Descripcion/confirmacion/fechas siguen visibles.
+        if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
+        {
+            foreach (var item in page.Items)
+            {
+                item.NetCost = 0m;
+            }
+        }
+
+        return page;
     }
 
     public async Task<PagedResponse<SupplierPaymentDto>> GetSupplierAccountPaymentsAsync(
@@ -404,7 +498,13 @@ public class SupplierService : ISupplierService
         }
 
         paymentsQuery = ApplySupplierPaymentOrdering(paymentsQuery, query);
-        return await paymentsQuery.ToPagedResponseAsync(query, cancellationToken);
+        var page = await paymentsQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // ADR-017 F1b: el monto de un pago al proveedor es plata del lado costo/deuda
+        // (sumandolos se reconstruye TotalPaid y de ahi la deuda). Sin see_cost se
+        // anula; metodo/referencia/fechas siguen visibles.
+        await MaskSupplierPaymentAmountsAsync(page.Items, cancellationToken);
+        return page;
     }
 
     public async Task<Guid> AddSupplierPaymentAsync(int id, SupplierPaymentRequest request, CancellationToken cancellationToken)
@@ -423,7 +523,14 @@ public class SupplierService : ISupplierService
         var currentDebt = await CalculateSupplierDebt(id, cancellationToken);
         if (request.Amount > currentDebt)
         {
-            throw new InvalidOperationException($"El pago ({request.Amount:C}) excede la deuda actual con el proveedor ({currentDebt:C}).");
+            // ADR-017 F1b: este mensaje NO debe revelar la deuda exacta con el proveedor.
+            // SuppliersController traduce esta InvalidOperationException a un mensaje HTTP
+            // generico ("No se pudo registrar el pago al proveedor"), asi que cualquier
+            // detalle por permiso aca seria codigo muerto que jamas llega al cliente. Para
+            // evitar esa incoherencia (y un eventual leak si algun futuro caller surfacea
+            // ex.Message), el mensaje es generico para todos. El enmascarado real de montos
+            // vive en los DTOs (MaskSupplierPaymentAmountsAsync), no en los mensajes de error.
+            throw new InvalidOperationException("El pago excede la deuda actual con el proveedor.");
         }
 
         int? reservaId = null;
@@ -486,7 +593,10 @@ public class SupplierService : ISupplierService
 
         if (request.Amount > debtPrePayment)
         {
-            throw new InvalidOperationException($"La modificacion del pago excede la deuda actual. Deuda: {debtPrePayment:C}, Nuevo Monto: {request.Amount:C}");
+            // ADR-017 F1b: mismo criterio que AddSupplierPaymentAsync — el controller pisa
+            // esta excepcion con un mensaje HTTP generico, asi que el mensaje es generico
+            // para todos (sin revelar la deuda). El masking de montos vive en los DTOs.
+            throw new InvalidOperationException("La modificacion del pago excede la deuda actual con el proveedor.");
         }
 
         int? reservaId = null;
@@ -579,10 +689,31 @@ public class SupplierService : ISupplierService
 
     public async Task<IEnumerable<SupplierPaymentDto>> GetSupplierPaymentsHistoryAsync(int id, CancellationToken cancellationToken)
     {
-        return await ApplySupplierPaymentOrdering(
+        var payments = await ApplySupplierPaymentOrdering(
                 BuildSupplierPaymentsQuery(id),
                 new SupplierAccountPaymentsQuery())
             .ToListAsync(cancellationToken);
+
+        // ADR-017 F1b: mismo criterio que la version paginada (ver
+        // GetSupplierAccountPaymentsAsync).
+        await MaskSupplierPaymentAmountsAsync(payments, cancellationToken);
+        return payments;
+    }
+
+    /// <summary>
+    /// Anula Amount en los pagos al proveedor si el caller no puede ver montos de
+    /// costo/deuda (ADR-017 F1b). Los datos no monetarios del pago quedan intactos.
+    /// </summary>
+    private async Task MaskSupplierPaymentAmountsAsync(
+        IEnumerable<SupplierPaymentDto> payments,
+        CancellationToken cancellationToken)
+    {
+        if (await CanSeeSupplierCostFiguresAsync(cancellationToken)) return;
+
+        foreach (var payment in payments)
+        {
+            payment.Amount = 0m;
+        }
     }
 
     private IQueryable<SupplierAccountServiceListItemDto> BuildSupplierServicesQuery(int supplierId)

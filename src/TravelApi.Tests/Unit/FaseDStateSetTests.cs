@@ -128,7 +128,9 @@ public class FaseDStateSetTests
 
         var service = new AlertService(context, SettingsMock().Object);
 
-        dynamic result = await service.GetAlertsAsync(CancellationToken.None);
+        // Fuga 2 (ADR-017 F1b): GetAlertsAsync ahora recibe la identidad del caller.
+        // Los buckets financieros son solo-admin, asi que este test pasa un admin.
+        dynamic result = await service.GetAlertsAsync(new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);
 
         var urgentStatuses = EnumerateStatuses(result.UrgentTrips);
         Assert.Contains(EstadoReserva.Sold, urgentStatuses);
@@ -326,7 +328,8 @@ public class FaseDStateSetTests
 
         var service = new AlertService(context, SettingsMock().Object);
 
-        dynamic result = await service.GetAlertsAsync(CancellationToken.None);
+        // Fuga 2 (ADR-017 F1b): buckets financieros solo-admin -> caller admin.
+        dynamic result = await service.GetAlertsAsync(new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);
 
         var urgentStatuses = EnumerateStatuses(result.UrgentTrips);
         Assert.Contains(EstadoReserva.Confirmed, urgentStatuses);

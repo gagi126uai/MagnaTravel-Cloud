@@ -1,4 +1,5 @@
 using System.Data;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -7,6 +8,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -14,6 +16,12 @@ public class RateService : IRateService
 {
     private readonly AppDbContext _db;
     private readonly ILogger<RateService> _logger;
+    // Fuga 1 (ADR-017 §2.7, F1b): dependencias para enmascarar costos del tarifario
+    // segun el permiso cobranzas.see_cost. Opcionales (default null) para no romper
+    // instancias existentes; sin ellas el masking es fail-closed (oculta el costo),
+    // igual que CostMasking en BookingService.
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     // ===================================================================
     // Pieza C "tarifario que se llena solo": umbral de similitud difusa.
@@ -32,10 +40,59 @@ public class RateService : IRateService
     // Cuantos candidatos difusos como maximo devolvemos (los mas parecidos).
     private const int FuzzyMatchLimit = 5;
 
-    public RateService(AppDbContext db, ILogger<RateService> logger)
+    public RateService(
+        AppDbContext db,
+        ILogger<RateService> logger,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _db = db;
         _logger = logger;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    // ===================================================================
+    // Fuga 1 (ADR-017 §2.7, F1b — fix de seguridad SIN flag): el tarifario
+    // devolvia NetCost/Tax/Commission a CUALQUIER usuario logueado (el
+    // controller solo tiene [Authorize] de clase). El costo del proveedor
+    // deja inferir el margen de la agencia, asi que se enmascara a 0m
+    // (convencion de la casa, igual que CostMasking en bookings) para
+    // callers sin cobranzas.see_cost. SalePrice NUNCA se enmascara (D1:
+    // quien no ve costos ve el precio de venta).
+    // Lo persistido en DB no se toca: solo se anula en el DTO de salida.
+    // ===================================================================
+
+    /// <summary>
+    /// Anula los campos de costo de los items del tarifario si el caller no
+    /// puede ver costos. Admin siempre ve (bypass dentro de CanSeeCostAsync);
+    /// sin HttpContext/resolver (tests) es fail-closed: oculta.
+    /// </summary>
+    private async Task MaskRateListCostsAsync(IEnumerable<RateListItemDto> items, CancellationToken ct)
+    {
+        if (await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct)) return;
+
+        foreach (var item in items)
+        {
+            item.NetCost = 0m;
+            item.Tax = 0m;        // el impuesto es componente del costo: revelarlo deja inferir margen
+            item.Commission = 0m; // la ganancia revela el margen directamente
+        }
+    }
+
+    /// <summary>
+    /// Igual que <see cref="MaskRateListCostsAsync"/> pero para los resultados de
+    /// /api/rates/search (RateSearchItemDto no expone Commission, solo NetCost/Tax).
+    /// </summary>
+    private async Task MaskSearchCostsAsync(IEnumerable<RateSearchItemDto> items, CancellationToken ct)
+    {
+        if (await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct)) return;
+
+        foreach (var item in items)
+        {
+            item.NetCost = 0m;
+            item.Tax = 0m;
+        }
     }
 
     public async Task<PagedResponse<RateListItemDto>> GetAllAsync(RateListQuery query, CancellationToken ct)
@@ -44,8 +101,11 @@ public class RateService : IRateService
         var ratesQuery = BuildFilteredRatesQuery(supplierId, query.ServiceType, query.ActiveOnly, query.Search);
         ratesQuery = ApplyRateOrdering(ratesQuery, query);
 
-        return await ProjectRateListItems(ratesQuery)
+        var page = await ProjectRateListItems(ratesQuery)
             .ToPagedResponseAsync(query, ct);
+
+        await MaskRateListCostsAsync(page.Items, ct);
+        return page;
     }
 
     public async Task<PagedResponse<RateGroupDto>> GetGroupsAsync(RateGroupsQuery query, CancellationToken ct)
@@ -141,6 +201,10 @@ public class RateService : IRateService
                 (rate.ServiceType == "Hotel" && selectedHotelNames.Contains(rate.HotelName ?? "Hotel sin nombre")) ||
                 (rate.ServiceType != "Hotel" && selectedProductNames.Contains(rate.ProductName)))
             .ToListAsync(ct);
+
+        // Fuga 1 (F1b): los items de cada grupo llevan costos -> mismo masking que GetAll.
+        // FromPrice del grupo es un MIN de SalePrice, no se enmascara (D1).
+        await MaskRateListCostsAsync(groupItems, ct);
 
         var itemsByGroup = groupItems
             .GroupBy(BuildRateGroupKey)
@@ -239,6 +303,9 @@ public class RateService : IRateService
             .ThenBy(rate => rate.SalePrice)
             .ToListAsync(ct);
 
+        // Fuga 1 (F1b): mismo masking de costos que GetAll para los items de cada hotel.
+        await MaskRateListCostsAsync(hotelItems, ct);
+
         var itemsByGroup = hotelItems
             .GroupBy(rate => BuildHotelGroupKey(rate.HotelName, rate.City, rate.SupplierName, rate.StarRating))
             .ToDictionary(group => group.Key, group => (IReadOnlyList<RateListItemDto>)group.ToList());
@@ -300,8 +367,14 @@ public class RateService : IRateService
 
     public async Task<RateListItemDto?> GetByIdAsync(int id, CancellationToken ct)
     {
-        return await ProjectRateListItems(_db.Rates.AsNoTracking().Where(rate => rate.Id == id))
+        var item = await ProjectRateListItems(_db.Rates.AsNoTracking().Where(rate => rate.Id == id))
             .FirstOrDefaultAsync(ct);
+
+        // Fuga 1 (F1b): tambien lo usan Create/Update/Deactivate/Reactivate para armar
+        // el response, pero esos endpoints son Admin-only y Admin tiene bypass -> para
+        // ellos el resultado es identico a antes.
+        if (item != null) await MaskRateListCostsAsync(new[] { item }, ct);
+        return item;
     }
 
     public async Task<RateListItemDto?> GetByPublicIdAsync(string publicId, CancellationToken ct)
@@ -311,15 +384,19 @@ public class RateService : IRateService
             return null;
         }
 
-        return await ProjectRateListItems(_db.Rates.AsNoTracking().Where(rate => rate.PublicId == parsedPublicId))
+        var item = await ProjectRateListItems(_db.Rates.AsNoTracking().Where(rate => rate.PublicId == parsedPublicId))
             .FirstOrDefaultAsync(ct);
+
+        // Fuga 1 (F1b): GET /api/rates/{publicId} es de cualquier logueado -> masking.
+        if (item != null) await MaskRateListCostsAsync(new[] { item }, ct);
+        return item;
     }
 
     public async Task<IReadOnlyList<RateSearchItemDto>> SearchAsync(int? supplierId, string? serviceType, string? query, CancellationToken ct)
     {
         var ratesQuery = BuildFilteredRatesQuery(supplierId, serviceType, activeOnly: true, query);
 
-        return await ratesQuery
+        var results = await ratesQuery
             .OrderBy(rate => rate.ProductName)
             .ThenBy(rate => rate.HotelName)
             .Select(rate => new RateSearchItemDto
@@ -353,6 +430,11 @@ public class RateService : IRateService
             })
             .Take(30)
             .ToListAsync(ct);
+
+        // Fuga 1 (F1b): /api/rates/search era la fuga original reportada (D3) — devolvia
+        // NetCost/Tax crudos a cualquier logueado. SalePrice queda (D1).
+        await MaskSearchCostsAsync(results, ct);
+        return results;
     }
 
     public async Task<RateListItemDto> CreateAsync(RateDto request, CancellationToken ct)

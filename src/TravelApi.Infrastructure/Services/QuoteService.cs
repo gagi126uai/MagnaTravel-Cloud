@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -11,35 +13,102 @@ public class QuoteService : IQuoteService
     private readonly AppDbContext _db;
     private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly IOperationalFinanceSettingsService _settingsService;
+    // B3 (ADR-017 F1b): dependencias para enmascarar costos/margenes de cotizaciones
+    // segun el permiso cobranzas.see_cost. Opcionales (default null) para no romper
+    // instancias existentes; sin ellas el masking es fail-closed (oculta el costo),
+    // igual que CostMasking en BookingService/RateService.
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public QuoteService(
         AppDbContext db,
         IEntityReferenceResolver entityReferenceResolver,
-        IOperationalFinanceSettingsService settingsService)
+        IOperationalFinanceSettingsService settingsService,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _db = db;
         _entityReferenceResolver = entityReferenceResolver;
         _settingsService = settingsService;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    // ===================================================================
+    // B3 (ADR-017 F1b — fix de seguridad SIN flag): el modulo Quotes era un
+    // "oraculo" del costo de cualquier tarifa. El controller solo tiene
+    // [Authorize] plano, y los DTOs exponen TotalCost/GrossMargin (summary)
+    // y UnitCost/MarkupPercent/TotalCost (items). Peor: POST /items con
+    // rateId autocompleta UnitCost = rate.NetCost y lo DEVOLVIA en el
+    // response, asi cualquier vendedor podia leer el costo de cualquier
+    // tarifa aunque el tarifario se lo enmascare.
+    //
+    // Fix (decision D3 del dueño, "tapar la fuga"): mismo CanSeeCostAsync que
+    // el resto del sistema; para callers sin permiso los campos de costo y
+    // margen van en 0m con la MISMA forma de DTO. El autocompletado
+    // server-side SIGUE guardando el costo real en DB (el server sabe; el
+    // caller no lo ve). TotalSale/UnitPrice/TotalPrice (venta) viajan
+    // SIEMPRE (D1). Lo persistido nunca se altera.
+    // ===================================================================
+
+    private static void MaskQuoteSummaryCosts(QuoteSummaryDto dto)
+    {
+        dto.TotalCost = 0m;
+        dto.GrossMargin = 0m; // el margen revela el costo dado el precio de venta
+    }
+
+    private static void MaskQuoteDetailCosts(QuoteDetailDto dto)
+    {
+        MaskQuoteSummaryCosts(dto);
+        foreach (var item in dto.Items)
+        {
+            item.UnitCost = 0m;
+            item.TotalCost = 0m;
+            item.MarkupPercent = 0m; // con el markup y la venta se despeja el costo
+        }
+    }
+
+    /// <summary>
+    /// Mapea el detalle y enmascara costos/margenes si el caller no puede verlos.
+    /// Todos los metodos publicos que devuelven QuoteDetailDto pasan por aca para
+    /// que ningun endpoint (incluido el echo de AddItem) filtre el costo real.
+    /// </summary>
+    private async Task<QuoteDetailDto> MapQuoteDetailMaskedAsync(Quote quote, CancellationToken ct)
+    {
+        var dto = MapQuoteDetail(quote);
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            MaskQuoteDetailCosts(dto);
+        }
+        return dto;
     }
 
     public async Task<List<QuoteSummaryDto>> GetAllAsync(CancellationToken cancellationToken)
     {
         var quotes = await GetAllEntitiesAsync(cancellationToken);
-        return quotes.Select(MapQuoteSummary).ToList();
+        var summaries = quotes.Select(MapQuoteSummary).ToList();
+
+        // B3 (F1b): TotalCost/GrossMargin del listado tambien revelan el margen.
+        // CanSeeCost se evalua una sola vez (mismo caller para toda la lista).
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, cancellationToken))
+        {
+            foreach (var summary in summaries) MaskQuoteSummaryCosts(summary);
+        }
+        return summaries;
     }
 
     public async Task<QuoteDetailDto?> GetByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
         var quote = await GetByIdAsync(id, cancellationToken);
-        return quote == null ? null : MapQuoteDetail(quote);
+        return quote == null ? null : await MapQuoteDetailMaskedAsync(quote, cancellationToken);
     }
 
     public async Task<QuoteDetailDto> CreateAsync(UpsertQuoteRequest request, CancellationToken cancellationToken)
     {
         var quote = await CreateAsync(await BuildQuoteEntityAsync(request, cancellationToken), cancellationToken);
         var detail = await GetByIdAsync(quote.Id, cancellationToken) ?? quote;
-        return MapQuoteDetail(detail);
+        return await MapQuoteDetailMaskedAsync(detail, cancellationToken);
     }
 
     public async Task<QuoteDetailDto> UpdateAsync(string publicIdOrLegacyId, UpsertQuoteRequest updated, CancellationToken cancellationToken)
@@ -47,7 +116,7 @@ public class QuoteService : IQuoteService
         var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
         var quote = await UpdateAsync(id, await BuildQuoteEntityAsync(updated, cancellationToken), cancellationToken);
         var detail = await GetByIdAsync(quote.Id, cancellationToken) ?? quote;
-        return MapQuoteDetail(detail);
+        return await MapQuoteDetailMaskedAsync(detail, cancellationToken);
     }
 
     public async Task DeleteAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
@@ -60,7 +129,9 @@ public class QuoteService : IQuoteService
     {
         var quoteId = await ResolveRequiredIdAsync<Quote>(quotePublicIdOrLegacyId, cancellationToken);
         var quote = await AddItemAsync(quoteId, await BuildQuoteItemEntityAsync(item, cancellationToken), cancellationToken);
-        return MapQuoteDetail(quote);
+        // B3 (F1b): SIN masking, este response hacia echo del UnitCost autocompletado desde
+        // la tarifa (rate.NetCost) — el oraculo de costos. En DB queda el costo real igual.
+        return await MapQuoteDetailMaskedAsync(quote, cancellationToken);
     }
 
     public async Task RemoveItemAsync(string quotePublicIdOrLegacyId, string itemPublicIdOrLegacyId, CancellationToken cancellationToken)
@@ -75,7 +146,7 @@ public class QuoteService : IQuoteService
         var id = await ResolveRequiredIdAsync<Quote>(publicIdOrLegacyId, cancellationToken);
         var quote = await UpdateStatusAsync(id, status, cancellationToken);
         var detail = await GetByIdAsync(quote.Id, cancellationToken) ?? quote;
-        return MapQuoteDetail(detail);
+        return await MapQuoteDetailMaskedAsync(detail, cancellationToken);
     }
 
     public async Task<QuoteConversionResultDto> ConvertToFileAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)

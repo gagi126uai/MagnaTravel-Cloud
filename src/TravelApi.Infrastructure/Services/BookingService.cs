@@ -83,6 +83,106 @@ public class BookingService : IBookingService
         return await _db.Set<Rate>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == rateId.Value, ct);
     }
 
+    /// <summary>
+    /// Fuga 3 (ADR-017 §2.7, F1b — fix de seguridad SIN flag): decide que valores de costo
+    /// persiste un UPDATE segun el permiso del caller.
+    ///
+    /// Contexto del bug: el PUT de bookings solo exige ReservasEdit (sin gate de costos);
+    /// a un caller sin cobranzas.see_cost el GET le enmascara NetCost/Tax a 0, el form de
+    /// edicion se puebla con ese 0 y el submit lo manda de vuelta -> el mapeo automatico
+    /// pisaba el costo real persistido con 0 en cada edicion legitima. Por eso los maps
+    /// de UPDATE (MappingProfile) ahora IGNORAN NetCost/Tax/Commission y la asignacion
+    /// pasa por aca:
+    ///  - Caller CON permiso (o Admin): valores del request, identico al comportamiento de siempre.
+    ///  - Caller SIN permiso: se PRESERVAN NetCost/Tax persistidos. La ganancia se recalcula
+    ///    canonica (Commission = SalePrice - NetCost - Tax, formula documentada en las 5
+    ///    entidades) con el SalePrice del request (que el caller SI ve y puede editar) y los
+    ///    costos preservados. La Commission del request se descarta: el front la calculo con
+    ///    el costo enmascarado en 0, asi que no es un dato real.
+    ///
+    /// Fail-closed: sin HttpContext/resolver (tests sin accessor) se trata como "sin permiso",
+    /// igual que CostMasking.
+    /// </summary>
+    private async Task<(decimal NetCost, decimal Tax, decimal Commission)> ResolveUpdateCostFieldsAsync(
+        string serviceType,
+        int serviceId,
+        decimal persistedNetCost,
+        decimal persistedTax,
+        decimal requestNetCost,
+        decimal requestTax,
+        decimal requestCommission,
+        decimal requestSalePrice,
+        CancellationToken ct)
+    {
+        if (await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            return (requestNetCost, requestTax, requestCommission);
+        }
+
+        // Trazabilidad: dejamos registro de que fue EL SISTEMA quien decidio los costos
+        // (preservando lo persistido), no el vendedor. Solo IDs — sin montos en el log.
+        _logger.LogInformation(
+            "ResolveUpdateCostFields: caller sin ver-costos; se preservan NetCost/Tax persistidos y se recalcula la ganancia canonica. ServiceType={ServiceType} ServiceId={ServiceId}",
+            serviceType, serviceId);
+
+        var recalculatedCommission = requestSalePrice - persistedNetCost - persistedTax;
+        return (persistedNetCost, persistedTax, recalculatedCommission);
+    }
+
+    /// <summary>
+    /// B1 (ADR-017 F1b): cuantas "unidades" de tarifa de hotel hay que cobrar.
+    /// El tarifario de hotel guarda precios POR NOCHE y POR HABITACION (precio unitario,
+    /// ver Rate.PriceUnit/HotelPriceType); el booking persiste montos TOTALES. El criterio
+    /// es el mismo que usa el form (getHotelQuantity): noches (minimo 1) x habitaciones (minimo 1).
+    /// </summary>
+    private static int ComputeHotelRateQuantity(DateTime checkIn, DateTime checkOut, int rooms)
+    {
+        var nights = (checkOut.Date - checkIn.Date).Days;
+        return Math.Max(nights, 1) * Math.Max(rooms, 1);
+    }
+
+    /// <summary>
+    /// B1 (ADR-017 F1b — regresion del masking): el alta de hotel desde tarifario nacia con
+    /// costo 0 para vendedores sin <c>cobranzas.see_cost</c>. La cadena: el search del tarifario
+    /// les enmascara NetCost/Tax a 0 -> el form copia ese 0 -> el create lo persiste, porque
+    /// Hotel (a diferencia de Flight/Package/Transfer/Assistance) NO re-aplica precios del
+    /// Rate en su snapshot.
+    ///
+    /// Fix: si el caller NO puede ver costos, el server resuelve el costo real desde la tarifa
+    /// (el server sabe; el caller sigue sin verlo) y recalcula la ganancia canonica
+    /// (Commission = SalePrice - NetCost - Tax) con el SalePrice del request, que el caller
+    /// SI ve y puede editar. Si la tarifa no tiene costo utilizable, se persiste 0 (no inventar).
+    /// Callers CON permiso: no se toca nada — el request manda, como siempre.
+    /// </summary>
+    private async Task ApplyHotelRateCostsForMaskedCallerAsync(
+        HotelBooking hotel,
+        Rate rate,
+        CreateHotelRequest req,
+        CancellationToken ct)
+    {
+        if (await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct)) return;
+
+        var quantity = ComputeHotelRateQuantity(req.CheckIn, req.CheckOut, req.Rooms);
+
+        // Math.Round a 2 decimales (AwayFromZero) = mismo redondeo que roundMoney en el front.
+        hotel.NetCost = rate.NetCost > 0m
+            ? Math.Round(rate.NetCost * quantity, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+        hotel.Tax = rate.Tax > 0m
+            ? Math.Round(rate.Tax * quantity, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+
+        // La Commission del request se descarta: el front la calculo con el costo enmascarado
+        // en 0, asi que no es un dato real. Formula canonica documentada en HotelBooking.
+        hotel.Commission = hotel.SalePrice - hotel.NetCost - hotel.Tax;
+
+        // Trazabilidad: el costo lo resolvio el sistema desde la tarifa, no el vendedor.
+        // Solo IDs — sin montos en el log.
+        _logger.LogInformation(
+            "CreateHotel: caller sin ver-costos; costos resueltos server-side desde el tarifario. ReservaId={ReservaId} RateId={RateId} Quantity={Quantity}",
+            hotel.ReservaId, rate.Id, quantity);
+    }
+
     private static void ValidateHotelStay(DateTime checkIn, DateTime checkOut)
     {
         if (checkOut <= checkIn)
@@ -365,12 +465,21 @@ public class BookingService : IBookingService
         _mapper.Map(req, flight);
         flight.SupplierId = supplierId;
 
+        // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
+        (flight.NetCost, flight.Tax, flight.Commission) = await ResolveUpdateCostFieldsAsync(
+            serviceType: "Flight", serviceId: id,
+            persistedNetCost: flight.NetCost, persistedTax: flight.Tax,
+            requestNetCost: req.NetCost, requestTax: req.Tax,
+            requestCommission: req.Commission, requestSalePrice: req.SalePrice, ct: ct);
+
         // B1 (zona horaria): misma normalizacion que en el alta. La hora de vuelo se guarda
         // como hora local del aeropuerto, sin convertir a UTC. Ver NormalizeAirportWallClock.
         flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
         flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
 
-        // Si viene un RateId nuevo, actualizar snapshot
+        // Si viene un RateId nuevo, solo se re-vincula la tarifa (RateId). OJO: NO se
+        // re-aplican precios del tarifario en el update — los costos ya quedaron resueltos
+        // arriba segun el permiso del caller (ResolveUpdateCostFieldsAsync).
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             flight.RateId = rateId.Value;
@@ -501,6 +610,11 @@ public class BookingService : IBookingService
         if (rate != null)
         {
             ApplyHotelRateSnapshot(hotel, rate);
+
+            // B1 (F1b): si el caller no puede ver costos, el NetCost/Tax del request son el 0
+            // enmascarado rebotado por el form — el costo real lo resuelve el server desde la
+            // tarifa. Con permiso, no hace nada (el request manda, como siempre).
+            await ApplyHotelRateCostsForMaskedCallerAsync(hotel, rate, req, ct);
         }
 
         // En Presupuesto el status siempre es "Solicitado" — no es una reserva real.
@@ -573,6 +687,14 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, hotel);
         hotel.SupplierId = supplierId;
+
+        // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
+        // (ApplyHotelRateSnapshot, mas abajo, no toca precios en Hotel: solo atributos.)
+        (hotel.NetCost, hotel.Tax, hotel.Commission) = await ResolveUpdateCostFieldsAsync(
+            serviceType: "Hotel", serviceId: id,
+            persistedNetCost: hotel.NetCost, persistedTax: hotel.Tax,
+            requestNetCost: req.NetCost, requestTax: req.Tax,
+            requestCommission: req.Commission, requestSalePrice: req.SalePrice, ct: ct);
 
         if (requestedRate != null)
         {
@@ -775,6 +897,13 @@ public class BookingService : IBookingService
         _mapper.Map(req, package);
         package.SupplierId = supplierId;
 
+        // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
+        (package.NetCost, package.Tax, package.Commission) = await ResolveUpdateCostFieldsAsync(
+            serviceType: "Package", serviceId: id,
+            persistedNetCost: package.NetCost, persistedTax: package.Tax,
+            requestNetCost: req.NetCost, requestTax: req.Tax,
+            requestCommission: req.Commission, requestSalePrice: req.SalePrice, ct: ct);
+
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             package.RateId = rateId.Value;
@@ -968,6 +1097,13 @@ public class BookingService : IBookingService
 
         _mapper.Map(req, transfer);
         transfer.SupplierId = supplierId;
+
+        // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
+        (transfer.NetCost, transfer.Tax, transfer.Commission) = await ResolveUpdateCostFieldsAsync(
+            serviceType: "Transfer", serviceId: id,
+            persistedNetCost: transfer.NetCost, persistedTax: transfer.Tax,
+            requestNetCost: req.NetCost, requestTax: req.Tax,
+            requestCommission: req.Commission, requestSalePrice: req.SalePrice, ct: ct);
 
         // B1 (zona horaria): misma normalizacion que en el alta. Hora local del traslado,
         // sin convertir a UTC. Ver NormalizeAirportWallClock.
@@ -1192,7 +1328,16 @@ public class BookingService : IBookingService
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
         assistance.SupplierId = supplierId;
 
-        // Si viene un RateId nuevo, re-aplicamos el snapshot (igual que Flight/Package).
+        // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
+        (assistance.NetCost, assistance.Tax, assistance.Commission) = await ResolveUpdateCostFieldsAsync(
+            serviceType: "Assistance", serviceId: id,
+            persistedNetCost: assistance.NetCost, persistedTax: assistance.Tax,
+            requestNetCost: req.NetCost, requestTax: req.Tax,
+            requestCommission: req.Commission, requestSalePrice: req.SalePrice, ct: ct);
+
+        // Si viene un RateId nuevo, solo se re-vincula la tarifa (RateId), igual que en
+        // Flight/Package. OJO: NO se re-aplica el snapshot de precios en el update — los
+        // costos ya quedaron resueltos arriba segun el permiso del caller.
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
             assistance.RateId = rateId.Value;

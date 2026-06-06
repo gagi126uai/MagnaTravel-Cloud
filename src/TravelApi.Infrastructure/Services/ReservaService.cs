@@ -110,9 +110,17 @@ public class ReservaService : IReservaService
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var (reservation, warning) = await AddServiceAsync(reservaId, request, ct);
 
+        var servicioDto = _mapper.Map<ServicioReservaDto>(reservation);
+
+        // B1 (ADR-017 F1b): el costo REAL se resuelve/persiste server-side, asi que viaja
+        // en la entidad mapeada. El body de respuesta del POST llega a un caller que puede
+        // no tener cobranzas.see_cost; sin esto reabriria la fuga que el GET de detalle ya
+        // cierra (asimetria response-mutacion vs response-detalle).
+        await CostMasking.MaskGenericServiceAsync(servicioDto, _httpContextAccessor, _permissionResolver, ct);
+
         return new ReservationServiceMutationResult
         {
-            Servicio = _mapper.Map<ServicioReservaDto>(reservation),
+            Servicio = servicioDto,
             Warning = warning
         };
     }
@@ -121,7 +129,14 @@ public class ReservaService : IReservaService
     {
         var serviceId = await ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, ct);
         var service = await UpdateServiceAsync(serviceId, request, ct);
-        return _mapper.Map<ServicioReservaDto>(service);
+
+        var servicioDto = _mapper.Map<ServicioReservaDto>(service);
+
+        // B1 (ADR-017 F1b): mismo motivo que en AddServiceAsync — el body del PUT no debe
+        // revelar NetCost/Commission/Tax reales a un caller sin cobranzas.see_cost.
+        await CostMasking.MaskGenericServiceAsync(servicioDto, _httpContextAccessor, _permissionResolver, ct);
+
+        return servicioDto;
     }
 
     public async Task RemoveServiceAsync(string servicePublicIdOrLegacyId, CancellationToken ct = default)
@@ -1406,6 +1421,36 @@ public class ReservaService : IReservaService
             CreatedAt = DateTime.UtcNow
         };
 
+        // B1 (ADR-017 F1b — regresion del masking): si el alta vino del tarifario y el caller
+        // NO puede ver costos, el NetCost del request es el 0 enmascarado rebotado por el form,
+        // no un dato real. El server resuelve el costo desde la tarifa (el server sabe; el
+        // caller sigue sin verlo) y recalcula la ganancia con la formula de este path
+        // (Commission = SalePrice - NetCost; el servicio generico no captura Tax en ningun
+        // punto de su ciclo, queda en 0). Si la tarifa no tiene costo utilizable, queda 0
+        // (no inventar). Con permiso: el request manda, como siempre.
+        if (!string.IsNullOrWhiteSpace(request.RateId)
+            && !await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            var rateId = await _context.Rates
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.RateId, ct);
+            var rate = rateId.HasValue
+                ? await _context.Rates.AsNoTracking().FirstOrDefaultAsync(r => r.Id == rateId.Value, ct)
+                : null;
+
+            if (rate != null)
+            {
+                reservation.NetCost = rate.NetCost > 0m ? rate.NetCost : 0m;
+                reservation.Commission = request.SalePrice - reservation.NetCost;
+
+                // Trazabilidad: el costo lo resolvio el sistema desde la tarifa, no el
+                // vendedor. Solo IDs — sin montos en el log.
+                _logger.LogInformation(
+                    "AddService: caller sin ver-costos; costo resuelto server-side desde el tarifario. ReservaId={ReservaId} RateId={RateId}",
+                    reservaId, rate.Id);
+            }
+        }
+
         _context.Servicios.Add(reservation);
         await _context.SaveChangesAsync();
         await UpdateBalanceAsync(reservaId);
@@ -1458,8 +1503,37 @@ public class ReservaService : IReservaService
         service.ReturnDate = request.ReturnDate?.ToUniversalTime();
         service.SupplierId = supplierId;
         service.SalePrice = request.SalePrice;
-        service.NetCost = request.NetCost;
-        service.Commission = request.SalePrice - request.NetCost;
+
+        // B2 (ADR-017 F1b — Fuga 3 en el servicio generico): a un caller sin
+        // cobranzas.see_cost el GET le enmascara NetCost a 0; el form re-envia ese 0 y la
+        // asignacion incondicional destruia el costo real en cada edicion legitima.
+        // Mismo patron que BookingService.ResolveUpdateCostFieldsAsync, replicado local
+        // porque este path tiene su propia formula (sin Tax en el request) — compartir el
+        // helper acoplaria los dos services por una tupla que aca no aplica.
+        //  - Con permiso (o Admin): el request manda, identico al comportamiento de siempre.
+        //  - Sin permiso: se PRESERVA el NetCost persistido y la ganancia se recalcula con
+        //    el SalePrice del request (que el caller SI ve) y los valores preservados.
+        //    Se descuenta tambien el Tax persistido (formula canonica); en este path es 0
+        //    porque el servicio generico no captura impuesto, pero si algun dato lo trae,
+        //    la ganancia no lo ignora.
+        if (await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct))
+        {
+            service.NetCost = request.NetCost;
+            // Divergencia menor vs la rama sin permiso (que resta service.Tax): aca la formula
+            // NO descuenta Tax. Es inofensivo porque el servicio generico no captura impuesto
+            // en ningun punto de su ciclo (Tax ≡ 0 en este path); ambas formulas dan lo mismo.
+            // Se deja asi para no cambiar el comportamiento historico de la rama con permiso.
+            service.Commission = request.SalePrice - request.NetCost;
+        }
+        else
+        {
+            // Trazabilidad: fue el sistema quien preservo el costo, no el vendedor.
+            // Solo IDs — sin montos en el log.
+            _logger.LogInformation(
+                "UpdateService: caller sin ver-costos; se preserva el NetCost persistido y se recalcula la ganancia. ServiceId={ServiceId} ReservaId={ReservaId}",
+                serviceId, service.ReservaId);
+            service.Commission = request.SalePrice - service.NetCost - service.Tax;
+        }
 
         await _context.SaveChangesAsync();
         if (service.ReservaId.HasValue) await UpdateBalanceAsync(service.ReservaId.Value);

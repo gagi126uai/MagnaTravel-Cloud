@@ -16,8 +16,30 @@ public class AlertService : IAlertService
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
     }
 
-    public async Task<object> GetAlertsAsync(CancellationToken cancellationToken)
+    public async Task<object> GetAlertsAsync(AlertCallerContext caller, CancellationToken cancellationToken)
     {
+        // Fuga 2 (ADR-017 §2.7, F1b — fix de seguridad SIN flag): UrgentTrips y
+        // SupplierDebts son informacion financiera de TODA la agencia (deudas a
+        // proveedores, saldos de clientes). Antes el gating "solo admin" vivia
+        // UNICAMENTE en el frontend (AlertsContext.jsx), asi que cualquier logueado
+        // podia leerlos con un curl. Ahora el server decide.
+        //
+        // El no-admin recibe el payload con la MISMA forma pero vacio (no un 403):
+        // asi el contrato queda listo para que F3 agregue buckets por-vendedor
+        // (deadlines de SUS reservas) sin otro cambio de contrato. El gate es
+        // POR BUCKET (variable propia), no un "if admin" global, para que F3
+        // pueda sumar buckets con otro criterio de visibilidad.
+        var canSeeAgencyFinancialBuckets = caller.IsAdmin;
+        if (!canSeeAgencyFinancialBuckets)
+        {
+            return new
+            {
+                UrgentTrips = Array.Empty<object>(),
+                SupplierDebts = Array.Empty<object>(),
+                TotalCount = 0
+            };
+        }
+
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));

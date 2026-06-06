@@ -137,4 +137,27 @@ public static class CostMasking
         dto.NetCost = 0m;
         dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
     }
+
+    /// <summary>
+    /// Enmascara el DTO del servicio GENERICO (<see cref="ServicioReservaDto"/>) a la
+    /// vuelta de un create/update, si el caller no puede ver costos. A diferencia de los
+    /// DTOs tipados (Hotel/Flight/Package/Transfer/Assistance) que solo exponen NetCost,
+    /// el generico expone tambien Commission y Tax, asi que hay que ocultar los tres.
+    ///
+    /// Existe para cerrar la asimetria con el GET de detalle: el detalle de la reserva ya
+    /// enmascara estos servicios (ver ReservaService.ApplyCostMaskingAsync), pero el body
+    /// de respuesta de la mutacion no lo hacia y reabria la fuga de costo (ADR-017 F1b).
+    /// </summary>
+    public static async Task MaskGenericServiceAsync(
+        ServicioReservaDto? dto,
+        IHttpContextAccessor? httpContextAccessor,
+        IUserPermissionResolver? permissionResolver,
+        CancellationToken ct)
+    {
+        if (dto is null) return;
+        if (await CanSeeCostAsync(httpContextAccessor, permissionResolver, ct)) return;
+        dto.NetCost = 0m;
+        dto.Commission = 0m;
+        dto.Tax = 0m; // Impuesto es componente del costo; revelaria margen/costo proveedor.
+    }
 }

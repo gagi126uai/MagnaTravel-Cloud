@@ -61,9 +61,18 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
             
+        // Fuga 3 (ADR-017 §2.7, F1b): NetCost/Tax/Commission NO se mapean automaticamente
+        // en los UPDATE. Un caller sin cobranzas.see_cost recibe el costo enmascarado a 0
+        // en el GET, el form se puebla con ese 0 y el submit lo mandaba de vuelta ->
+        // _mapper.Map destruia el costo real persistido. La asignacion ahora es manual
+        // en BookingService, condicionada por el permiso del caller (ver ApplyUpdateCostFields).
+        // Los CREATE no se tocan: ahi no hay valor persistido que destruir.
         CreateMap<UpdateFlightRequest, FlightSegment>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            .ForMember(dest => dest.NetCost, opt => opt.Ignore())
+            .ForMember(dest => dest.Tax, opt => opt.Ignore())
+            .ForMember(dest => dest.Commission, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
 
         CreateMap<HotelBooking, HotelBookingDto>()
@@ -86,6 +95,10 @@ public class MappingProfile : Profile
         CreateMap<UpdateHotelRequest, HotelBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // Fuga 3 (F1b): costos asignados a mano segun permiso (ver UpdateFlightRequest arriba).
+            .ForMember(dest => dest.NetCost, opt => opt.Ignore())
+            .ForMember(dest => dest.Tax, opt => opt.Ignore())
+            .ForMember(dest => dest.Commission, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
@@ -106,7 +119,11 @@ public class MappingProfile : Profile
         CreateMap<UpdateTransferRequest, TransferBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
-            .ForMember(dest => dest.RateId, opt => opt.Ignore());
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // Fuga 3 (F1b): costos asignados a mano segun permiso (ver UpdateFlightRequest arriba).
+            .ForMember(dest => dest.NetCost, opt => opt.Ignore())
+            .ForMember(dest => dest.Tax, opt => opt.Ignore())
+            .ForMember(dest => dest.Commission, opt => opt.Ignore());
 
         CreateMap<PackageBooking, PackageBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -125,6 +142,10 @@ public class MappingProfile : Profile
         CreateMap<UpdatePackageRequest, PackageBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // Fuga 3 (F1b): costos asignados a mano segun permiso (ver UpdateFlightRequest arriba).
+            .ForMember(dest => dest.NetCost, opt => opt.Ignore())
+            .ForMember(dest => dest.Tax, opt => opt.Ignore())
+            .ForMember(dest => dest.Commission, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
 
@@ -146,6 +167,10 @@ public class MappingProfile : Profile
         CreateMap<UpdateAssistanceRequest, AssistanceBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // Fuga 3 (F1b): costos asignados a mano segun permiso (ver UpdateFlightRequest arriba).
+            .ForMember(dest => dest.NetCost, opt => opt.Ignore())
+            .ForMember(dest => dest.Tax, opt => opt.Ignore())
+            .ForMember(dest => dest.Commission, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus));
 
         // Customers
