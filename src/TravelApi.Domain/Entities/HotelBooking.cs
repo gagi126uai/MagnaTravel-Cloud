@@ -90,6 +90,29 @@ public class HotelBooking : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
 
+    /// <summary>
+    /// ADR-017 F1.1 (2026-06-05): fecha limite de seña/pago al operador. Aditivo, nullable: las filas
+    /// existentes quedan en null (sin fecha). En F1.1 nadie lo escribe todavia (la ficha que lo carga es
+    /// F2; el handler de update que lo persiste, gobernado por el discriminador DeadlinesSpecified, es
+    /// F1.4). Se guarda date-only "de pared" igual que <see cref="CheckIn"/>.
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
+
+    /// <summary>
+    /// ADR-017 F1.1 (decision D7, 2026-06-05): marca "costo a confirmar". Aditivo, default false: las
+    /// filas existentes no cambian. ORTOGONAL al workflow (Status no se toca): un servicio "a confirmar"
+    /// se confirma/factura/viaja igual; lo unico que bloquea es el upsert de RateSupplierSale hasta que
+    /// alguien con permiso confirme el costo (boton "Confirmar costo", F1.3). En F1.1 nadie lo setea.
+    /// </summary>
+    public bool CostToConfirm { get; set; } = false;
+
+    /// <summary>
+    /// ADR-017 F1.1 (D7): por que quedo marcado: "NoKnownCost" (producto nuevo sin costo) o
+    /// "StaleReference" (costo de referencia mas viejo que el umbral). Null si no hay marca.
+    /// </summary>
+    [MaxLength(30)]
+    public string? CostToConfirmReason { get; set; }
+
     // Planner de habitaciones: JSON con asignación de pasajeros por habitación
     public string? RoomingAssignmentsJson { get; set; }
 

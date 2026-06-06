@@ -31,7 +31,12 @@ public record UpdateFlightRequest(
     string? ConfirmationNumber = null,
     // Cantidad de pasajeros de ESTE segmento. Opcional (nullable) para no romper
     // las llamadas existentes que no lo mandaban: si llega null, queda sin informar.
-    int? PassengerCount = null
+    int? PassengerCount = null,
+    // ADR-017 F1.1 (2026-06-05): fecha limite de EMISION del ticket. Mismo criterio que
+    // UpdateHotelRequest: Ignore() en el map + handler de persistencia gobernado por
+    // DeadlinesSpecified, que llega en F1.4. En F1.1 solo estructura.
+    DateTime? TicketingDeadline = null,
+    bool DeadlinesSpecified = false
 );
 
 public record CreateHotelRequest(
@@ -58,7 +63,13 @@ public record UpdateHotelRequest(
     string WorkflowStatus = "Solicitado",
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver HotelBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // ADR-017 F1.1 (2026-06-05): fecha limite de seña/pago al operador. El map de update hace
+    // Ignore() de este campo (ver MappingProfile) — en F1.1 el handler NO lo persiste todavia
+    // (eso es F1.4). DeadlinesSpecified distingue "no lo mande" (modal viejo) de "borralo": con
+    // false (default) se preserva el valor persistido; con true se asigna lo que vino, null = borrar.
+    DateTime? OperatorPaymentDeadline = null,
+    bool DeadlinesSpecified = false
 );
 
 public record CreateTransferRequest(
@@ -144,5 +155,10 @@ public record UpdatePackageRequest(
     string WorkflowStatus = "Solicitado",
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver PackageBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // ADR-017 F1.1 (2026-06-05): fecha limite de seña/pago al operador. Mismo criterio que
+    // UpdateHotelRequest: Ignore() en el map + handler de persistencia gobernado por
+    // DeadlinesSpecified, que llega en F1.4. En F1.1 solo estructura.
+    DateTime? OperatorPaymentDeadline = null,
+    bool DeadlinesSpecified = false
 );

@@ -73,6 +73,11 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
+            // ADR-017 F1.1 (§2.2, R12): el deadline NUNCA se mapea por convencion. La asignacion
+            // sera manual en BookingService, gobernada por DeadlinesSpecified (F1.4). Sin este
+            // Ignore(), una edicion desde el modal viejo (que no manda el campo) borraria el deadline
+            // en silencio. En F1.1 el handler aun no lo asigna, asi que el deadline queda intacto.
+            .ForMember(dest => dest.TicketingDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
 
         CreateMap<HotelBooking, HotelBookingDto>()
@@ -99,6 +104,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
+            // ADR-017 F1.1 (§2.2, R12): deadline anti-clobber (ver UpdateFlightRequest arriba).
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
@@ -146,6 +153,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
+            // ADR-017 F1.1 (§2.2, R12): deadline anti-clobber (ver UpdateFlightRequest arriba).
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
 

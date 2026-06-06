@@ -274,6 +274,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Bloque 3: Asistencia al viajero (seguro). Tipo de servicio propio, espejo de HotelBooking.
     public DbSet<AssistanceBooking> AssistanceBookings => Set<AssistanceBooking>();
     public DbSet<Rate> Rates => Set<Rate>();
+    // ADR-017 F1.1 (catalogo find-or-create, 2026-06-05): memoria "ultima venta por producto y
+    // operador". En F1.1 nace vacia (el upsert que la llena es F1.3). Config en OnModelCreating.
+    public DbSet<RateSupplierSale> RateSupplierSales => Set<RateSupplierSale>();
     public DbSet<CatalogPackage> CatalogPackages => Set<CatalogPackage>();
     public DbSet<CatalogPackageDeparture> CatalogPackageDepartures => Set<CatalogPackageDeparture>();
 
@@ -1714,6 +1717,48 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(k => k.Key)
                   .IsUnique()
                   .HasDatabaseName("IX_ArcaIdempotencyKeys_Key");
+        });
+
+        // ===== ADR-017 F1.1 (catalogo find-or-create, 2026-06-05) =====
+        // Rate.CreatedFromReservaId: FK opcional a la Reserva donde nacio el producto en venta.
+        // ON DELETE SET NULL para que borrar una reserva NO se bloquee por la trazabilidad (la
+        // marca es informativa). Reserva mapea a la tabla legacy "TravelFiles"; declaramos la FK
+        // sin nav prop (mismo patron que Reserva.ResponsibleUserId -> ApplicationUser).
+        modelBuilder.Entity<Rate>()
+            .HasOne<Reserva>()
+            .WithMany()
+            .HasForeignKey(r => r.CreatedFromReservaId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        // RateSupplierSale: memoria "ultima venta por producto y operador".
+        modelBuilder.Entity<RateSupplierSale>(entity =>
+        {
+            entity.Property(s => s.LastPriceUnit).IsRequired().HasMaxLength(30);
+            entity.Property(s => s.LastCurrency).HasMaxLength(3);
+
+            // FK al producto (Rate): CASCADE. Si se borra el Rate, su historial de ventas se va con el.
+            entity.HasOne(s => s.Rate)
+                  .WithMany()
+                  .HasForeignKey(s => s.RateId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // FK al operador (Supplier): RESTRICT (red de seguridad C24, igual que los bookings
+            // tipados): no permitir borrar un Supplier con historial de ventas asociado.
+            entity.HasOne(s => s.Supplier)
+                  .WithMany()
+                  .HasForeignKey(s => s.SupplierId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Una sola fila por combinacion (producto, operador): el corazon del upsert ON CONFLICT
+            // que la llena en F1.3. Sin este UNIQUE el upsert no tendria contra que hacer conflicto.
+            entity.HasIndex(s => new { s.RateId, s.SupplierId })
+                  .IsUnique()
+                  .HasDatabaseName("IX_RateSupplierSales_RateId_SupplierId");
+
+            // Indice para sacar rapido el "ultimo precio" de un producto: por RateId y LastSoldAt DESC.
+            entity.HasIndex(s => new { s.RateId, s.LastSoldAt })
+                  .IsDescending(false, true)
+                  .HasDatabaseName("IX_RateSupplierSales_RateId_LastSoldAt");
         });
     }
 

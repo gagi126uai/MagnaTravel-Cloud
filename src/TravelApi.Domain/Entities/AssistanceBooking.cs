@@ -119,6 +119,21 @@ public class AssistanceBooking : IHasPublicId
     [Column(TypeName = "jsonb")]
     public string? NonRefundableConceptsJson { get; set; }
 
+    // ADR-017 F1.1 (2026-06-05): Asistencia NO lleva fecha limite (la tabla de campos por tipo del
+    // mockup no la incluye — no inventamos alcance). Solo la marca "costo a confirmar".
+
+    /// <summary>
+    /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).
+    /// Mismo criterio que <see cref="HotelBooking.CostToConfirm"/>. En F1.1 nadie lo setea.
+    /// </summary>
+    public bool CostToConfirm { get; set; } = false;
+
+    /// <summary>
+    /// ADR-017 F1.1 (D7): razon de la marca ("NoKnownCost" | "StaleReference"). Null si no hay marca.
+    /// </summary>
+    [MaxLength(30)]
+    public string? CostToConfirmReason { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Capacidad de pasajeros del servicio (mismo contrato que Hotel/Package).

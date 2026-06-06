@@ -53,6 +53,61 @@ public static class TextNormalizer
     }
 
     /// <summary>
+    /// ADR-017 F1.1 (catalogo find-or-create, 2026-06-05): version del normalizador para el
+    /// buscador del CATALOGO de productos (el campo <c>Rate.SearchName</c>).
+    ///
+    /// <para><b>Por que existe y no reusamos <see cref="NormalizeForMatch"/> a secas</b>: el catalogo
+    /// agrupa "el producto" (ej. un hotel) escrito de mil formas distintas por vendedores apurados.
+    /// Ademas de lo que ya hace <c>NormalizeForMatch</c> (minuscula, sin tildes, sin espacios de mas),
+    /// colapsamos la puntuacion repetida ("hotel--maitei!!" -> "hotel-maitei!") para que esos detalles
+    /// no partan el mismo producto en dos. Se agrega como metodo NUEVO (no se toca
+    /// <c>NormalizeForMatch</c>) para no cambiarle la semantica al detector de duplicados del tarifario,
+    /// que ya esta testeado y en uso.</para>
+    ///
+    /// <para><b>Regla de oro (igual que NormalizeForMatch)</b>: es la funcion AUTORITATIVA que usan
+    /// TANTO el backfill de la migracion COMO la escritura de la app. El backfill SQL des-acentua
+    /// best-effort solo el set español; cualquier residuo (alfabetos raros) se corrige solo en la
+    /// primera escritura de la app sobre esa fila y el matching es difuso, asi que tolera residuos.</para>
+    ///
+    /// Null, vacio o solo-espacios devuelven "" (nunca null), igual que <see cref="NormalizeForMatch"/>.
+    /// </summary>
+    public static string NormalizeForCatalog(string? raw)
+    {
+        // Partimos de la base ya probada: minuscula + trim + sin tildes + espacios colapsados.
+        var baseNormalized = NormalizeForMatch(raw);
+
+        // Encima colapsamos corridas del MISMO signo de puntuacion ("a--b" -> "a-b", "x!!" -> "x!").
+        return CollapseRepeatedPunctuation(baseNormalized);
+    }
+
+    /// <summary>
+    /// Colapsa secuencias del mismo caracter de puntuacion/simbolo en una sola aparicion. Las letras,
+    /// los digitos y los espacios NO se tocan (los espacios ya los colapso <see cref="NormalizeForMatch"/>).
+    /// Ejemplo: "san---martin..." -> "san-martin."
+    /// </summary>
+    private static string CollapseRepeatedPunctuation(string text)
+    {
+        var builder = new StringBuilder(text.Length);
+        var previousChar = '\0';
+
+        foreach (var character in text)
+        {
+            // Es "puntuacion" todo lo que no sea letra, digito ni espacio. Si este caracter es
+            // puntuacion Y es igual al que acabamos de escribir, lo salteamos (colapso).
+            var isPunctuation = !char.IsLetterOrDigit(character) && !char.IsWhiteSpace(character);
+            if (isPunctuation && character == previousChar)
+            {
+                continue;
+            }
+
+            builder.Append(character);
+            previousChar = character;
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>
     /// Saca tildes/acentos preservando la letra base ("sheratón" -> "sheraton").
     ///
     /// **Como funciona** (didactico): Unicode permite escribir "á" de dos formas:

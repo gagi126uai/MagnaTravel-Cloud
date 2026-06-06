@@ -83,6 +83,25 @@ public class PackageBooking : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
 
+    /// <summary>
+    /// ADR-017 F1.1 (2026-06-05): fecha limite de seña/pago al operador. Aditivo, nullable (filas
+    /// existentes en null). En F1.1 nadie lo escribe (ficha = F2; persistencia gobernada por
+    /// DeadlinesSpecified = F1.4). Date-only "de pared" igual que <see cref="StartDate"/>.
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
+
+    /// <summary>
+    /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).
+    /// Mismo criterio que <see cref="HotelBooking.CostToConfirm"/>. En F1.1 nadie lo setea.
+    /// </summary>
+    public bool CostToConfirm { get; set; } = false;
+
+    /// <summary>
+    /// ADR-017 F1.1 (D7): razon de la marca ("NoKnownCost" | "StaleReference"). Null si no hay marca.
+    /// </summary>
+    [MaxLength(30)]
+    public string? CostToConfirmReason { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public int GetExpectedPaxCount() => Adults + Children;

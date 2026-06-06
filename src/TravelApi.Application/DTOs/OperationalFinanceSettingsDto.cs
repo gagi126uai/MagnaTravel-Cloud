@@ -143,4 +143,38 @@ public class OperationalFinanceSettingsDto
     /// con valor.</para>
     /// </summary>
     public bool? EnableAiCopilot { get; set; }
+
+    /// <summary>
+    /// ADR-017 F1.1 (catalogo find-or-create, 2026-06-05): feature flag maestro del catalogo
+    /// find-or-create desde la venta. El admin lo prende/apaga desde el panel de Configuracion.
+    ///
+    /// <para>Es un flag de COMPORTAMIENTO puro: con OFF (default) todo es byte-identico a hoy y NO tiene
+    /// validacion cruzada con otros flags. En F1.1 nadie lo lee todavia (el comportamiento que gobierna
+    /// se construye en F1.2+); solo debe existir, persistir y poder togglearse.</para>
+    ///
+    /// <para>Nullable y patch-like (mismo criterio B-002 que el resto del DTO): enviar null u omitir el
+    /// campo en el PUT = no se modifica el valor actual. Solo se persiste si viene con valor.</para>
+    /// </summary>
+    public bool? EnableCatalogFindOrCreate { get; set; }
+
+    /// <summary>
+    /// ADR-017 F1.1 (2026-06-05): feature flag de las alertas de fechas limite de servicio.
+    /// Independiente de <see cref="EnableCatalogFindOrCreate"/> (se puede prender antes). Flag de
+    /// comportamiento puro, sin validacion cruzada. En F1.1 nadie lo lee todavia (el bucket de alertas
+    /// es F3); solo debe existir y poder togglearse.
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): null u omitido = no se toca; solo persiste si viene.</para>
+    /// </summary>
+    public bool? EnableServiceDeadlineAlerts { get; set; }
+
+    /// <summary>
+    /// ADR-017 F1.1 (decision D7, 2026-06-05): umbral en DIAS para marcar "costo a confirmar" una
+    /// referencia de costo vieja. Default persistido en BD: 60. En F1.1 nadie lo lee todavia (la cadena
+    /// D7 es F1.3); solo debe existir y poder editarse desde el panel.
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor
+    /// actual. Rango razonable 1..3650 (un dia a ~diez años); el [Range] solo se evalua si viene valor.</para>
+    /// </summary>
+    [Range(1, 3650, ErrorMessage = "StaleCostReferenceDays debe estar entre 1 y 3650.")]
+    public int? StaleCostReferenceDays { get; set; }
 }

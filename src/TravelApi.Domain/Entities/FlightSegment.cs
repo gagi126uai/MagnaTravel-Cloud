@@ -100,9 +100,30 @@ public class FlightSegment : IHasPublicId
 
     [MaxLength(500)]
     public string? Notes { get; set; }
-    
+
+    /// <summary>
+    /// ADR-017 F1.1 (2026-06-05): fecha limite de EMISION del ticket. Aditivo, nullable (filas
+    /// existentes en null). El deadline conceptual es del PNR, pero la entidad es por segmento: la
+    /// ficha de carga (F2) escribe el mismo valor en los segmentos de la operacion y la alerta (F3)
+    /// agrupa por (ReservaId, PNR) con MIN(TicketingDeadline). En F1.1 nadie lo escribe (persistencia
+    /// gobernada por DeadlinesSpecified = F1.4). Date-only "de pared".
+    /// </summary>
+    public DateTime? TicketingDeadline { get; set; }
+
+    /// <summary>
+    /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).
+    /// Mismo criterio que <see cref="HotelBooking.CostToConfirm"/>. En F1.1 nadie lo setea.
+    /// </summary>
+    public bool CostToConfirm { get; set; } = false;
+
+    /// <summary>
+    /// ADR-017 F1.1 (D7): razon de la marca ("NoKnownCost" | "StaleReference"). Null si no hay marca.
+    /// </summary>
+    [MaxLength(30)]
+    public string? CostToConfirmReason { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    
+
     // Tarifario - snapshot de precios al momento de crear
     public int? RateId { get; set; }
     public Rate? Rate { get; set; }

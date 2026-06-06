@@ -154,10 +154,45 @@ public class Rate : IHasPublicId
     
     // === METADATA ===
     public bool IsActive { get; set; } = true;
-    
+
     [MaxLength(500)]
     public string? InternalNotes { get; set; } // Notas internas (no visibles al cliente)
-    
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
+
+    // ============================================================
+    // ADR-017 F1.1 (catalogo find-or-create, 2026-06-05): el Rate ES el "producto"
+    // del catalogo (no se crea una entidad CatalogProduct aparte). Estos 3 campos son
+    // 100% aditivos con default neutro, asi las filas existentes no cambian. En F1.1
+    // todavia NADIE los escribe desde la app (eso es F1.2+); solo se crea la estructura.
+    // ============================================================
+
+    /// <summary>
+    /// Nombre NORMALIZADO del producto, usado SOLO para el buscador find-or-create de la venta
+    /// (no se le muestra al usuario; el nombre lindo sigue siendo HotelName/ProductName).
+    /// Se calcula en la app con <c>TextNormalizer.NormalizeForCatalog</c> al escribir el Rate.
+    ///
+    /// <para>Fuente por tipo (regla UNICA, misma en backfill SQL y en escritura de app): Hotel =
+    /// <c>HotelName</c> si no esta vacio, si no <c>ProductName</c>; el resto de los tipos =
+    /// <c>ProductName</c>. En hoteles legacy el nombre real vive en HotelName y ProductName suele ser
+    /// generico ("Tarifa hotel doble"); por eso Hotel prioriza HotelName, para que el anti-duplicados
+    /// no nazca roto. Tiene un indice GIN trigram (creado por SQL crudo en la migracion, igual que los
+    /// indices de HotelName/ProductName).</para>
+    /// </summary>
+    [MaxLength(200)]
+    public string? SearchName { get; set; }
+
+    /// <summary>
+    /// Marca el "pill violeta" Creado en venta: <c>true</c> cuando el producto nacio inline durante la
+    /// carga de un servicio (no desde el back-office del tarifario). Default <c>false</c> = curado en
+    /// back-office o legacy. En F1.1 nadie lo setea todavia (la creacion inline es F1.2).
+    /// </summary>
+    public bool CreatedInSale { get; set; } = false;
+
+    /// <summary>
+    /// Trazabilidad: id de la Reserva donde se creo este producto en venta (null si no nacio asi o si
+    /// esa Reserva se borro — la FK es ON DELETE SET NULL para no bloquear el borrado de reservas).
+    /// </summary>
+    public int? CreatedFromReservaId { get; set; }
 }

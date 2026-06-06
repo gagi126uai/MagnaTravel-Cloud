@@ -102,6 +102,23 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.EnableAiCopilot = request.EnableAiCopilot.Value;
         }
 
+        // ADR-017 F1.1 (catalogo find-or-create + fechas limite, 2026-06-05): persistimos los 2 flags
+        // nuevos + el setting StaleCostReferenceDays. Update CONDICIONAL (patch-like, criterio B-002):
+        // solo se aplica si el request trae valor. Son flags/setting de comportamiento puro, sin
+        // dependencias con otros flags, por eso NO hay validacion cruzada para ellos mas abajo.
+        if (request.EnableCatalogFindOrCreate.HasValue)
+        {
+            entity.EnableCatalogFindOrCreate = request.EnableCatalogFindOrCreate.Value;
+        }
+        if (request.EnableServiceDeadlineAlerts.HasValue)
+        {
+            entity.EnableServiceDeadlineAlerts = request.EnableServiceDeadlineAlerts.Value;
+        }
+        if (request.StaleCostReferenceDays.HasValue)
+        {
+            entity.StaleCostReferenceDays = request.StaleCostReferenceDays.Value;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -241,6 +258,10 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             EnableCancellationDebitNote = entity.EnableCancellationDebitNote,
             // ADR-016 F0a: el GET expone el flag maestro del copiloto de IA.
             EnableAiCopilot = entity.EnableAiCopilot,
+            // ADR-017 F1.1: el GET expone los 2 flags nuevos + el umbral, para que el panel los muestre.
+            EnableCatalogFindOrCreate = entity.EnableCatalogFindOrCreate,
+            EnableServiceDeadlineAlerts = entity.EnableServiceDeadlineAlerts,
+            StaleCostReferenceDays = entity.StaleCostReferenceDays,
         };
     }
 }

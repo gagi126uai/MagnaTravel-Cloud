@@ -484,6 +484,50 @@ public class OperationalFinanceSettings
     /// </summary>
     public bool EnableAiCopilot { get; set; } = false;
 
+    // ============================================================
+    // ADR-017 F1.1 (catalogo find-or-create + fechas limite, 2026-06-05): 2 flags + 1 setting.
+    // Defaults conservadores (flags OFF). En F1.1 NADIE los lee todavia (no hay comportamiento
+    // condicionado aun); solo existen, persisten y se togglean desde el panel. El comportamiento
+    // que gobiernan se construye en F1.2+ (catalog-search, request-manda, upsert) y F3 (alertas).
+    // ============================================================
+
+    /// <summary>
+    /// ADR-017 (2026-06-05): feature flag MAESTRO del catalogo find-or-create desde la venta.
+    ///
+    /// <para><b>Con OFF (default)</b>: byte-identico a hoy. Los endpoints nuevos (catalog-search) dan
+    /// 404, los requests con producto nuevo dan 400, el snapshot actual pisa como hoy, no hay
+    /// transaccion nueva ni upsert de RateSupplierSale, y la ficha inline del front no se monta.</para>
+    ///
+    /// <para><b>Con ON</b> (a partir de F1.2+): habilita el buscador find-or-create, la creacion inline
+    /// del producto, la regla "request manda", la cadena de costo D7 (marca "costo a confirmar") y el
+    /// upsert de RateSupplierSale. Es un flag de COMPORTAMIENTO puro, sin emision fiscal y sin
+    /// dependencias con otros flags, por eso NO tiene validacion cruzada.</para>
+    ///
+    /// <para>Default <c>false</c>. Editable desde el panel admin (PUT operational-finance).</para>
+    /// </summary>
+    public bool EnableCatalogFindOrCreate { get; set; } = false;
+
+    /// <summary>
+    /// ADR-017 (2026-06-05): feature flag de las alertas de fechas limite de servicio (seña/pago al
+    /// operador, emision de ticket). Independiente de <see cref="EnableCatalogFindOrCreate"/>: se puede
+    /// prender antes (riesgo mucho menor) para no acoplar el rollout.
+    ///
+    /// <para><b>Con OFF (default)</b>: <c>/alerts</c> byte-identico al actual; la campanita sigue siendo
+    /// solo-admin como hoy. <b>Con ON</b> (F3): aparece el bucket <c>ServiceDeadlines</c> y el polling se
+    /// abre a los vendedores (cada uno ve los deadlines de SUS reservas). Sin dependencias cruzadas.</para>
+    ///
+    /// <para>Default <c>false</c>. Editable desde el panel admin.</para>
+    /// </summary>
+    public bool EnableServiceDeadlineAlerts { get; set; } = false;
+
+    /// <summary>
+    /// ADR-017 (decision D7, 2026-06-05): umbral en DIAS para considerar "vieja" una referencia de costo
+    /// usada por la cadena D7 (F1.3). Si el costo de referencia es mas viejo que esto, el servicio se
+    /// marca "costo a confirmar" para que alguien con permiso lo revise. En F1.1 nadie lo lee todavia.
+    /// Default 60 (mismo orden que <see cref="OperatorRefundTimeoutDays"/>). Editable desde el panel.
+    /// </summary>
+    public int StaleCostReferenceDays { get; set; } = 60;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
