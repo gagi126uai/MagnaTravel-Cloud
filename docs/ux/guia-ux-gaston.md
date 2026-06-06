@@ -83,3 +83,19 @@ Decisiones adicionales de Gastón (2026-06-05, ronda arquitectura):
 - **Confirmar costo en CERO: avisar antes (2026-06-05).** Si alguien con permiso confirma un costo en 0, el sistema pregunta "¿seguro? va a quedar costo 0 como sugerencia para todos" antes de guardar. (El 0 confirmado igual vale si lo aceptás — D8c — pero con aviso.)
 - **Confirmar costo se permite aunque la reserva esté facturada (2026-06-05).** "Confirmar costo" solo corrige el costo interno (deuda al operador + tu ganancia); nunca toca la factura del cliente (que es por precio de venta). Por eso NO lo frena la inmutabilidad post-factura/voucher. (Distinto del tema general de inmutabilidad de la reserva, que sigue pendiente.)
 - **UI del "costo a confirmar" (Q4, respondida 2026-06-05):** (a) el vendedor que lo generó **no ve nada** — la etiqueta ámbar la ven solo quienes pueden ver costos; (b) **la campanita avisa** "tenés N costos a confirmar" a quienes ven costos; (c) se confirma con **botón explícito "Confirmar costo"** (confirmás o corregís el número; imposible confirmar sin querer). Nada de confirmación implícita al guardar.
+
+## Ficha de carga en línea F2 — decisiones de detalle (2026-06-06)
+
+Ronda 1:
+- **Editar un servicio de la reserva → desde la MISMA ficha en línea** (se abre con los datos puestos, lo corregís ahí). Una sola forma para crear y editar.
+- **TEMA APARTE pendiente (Gastón: "habría que ver cómo hacer"):** "actualización de precios" es distinto del editar normal — charlarlo con Gastón antes de tocarlo. NO resolver solo.
+- **Al abrir la ficha: TODOS los campos a la vista** desde el arranque (buscador + fechas + costo/venta + moneda visibles). NO revelado progresivo (eso era del form rechazado). Al elegir/crear un producto se completan operador y precio (sugerencias en amarillo) o aparece el recuadro de "producto nuevo".
+- **Botón "Confirmar costo": en la misma fila** del servicio, al lado del costo (solo quien ve costos).
+- **Etiqueta "costo a confirmar": pegada al costo**, texto corto "A confirmar", ámbar (solo quien ve costos).
+
+Ronda 2:
+- **Si falla Guardar:** la ficha queda abierta con TODO lo cargado intacto + cartel rojo arriba de los botones ("No se pudo guardar. Revisá la conexión y probá de nuevo"); reintenta en el mismo botón. (Nunca se pierde lo cargado.)
+- **Aviso de confirmar costo en CERO: ventana que frena** ("¿Seguro? Va a quedar costo $0 como sugerencia para todos" · Volver / Sí, confirmar). No cartel pasivo.
+- **Buscador sin resultados: directo a crear** ("No encontramos '{texto}' en tu tarifario" + botón crear). Mientras busca, mostrar un "Buscando…" sutil (estándar).
+- **Hotel: agregar campo "Cantidad de habitaciones"** a la vista (al lado de Noches). Total = noches × habitaciones × precio/noche. Coherente con "precio por noche POR HABITACIÓN" (el dibujo no lo mostraba; Gastón confirmó agregarlo 2026-06-06).
+- **"Más detalles" por tipo: confirmado tal cual** — Hotel: Régimen · Tipo de habitación · Confirmación operador · Fecha límite de seña · Dirección. Aéreo: PNR · Nº ticket · Horarios/escalas · Equipaje. Traslado: Nº vuelo · Horario · Confirmación. Paquete: Qué incluye · Nº file. Asistencia: Nº voucher por pax · Upgrades. (Ajustable si después falta/sobra algo.)

@@ -18,6 +18,9 @@ public class HotelBookingDto
     public string? MealPlan { get; set; }
     public string Status { get; set; } = "Pendiente";
     public string? ConfirmationNumber { get; set; }
+    // Direccion del hotel (campo de "Mas detalles"). Se expone para que la ficha de edicion
+    // la recupere y no la pise al guardar (round-trip). No es dato de costo.
+    public string? Address { get; set; }
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
     // Impuestos incluidos en el costo (mismo criterio que FlightSegmentDto.Tax). No suma al precio

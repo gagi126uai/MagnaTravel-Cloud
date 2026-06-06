@@ -231,6 +231,111 @@ public class BookingServiceTests
         Assert.Equal(888m, storedHotel.SalePrice);
     }
 
+    // === Direccion del hotel (campo "Mas detalles", metadato inocuo) ===
+    // El front recolecta la direccion pero antes el request no la tenia, asi que se descartaba.
+    // Ahora se mapea por nombre a HotelBooking.Address (igual que Country/Notes: sin discriminador,
+    // el modal la reenvia en cada edicion).
+
+    [Fact]
+    public async Task CreateHotelAsync_WithAddress_PersistsAddress()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Hotel Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0020", Name = "Reserva test" };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        // Carga manual (sin RateId). Address va al final como parametro opcional; usamos `with`
+        // para no depender de la posicion exacta del resto de los opcionales.
+        var request = new CreateHotelRequest(
+            supplier.PublicId.ToString(),
+            "Hotel manual",
+            3,
+            "Cordoba",
+            "Argentina",
+            DateTime.UtcNow.Date.AddDays(5),
+            DateTime.UtcNow.Date.AddDays(7),
+            "Doble",
+            "Desayuno",
+            2,
+            0,
+            1,
+            null,
+            200m,
+            300m,
+            100m,
+            null) with { Address = "Av. Colon 1234" };
+
+        await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
+
+        var storedHotel = await context.HotelBookings.SingleAsync();
+        Assert.Equal("Av. Colon 1234", storedHotel.Address);
+    }
+
+    [Fact]
+    public async Task UpdateHotelAsync_WithAddress_PersistsAddress()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var supplier = new Supplier { Id = 1, Name = "Hotel Supplier" };
+        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-0021", Name = "Reserva test" };
+        var hotel = new HotelBooking
+        {
+            Id = 1,
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel manual",
+            City = "Mendoza",
+            Address = "Direccion vieja 1",
+            CheckIn = DateTime.UtcNow.Date.AddDays(10),
+            CheckOut = DateTime.UtcNow.Date.AddDays(12),
+            Nights = 2,
+            RoomType = "Doble",
+            MealPlan = "Desayuno",
+            Rooms = 1,
+            Adults = 2,
+            Children = 0,
+            NetCost = 200m,
+            SalePrice = 300m,
+            Commission = 100m,
+        };
+
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        context.HotelBookings.Add(hotel);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper);
+        var request = new UpdateHotelRequest(
+            supplier.PublicId.ToString(),
+            "Hotel manual",
+            3,
+            "Mendoza",
+            "Argentina",
+            hotel.CheckIn,
+            hotel.CheckOut,
+            "Doble",
+            "Desayuno",
+            2,
+            0,
+            1,
+            null,
+            200m,
+            300m,
+            100m,
+            "Solicitado",
+            null) with { Address = "Direccion nueva 99" };
+
+        await service.UpdateHotelAsync(reserva.Id, hotel.Id, request, CancellationToken.None);
+
+        var storedHotel = await context.HotelBookings.SingleAsync();
+        Assert.Equal("Direccion nueva 99", storedHotel.Address);
+    }
+
     // === Trazabilidad de moneda (metadato, no afecta saldo) ===
     // Al crear un servicio desde una tarifa, copiamos rate.Currency al booking para
     // dejar registro de en que moneda se cotizo. Si no hay tarifa, queda en null.

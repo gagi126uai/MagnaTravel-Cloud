@@ -28,6 +28,10 @@ const defaultFlags = {
     // pero se incluye en el contexto global para que el día que un componente necesite
     // saber si la ND está activa, lo lea desde acá en lugar de hacer un fetch propio.
     enableCancellationDebitNote: false,
+    // ADR-017: flag del tarifario find-or-create desde la venta.
+    // OFF = render idéntico a hoy (modal viejo ServiceFormModal).
+    // ON  = muestra la ficha de carga en línea (ServiceInlineCard) + buscador de catálogo.
+    enableCatalogFindOrCreate: false,
 };
 
 const OperationalFlagsContext = createContext(undefined);
@@ -56,6 +60,10 @@ export function OperationalFlagsProvider({ children }) {
                         // en AfipSettingsResponse (solo en /settings/operational-finance),
                         // así que data.enableCancellationDebitNote será undefined → false.
                         enableCancellationDebitNote: Boolean(data.enableCancellationDebitNote),
+                        // ADR-017: flag del tarifario find-or-create.
+                        // Si el backend no lo expone en /afip/settings todavía,
+                        // data.enableCatalogFindOrCreate será undefined → false (seguro).
+                        enableCatalogFindOrCreate: Boolean(data.enableCatalogFindOrCreate),
                     });
                 }
             } catch {

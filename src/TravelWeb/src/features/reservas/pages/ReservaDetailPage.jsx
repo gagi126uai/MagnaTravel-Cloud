@@ -9,6 +9,7 @@ import PassengerFormModal from "../../../components/PassengerFormModal";
 import PaymentModal from "../../../components/PaymentModal";
 import { ReservaDocumentsTab } from "../../../components/ReservaDocumentsTab";
 import ServiceFormModal from "../../../components/ServiceFormModal";
+import { ServiceInlineCard } from "../inline-service/ServiceInlineCard";
 import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
 import {
   DataGrid,
@@ -360,6 +361,13 @@ export default function ReservaDetailPage() {
   // el valor definitivo del flag — evita el salto del boton "Confirmar Reserva" a "Vender".
   const { flags, loadingFlags } = useOperationalFlags();
   const isSoldToSettleEnabled = flags.enableSoldToSettleStates;
+  // ADR-017: cuando está ON, la carga de servicios usa la ficha en línea (ServiceInlineCard)
+  // en lugar del modal (ServiceFormModal). Con OFF el comportamiento es idéntico al de hoy.
+  const isCatalogFindOrCreateEnabled = flags.enableCatalogFindOrCreate;
+
+  // Estado de la ficha inline (solo se usa cuando enableCatalogFindOrCreate está ON)
+  const [showInlineCard, setShowInlineCard] = useState(false);
+  const [serviceToEditInline, setServiceToEditInline] = useState(null);
 
   // Permiso de cancelacion: se resuelve client-side desde el store de auth.
   // NOTA: esto es UI-only. El server-side siempre re-valida el permiso.
@@ -688,12 +696,29 @@ export default function ReservaDetailPage() {
                 services={allServices}
                 serviceCollectionErrors={serviceCollectionErrors}
                 onAddService={() => {
-                  setServiceToEdit(null);
-                  setShowServiceModal(true);
+                  if (isCatalogFindOrCreateEnabled) {
+                    // Ficha en línea (ADR-017): se abre debajo de la lista, sin modal
+                    setServiceToEditInline(null);
+                    setShowInlineCard(true);
+                  } else {
+                    // Modal viejo: comportamiento intacto con flag OFF
+                    setServiceToEdit(null);
+                    setShowServiceModal(true);
+                  }
                 }}
                 onEditService={(service) => {
-                  setServiceToEdit(service);
-                  setShowServiceModal(true);
+                  // B1 — Parte 1 solo implementa Hotel en la ficha inline.
+                  // Para cualquier otro tipo (Aereo, Traslado, Paquete, Asistencia, Generico)
+                  // seguimos usando el modal viejo AUNQUE el flag esté ON.
+                  // Cuando cada tipo se implemente en F2 parte 2, se sumará acá.
+                  const esHotel = service?.recordKind === "hotel";
+                  if (isCatalogFindOrCreateEnabled && esHotel) {
+                    setServiceToEditInline(service);
+                    setShowInlineCard(true);
+                  } else {
+                    setServiceToEdit(service);
+                    setShowServiceModal(true);
+                  }
                 }}
                 onDeleteService={(service) =>
                   askConfirmation({
@@ -704,6 +729,26 @@ export default function ReservaDetailPage() {
                   })
                 }
               />
+
+              {/* Ficha de carga en línea (ADR-017): solo aparece con EnableCatalogFindOrCreate ON.
+                  Se monta debajo de la lista de servicios cuando el usuario hace clic en
+                  "Agregar Servicio" o en el lápiz de editar. Con flag OFF nunca se renderiza. */}
+              {isCatalogFindOrCreateEnabled && showInlineCard && (
+                <ServiceInlineCard
+                  reservaId={publicId}
+                  serviceToEdit={serviceToEditInline}
+                  suppliers={suppliers}
+                  onGuardado={(options) => {
+                    setShowInlineCard(false);
+                    setServiceToEditInline(null);
+                    fetchReserva(options);
+                  }}
+                  onCancelar={() => {
+                    setShowInlineCard(false);
+                    setServiceToEditInline(null);
+                  }}
+                />
+              )}
               <PassengerAssignmentsPanel reserva={reserva} isBudget={isBudget} />
             </div>
           ) : null}

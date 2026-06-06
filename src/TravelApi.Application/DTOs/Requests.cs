@@ -95,7 +95,11 @@ public record CreateHotelRequest(
     NewCatalogProductRequest? NewCatalogProduct = null,
     // ADR-017 F1.4 (§2.2/§2.6): fecha limite de seña/pago al operador, opcional. La API la acepta y
     // persiste aun con el flag OFF; el map la IGNORA y la asigna el service normalizada a medianoche Kind=Utc.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Direccion del hotel (campo "Mas detalles" del form). Antes el front la mandaba y se descartaba
+    // porque el request no la tenia. Opcional con default null para no romper los callers posicionales.
+    // AutoMapper la mapea por nombre contra HotelBooking.Address (no es campo de costo, es inocuo).
+    string? Address = null
 );
 
 public record UpdateHotelRequest(
@@ -114,7 +118,11 @@ public record UpdateHotelRequest(
     // (eso es F1.4). DeadlinesSpecified distingue "no lo mande" (modal viejo) de "borralo": con
     // false (default) se preserva el valor persistido; con true se asigna lo que vino, null = borrar.
     DateTime? OperatorPaymentDeadline = null,
-    bool DeadlinesSpecified = false
+    bool DeadlinesSpecified = false,
+    // Direccion del hotel (campo "Mas detalles" del form). Opcional con default null para no romper los
+    // callers posicionales. AutoMapper la mapea por nombre a HotelBooking.Address, igual que los demas
+    // strings del hotel (Country/Notes): el modal la reenvia en cada edicion, no usa discriminador.
+    string? Address = null
 );
 
 public record CreateTransferRequest(
