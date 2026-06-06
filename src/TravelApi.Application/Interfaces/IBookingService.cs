@@ -45,4 +45,15 @@ public interface IBookingService
     Task<PackageBookingDto> UpdatePackageStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
     Task<FlightSegmentDto> UpdateFlightStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
     Task<AssistanceBookingDto> UpdateAssistanceStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct);
+
+    // ADR-017 F1.3 (§2.8, D8c): boton "Confirmar costo". Limpia la marca "costo a confirmar" de un
+    // servicio (confirma el costo resuelto o lo corrige con el body) y dispara el upsert diferido de
+    // RateSupplierSale con LastSoldAt = fecha de la venta. Gateado por flag EnableCatalogFindOrCreate
+    // (OFF -> FeatureNotEnabledException -> 404) + cobranzas.see_cost (en el controller). Idempotente:
+    // confirmar un servicio sin marca es no-op.
+    Task<HotelBookingDto> ConfirmHotelCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
+    Task<FlightSegmentDto> ConfirmFlightCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
+    Task<TransferBookingDto> ConfirmTransferCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
+    Task<PackageBookingDto> ConfirmPackageCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
+    Task<AssistanceBookingDto> ConfirmAssistanceCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
 }

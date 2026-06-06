@@ -59,6 +59,10 @@ public class MappingProfile : Profile
         CreateMap<CreateFlightRequest, FlightSegment>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // ADR-017 F1.3: Currency NO se mapea por convencion. Con flag OFF la asigna el snapshot
+            // del tarifario (byte-identico a hoy); con flag ON la asigna el service desde el request
+            // (regla "request manda"). Sin este Ignore, el campo nuevo del request cambiaria el OFF.
+            .ForMember(dest => dest.Currency, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
             
         // Fuga 3 (ADR-017 §2.7, F1b): NetCost/Tax/Commission NO se mapean automaticamente
@@ -93,6 +97,8 @@ public class MappingProfile : Profile
         CreateMap<CreateHotelRequest, HotelBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
+            .ForMember(dest => dest.Currency, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
@@ -121,7 +127,9 @@ public class MappingProfile : Profile
         CreateMap<CreateTransferRequest, TransferBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
-            .ForMember(dest => dest.RateId, opt => opt.Ignore());
+            .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
+            .ForMember(dest => dest.Currency, opt => opt.Ignore());
             
         CreateMap<UpdateTransferRequest, TransferBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
@@ -143,6 +151,8 @@ public class MappingProfile : Profile
         CreateMap<CreatePackageRequest, PackageBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
+            .ForMember(dest => dest.Currency, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.EndDate - src.StartDate).Days));
             
@@ -171,6 +181,8 @@ public class MappingProfile : Profile
         CreateMap<CreateAssistanceRequest, AssistanceBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
+            // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
+            .ForMember(dest => dest.Currency, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus));
 
         CreateMap<UpdateAssistanceRequest, AssistanceBooking>()

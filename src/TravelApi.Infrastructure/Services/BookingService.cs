@@ -12,7 +12,7 @@ using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
-public class BookingService : IBookingService
+public partial class BookingService : IBookingService
 {
     private readonly IRepository<FlightSegment> _flightRepo;
     private readonly IRepository<HotelBooking> _hotelRepo;
@@ -31,6 +31,10 @@ public class BookingService : IBookingService
     // para no romper los tests unitarios que instancian con el ctor de 11 args.
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    // ADR-017 F1.3: lo usa SOLO el path del catalogo find-or-create para leer el flag
+    // EnableCatalogFindOrCreate + el setting StaleCostReferenceDays. Opcional para no romper los
+    // ctores de tests existentes (14 args). Si es null -> flag OFF (byte-identico), fail-closed.
+    private readonly IOperationalFinanceSettingsService? _settingsService;
 
     public BookingService(
         IRepository<FlightSegment> flightRepo,
@@ -46,7 +50,8 @@ public class BookingService : IBookingService
         IMapper mapper,
         ILogger<BookingService> logger,
         IUserPermissionResolver? permissionResolver = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        IOperationalFinanceSettingsService? settingsService = null)
     {
         _flightRepo = flightRepo;
         _hotelRepo = hotelRepo;
@@ -62,6 +67,7 @@ public class BookingService : IBookingService
         _logger = logger;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
+        _settingsService = settingsService;
     }
 
     // === RATE RESOLUTION (Snapshot) ===
@@ -380,6 +386,12 @@ public class BookingService : IBookingService
 
     public async Task<FlightSegmentDto> CreateFlightAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
     {
+        // ADR-017 F1.3: con el catalogo find-or-create prendido, el alta corre por el path nuevo
+        // (transaccion atomica + find-or-create + request-manda + cadena de costo D7 + upsert de
+        // RateSupplierSale). Con el flag APAGADO, sigue EXACTAMENTE el codigo de abajo (byte-identico).
+        if (await IsCatalogFindOrCreateEnabledAsync(ct))
+            return await CreateFlightWithCatalogAsync(reservaId, req, ct);
+
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -596,6 +608,10 @@ public class BookingService : IBookingService
 
     public async Task<HotelBookingDto> CreateHotelAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
     {
+        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
+        if (await IsCatalogFindOrCreateEnabledAsync(ct))
+            return await CreateHotelWithCatalogAsync(reservaId, req, ct);
+
         ValidateHotelStay(req.CheckIn, req.CheckOut);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
@@ -820,6 +836,10 @@ public class BookingService : IBookingService
 
     public async Task<PackageBookingDto> CreatePackageAsync(int reservaId, CreatePackageRequest req, CancellationToken ct)
     {
+        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
+        if (await IsCatalogFindOrCreateEnabledAsync(ct))
+            return await CreatePackageWithCatalogAsync(reservaId, req, ct);
+
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -1014,6 +1034,10 @@ public class BookingService : IBookingService
 
     public async Task<TransferBookingDto> CreateTransferAsync(int reservaId, CreateTransferRequest req, CancellationToken ct)
     {
+        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
+        if (await IsCatalogFindOrCreateEnabledAsync(ct))
+            return await CreateTransferWithCatalogAsync(reservaId, req, ct);
+
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -1255,6 +1279,10 @@ public class BookingService : IBookingService
 
     public async Task<AssistanceBookingDto> CreateAssistanceAsync(int reservaId, CreateAssistanceRequest req, CancellationToken ct)
     {
+        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
+        if (await IsCatalogFindOrCreateEnabledAsync(ct))
+            return await CreateAssistanceWithCatalogAsync(reservaId, req, ct);
+
         ValidateAssistanceValidity(req.ValidFrom, req.ValidTo);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);

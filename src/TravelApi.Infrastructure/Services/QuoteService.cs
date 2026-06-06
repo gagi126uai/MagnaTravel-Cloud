@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services.Reservations;
 
@@ -19,19 +21,24 @@ public class QuoteService : IQuoteService
     // igual que CostMasking en BookingService/RateService.
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    // ADR-017 F1.3: para loguear (warning) si falla el upsert best-effort de RateSupplierSale en la
+    // conversion de presupuesto. Opcional para no romper los ctores de tests existentes.
+    private readonly ILogger<QuoteService>? _logger;
 
     public QuoteService(
         AppDbContext db,
         IEntityReferenceResolver entityReferenceResolver,
         IOperationalFinanceSettingsService settingsService,
         IUserPermissionResolver? permissionResolver = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        ILogger<QuoteService>? logger = null)
     {
         _db = db;
         _entityReferenceResolver = entityReferenceResolver;
         _settingsService = settingsService;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
+        _logger = logger;
     }
 
     // ===================================================================
@@ -358,6 +365,11 @@ public class QuoteService : IQuoteService
         _db.Reservas.Add(file);
         await _db.SaveChangesAsync(cancellationToken);
 
+        // ADR-017 F1.3 (§2.3.b.7): "ultimas ventas" a upsertear DESPUES de que la conversion termine bien.
+        // Asimetria DELIBERADA con el create transaccional: la conversion NO es atomica (deuda preexistente),
+        // asi que el upsert es POST-EXITO best-effort (si falla, se loguea y NO se revierte la conversion).
+        var pendingCatalogUpserts = new List<(int RateId, int SupplierId, CatalogUnitization.Unitized Unit, string? Currency)>();
+
         // Migrate Quote Items to File Services (Smart Conversion)
         foreach (var item in quote.Items)
         {
@@ -398,6 +410,13 @@ public class QuoteService : IQuoteService
                 };
                 _db.Set<HotelBooking>().Add(hotel);
                 specializedCreated = true;
+                if (item.RateId.HasValue)
+                {
+                    var nights = (hotel.CheckOut.Date - hotel.CheckIn.Date).Days;
+                    pendingCatalogUpserts.Add((item.RateId.Value, hotel.SupplierId,
+                        CatalogUnitization.ForHotel(hotel.NetCost, hotel.Tax, hotel.SalePrice, nights, hotel.Rooms),
+                        hotel.Currency));
+                }
             }
             else if (sType == "vuelo" || sType == "aereo" || sType == "flight")
             {
@@ -424,6 +443,12 @@ public class QuoteService : IQuoteService
                 };
                 _db.Set<FlightSegment>().Add(flight);
                 specializedCreated = true;
+                if (item.RateId.HasValue)
+                {
+                    pendingCatalogUpserts.Add((item.RateId.Value, flight.SupplierId,
+                        CatalogUnitization.ForFlight(flight.NetCost, flight.Tax, flight.SalePrice, flight.PassengerCount ?? 1),
+                        flight.Currency));
+                }
             }
             else if (sType == "traslado" || sType == "transfer")
             {
@@ -448,6 +473,12 @@ public class QuoteService : IQuoteService
                 };
                 _db.Set<TransferBooking>().Add(transfer);
                 specializedCreated = true;
+                if (item.RateId.HasValue)
+                {
+                    pendingCatalogUpserts.Add((item.RateId.Value, transfer.SupplierId,
+                        CatalogUnitization.ForTransfer(transfer.NetCost, transfer.Tax, transfer.SalePrice),
+                        transfer.Currency));
+                }
             }
             else if (sType == "paquete" || sType == "package")
             {
@@ -473,6 +504,12 @@ public class QuoteService : IQuoteService
                 };
                 _db.Set<PackageBooking>().Add(package);
                 specializedCreated = true;
+                if (item.RateId.HasValue)
+                {
+                    pendingCatalogUpserts.Add((item.RateId.Value, package.SupplierId,
+                        CatalogUnitization.ForPackage(package.NetCost, package.Tax, package.SalePrice, package.Adults, package.Children),
+                        package.Currency));
+                }
             }
 
             // Fallback to generic service if no specialized type or extra customization needed
@@ -514,6 +551,28 @@ public class QuoteService : IQuoteService
             }
         }
         await _db.SaveChangesAsync(cancellationToken);
+
+        // ADR-017 F1.3 (§2.3.b.7): upsert POST-EXITO best-effort de la "ultima venta" por (producto, operador).
+        // Solo con flag ON. Skip de supplier 0 lo hace el propio helper. Asistencia NO entra (cae al servicio
+        // generico, que no snapshotea Rate). Si un upsert falla, se loguea y se sigue: la conversion ya quedo
+        // commiteada y la tabla es estadistica de sugerencia (la reconciliacion R7 detecta faltantes).
+        if (settings.EnableCatalogFindOrCreate)
+        {
+            foreach (var sale in pendingCatalogUpserts)
+            {
+                try
+                {
+                    await CatalogSaleUpsert.UpsertAsync(
+                        _db, sale.RateId, sale.SupplierId, sale.Unit, sale.Currency, DateTime.UtcNow, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex,
+                        "ConvertToFile: fallo el upsert best-effort de RateSupplierSale. RateId={RateId} SupplierId={SupplierId}",
+                        sale.RateId, sale.SupplierId);
+                }
+            }
+        }
 
         return file.Id;
     }

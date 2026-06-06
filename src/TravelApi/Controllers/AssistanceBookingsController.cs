@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
+using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
@@ -102,6 +103,23 @@ public class AssistanceBookingsController : ControllerBase
         {
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar la asistencia.");
         }
+    }
+
+    // ADR-017 F1.3 (§2.8, D8c): boton "Confirmar costo". Ver HotelBookingsController.
+    [HttpPost("{id}/confirm-cost")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequirePermission(Permissions.CobranzasSeeCost)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> ConfirmCost(string reservaId, string id, [FromBody] ConfirmCostRequest? req, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _bookingService.ConfirmAssistanceCostAsync(reservaId, id, req ?? new ConfirmCostRequest(), ct));
+        }
+        catch (FeatureNotEnabledException) { return NotFound(); }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
     }
 
     /// <summary>

@@ -1,6 +1,33 @@
 using System;
+using System.ComponentModel.DataAnnotations;
 
 namespace TravelApi.Application.DTOs;
+
+/// <summary>
+/// ADR-017 F1.3 (§2.3.b): sub-objeto OPCIONAL para crear un producto del catalogo "en linea", en la
+/// misma operacion que el servicio. Mutuamente excluyente con <c>RateId</c> (400 si vienen ambos).
+/// Solo tiene efecto con el flag <c>EnableCatalogFindOrCreate</c> ON; con OFF se ignora (o 400 segun
+/// el create). Campos minimos: el resto del producto se enriquece despues desde el back-office.
+/// </summary>
+public record NewCatalogProductRequest(
+    // Nombre del producto tal como lo escribio el vendedor (hotel, ruta, plan...). De aca sale el
+    // SearchName normalizado para el anti-duplicados.
+    [property: Required, MaxLength(200)] string Name,
+    // Hotel: OBLIGATORIA (decision D6 — 400 si falta o viene en blanco). Otros tipos: destino/ruta,
+    // opcional. La validacion "obligatoria para Hotel" se hace en el service (depende del tipo).
+    [property: MaxLength(100)] string? City,
+    // Operador con el que se crea el producto. Obligatorio: un producto del catalogo siempre nace con
+    // un proveedor (su primera combinacion en RateSupplierSale).
+    [property: Required] string SupplierPublicId);
+
+/// <summary>
+/// ADR-017 F1.3 (§2.8, D8c): body OPCIONAL del boton "Confirmar costo". Si trae montos, el confirmador
+/// CORRIGE el costo; si viene vacio, CONFIRMA el costo resuelto tal cual (incluido 0, aserción humana
+/// deliberada). Son montos TOTALES del servicio (la misma unidad que persiste el booking).
+/// </summary>
+public record ConfirmCostRequest(
+    decimal? NetCost = null,
+    decimal? Tax = null);
 
 public record CreateFlightRequest(
     string SupplierId, string AirlineCode, string? AirlineName, string FlightNumber,
@@ -17,7 +44,13 @@ public record CreateFlightRequest(
     // asi que el ticket que mandaba el front al crear el vuelo se descartaba silenciosamente.
     // Opcional: en el alta muchas veces todavia no hay ticket emitido. AutoMapper lo mapea
     // por nombre contra FlightSegment.TicketNumber.
-    string? TicketNumber = null
+    string? TicketNumber = null,
+    // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta (ARS / USD). Con flag ON es OBLIGATORIA
+    // (la ficha siempre la manda); con flag OFF se ignora si viene null (byte-identico). El map la
+    // ignora a proposito: la asigna el service segun el flag (ver MappingProfile).
+    string? Currency = null,
+    // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
+    NewCatalogProductRequest? NewCatalogProduct = null
 );
 
 public record UpdateFlightRequest(
@@ -50,7 +83,12 @@ public record CreateHotelRequest(
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). El front lo manda ya restado
     // en la Commission (SalePrice - NetCost - Tax). Opcional con default 0 para no romper los
     // callers posicionales existentes que no lo enviaban. Ver HotelBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta. Obligatoria con flag ON, ignorada con OFF.
+    string? Currency = null,
+    // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
+    // Para Hotel exige City (D6).
+    NewCatalogProductRequest? NewCatalogProduct = null
 );
 
 public record UpdateHotelRequest(
@@ -82,7 +120,11 @@ public record CreateTransferRequest(
     string? ConfirmationNumber = null,
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver TransferBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta. Obligatoria con flag ON, ignorada con OFF.
+    string? Currency = null,
+    // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
+    NewCatalogProductRequest? NewCatalogProduct = null
 );
 
 public record UpdateTransferRequest(
@@ -113,7 +155,11 @@ public record CreateAssistanceRequest(
     string WorkflowStatus = "Solicitado",
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver AssistanceBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta. Obligatoria con flag ON, ignorada con OFF.
+    string? Currency = null,
+    // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
+    NewCatalogProductRequest? NewCatalogProduct = null
 );
 
 public record UpdateAssistanceRequest(
@@ -142,7 +188,11 @@ public record CreatePackageRequest(
     string? ConfirmationNumber = null,
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver PackageBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta. Obligatoria con flag ON, ignorada con OFF.
+    string? Currency = null,
+    // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
+    NewCatalogProductRequest? NewCatalogProduct = null
 );
 
 public record UpdatePackageRequest(
