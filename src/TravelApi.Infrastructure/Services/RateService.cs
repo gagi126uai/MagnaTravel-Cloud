@@ -22,6 +22,10 @@ public class RateService : IRateService
     // igual que CostMasking en BookingService.
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    // ADR-017 F1.2: lo usa SOLO catalog-search para leer el flag EnableCatalogFindOrCreate.
+    // Opcional (default null) para no romper el ctor legacy de los tests de masking; si es null,
+    // catalog-search se comporta fail-closed (flag OFF -> 404), igual que el resto del helper.
+    private readonly IOperationalFinanceSettingsService? _settingsService;
 
     // ===================================================================
     // Pieza C "tarifario que se llena solo": umbral de similitud difusa.
@@ -44,12 +48,14 @@ public class RateService : IRateService
         AppDbContext db,
         ILogger<RateService> logger,
         IUserPermissionResolver? permissionResolver = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        IOperationalFinanceSettingsService? settingsService = null)
     {
         _db = db;
         _logger = logger;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
+        _settingsService = settingsService;
     }
 
     // ===================================================================
@@ -950,6 +956,436 @@ public class RateService : IRateService
             }
         }
     }
+
+    // ===================================================================
+    // ADR-017 F1.2 (catalogo find-or-create, buscador): catalog-search.
+    //
+    // Buscador difuso UNIFICADO y supplier-AGNOSTICO que usa el vendedor al
+    // cargar un servicio. A diferencia del duplicate-check (que es por-proveedor
+    // y de back-office), aca el PRODUCTO manda: se busca "el hotel", no "la tarifa
+    // del proveedor X". Deduplica las N tarifas legacy del mismo producto en un
+    // solo resultado y le cuelga el contexto de la "ultima vez" que se vendio.
+    //
+    // SOLO LECTURA: no crea ni escribe nada (la creacion inline y el upsert son F1.3).
+    // ===================================================================
+
+    // Cuantos resultados finales muestra el dropdown (ADR §2.3.a: hasta 8).
+    private const int CatalogSearchResultLimit = 8;
+
+    // Minimo de caracteres utiles de q para que el buscador haga algo (ADR §2.3.a: 2).
+    private const int CatalogSearchMinQueryLength = 2;
+
+    // Cuantos candidatos crudos traemos ANTES de deduplicar. Mas grande que el limite final
+    // porque un mismo producto puede tener N tarifas legacy (room types / proveedores) que
+    // colapsan a un solo resultado; si trajeramos solo 8 crudos, el dedupe podria dejar el
+    // dropdown casi vacio. A escala single-tenant (pocos miles de Rates) es barato.
+    private const int CatalogSearchCandidateFetchLimit = 50;
+
+    public async Task<IReadOnlyList<CatalogSearchItemDto>?> CatalogSearchAsync(
+        string? serviceType, string? query, CancellationToken ct)
+    {
+        // 1. Gate por flag. Si esta OFF (o no podemos leerlo -> fail-closed), devolvemos null:
+        //    el controller traduce null a 404, asi el endpoint "no existe" hasta prender el flag.
+        if (!await IsCatalogFindOrCreateEnabledAsync(ct))
+        {
+            return null;
+        }
+
+        // 2. Validacion de entrada. Normalizamos q con la MISMA funcion que escribe SearchName
+        //    (NormalizeForCatalog), para que "Maitei" / "MAITEI " / "maitei--" se comporten igual
+        //    (cierra la nota NB-1 de los reviewers de F1.1). q con menos de 2 chars utiles o sin
+        //    tipo de servicio -> lista vacia (no es un error: todavia no hay nada que buscar).
+        var serviceTypeFilter = serviceType?.Trim() ?? string.Empty;
+        var normalizedQuery = TextNormalizer.NormalizeForCatalog(query);
+        if (serviceTypeFilter.Length == 0 || normalizedQuery.Length < CatalogSearchMinQueryLength)
+        {
+            return Array.Empty<CatalogSearchItemDto>();
+        }
+
+        var isHotel = string.Equals(
+            TextNormalizer.NormalizeForMatch(serviceTypeFilter), "hotel", StringComparison.Ordinal);
+
+        // 3. Candidatos difusos (RateId + score). En Postgres usa pg_trgm; en motores no
+        //    relacionales (tests InMemory) cae a un fallback LINQ por substring.
+        var candidates = await FetchCatalogCandidatesAsync(serviceTypeFilter, normalizedQuery, isHotel, ct);
+        if (candidates.Count == 0)
+        {
+            return Array.Empty<CatalogSearchItemDto>();
+        }
+
+        // 4. Detalle de cada Rate candidato + su ultima venta (RateSupplierSale).
+        var scoreByRateId = candidates
+            .GroupBy(candidate => candidate.RateId)
+            .ToDictionary(group => group.Key, group => group.Max(candidate => candidate.Score));
+        var rateIds = scoreByRateId.Keys.ToList();
+
+        var rates = await LoadCandidateRatesAsync(rateIds, ct);
+        var latestSaleByRateId = await LoadLatestSalesAsync(rateIds, ct);
+
+        // 5. Enmascarado de costo: lo resolvemos UNA vez (mismo resolver que F1b / CostMasking).
+        var canSeeCost = await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct);
+
+        var items = rates
+            .Select(rate => BuildCatalogSearchItem(
+                rate,
+                scoreByRateId.TryGetValue(rate.Id, out var score) ? score : null,
+                latestSaleByRateId.TryGetValue(rate.Id, out var sale) ? sale : null,
+                canSeeCost))
+            .ToList();
+
+        // 6. Dedupe (ADR §2.4 / m1): el mismo producto cargado N veces aparece UNA vez. Para Hotel
+        //    la clave incluye la City normalizada (homonimos de 2 ciudades = 2 productos distintos).
+        //    Lo hacemos en memoria con NormalizeForCatalog (autoritativo) sobre los pocos candidatos.
+        var deduped = DedupeCatalogItems(items, isHotel);
+
+        // 7. Orden final (ADR §2.3.a): mas parecido primero; a igual score, la venta mas reciente.
+        return deduped
+            .OrderByDescending(item => item.Score ?? -1d)
+            .ThenByDescending(item => item.LastSale?.SoldAt ?? DateTime.MinValue)
+            .Take(CatalogSearchResultLimit)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Lee el flag <c>EnableCatalogFindOrCreate</c>. Fail-closed: si no hay service de settings
+    /// inyectado (ctor legacy de tests), se considera apagado -> catalog-search devuelve 404.
+    /// </summary>
+    private async Task<bool> IsCatalogFindOrCreateEnabledAsync(CancellationToken ct)
+    {
+        if (_settingsService is null)
+        {
+            return false;
+        }
+
+        var settings = await _settingsService.GetEntityAsync(ct);
+        return settings.EnableCatalogFindOrCreate;
+    }
+
+    /// <summary>
+    /// Trae los candidatos difusos (RateId + score). En Postgres usa pg_trgm; si la extension no
+    /// estuviera, cae al fallback ILIKE; en motores no relacionales (tests InMemory) usa un fallback
+    /// LINQ por substring para poder ejercitar el resto del pipeline (dedupe / masking / DTO).
+    /// </summary>
+    private async Task<IReadOnlyList<CatalogCandidate>> FetchCatalogCandidatesAsync(
+        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+    {
+        if (!_db.Database.IsRelational())
+        {
+            return await FetchCatalogCandidatesLinqAsync(serviceType, normalizedQuery, isHotel, ct);
+        }
+
+        try
+        {
+            return await RunCatalogTrigramQueryAsync(serviceType, normalizedQuery, isHotel, ct);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction)
+        {
+            // pg_trgm no instalada (42883): mismo criterio degradado que el duplicate-check.
+            _logger.LogWarning(
+                "pg_trgm no disponible en catalog-search; usando fallback ILIKE. " +
+                "Verificar la extension en el servidor (pg_trgm).");
+            return await RunCatalogIlikeFallbackAsync(serviceType, normalizedQuery, isHotel, ct);
+        }
+    }
+
+    /// <summary>
+    /// Query difusa real con pg_trgm sobre <c>SearchName</c> (supplier-agnostica). SQL crudo
+    /// PARAMETRIZADO; el unico texto interpolado es la rama de Hotel, que sale de un bool fijo del
+    /// codigo (nunca del usuario). Conserva LAS DOS condiciones trigram (ADR §m3): el operador
+    /// <c>%</c> (pega contra el indice GIN, corta por el GUC 0.3) y <c>similarity() &gt;= umbral</c>
+    /// (0.4 parametrico). Para Hotel ademas matchea contra <c>lower(HotelName)</c> (el nombre real
+    /// del hotel legacy suele vivir ahi); el score es el MAYOR de ambas similitudes.
+    /// </summary>
+    private async Task<IReadOnlyList<CatalogCandidate>> RunCatalogTrigramQueryAsync(
+        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+    {
+        // SearchName ya esta normalizado en DB (lower + sin tildes), por eso se compara directo
+        // contra @q (que tambien paso por NormalizeForCatalog). HotelName es crudo -> lower(...).
+        var scoreExpr = isHotel
+            ? @"GREATEST(similarity(""SearchName"", @q), similarity(lower(""HotelName""), @q))"
+            : @"similarity(""SearchName"", @q)";
+        var hotelMatch = isHotel
+            ? @" OR (""HotelName"" IS NOT NULL AND lower(""HotelName"") % @q AND similarity(lower(""HotelName""), @q) >= @threshold)"
+            : string.Empty;
+
+        var sql = $@"
+            SELECT ""Id"", {scoreExpr} AS score
+            FROM ""Rates""
+            WHERE ""ServiceType"" = @serviceType
+              AND ""IsActive"" = TRUE
+              AND ""SearchName"" IS NOT NULL
+              AND (
+                (""SearchName"" % @q AND similarity(""SearchName"", @q) >= @threshold)
+                {hotelMatch}
+              )
+            ORDER BY score DESC
+            LIMIT @limit;";
+
+        await using var command = CreateRatesCommand(sql);
+        command.Parameters.Add(new NpgsqlParameter("q", normalizedQuery));
+        command.Parameters.Add(new NpgsqlParameter("serviceType", serviceType));
+        command.Parameters.Add(new NpgsqlParameter("threshold", FuzzyMatchSimilarityThreshold));
+        command.Parameters.Add(new NpgsqlParameter("limit", CatalogSearchCandidateFetchLimit));
+
+        return await ReadCatalogCandidatesAsync(command, hasRealScore: true, ct);
+    }
+
+    /// <summary>
+    /// Fallback cuando pg_trgm no esta: substring case-insensitive (ILIKE). Sin score real (null).
+    /// </summary>
+    private async Task<IReadOnlyList<CatalogCandidate>> RunCatalogIlikeFallbackAsync(
+        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+    {
+        var hotelMatch = isHotel ? @" OR lower(""HotelName"") ILIKE @pattern" : string.Empty;
+        var sql = $@"
+            SELECT ""Id"", NULL::real AS score
+            FROM ""Rates""
+            WHERE ""ServiceType"" = @serviceType
+              AND ""IsActive"" = TRUE
+              AND ""SearchName"" IS NOT NULL
+              AND (""SearchName"" ILIKE @pattern {hotelMatch})
+            ORDER BY ""SearchName""
+            LIMIT @limit;";
+
+        await using var command = CreateRatesCommand(sql);
+        // El % del LIKE se arma como VALOR del parametro, no se concatena en el SQL.
+        command.Parameters.Add(new NpgsqlParameter("pattern", $"%{normalizedQuery}%"));
+        command.Parameters.Add(new NpgsqlParameter("serviceType", serviceType));
+        command.Parameters.Add(new NpgsqlParameter("limit", CatalogSearchCandidateFetchLimit));
+
+        return await ReadCatalogCandidatesAsync(command, hasRealScore: false, ct);
+    }
+
+    /// <summary>
+    /// Fallback para motores no relacionales (EF Core InMemory en los tests unitarios): no hay SQL
+    /// crudo ni pg_trgm. Filtra por substring sobre <c>SearchName</c> (ya normalizado en DB) y, para
+    /// Hotel, tambien sobre <c>HotelName</c>. Score null (no es una medida real de similitud).
+    /// </summary>
+    private async Task<IReadOnlyList<CatalogCandidate>> FetchCatalogCandidatesLinqAsync(
+        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+    {
+        var ids = await _db.Rates
+            .AsNoTracking()
+            .Where(rate => rate.ServiceType == serviceType
+                && rate.IsActive
+                && rate.SearchName != null
+                && (rate.SearchName.Contains(normalizedQuery)
+                    || (isHotel && rate.HotelName != null && rate.HotelName.ToLower().Contains(normalizedQuery))))
+            .Select(rate => rate.Id)
+            .Take(CatalogSearchCandidateFetchLimit)
+            .ToListAsync(ct);
+
+        return ids.Select(id => new CatalogCandidate(id, null)).ToList();
+    }
+
+    /// <summary>Lee el reader de candidatos (Id + score). Abre/cierra la conexion como estaba.</summary>
+    private static async Task<IReadOnlyList<CatalogCandidate>> ReadCatalogCandidatesAsync(
+        NpgsqlCommand command, bool hasRealScore, CancellationToken ct)
+    {
+        var connection = command.Connection!;
+        var connectionWasClosed = connection.State == ConnectionState.Closed;
+        if (connectionWasClosed)
+        {
+            await connection.OpenAsync(ct);
+        }
+
+        try
+        {
+            var results = new List<CatalogCandidate>();
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                double? score = hasRealScore && !reader.IsDBNull(1)
+                    ? Convert.ToDouble(reader.GetValue(1))
+                    : null;
+                results.Add(new CatalogCandidate(reader.GetInt32(0), score));
+            }
+
+            return results;
+        }
+        finally
+        {
+            if (connectionWasClosed)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
+    private async Task<IReadOnlyList<Rate>> LoadCandidateRatesAsync(IReadOnlyList<int> rateIds, CancellationToken ct)
+    {
+        return await _db.Rates
+            .AsNoTracking()
+            .Where(rate => rateIds.Contains(rate.Id))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Para cada Rate candidato, la fila MAS reciente de <c>RateSupplierSale</c> (la tabla puede tener
+    /// una por operador). En F1.1/F1.2 la tabla nace vacia, asi que normalmente devuelve un dict vacio
+    /// y todos los resultados caen al <c>rateFallback</c>; el join se implementa completo igual para
+    /// que el dia que F1.3 empiece a escribir ventas, el contexto "ultima vez" aparezca solo.
+    /// </summary>
+    private async Task<Dictionary<int, CatalogLatestSale>> LoadLatestSalesAsync(
+        IReadOnlyList<int> rateIds, CancellationToken ct)
+    {
+        var sales = await _db.RateSupplierSales
+            .AsNoTracking()
+            .Where(sale => rateIds.Contains(sale.RateId))
+            .Select(sale => new CatalogLatestSale(
+                sale.RateId,
+                sale.LastSoldAt,
+                sale.LastNetCost,
+                sale.LastSalePrice,
+                sale.LastCurrency,
+                sale.LastPriceUnit,
+                sale.Supplier != null ? (Guid?)sale.Supplier.PublicId : null,
+                sale.Supplier != null ? sale.Supplier.Name : null))
+            .ToListAsync(ct);
+
+        return sales
+            .GroupBy(sale => sale.RateId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(sale => sale.SoldAt).First());
+    }
+
+    /// <summary>Arma el DTO de un resultado: identidad + sugerencia (ultima venta o fallback del Rate).</summary>
+    private static CatalogSearchItemDto BuildCatalogSearchItem(
+        Rate rate, double? score, CatalogLatestSale? sale, bool canSeeCost)
+    {
+        var item = new CatalogSearchItemDto
+        {
+            RatePublicId = rate.PublicId,
+            ServiceType = rate.ServiceType,
+            Name = BuildCatalogName(rate),
+            Subtitle = BuildCatalogSubtitle(rate),
+            CreatedInSale = rate.CreatedInSale,
+            Score = score
+        };
+
+        if (sale != null)
+        {
+            // Producto ya vendido: la sugerencia sale de la ultima venta.
+            item.LastSale = new CatalogSearchLastSaleDto
+            {
+                SupplierPublicId = sale.SupplierPublicId,
+                SupplierName = sale.SupplierName,
+                SoldAt = sale.SoldAt,
+                NetCost = canSeeCost ? sale.NetCost : null, // R1/D1: costo solo a quien lo puede ver
+                SalePrice = sale.SalePrice,                 // la venta viaja SIEMPRE
+                Currency = sale.Currency,
+                PriceUnit = sale.PriceUnit
+            };
+        }
+        else
+        {
+            // Producto sin ventas registradas: fallback a los campos curados del Rate.
+            item.RateFallback = new CatalogSearchRateFallbackDto
+            {
+                NetCost = canSeeCost ? rate.NetCost : null,
+                SalePrice = rate.SalePrice,
+                Currency = rate.Currency,
+                PriceUnit = rate.PriceUnit,
+                HotelPriceType = rate.HotelPriceType
+            };
+        }
+
+        return item;
+    }
+
+    /// <summary>Nombre lindo para mostrar: misma fuente que SearchName (Hotel prioriza HotelName).</summary>
+    private static string BuildCatalogName(Rate rate)
+    {
+        var isHotel = string.Equals(
+            TextNormalizer.NormalizeForMatch(rate.ServiceType), "hotel", StringComparison.Ordinal);
+        if (isHotel && !string.IsNullOrWhiteSpace(rate.HotelName))
+        {
+            return rate.HotelName!;
+        }
+
+        return rate.ProductName;
+    }
+
+    /// <summary>Subtitulo segun tipo: ciudad (hotel), ruta (aereo/traslado), destino (resto).</summary>
+    private static string? BuildCatalogSubtitle(Rate rate)
+    {
+        var typeKey = TextNormalizer.NormalizeForMatch(rate.ServiceType);
+        return typeKey switch
+        {
+            "hotel" => NullIfBlank(rate.City),
+            "aereo" => BuildRoute(rate.Origin, rate.Destination),
+            "traslado" => BuildRoute(rate.PickupLocation, rate.DropoffLocation),
+            _ => NullIfBlank(rate.Destination)
+        };
+    }
+
+    private static string? NullIfBlank(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? BuildRoute(string? origin, string? destination)
+    {
+        var from = NullIfBlank(origin);
+        var to = NullIfBlank(destination);
+        if (from is null && to is null) return null;
+        if (to is null) return from;
+        if (from is null) return to;
+        return $"{from} → {to}";
+    }
+
+    /// <summary>
+    /// Deduplica los resultados (ADR §2.4 / m1): un mismo producto cargado N veces en el tarifario
+    /// legacy aparece UNA sola vez. Representante = el de venta mas reciente; el score del grupo es el
+    /// mayor (todas las tarifas del producto compiten por el mismo q).
+    /// </summary>
+    private static IReadOnlyList<CatalogSearchItemDto> DedupeCatalogItems(
+        IReadOnlyList<CatalogSearchItemDto> items, bool isHotel)
+    {
+        var deduped = new List<CatalogSearchItemDto>();
+
+        foreach (var group in items.GroupBy(item => BuildDedupeKey(item, isHotel)))
+        {
+            var representative = group
+                .OrderByDescending(item => item.LastSale?.SoldAt ?? DateTime.MinValue)
+                .ThenByDescending(item => item.Score ?? -1d)
+                .First();
+            representative.Score = group.Max(item => item.Score);
+            deduped.Add(representative);
+        }
+
+        return deduped;
+    }
+
+    /// <summary>
+    /// Clave de dedupe: el nombre normalizado (con NormalizeForCatalog, autoritativo). Para Hotel suma
+    /// la City normalizada — dos hoteles homonimos de ciudades distintas son productos distintos.
+    /// </summary>
+    private static string BuildDedupeKey(CatalogSearchItemDto item, bool isHotel)
+    {
+        var nameKey = TextNormalizer.NormalizeForCatalog(item.Name);
+        if (!isHotel)
+        {
+            return nameKey;
+        }
+
+        var cityKey = TextNormalizer.NormalizeForCatalog(item.Subtitle);
+        return $"{nameKey}|{cityKey}";
+    }
+
+    /// <summary>Candidato crudo del buscador: id del Rate + score difuso (null si vino de un fallback).</summary>
+    private sealed record CatalogCandidate(int RateId, double? Score);
+
+    /// <summary>Snapshot de la ultima venta de un Rate (para el contexto "ultima vez" del dropdown).</summary>
+    private sealed record CatalogLatestSale(
+        int RateId,
+        DateTime SoldAt,
+        decimal NetCost,
+        decimal SalePrice,
+        string? Currency,
+        string? PriceUnit,
+        Guid? SupplierPublicId,
+        string? SupplierName);
 
     private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicId, CancellationToken ct)
     {

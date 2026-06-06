@@ -208,3 +208,89 @@ public class RateDuplicateFuzzyDto
     public decimal NetCost { get; set; }
     public string? Currency { get; set; }
 }
+
+// ===========================================================================
+// ADR-017 F1.2 (catalogo find-or-create, buscador, 2026-06-05): contrato del
+// endpoint GET /api/rates/catalog-search.
+//
+// Es el buscador difuso UNIFICADO que usa el vendedor al cargar un servicio:
+// busca "el producto" (un hotel, una ruta, un plan) sin filtrar por operador
+// (el producto manda, no el operador). Cada resultado trae el contexto de la
+// "ultima vez" que se vendio ese producto, para precargar una sugerencia.
+//
+// IMPORTANTE F1.2 es SOLO LECTURA: no crea ni escribe nada. La creacion inline,
+// la regla "request manda" y el upsert de RateSupplierSale son F1.3.
+// ===========================================================================
+
+/// <summary>
+/// Un resultado del buscador del catalogo. Identidad del producto + (opcional) el
+/// contexto de la ultima venta. Exactamente UNO de <see cref="LastSale"/> /
+/// <see cref="RateFallback"/> viene poblado: <c>LastSale</c> si el producto ya se
+/// vendio alguna vez (sale de <c>RateSupplierSale</c>), <c>RateFallback</c> si todavia
+/// no tiene ventas registradas (sale de los campos curados del propio <c>Rate</c>).
+/// </summary>
+public class CatalogSearchItemDto
+{
+    /// <summary>PublicId del Rate (el "producto" del catalogo). El front lo usa como RateId al cargar.</summary>
+    public Guid RatePublicId { get; set; }
+
+    public string ServiceType { get; set; } = string.Empty;
+
+    /// <summary>Nombre lindo para mostrar (Hotel: nombre del hotel; resto: nombre del producto).</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Subtitulo segun tipo: ciudad (hotel), ruta (aereo/traslado), etc. Null si no aplica.</summary>
+    public string? Subtitle { get; set; }
+
+    /// <summary>Pill "creado en venta" (producto nacido inline durante una carga, no curado en back-office).</summary>
+    public bool CreatedInSale { get; set; }
+
+    /// <summary>
+    /// Score de similitud difusa (0..1) de pg_trgm. <c>null</c> cuando vino del fallback
+    /// ILIKE (sin extension) o del fallback LINQ (motor no relacional en tests): en esos
+    /// casos no hay medida real de cuan parecido es.
+    /// </summary>
+    public double? Score { get; set; }
+
+    public CatalogSearchLastSaleDto? LastSale { get; set; }
+    public CatalogSearchRateFallbackDto? RateFallback { get; set; }
+}
+
+/// <summary>
+/// Contexto "ultima vez": con que operador, a que precio y cuando se vendio por ultima
+/// vez este producto. Sale de la fila mas reciente de <c>RateSupplierSale</c> del Rate.
+/// </summary>
+public class CatalogSearchLastSaleDto
+{
+    public Guid? SupplierPublicId { get; set; }
+    public string? SupplierName { get; set; }
+    public DateTime SoldAt { get; set; }
+
+    /// <summary>
+    /// Costo neto UNITARIO de la ultima venta. <c>null</c> si el caller NO tiene
+    /// <c>cobranzas.see_cost</c> (decision R1/D1: nunca se filtra el costo a quien no puede verlo).
+    /// </summary>
+    public decimal? NetCost { get; set; }
+
+    /// <summary>Precio de venta UNITARIO de la ultima vez. Viaja SIEMPRE (D1: quien no ve costos ve la venta).</summary>
+    public decimal SalePrice { get; set; }
+
+    public string? Currency { get; set; }
+    public string? PriceUnit { get; set; }
+}
+
+/// <summary>
+/// Sugerencia de respaldo cuando el producto todavia NO tiene ventas registradas: sale de
+/// los campos curados del propio <c>Rate</c> (back-office o nacimiento). El front debe
+/// interpretar <see cref="PriceUnit"/> / <see cref="HotelPriceType"/> como hace hoy el
+/// selector de tarifas (la semantica de estos campos es la del Rate, no la de RateSupplierSale).
+/// </summary>
+public class CatalogSearchRateFallbackDto
+{
+    /// <summary>Costo neto del Rate. <c>null</c> si el caller no tiene <c>cobranzas.see_cost</c> (R1/D1).</summary>
+    public decimal? NetCost { get; set; }
+    public decimal SalePrice { get; set; }
+    public string? Currency { get; set; }
+    public string? PriceUnit { get; set; }
+    public string? HotelPriceType { get; set; }
+}

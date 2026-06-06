@@ -97,6 +97,32 @@ public class RatesController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-017 F1.2 (catalogo find-or-create, buscador): busca productos del catalogo del tipo pedido
+    /// cuyo nombre se parece a <paramref name="q"/> (difuso). Es supplier-agnostico (el producto manda)
+    /// y deduplica las tarifas legacy del mismo producto. Cada item trae el contexto de la "ultima vez".
+    ///
+    /// <para>Mismo gate que los creates de bookings (<c>[Authorize]</c> de clase, NO Admin-only). El
+    /// costo se enmascara para callers sin <c>cobranzas.see_cost</c> (R1/D1). Gateado por el flag
+    /// <c>EnableCatalogFindOrCreate</c>: con el flag OFF el service devuelve null y aca respondemos 404,
+    /// como si el endpoint no existiera (ADR §2.3 / R4).</para>
+    /// </summary>
+    [HttpGet("catalog-search")]
+    public async Task<IActionResult> CatalogSearch(
+        [FromQuery] string? serviceType,
+        [FromQuery] string? q,
+        CancellationToken ct)
+    {
+        var results = await _rateService.CatalogSearchAsync(serviceType, q, ct);
+        if (results is null)
+        {
+            // El service devuelve null SOLO cuando el flag esta apagado: el endpoint "no existe".
+            return NotFound();
+        }
+
+        return Ok(results);
+    }
+
+    /// <summary>
     /// Pieza C "tarifario que se llena solo": antes de crear una tarifa, avisa si
     /// ya existe una identica o muy parecida (para no cargar duplicados).
     /// Mismo gate que crear/editar tarifas (Admin): expone precios netos/venta.
