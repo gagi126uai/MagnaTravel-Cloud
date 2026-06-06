@@ -42,6 +42,8 @@ Use `security-data-risk-reviewer` as an additional reviewer when the change touc
 
 ### Frontend work
 
+**MANDATORY UX gate (owner's rule, 2026-06-05):** before ANY frontend change that alters what the user sees or how a screen flows (layout, forms, field order, buttons, modals, navigation, visibility), use `ux-ui-disenador` FIRST. That agent designs ONLY from `docs/ux/guia-ux-gaston.md`; anything not covered there becomes explicit questions for Gaston (the owner). The orchestrator must relay those questions to Gaston verbatim and wait for his answers BEFORE implementation starts. `frontend-senior` implements the approved spec exactly; `frontend-reviewer` must also verify compliance with `docs/ux/guia-ux-gaston.md`. Pure bug fixes with zero visual/flow change are exempt.
+
 Use `frontend-senior` for:
 
 - pages;

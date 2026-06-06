@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Propuestas: Agregar servicio — MagnaTravel</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #eef1f5; color: #1f2937; padding: 32px 16px 80px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 26px; margin-bottom: 6px; }
+  .sub { color: #6b7280; margin-bottom: 36px; font-size: 15px; }
+  .propuesta { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08); padding: 28px; margin-bottom: 48px; }
+  .ptitle { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+  .badge { background: #1d4ed8; color: #fff; font-weight: 700; border-radius: 10px; padding: 6px 14px; font-size: 18px; }
+  .ptitle h2 { font-size: 21px; }
+  .pdesc { color: #4b5563; font-size: 14.5px; margin: 10px 0 22px; max-width: 760px; line-height: 1.55; }
+  .pros { font-size: 13.5px; color: #374151; margin: -8px 0 22px; }
+  .pros b.si { color: #047857; } .pros b.no { color: #b45309; }
+
+  /* ---- marco de "pantalla" ---- */
+  .screen { border: 1px solid #d1d5db; border-radius: 12px; overflow: hidden; background: #f8fafc; }
+  .browserbar { background: #e5e7eb; padding: 8px 14px; display: flex; gap: 6px; align-items: center; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .d1{background:#f87171} .d2{background:#fbbf24} .d3{background:#34d399}
+  .urlbox { background: #fff; border-radius: 6px; font-size: 11.5px; color: #9ca3af; padding: 3px 12px; margin-left: 10px; flex: 1; }
+
+  /* ---- piezas de UI ---- */
+  .field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+  .input { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 12px; font-size: 13.5px; color: #111827; }
+  .input.ghost { color: #9ca3af; }
+  .input.calc { background: #f1f5f9; color: #334155; font-weight: 600; border-style: dashed; }
+  .row { display: flex; gap: 12px; margin-bottom: 14px; }
+  .row .field { flex: 1; }
+  .field .input { width: 100%; }
+  .btn { border: none; border-radius: 9px; padding: 10px 22px; font-size: 14px; font-weight: 600; cursor: default; }
+  .btn.primary { background: #1d4ed8; color: #fff; }
+  .btn.soft { background: #e5e7eb; color: #374151; }
+  .btn.line { background: transparent; border: 1px solid #cbd5e1; color: #374151; font-size: 13px; padding: 8px 16px; }
+  .pill { display: inline-block; border-radius: 999px; font-size: 11.5px; font-weight: 600; padding: 3px 10px; }
+  .pill.green { background: #d1fae5; color: #047857; }
+  .pill.blue { background: #dbeafe; color: #1d4ed8; }
+  .pill.gray { background: #e5e7eb; color: #4b5563; }
+  .masdetalles { color: #1d4ed8; font-size: 13px; font-weight: 600; margin: 4px 0 16px; }
+  .tabsvc { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tabsvc span { padding: 7px 16px; border-radius: 999px; background: #e5e7eb; color: #4b5563; font-size: 13px; font-weight: 600; }
+  .tabsvc span.on { background: #1d4ed8; color: #fff; }
+  .ganancia { color: #047857; font-weight: 700; }
+
+  /* ---- A: panel lateral ---- */
+  .drawerlayout { display: flex; min-height: 540px; }
+  .behind { flex: 1; background: #cbd5e1; padding: 22px; position: relative; }
+  .behind::after { content: ""; position: absolute; inset: 0; background: rgba(15,23,42,.45); }
+  .behindcard { background: #f8fafc; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; font-size: 13px; color: #475569; }
+  .drawer { width: 460px; background: #fff; border-left: 1px solid #d1d5db; padding: 22px 24px 0; display: flex; flex-direction: column; box-shadow: -8px 0 24px rgba(0,0,0,.15); position: relative; z-index: 2; }
+  .drawerhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .drawerhead h3 { font-size: 17px; }
+  .x { color: #9ca3af; font-size: 20px; }
+  .totalbar { margin-top: auto; background: #0f172a; color: #fff; margin-left: -24px; margin-right: -24px; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; font-size: 13.5px; }
+  .totalbar .nums b { font-size: 16px; }
+
+  /* ---- B: pagina con resumen ---- */
+  .pagelayout { display: flex; gap: 22px; padding: 26px; background: #f1f5f9; }
+  .formcol { flex: 1.6; }
+  .sumcol { flex: 1; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .stepnum { display: inline-flex; width: 24px; height: 24px; border-radius: 50%; background: #1d4ed8; color: #fff; font-size: 13px; font-weight: 700; align-items: center; justify-content: center; margin-right: 9px; }
+  .card h4 { font-size: 15px; margin-bottom: 16px; display: flex; align-items: center; }
+  .sticky { background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 20px; }
+  .sticky h4 { color: #fff; font-size: 15px; margin-bottom: 14px; }
+  .sline { display: flex; justify-content: space-between; font-size: 13.5px; padding: 7px 0; border-bottom: 1px solid #1e293b; }
+  .sline.big { font-size: 15px; font-weight: 700; border-bottom: none; padding-top: 12px; }
+  .gan { color: #34d399; }
+  .crumb { font-size: 12.5px; color: #64748b; padding: 14px 26px 0; }
+
+  /* ---- C: inline ---- */
+  .tablewrap { padding: 24px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; font-size: 13px; }
+  th { text-align: left; background: #f1f5f9; color: #475569; padding: 10px 14px; font-size: 12px; }
+  td { padding: 11px 14px; border-top: 1px solid #e5e7eb; color: #334155; }
+  .inlinecard { border: 2px solid #1d4ed8; border-radius: 12px; background: #fff; margin-top: 14px; padding: 20px; }
+  .inlinegrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0; }
+  .footnote { font-size: 12px; color: #94a3b8; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Agregar un servicio a la reserva — 3 propuestas</h1>
+  <p class="sub">Las tres cumplen lo mismo: <b>solo los campos imprescindibles a la vista</b> (operador, fechas, pasajeros, costo, venta, moneda), las noches se cuentan y calculan solas, <b>sin</b> "guardar tarifa para reusar", <b>sin</b> cartelitos explicativos, <b>sin</b> "(opcional)". Lo secundario vive detrás de "Más detalles". Cambia DÓNDE y CÓMO se carga. El ejemplo es un hotel; Aéreo/Traslado/Paquete/Asistencia siguen el mismo molde con sus campos.</p>
+
+  <!-- ============ PROPUESTA A ============ -->
+  <div class="propuesta">
+    <div class="ptitle"><span class="badge">A</span><h2>Panel lateral — la reserva nunca desaparece</h2></div>
+    <p class="pdesc">Tocás "Agregar servicio" y se desliza un panel desde la derecha. La reserva queda visible atrás (oscurecida): nunca perdés de vista con qué cliente y qué file estás trabajando. El total y la ganancia se calculan abajo, siempre a la vista, y el botón Guardar vive ahí pegado.</p>
+    <p class="pros"><b class="si">A favor:</b> rápido, no te saca de la reserva, ideal para cargar varios servicios seguidos. <b class="no">En contra:</b> el espacio es angosto; si un día querés MUCHOS campos a la vez, queda apretado.</p>
+    <div class="screen">
+      <div class="browserbar"><span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span><span class="urlbox">magnatravel — Reserva #1042 · Familia Pérez</span></div>
+      <div class="drawerlayout">
+        <div class="behind">
+          <div class="behindcard"><b>Reserva #1042 — Familia Pérez</b> &nbsp;·&nbsp; Iguazú &nbsp;·&nbsp; 12/08 al 19/08</div>
+          <div class="behindcard">✈ Aéreo AEP–IGR &nbsp;·&nbsp; 4 pax &nbsp;·&nbsp; $ 1.800.000</div>
+          <div class="behindcard">🚐 Traslado aeropuerto–hotel &nbsp;·&nbsp; $ 95.000</div>
+        </div>
+        <div class="drawer">
+          <div class="drawerhead"><h3>Agregar servicio</h3><span class="x">✕</span></div>
+          <div class="tabsvc"><span class="on">Hotel</span><span>Aéreo</span><span>Traslado</span><span>Paquete</span><span>Asistencia</span></div>
+          <div class="row"><div class="field"><label>Hotel</label><div class="input">Maitei Posadas Hotel ▾</div></div></div>
+          <div class="row">
+            <div class="field"><label>Entrada</label><div class="input">12/08/2026</div></div>
+            <div class="field"><label>Salida</label><div class="input">19/08/2026</div></div>
+            <div class="field"><label>Noches</label><div class="input calc">7</div></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Operador</label><div class="input">Ola Mayorista ▾</div></div>
+            <div class="field"><label>Pasajeros</label><div class="input">4 ▾</div></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Costo por noche</label><div class="input">50.000</div></div>
+            <div class="field"><label>Venta por noche</label><div class="input">60.000</div></div>
+            <div class="field"><label>Moneda</label><div class="input">ARS ▾</div></div>
+          </div>
+          <div class="masdetalles">+ Más detalles (régimen, habitación, confirmación del operador)</div>
+          <div class="totalbar">
+            <div class="nums">7 noches &nbsp;·&nbsp; Venta <b>$ 420.000</b> &nbsp;·&nbsp; <span class="gan ganancia">Ganás $ 70.000</span></div>
+            <button class="btn primary">Guardar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROPUESTA B ============ -->
+  <div class="propuesta">
+    <div class="ptitle"><span class="badge">B</span><h2>Página propia con resumen vivo — estilo sistema moderno</h2></div>
+    <p class="pdesc">"Agregar servicio" te lleva a una pantalla completa, sin ventanita. A la izquierda cargás en 3 pasos cortos (qué vendés → fechas y pasajeros → la plata). A la derecha hay un <b>resumen oscuro que se va armando solo</b> mientras escribís: noches, total, ganancia. Es lo que hoy hacen los sistemas modernos de venta.</p>
+    <p class="pros"><b class="si">A favor:</b> aire de sobra, se ve profesional, el resumen vivo evita errores de plata antes de guardar. <b class="no">En contra:</b> salís de la pantalla de la reserva y volvés al guardar (un viaje más).</p>
+    <div class="screen">
+      <div class="browserbar"><span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span><span class="urlbox">magnatravel — Reserva #1042 › Agregar servicio</span></div>
+      <div class="crumb">← Volver a la reserva #1042 · Familia Pérez</div>
+      <div class="pagelayout">
+        <div class="formcol">
+          <div class="card">
+            <h4><span class="stepnum">1</span>¿Qué vendés?</h4>
+            <div class="tabsvc"><span class="on">Hotel</span><span>Aéreo</span><span>Traslado</span><span>Paquete</span><span>Asistencia</span></div>
+            <div class="row"><div class="field"><label>Hotel</label><div class="input">Maitei Posadas Hotel ▾</div></div>
+            <div class="field"><label>Operador</label><div class="input">Ola Mayorista ▾</div></div></div>
+          </div>
+          <div class="card">
+            <h4><span class="stepnum">2</span>Fechas y pasajeros</h4>
+            <div class="row">
+              <div class="field"><label>Entrada</label><div class="input">12/08/2026</div></div>
+              <div class="field"><label>Salida</label><div class="input">19/08/2026</div></div>
+              <div class="field"><label>Pasajeros</label><div class="input">4 ▾</div></div>
+            </div>
+          </div>
+          <div class="card">
+            <h4><span class="stepnum">3</span>La plata</h4>
+            <div class="row">
+              <div class="field"><label>Costo por noche</label><div class="input">50.000</div></div>
+              <div class="field"><label>Venta por noche</label><div class="input">60.000</div></div>
+              <div class="field"><label>Moneda</label><div class="input">ARS ▾</div></div>
+            </div>
+            <div class="masdetalles">+ Más detalles (régimen, habitación, confirmación del operador)</div>
+          </div>
+          <button class="btn primary">Guardar servicio</button> &nbsp; <button class="btn soft">Cancelar</button>
+        </div>
+        <div class="sumcol">
+          <div class="sticky">
+            <h4>Resumen</h4>
+            <div class="sline"><span>Hotel</span><span>Maitei Posadas</span></div>
+            <div class="sline"><span>Estadía</span><span>12/08 → 19/08 · <b>7 noches</b></span></div>
+            <div class="sline"><span>Pasajeros</span><span>4</span></div>
+            <div class="sline"><span>Costo (7 × 50.000)</span><span>$ 350.000</span></div>
+            <div class="sline"><span>Venta (7 × 60.000)</span><span>$ 420.000</span></div>
+            <div class="sline big"><span>Ganancia</span><span class="gan">$ 70.000</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROPUESTA C ============ -->
+  <div class="propuesta">
+    <div class="ptitle"><span class="badge">C</span><h2>Carga en la misma lista — cero ventanas</h2></div>
+    <p class="pdesc">Nada de ventanas ni de irse a otra página: tocás "Agregar servicio" y se abre una <b>ficha de carga ahí mismo</b>, abajo de la lista de servicios de la reserva. Una sola línea de campos, calculás y guardás. Al guardar, la ficha se convierte en una fila más de la lista. Es la opción más veloz para el vendedor que carga todo el día.</p>
+    <p class="pros"><b class="si">A favor:</b> velocísimo, ves los otros servicios mientras cargás (no repetís ni pisás nada). <b class="no">En contra:</b> menos espacio para crecer; en pantallas chicas la línea de campos se acomoda en dos renglones.</p>
+    <div class="screen">
+      <div class="browserbar"><span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span><span class="urlbox">magnatravel — Reserva #1042 · Familia Pérez</span></div>
+      <div class="tablewrap">
+        <table>
+          <tr><th>Servicio</th><th>Fechas</th><th>Operador</th><th>Costo</th><th>Venta</th><th></th></tr>
+          <tr><td>✈ Aéreo AEP–IGR · 4 pax</td><td>12/08 → 19/08</td><td>TTS Viajes</td><td>$ 1.500.000</td><td>$ 1.800.000</td><td><span class="pill green">Confirmado</span></td></tr>
+          <tr><td>🚐 Traslado aeropuerto–hotel</td><td>12/08</td><td>Ola Mayorista</td><td>$ 80.000</td><td>$ 95.000</td><td><span class="pill blue">Cargado</span></td></tr>
+        </table>
+        <div class="inlinecard">
+          <div class="tabsvc"><span class="on">Hotel</span><span>Aéreo</span><span>Traslado</span><span>Paquete</span><span>Asistencia</span></div>
+          <div class="inlinegrid">
+            <div class="field"><label>Hotel</label><div class="input">Maitei Posadas ▾</div></div>
+            <div class="field"><label>Entrada</label><div class="input">12/08/2026</div></div>
+            <div class="field"><label>Salida</label><div class="input">19/08/2026</div></div>
+            <div class="field"><label>Noches</label><div class="input calc">7</div></div>
+            <div class="field"><label>Operador</label><div class="input">Ola Mayorista ▾</div></div>
+            <div class="field"><label>Costo por noche</label><div class="input">50.000</div></div>
+            <div class="field"><label>Venta por noche</label><div class="input">60.000</div></div>
+            <div class="field"><label>Moneda</label><div class="input">ARS ▾</div></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-size:13.5px;">Venta <b>$ 420.000</b> · <span class="ganancia">Ganás $ 70.000</span> &nbsp;&nbsp;<span class="masdetalles" style="display:inline;">+ Más detalles</span></div>
+            <div><button class="btn line">Cancelar</button> &nbsp;<button class="btn primary">Guardar</button></div>
+          </div>
+        </div>
+        <p class="footnote">Al guardar, esta ficha se convierte en una fila más de la tabla y queda lista para cargar el siguiente servicio.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Propuesta C en detalle — Agregar servicio con tarifario que se arma solo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #eef1f5; color: #1f2937; padding: 32px 16px 80px; }
+  .wrap { max-width: 1050px; margin: 0 auto; }
+  h1 { font-size: 25px; margin-bottom: 6px; }
+  .sub { color: #6b7280; margin-bottom: 34px; font-size: 15px; max-width: 850px; line-height: 1.5; }
+  .momento { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08); padding: 26px; margin-bottom: 44px; }
+  .mtitle { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .mbadge { background: #0f766e; color: #fff; font-weight: 700; border-radius: 10px; padding: 5px 13px; font-size: 15px; white-space: nowrap; }
+  .mtitle h2 { font-size: 19px; }
+  .mdesc { color: #4b5563; font-size: 14px; margin: 8px 0 20px; max-width: 800px; line-height: 1.55; }
+
+  .screen { border: 1px solid #d1d5db; border-radius: 12px; overflow: hidden; background: #f8fafc; padding: 22px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+  .input { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 12px; font-size: 13.5px; color: #111827; }
+  .input.focus { border: 2px solid #1d4ed8; }
+  .input.calc { background: #f1f5f9; color: #334155; font-weight: 600; border-style: dashed; }
+  .input.sugerido { background: #fefce8; border-color: #facc15; }
+  .row { display: flex; gap: 12px; margin-bottom: 13px; }
+  .row .field { flex: 1; }
+  .field .input { width: 100%; }
+  .btn { border: none; border-radius: 9px; padding: 10px 22px; font-size: 14px; font-weight: 600; cursor: default; }
+  .btn.primary { background: #1d4ed8; color: #fff; }
+  .btn.line { background: transparent; border: 1px solid #cbd5e1; color: #374151; font-size: 13px; padding: 8px 16px; }
+  .pill { display: inline-block; border-radius: 999px; font-size: 11px; font-weight: 600; padding: 3px 10px; vertical-align: middle; }
+  .pill.green { background: #d1fae5; color: #047857; }
+  .pill.blue { background: #dbeafe; color: #1d4ed8; }
+  .pill.amber { background: #fef3c7; color: #b45309; }
+  .pill.violet { background: #ede9fe; color: #6d28d9; }
+  .tabsvc { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabsvc span { padding: 7px 16px; border-radius: 999px; background: #e5e7eb; color: #4b5563; font-size: 13px; font-weight: 600; }
+  .tabsvc span.on { background: #1d4ed8; color: #fff; }
+  .ganancia { color: #047857; font-weight: 700; }
+  .inlinecard { border: 2px solid #1d4ed8; border-radius: 12px; background: #fff; padding: 20px; }
+
+  /* dropdown de busqueda */
+  .ddwrap { position: relative; }
+  .dropdown { background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,.14); margin-top: 6px; overflow: hidden; max-width: 560px; }
+  .dditem { padding: 11px 14px; border-bottom: 1px solid #f1f5f9; font-size: 13.5px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .dditem.hit { background: #eff6ff; }
+  .dditem .nom b { color: #111827; }
+  .dditem .meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .ddcrear { padding: 12px 14px; font-size: 13.5px; color: #1d4ed8; font-weight: 700; background: #f8fafc; }
+  .ddcrear small { display: block; color: #94a3b8; font-weight: 400; margin-top: 2px; }
+
+  /* seccion hotel nuevo */
+  .nuevobox { border: 1px dashed #6d28d9; background: #faf5ff; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .nuevobox .nbtitle { font-size: 13px; font-weight: 700; color: #6d28d9; margin-bottom: 10px; }
+
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; font-size: 13px; }
+  th { text-align: left; background: #f1f5f9; color: #475569; padding: 10px 14px; font-size: 12px; }
+  td { padding: 11px 14px; border-top: 1px solid #e5e7eb; color: #334155; vertical-align: top; }
+  .footbar { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+  .masdetalles { color: #1d4ed8; font-size: 13px; font-weight: 600; }
+
+  /* tabla de campos por tipo */
+  .tipos td:first-child { font-weight: 700; white-space: nowrap; }
+  .tipos td { font-size: 12.5px; line-height: 1.55; }
+  .nota { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 12px 16px; font-size: 13px; color: #92400e; margin-top: 16px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Propuesta C en detalle — el tarifario se arma solo, vendiendo</h1>
+  <p class="sub">Esto es lo que pasa en la pantalla de la reserva, paso por paso, con el ejemplo de un hotel. La regla de oro: <b>escribís lo que vendés en un solo buscador</b>; si existe, lo elegís y el sistema te acerca el operador y el precio de la última vez; si no existe, lo creás ahí mismo sin salir de la venta, y queda guardado para la próxima. Cero pantalla de "cargar tarifario".</p>
+
+  <!-- ============ MOMENTO 1 ============ -->
+  <div class="momento">
+    <div class="mtitle"><span class="mbadge">Momento 1</span><h2>Escribís y el sistema busca solo (aunque escribas con errores)</h2></div>
+    <p class="mdesc">Tipeás "maitei" y ya está buscando: encuentra parecidos aunque falte una letra o esté en otro orden. Cada resultado te dice de dónde lo conoce ("la última vez lo vendiste con tal operador a tal precio"). Crear uno nuevo es siempre la ÚLTIMA opción, después de mostrarte todos los parecidos — así es casi imposible duplicar.</p>
+    <div class="screen">
+      <div class="inlinecard">
+        <div class="tabsvc"><span class="on">Hotel</span><span>Aéreo</span><span>Traslado</span><span>Paquete</span><span>Asistencia</span></div>
+        <div class="row"><div class="field" style="max-width:560px;"><label>Hotel</label><div class="input focus">maitei|</div></div></div>
+        <div class="ddwrap">
+          <div class="dropdown">
+            <div class="dditem hit">
+              <div><div class="nom"><b>Hotel Maitei Posadas</b> · Posadas, Misiones</div>
+              <div class="meta">Última vez: Ola Mayorista · $ 48.000/noche · hace 2 semanas</div></div>
+              <span class="pill green">En tu tarifario</span>
+            </div>
+            <div class="dditem">
+              <div><div class="nom"><b>Maitei Resort & Spa</b> · Puerto Iguazú</div>
+              <div class="meta">Última vez: TTS Viajes · $ 71.000/noche · hace 3 meses</div></div>
+              <span class="pill green">En tu tarifario</span>
+            </div>
+            <div class="ddcrear">➕ No es ninguno: crear "maitei" como hotel nuevo
+              <small>Revisá los de arriba antes — si ya existe, elegirlo evita duplicados.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MOMENTO 2 ============ -->
+  <div class="momento">
+    <div class="mtitle"><span class="mbadge">Momento 2</span><h2>El hotel NO existía: lo creás en la misma ficha, sin salir de la venta</h2></div>
+    <p class="mdesc">Elegiste "crear nuevo". Aparece un recuadro chiquito con lo mínimo del hotel (ciudad y operador) y seguís cargando la venta como siempre. Al guardar pasan las dos cosas juntas: se crea el servicio en la reserva <b>y</b> el hotel queda en el tarifario con su operador y el precio como referencia para la próxima. El hotel nace marcado "creado en venta" para que administración lo revise cuando quiera — al vendedor no lo frena nada.</p>
+    <div class="screen">
+      <div class="inlinecard">
+        <div class="tabsvc"><span class="on">Hotel</span><span>Aéreo</span><span>Traslado</span><span>Paquete</span><span>Asistencia</span></div>
+        <div class="nuevobox">
+          <div class="nbtitle">Hotel nuevo — se guarda en tu tarifario al confirmar <span class="pill violet">Creado en venta</span></div>
+          <div class="row">
+            <div class="field"><label>Nombre</label><div class="input">Maitei Costa del Sol</div></div>
+            <div class="field"><label>Ciudad / destino</label><div class="input">Villa Gesell ▾</div></div>
+            <div class="field"><label>Operador</label><div class="input">Ola Mayorista ▾</div></div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Entrada</label><div class="input">12/08/2026</div></div>
+          <div class="field"><label>Salida</label><div class="input">19/08/2026</div></div>
+          <div class="field"><label>Noches</label><div class="input calc">7</div></div>
+          <div class="field"><label>Pasajeros</label><div class="input">4 ▾</div></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Costo por noche</label><div class="input">50.000</div></div>
+          <div class="field"><label>Venta por noche</label><div class="input">60.000</div></div>
+          <div class="field"><label>Moneda</label><div class="input">ARS ▾</div></div>
+        </div>
+        <div class="footbar">
+          <div style="font-size:13.5px;">Venta <b>$ 420.000</b> · <span class="ganancia">Ganás $ 70.000</span> &nbsp;&nbsp;<span class="masdetalles">+ Más detalles</span></div>
+          <div><button class="btn line">Cancelar</button> &nbsp;<button class="btn primary">Guardar servicio y hotel</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MOMENTO 3 ============ -->
+  <div class="momento">
+    <div class="mtitle"><span class="mbadge">Momento 3</span><h2>El hotel SÍ existía: te acerca todo lo de la última vez, vos solo confirmás o corregís</h2></div>
+    <p class="mdesc">Elegiste "Hotel Maitei Posadas". El operador y el precio por noche vienen precargados de la última venta (en amarillo = sugerido, lo pisás si cambió). Cargar un servicio repetido pasa a ser cuestión de segundos: fechas, pax, revisar el precio, guardar. Si esta vez lo vendés con OTRO operador, lo cambiás y el sistema también recuerda esa combinación para la próxima.</p>
+    <div class="screen">
+      <div class="inlinecard">
+        <div class="tabsvc"><span class="on">Hotel</span><span>Aéreo</span><span>Traslado</span><span>Paquete</span><span>Asistencia</span></div>
+        <div class="row">
+          <div class="field" style="flex:1.6;"><label>Hotel</label><div class="input">Hotel Maitei Posadas · Posadas ✓</div></div>
+          <div class="field"><label>Operador</label><div class="input sugerido">Ola Mayorista ▾</div></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Entrada</label><div class="input">12/08/2026</div></div>
+          <div class="field"><label>Salida</label><div class="input">19/08/2026</div></div>
+          <div class="field"><label>Noches</label><div class="input calc">7</div></div>
+          <div class="field"><label>Pasajeros</label><div class="input">4 ▾</div></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Costo por noche</label><div class="input sugerido">48.000</div></div>
+          <div class="field"><label>Venta por noche</label><div class="input">60.000</div></div>
+          <div class="field"><label>Moneda</label><div class="input sugerido">ARS ▾</div></div>
+        </div>
+        <div class="footbar">
+          <div style="font-size:13.5px;">Venta <b>$ 420.000</b> · <span class="ganancia">Ganás $ 84.000</span> &nbsp;&nbsp;<span class="masdetalles">+ Más detalles</span></div>
+          <div><button class="btn line">Cancelar</button> &nbsp;<button class="btn primary">Guardar servicio</button></div>
+        </div>
+      </div>
+      <p style="font-size:12.5px; color:#64748b; margin-top:10px;">🟡 Amarillo = lo trajo de la última venta, es una sugerencia: lo podés pisar. El precio de referencia se actualiza solo con cada venta nueva.</p>
+    </div>
+  </div>
+
+  <!-- ============ MOMENTO 4 ============ -->
+  <div class="momento">
+    <div class="mtitle"><span class="mbadge">Momento 4</span><h2>Guardaste: una fila más en la lista, con sus avisos</h2></div>
+    <p class="mdesc">La ficha se cierra y el servicio aparece como una fila más. Las fechas límite que cargaste (pago al operador, emisión del aéreo) se ven como etiquetas en la fila y el sistema avisa cuando se acercan. Abajo queda el botón listo para cargar el siguiente servicio.</p>
+    <div class="screen">
+      <table>
+        <tr><th>Servicio</th><th>Fechas</th><th>Operador</th><th>Costo</th><th>Venta</th><th>Avisos</th></tr>
+        <tr><td>✈ Aéreo AEP–IGR · 4 pax</td><td>12/08 → 19/08</td><td>TTS Viajes</td><td>$ 1.500.000</td><td>$ 1.800.000</td><td><span class="pill amber">⏰ Emitir antes del 15/07</span></td></tr>
+        <tr><td>🏨 Hotel Maitei Posadas · 7 noches · 4 pax</td><td>12/08 → 19/08</td><td>Ola Mayorista</td><td>$ 336.000</td><td>$ 420.000</td><td><span class="pill amber">⏰ Señar antes del 10/07</span></td></tr>
+        <tr><td>🏨 Maitei Costa del Sol · 7 noches <span class="pill violet">Hotel creado en venta</span></td><td>12/08 → 19/08</td><td>Ola Mayorista</td><td>$ 350.000</td><td>$ 420.000</td><td>—</td></tr>
+      </table>
+      <div style="margin-top:14px;"><button class="btn line">＋ Agregar otro servicio</button></div>
+    </div>
+  </div>
+
+  <!-- ============ CAMPOS POR TIPO ============ -->
+  <div class="momento">
+    <div class="mtitle"><span class="mbadge">Los 5 tipos</span><h2>Mismo molde para todos: buscador inteligente + lo mínimo + "Más detalles"</h2></div>
+    <p class="mdesc">En todos los tipos el primer campo es el buscador que encuentra-o-crea. Esto es lo que se ve de entrada y lo que queda guardado detrás de "Más detalles" en cada uno:</p>
+    <table class="tipos">
+      <tr><th style="width:110px;">Tipo</th><th>Buscás/creás</th><th>A la vista</th><th>Detrás de "Más detalles"</th></tr>
+      <tr><td>🏨 Hotel</td><td>El hotel</td><td>Operador · entrada/salida · noches (solas) · pax · costo y venta por noche · moneda · total y ganancia</td><td>Régimen · tipo de habitación · confirmación del operador · fecha límite de seña/pago · dirección</td></tr>
+      <tr><td>✈ Aéreo</td><td>La ruta o aerolínea</td><td>Operador/consolidador · ida y vuelta · pax · costo · venta · moneda · <b>fecha límite de emisión</b></td><td>Código de reserva (PNR) · números de ticket · horarios y escalas · equipaje</td></tr>
+      <tr><td>🚐 Traslado</td><td>El trayecto (ej. "EZE → hotel")</td><td>Operador · fecha · llegada o salida · pax · privado o compartido · costo · venta · moneda</td><td>Número de vuelo asociado · horario de búsqueda · confirmación</td></tr>
+      <tr><td>📦 Paquete</td><td>El paquete (ej. "Iguazú 7 noches")</td><td>Operador · salida · pax y base (doble/triple) · precio por persona · costo · venta · moneda · fecha límite de seña</td><td>Qué incluye (texto) · número de file del operador</td></tr>
+      <tr><td>🛡 Asistencia</td><td>El plan (ej. "AC 150")</td><td>Proveedor · vigencia desde/hasta · días (solos) · pax · costo · venta · moneda</td><td>Números de voucher por pasajero · upgrades (edad, embarazo, deportes)</td></tr>
+    </table>
+    <div class="nota"><b>Contra los duplicados, tres candados:</b> ① el buscador encuentra parecidos aunque escribas mal ("maitey" encuentra "Maitei"); ② crear nuevo es siempre la última opción, después de mostrarte los parecidos; ③ todo lo creado en venta queda marcado, y administración tiene una pantalla para revisarlos y, si dos son el mismo, unirlos sin perder las reservas que apuntan a cada uno.</div>
+  </div>
+</div>
+</body>
+</html>
