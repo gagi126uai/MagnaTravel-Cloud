@@ -112,6 +112,11 @@ public partial class BookingService
             hotel.ReservaId = reservaId;
             hotel.SupplierId = supplierId;
             hotel.Currency = currency;
+            // Bug 2026-06-06 (reportado por el dueño con flag ON): la ficha inline manda CheckIn/CheckOut
+            // como fecha pelada ("2026-08-12") -> Kind=Unspecified -> Npgsql tira DbUpdateException en el
+            // INSERT a timestamptz. Normalizamos a fecha de pared (medianoche Kind=Utc). Ver NormalizeCalendarDate.
+            hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
+            hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
             // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
             hotel.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
@@ -364,6 +369,10 @@ public partial class BookingService
             package.ReservaId = reservaId;
             package.SupplierId = supplierId;
             package.Currency = currency;
+            // Bug 2026-06-06: la ficha inline manda StartDate/EndDate como fecha pelada (Kind=Unspecified)
+            // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
+            package.StartDate = NormalizeCalendarDate(package.StartDate);
+            package.EndDate = NormalizeCalendarDate(package.EndDate);
             // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
             package.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
@@ -434,6 +443,11 @@ public partial class BookingService
             assistance.ReservaId = reservaId;
             assistance.SupplierId = supplierId;
             assistance.Currency = currency;
+            // Bug 2026-06-06: la ficha inline manda ValidFrom/ValidTo como fecha pelada (Kind=Unspecified)
+            // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared ANTES de calcular los dias
+            // de vigencia. Ver NormalizeCalendarDate.
+            assistance.ValidFrom = NormalizeCalendarDate(assistance.ValidFrom);
+            assistance.ValidTo = NormalizeCalendarDate(assistance.ValidTo);
 
             var days = CatalogUnitization.AssistanceDays(assistance.ValidFrom, assistance.ValidTo);
             var divisor = CatalogUnitization.AssistanceDivisor(assistance.Adults, assistance.Children, days);

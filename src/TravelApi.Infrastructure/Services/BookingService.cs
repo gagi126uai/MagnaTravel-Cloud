@@ -400,6 +400,27 @@ public partial class BookingService : IBookingService
             : (DateTime?)null;
 
     /// <summary>
+    /// Bug en vivo 2026-06-06 (ficha inline): normaliza una fecha-calendario del request (date-only:
+    /// check-in/check-out de hotel, inicio/fin de paquete, vigencia de asistencia) a medianoche con
+    /// <see cref="DateTimeKind.Utc"/>, SIN convertir el instante — el mismo contrato "fecha de pared
+    /// disfrazada de Utc" de <see cref="NormalizeDeadlineDate"/> y <see cref="NormalizeAirportWallClock"/>.
+    ///
+    /// POR QUE existe: la ficha inline manda el value crudo del input date ("2026-08-12") y el binder
+    /// JSON lo deserializa con Kind=Unspecified. Npgsql (sin EnableLegacyTimestampBehavior) EXIGE
+    /// Kind=Utc al escribir columnas 'timestamp with time zone' y con Unspecified tira
+    /// DbUpdateException -> 500 en el INSERT. El modal viejo mandaba "...T00:00:00.000Z" (Kind=Utc)
+    /// y por eso nunca explotaba. Los DOS contratos quedan validos: sobre una medianoche ya-Utc,
+    /// <c>.Date</c> + SpecifyKind no cambia nada (idempotente); sobre Unspecified/Local preserva la
+    /// fecha calendario que eligio el vendedor y solo arregla el Kind.
+    /// </summary>
+    private static DateTime NormalizeCalendarDate(DateTime date)
+        => DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+
+    /// <summary>Variante nullable de <see cref="NormalizeCalendarDate(DateTime)"/>: null = sin fecha.</summary>
+    private static DateTime? NormalizeCalendarDate(DateTime? date)
+        => date.HasValue ? NormalizeCalendarDate(date.Value) : (DateTime?)null;
+
+    /// <summary>
     /// ADR-018 Ronda 7 (2026-06-06): normaliza un texto OPCIONAL del request — vacio o solo espacios
     /// se persiste como null ("Sin especificar"), nunca como "". Reemplaza al viejo coalesce a default
     /// de negocio ("Economy"/"Sedan" de ADR-018 §2): Gaston decidio que el sistema deja de exigir
@@ -697,6 +718,13 @@ public partial class BookingService : IBookingService
         var hotel = _mapper.Map<HotelBooking>(req);
         hotel.ReservaId = reservaId;
         hotel.SupplierId = supplierId;
+
+        // Bug 2026-06-06: la ficha inline manda CheckIn/CheckOut como fecha pelada ("2026-08-12") y el
+        // binder los deja con Kind=Unspecified -> Npgsql los rechaza en timestamptz. Normalizamos a
+        // fecha de pared (medianoche Kind=Utc). Ver NormalizeCalendarDate.
+        hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
+        hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
+
         // ADR-017 F1.4 (§2.2): el deadline lo ignora el map; lo asignamos normalizado (null = sin deadline).
         hotel.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
@@ -781,6 +809,11 @@ public partial class BookingService : IBookingService
 
         _mapper.Map(req, hotel);
         hotel.SupplierId = supplierId;
+
+        // Bug 2026-06-06: misma normalizacion que en el alta — la ficha inline manda fechas peladas
+        // (Kind=Unspecified) y Npgsql las rechaza en timestamptz. Ver NormalizeCalendarDate.
+        hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
+        hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
 
         // ADR-017 F1.4 (§2.2, R12 — anti-clobber): ver UpdateFlightAsync. El map ignora el deadline; solo lo
         // tocamos si el request declara el bloque (DeadlinesSpecified). El modal viejo lo preserva.
@@ -934,6 +967,12 @@ public partial class BookingService : IBookingService
         var package = _mapper.Map<PackageBooking>(req);
         package.ReservaId = reservaId;
         package.SupplierId = supplierId;
+
+        // Bug 2026-06-06: la ficha inline manda StartDate/EndDate como fecha pelada (Kind=Unspecified)
+        // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
+        package.StartDate = NormalizeCalendarDate(package.StartDate);
+        package.EndDate = NormalizeCalendarDate(package.EndDate);
+
         // ADR-017 F1.4 (§2.2): el deadline lo ignora el map; lo asignamos normalizado (null = sin deadline).
         package.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
@@ -1005,6 +1044,11 @@ public partial class BookingService : IBookingService
 
         _mapper.Map(req, package);
         package.SupplierId = supplierId;
+
+        // Bug 2026-06-06: misma normalizacion que en el alta — fechas peladas (Kind=Unspecified) de la
+        // ficha inline son rechazadas por Npgsql en timestamptz. Ver NormalizeCalendarDate.
+        package.StartDate = NormalizeCalendarDate(package.StartDate);
+        package.EndDate = NormalizeCalendarDate(package.EndDate);
 
         // ADR-017 F1.4 (§2.2, R12 — anti-clobber): ver UpdateFlightAsync. El map ignora el deadline; solo lo
         // tocamos si el request declara el bloque (DeadlinesSpecified). El modal viejo lo preserva.
@@ -1410,6 +1454,11 @@ public partial class BookingService : IBookingService
         assistance.ReservaId = reservaId;
         assistance.SupplierId = supplierId;
 
+        // Bug 2026-06-06: la ficha inline manda ValidFrom/ValidTo como fecha pelada (Kind=Unspecified)
+        // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
+        assistance.ValidFrom = NormalizeCalendarDate(assistance.ValidFrom);
+        assistance.ValidTo = NormalizeCalendarDate(assistance.ValidTo);
+
         if (rate != null)
         {
             ApplyAssistanceRateSnapshot(assistance, rate);
@@ -1471,6 +1520,11 @@ public partial class BookingService : IBookingService
         _mapper.Map(req, assistance);
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
         assistance.SupplierId = supplierId;
+
+        // Bug 2026-06-06: misma normalizacion que en el alta — fechas peladas (Kind=Unspecified) de la
+        // ficha inline son rechazadas por Npgsql en timestamptz. Ver NormalizeCalendarDate.
+        assistance.ValidFrom = NormalizeCalendarDate(assistance.ValidFrom);
+        assistance.ValidTo = NormalizeCalendarDate(assistance.ValidTo);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (assistance.NetCost, assistance.Tax, assistance.Commission) = await ResolveUpdateCostFieldsAsync(
