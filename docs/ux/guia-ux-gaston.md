@@ -43,6 +43,41 @@ _(pendiente — coordinar con el agente `ux-ui-travel-retail`, que cuida que la 
 
 ---
 
+# Ciclo de vida de la reserva (REDISEÑO — decisiones de Gastón, 2026-06-07)
+
+> Sesión de preguntas estructuradas (12 + 6 de dominio). Reemplaza el modelo anterior
+> (Budget→Sold→Confirmed con flag EnableSoldToSettleStates): "Vendida" MUERE.
+> Pendiente de diseño técnico (ADR-020) e implementación. Cada punto es decisión textual del dueño.
+
+**El ciclo:**
+```
+COTIZACIÓN (borrador interno del vendedor)
+   ↓ botón [Pasar a presupuesto]
+PRESUPUESTO (lo recibe el cliente) ──→ PERDIDO (no compró; queda en historial)
+   ↓ botón [El cliente aceptó]   (la plata viene después, el "sí" alcanza)
+EN GESTIÓN (se solicitan los servicios a los operadores)
+   ↓ AUTOMÁTICA al quedar TODOS los servicios resueltos
+CONFIRMADA 🔒
+   ↓ automática el día del viaje
+EN VIAJE → FINALIZADA          └→ [Apartar para liquidar] (manual, opcional, se mantiene)
+CANCELADA: desde cualquier etapa (cotiz/presup → Perdido sin proceso de plata;
+           en gestión/confirmada → proceso completo de penalidades y reembolsos).
+```
+
+- **Nacimiento: SIEMPRE como cotización**, sin excepciones. NUNCA se puede crear una reserva directamente Confirmada (bug actual señalado por Gastón). Avanzar es rápido; saltear no se puede.
+- **Cotización y presupuesto son DOS pasos distintos**: cotización = números rápidos/borrador (capaz ni se manda); presupuesto = documento armado que el cliente recibe y evalúa.
+- **Presupuesto → En gestión: cuando el cliente dice "sí"** (botón explícito). La plata no define este paso.
+- **CONFIRMADA = todos los servicios RESUELTOS** (definición por tipo, opción B del experto de dominio):
+  - Aéreo = ticket EMITIDO (el PNR confirmado NO alcanza — time limit, tarifa no garantizada).
+  - Hotel / Paquete = confirmado por el operador.
+  - Asistencia = voucher emitido.
+  - Traslado = confirmado por el operador O marcado a mano "no requiere confirmación" (la marca la pone CUALQUIER VENDEDOR, con registro de quién y cuándo — destraba el "traslado mudo").
+- **El paso a Confirmada es AUTOMÁTICO** (al resolverse el último servicio) y la VUELTA también: si se agrega un servicio nuevo solicitado, o un operador cancela/reprograma un servicio, el file **vuelve solo a En gestión + aviso fuerte al vendedor** (el candado se abre porque ya no está todo asegurado).
+- **Confirmación CON CAMBIOS (otra habitación/otro precio): vuelve al cliente.** El servicio queda solicitado con la propuesta; recién cuando el cliente acepta pasa a confirmado con los valores nuevos (porque su saldo cambia).
+- **PLATA: el saldo del cliente nace POR SERVICIO CONFIRMADO.** Un servicio solicitado NO genera deuda; al confirmarse, su precio de venta suma al saldo a cobrar. (Bug actual señalado: "en pendiente aparece dinero cuando está solicitado".) La fecha de confirmación de CADA servicio se guarda siempre (las penalidades de cancelación corren por servicio desde esa fecha).
+- **Edición: LIBRE hasta Confirmada** (cotización/presupuesto/en gestión: cualquier vendedor en sus reservas toca servicios, precios, fechas). **Confirmada = candado: bloqueada salvo autorización explícita** (queda registrado quién autorizó, qué cambió y por qué; vale para todos, admin incluido).
+- **"En gestión" muestra el detalle por servicio de un vistazo** (hotel ✔, aéreo pendiente de emitir, traslado mudo) — no hace falta estado "confirmada parcial".
+
 # Reglas por pantalla
 
 ## Carga de servicios de una reserva (ServiceFormModal)

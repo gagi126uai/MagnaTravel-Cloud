@@ -163,6 +163,11 @@ export function ProductSearchField({
     // Cuando el usuario elige un resultado, seteamos el nombre en el input y no
     // queremos que ese cambio lance otra búsqueda. Este ref lo evita.
     const skipNextSearch = useRef(false);
+    // BUG FIX: en modo edición el componente recibe `value` precargado desde el inicio.
+    // Sin este flag, el useEffect del debounce corre en el mount con ese valor ya largo
+    // y dispara la búsqueda/apertura del dropdown aunque el usuario no haya tocado nada.
+    // La solución: solo buscar si el usuario realmente interactuó (onChange).
+    const userHasInteracted = useRef(false);
     const blurTimer = useRef(null);
     // Identificador único para el listbox (a11y: aria-owns)
     const listboxId = useRef(`catalog-listbox-${Math.random().toString(36).slice(2)}`);
@@ -202,10 +207,18 @@ export function ProductSearchField({
     }, [serviceType]);
 
     // Debounce: espera DEBOUNCE_MS desde el último tecleo antes de buscar.
-    // Si recién elegimos un resultado, nos saltamos un ciclo (skipNextSearch).
+    // Condiciones para NO buscar:
+    //   1. skipNextSearch: recién elegimos un resultado (evita re-búsqueda por el setState del nombre).
+    //   2. userHasInteracted: el usuario nunca escribió (evita abrir el dropdown en modo edición
+    //      donde `value` ya viene precargado desde el padre al montar el componente).
     useEffect(() => {
         if (skipNextSearch.current) {
             skipNextSearch.current = false;
+            return;
+        }
+        // Si el usuario aún no interactuó con el campo (ej: modo edición con valor precargado),
+        // no lanzamos ninguna búsqueda ni abrimos el dropdown.
+        if (!userHasInteracted.current) {
             return;
         }
         const query = value || "";
@@ -237,8 +250,10 @@ export function ProductSearchField({
 
     const handleFocus = () => {
         clearTimeout(blurTimer.current);
-        // Re-abrir si ya hay resultados y el texto es suficientemente largo
-        if ((value || "").trim().length >= MIN_QUERY_LENGTH && results.length > 0) {
+        // Re-abrir el dropdown solo si el usuario ya interactuó antes (escribió algo)
+        // y hay resultados en caché. En modo edición (sin haber tipeado), el foco
+        // no debe disparar ninguna apertura.
+        if (userHasInteracted.current && (value || "").trim().length >= MIN_QUERY_LENGTH && results.length > 0) {
             setShowDropdown(true);
         }
     };
@@ -303,6 +318,8 @@ export function ProductSearchField({
                     value={value || ""}
                     onChange={(event) => {
                         skipNextSearch.current = false;
+                        // El usuario empezó a escribir: habilitamos las búsquedas desde ahora.
+                        userHasInteracted.current = true;
                         onChange(event.target.value);
                     }}
                     onFocus={handleFocus}
