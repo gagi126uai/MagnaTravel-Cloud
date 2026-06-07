@@ -158,10 +158,10 @@ public class OperationalFinanceSettingsDto
     public bool? EnableCatalogFindOrCreate { get; set; }
 
     /// <summary>
-    /// ADR-017 F1.1 (2026-06-05): feature flag de las alertas de fechas limite de servicio.
-    /// Independiente de <see cref="EnableCatalogFindOrCreate"/> (se puede prender antes). Flag de
-    /// comportamiento puro, sin validacion cruzada. En F1.1 nadie lo lee todavia (el bucket de alertas
-    /// es F3); solo debe existir y poder togglearse.
+    /// Feature flag de los avisos "Proximos inicios" (ADR-019; el nombre interno conserva el de
+    /// ADR-017 a proposito — ver <c>OperationalFinanceSettings.EnableServiceDeadlineAlerts</c>).
+    /// Independiente de <see cref="EnableCatalogFindOrCreate"/>. Flag de comportamiento puro,
+    /// sin validacion cruzada.
     ///
     /// <para>Nullable y patch-like (criterio B-002): null u omitido = no se toca; solo persiste si viene.</para>
     /// </summary>
@@ -179,9 +179,8 @@ public class OperationalFinanceSettingsDto
     public int? StaleCostReferenceDays { get; set; }
 
     /// <summary>
-    /// ADR-017 F1.4 (§2.5, 2026-06-06): ventana en DIAS de las alertas de fechas limite de servicio.
-    /// Editable desde el panel admin. Solo tiene efecto observable con <see cref="EnableServiceDeadlineAlerts"/>
-    /// ON (el bucket de alertas es F3).
+    /// Ventana en DIAS del aviso "Proximos inicios" (UI: "Dias de anticipacion del aviso" — ADR-019).
+    /// Editable desde el panel admin. Solo tiene efecto observable con <see cref="EnableServiceDeadlineAlerts"/> ON.
     ///
     /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor actual.
     /// Rango razonable 1..60 (mismo que <c>UpcomingUnpaidReservationAlertDays</c>); el [Range] solo se evalua

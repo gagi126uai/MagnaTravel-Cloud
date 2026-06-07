@@ -95,7 +95,8 @@ function buildHotelFormInitial(serviceToEdit) {
             mealPlan: "Desayuno",
             roomType: "Doble",
             confirmationNumber: "",
-            operatorPaymentDeadline: "", address: "",
+            // operatorPaymentDeadline eliminado en F2: el aviso de campanita viene del backend (firstStartDate).
+            address: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -119,7 +120,7 @@ function buildHotelFormInitial(serviceToEdit) {
         mealPlan: normalizarMealPlan(serviceToEdit.mealPlan),
         roomType: normalizarRoomType(serviceToEdit.roomType),
         confirmationNumber: serviceToEdit.confirmationNumber || "",
-        operatorPaymentDeadline: (serviceToEdit.operatorPaymentDeadline || "").split("T")[0] || "",
+        // operatorPaymentDeadline no se carga en la UI (campo eliminado en F2)
         address: serviceToEdit.address || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
@@ -131,9 +132,8 @@ function buildFlightFormInitial(serviceToEdit) {
         return {
             routeName: "", supplierId: "", departureDate: "", returnDate: "",
             passengers: "", netCost: "", salePrice: "", currency: "ARS",
-            // El estado interno sigue llamándose emissionDeadline para legibilidad del form,
-            // pero al armar el payload se envía como ticketingDeadline (nombre del backend).
-            emissionDeadline: "", pnr: "", ticketNumber: "", scheduleNotes: "",
+            // emissionDeadline eliminado en F2: el aviso de campanita viene del backend (firstStartDate).
+            pnr: "", ticketNumber: "", scheduleNotes: "",
             baggage: "",
             // cabinClass: "" = "Sin especificar" (igual que el modal viejo). El select
             // siempre tiene opciones, así que "" nunca queda colgado.
@@ -153,8 +153,7 @@ function buildFlightFormInitial(serviceToEdit) {
         netCost: String(serviceToEdit.netCost || ""),
         salePrice: String(serviceToEdit.salePrice || ""),
         currency: serviceToEdit.currency || "ARS",
-        // Lectura del round-trip: el backend devuelve ticketingDeadline (FlightSegmentDto)
-        emissionDeadline: (serviceToEdit.ticketingDeadline || "").split("T")[0] || "",
+        // emissionDeadline no se carga en la UI (campo eliminado en F2)
         pnr: serviceToEdit.pnr || "",
         ticketNumber: serviceToEdit.ticketNumber || "",
         scheduleNotes: serviceToEdit.scheduleNotes || serviceToEdit.notes || "",
@@ -226,9 +225,8 @@ function buildPackageFormInitial(serviceToEdit) {
             // El select de "Base" usa estos mismos valores en su atributo value.
             roomBase: "",
             unitNetCost: "", unitSalePrice: "", currency: "ARS",
-            // operatorPaymentDeadline: nombre del campo en el backend (PackageBookingDto).
-            // El input de fecha usa este nombre directamente.
-            operatorPaymentDeadline: "",
+            // operatorPaymentDeadline eliminado en F2: el aviso de campanita viene del backend (firstStartDate).
+            // El campo sigue en el backend pero ya no lo enviamos desde la ficha inline.
             itinerary: "", fileNumber: "",
             rateId: null, newCatalogProduct: null,
         };
@@ -250,8 +248,7 @@ function buildPackageFormInitial(serviceToEdit) {
         unitNetCost: pasajeros > 0 ? String(redondearDinero((serviceToEdit.netCost || 0) / pasajeros)) : "",
         unitSalePrice: pasajeros > 0 ? String(redondearDinero((serviceToEdit.salePrice || 0) / pasajeros)) : "",
         currency: serviceToEdit.currency || "ARS",
-        // Round-trip: el backend devuelve operatorPaymentDeadline en PackageBookingDto
-        operatorPaymentDeadline: (serviceToEdit.operatorPaymentDeadline || "").split("T")[0] || "",
+        // operatorPaymentDeadline no se carga en la UI (campo eliminado en F2)
         itinerary: serviceToEdit.itinerary || "",
         fileNumber: serviceToEdit.fileNumber || serviceToEdit.confirmationNumber || "",
         rateId: serviceToEdit.rateId || null,
@@ -457,8 +454,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 roomType: formHotel.roomType || "Doble",
                 confirmationNumber: formHotel.confirmationNumber || null,
                 address: formHotel.address || null,
-                operatorPaymentDeadline: formHotel.operatorPaymentDeadline || null,
-                deadlinesSpecified: true,
+                // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
             };
             if (formHotel.rateId) {
                 payload.rateId = formHotel.rateId;
@@ -483,9 +479,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 salePrice: redondearDinero(Number(formVuelo.salePrice) || 0),
                 tax: 0,
                 currency: formVuelo.currency || "ARS",
-                // El backend espera ticketingDeadline (FlightSegmentDto); el estado interno
-                // usa emissionDeadline como nombre de campo pero el valor enviado es el correcto.
-                ticketingDeadline: formVuelo.emissionDeadline || null,
+                // ticketingDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
                 pnr: formVuelo.pnr || null,
                 ticketNumber: formVuelo.ticketNumber || null,
                 notes: formVuelo.scheduleNotes || null,
@@ -560,8 +554,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 confirmationNumber: formPaquete.fileNumber || null,
                 // occupancyBase: "double", "triple", etc. El select ya almacena el valor backend.
                 occupancyBase: formPaquete.roomBase || null,
-                // operatorPaymentDeadline: fecha límite de pago al operador (PackageBookingDto).
-                operatorPaymentDeadline: formPaquete.operatorPaymentDeadline || null,
+                // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
             };
             if (formPaquete.rateId) {
                 payload.rateId = formPaquete.rateId;

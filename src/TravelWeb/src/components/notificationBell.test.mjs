@@ -3,11 +3,12 @@
  *
  * Cubre:
  *   - formatearDdMm: formato de fechas sin desfase UTC
- *   - textoDeadline: texto por tipo (OperatorPayment/Ticketing) y si está vencida
+ *   - textoProximoInicio: texto del ítem según daysLeft (HOY/singular/plural/dd-MM)
+ *   - Línea 2 del ítem: fallbacks de holderName/name
  *   - tituloCostos: plural/singular del título de la sección
  *   - textoRazonCosto: texto de la línea 2 según la razón del costo
- *   - Cálculo del badge (suma deadlines + costsToConfirm + notificaciones; excluye urgentTrips/supplierDebts)
- *   - Orden de deadlines (vencidas arriba)
+ *   - Cálculo del badge (suma upcomingStarts visibles + costsToConfirm + notificaciones; excluye urgentTrips/supplierDebts)
+ *   - Descarte optimista: al descartar un id, no aparece en el array filtrado; al revertir, reaparece
  *
  * Por qué lógica pura: las reglas de texto y cálculo no dependen del DOM ni del contexto.
  * Mismo patrón que serviceListCostConfirm.test.mjs y alertsContract.test.mjs.
@@ -29,12 +30,29 @@ function formatearDdMm(fechaIso) {
     return `${dia}/${mes}`;
 }
 
-function textoDeadline(deadlineKind, fechaIso, isOverdue) {
-    const fecha = formatearDdMm(fechaIso);
-    if (deadlineKind === "OperatorPayment") {
-        return isOverdue ? `Venció señar el ${fecha}` : `⏰ Señar antes del ${fecha}`;
+/**
+ * Construye el texto de la línea 1 del ítem de próximo inicio.
+ * Exportada como textoProximoInicio en NotificationBell.jsx.
+ * Copia exacta: si cambia allá, actualizar acá.
+ */
+function textoProximoInicio(daysLeft, firstStartDate) {
+    const fecha = formatearDdMm(firstStartDate);
+    // Defensivo: cubre daysLeft=0 (HOY) y negativos (server debería filtrarlos, pero por las dudas)
+    if (daysLeft <= 0) {
+        return `Empieza HOY ${fecha}`;
     }
-    return isOverdue ? `Venció emitir el ${fecha}` : `⏰ Emitir antes del ${fecha}`;
+    const diasTexto = daysLeft === 1 ? "en 1 día" : `en ${daysLeft} días`;
+    return `⏰ Empieza el ${fecha} (${diasTexto})`;
+}
+
+/**
+ * Construye la línea 2 del ítem: "Reserva {num} · {titular}" con fallbacks.
+ * Replica la lógica en SeccionProximosInicios.
+ */
+function construirLinea2(numeroReserva, holderName, name) {
+    const titular = holderName || name || "";
+    if (titular) return `Reserva ${numeroReserva} · ${titular}`;
+    return `Reserva ${numeroReserva}`;
 }
 
 function tituloCostos(cantidad) {
@@ -51,23 +69,18 @@ function textoRazonCosto(reason) {
 /**
  * Calcula el número del badge.
  * Decisión del dueño: urgentTrips y supplierDebts NO se suman (viven en Cobranzas).
+ * upcomingStartsVisibles = items filtrados por descarte optimista.
  */
-function calcularBadge(serviceDeadlines, costsToConfirm, notificacionesSinLeer) {
-    return serviceDeadlines.length + costsToConfirm.length + notificacionesSinLeer;
+function calcularBadge(upcomingStartsVisibles, costsToConfirm, notificacionesSinLeer) {
+    return upcomingStartsVisibles.length + costsToConfirm.length + notificacionesSinLeer;
 }
 
 /**
- * Ordena los deadlines por fecha ascendente (vencidas arriba).
- * Mismo criterio que SeccionFechasLimite en NotificationBell.jsx.
+ * Simula el filtro de descarte optimista.
+ * descartadas = Set<reservaPublicId>
  */
-function ordenarDeadlines(deadlines) {
-    return [...deadlines].sort((a, b) => {
-        const fa = (a.deadline || "").split("T")[0];
-        const fb = (b.deadline || "").split("T")[0];
-        if (fa < fb) return -1;
-        if (fa > fb) return 1;
-        return 0;
-    });
+function filtrarDescartados(items, descartadas) {
+    return items.filter((item) => !descartadas.has(item.reservaPublicId));
 }
 
 // ─── Tests: formatearDdMm ─────────────────────────────────────────────────────
@@ -92,29 +105,68 @@ test("formatearDdMm: devuelve vacío con entrada vacía o nula", () => {
     assert.equal(formatearDdMm(undefined), "");
 });
 
-// ─── Tests: textoDeadline ─────────────────────────────────────────────────────
+// ─── Tests: textoProximoInicio ────────────────────────────────────────────────
 
-test("textoDeadline: OperatorPayment vigente muestra emoji y texto de señar", () => {
-    const texto = textoDeadline("OperatorPayment", "2026-12-30", false);
-    assert.equal(texto, "⏰ Señar antes del 30/12");
+test("textoProximoInicio: daysLeft 0 → HOY rojo, sin emoji", () => {
+    const texto = textoProximoInicio(0, "2026-06-15T00:00:00Z");
+    assert.equal(texto, "Empieza HOY 15/06");
+    assert.ok(!texto.includes("⏰"), "HOY no lleva emoji");
 });
 
-test("textoDeadline: OperatorPayment vencida muestra texto de vencimiento sin emoji", () => {
-    const texto = textoDeadline("OperatorPayment", "2026-01-10", true);
-    assert.equal(texto, "Venció señar el 10/01");
-    // Sin emoji
-    assert.ok(!texto.includes("⏰"), "Las vencidas no llevan emoji");
+test("textoProximoInicio: daysLeft 1 → singular 'en 1 día'", () => {
+    const texto = textoProximoInicio(1, "2026-06-16T00:00:00Z");
+    assert.equal(texto, "⏰ Empieza el 16/06 (en 1 día)");
 });
 
-test("textoDeadline: Ticketing vigente muestra emoji y texto de emisión", () => {
-    const texto = textoDeadline("Ticketing", "2026-11-05", false);
-    assert.equal(texto, "⏰ Emitir antes del 05/11");
+test("textoProximoInicio: daysLeft 5 → plural 'en 5 días'", () => {
+    const texto = textoProximoInicio(5, "2026-06-20T00:00:00Z");
+    assert.equal(texto, "⏰ Empieza el 20/06 (en 5 días)");
 });
 
-test("textoDeadline: Ticketing vencida muestra texto de vencimiento sin emoji", () => {
-    const texto = textoDeadline("Ticketing", "2026-03-22", true);
-    assert.equal(texto, "Venció emitir el 22/03");
-    assert.ok(!texto.includes("⏰"), "Las vencidas no llevan emoji");
+test("textoProximoInicio: daysLeft 7 → plural, dd/MM correcto", () => {
+    const texto = textoProximoInicio(7, "2026-01-01T00:00:00Z");
+    assert.equal(texto, "⏰ Empieza el 01/01 (en 7 días)");
+});
+
+test("textoProximoInicio: sin T en la fecha → también funciona", () => {
+    const texto = textoProximoInicio(3, "2026-12-25");
+    assert.equal(texto, "⏰ Empieza el 25/12 (en 3 días)");
+});
+
+test("textoProximoInicio: daysLeft negativo → tratado como HOY (defensivo, server debería filtrar)", () => {
+    // El server filtra items con daysLeft < 0, pero por defensividad lo tratamos como HOY.
+    // Este test fija el contrato: daysLeft <= 0 → "Empieza HOY" sin emoji.
+    const texto = textoProximoInicio(-1, "2026-06-05T00:00:00Z");
+    assert.equal(texto, "Empieza HOY 05/06");
+    assert.ok(!texto.includes("⏰"), "Negativo no lleva emoji");
+});
+
+// ─── Tests: línea 2 del ítem (fallbacks holderName/name) ─────────────────────
+
+test("línea 2: holderName presente → 'Reserva {num} · {holderName}'", () => {
+    const linea2 = construirLinea2("RES-001", "Juan Perez", "Paquete Caribe");
+    assert.equal(linea2, "Reserva RES-001 · Juan Perez");
+});
+
+test("línea 2: holderName null → fallback a name", () => {
+    const linea2 = construirLinea2("RES-002", null, "Caribe 7 noches");
+    assert.equal(linea2, "Reserva RES-002 · Caribe 7 noches");
+});
+
+test("línea 2: holderName null y name null → solo número de reserva sin separador", () => {
+    const linea2 = construirLinea2("RES-003", null, null);
+    assert.equal(linea2, "Reserva RES-003");
+    assert.ok(!linea2.includes("·"), "Sin titular no se agrega el separador '·'");
+});
+
+test("línea 2: holderName string vacío → fallback a name", () => {
+    const linea2 = construirLinea2("RES-004", "", "Paquete Iguazu");
+    assert.equal(linea2, "Reserva RES-004 · Paquete Iguazu");
+});
+
+test("línea 2: holderName vacío y name vacío → solo número", () => {
+    const linea2 = construirLinea2("RES-005", "", "");
+    assert.equal(linea2, "Reserva RES-005");
 });
 
 // ─── Tests: tituloCostos (plural/singular) ────────────────────────────────────
@@ -151,13 +203,13 @@ test("textoRazonCosto: razón desconocida devuelve null (sin línea 2)", () => {
 
 // ─── Tests: cálculo del badge ────────────────────────────────────────────────
 
-test("badge: suma deadlines + costos + notificaciones sin leer", () => {
-    const deadlines = [{ deadline: "2026-12-01" }, { deadline: "2026-12-02" }];
+test("badge: suma upcomingStarts visibles + costos + notificaciones sin leer", () => {
+    const upcomingStarts = [{ reservaPublicId: "a" }, { reservaPublicId: "b" }];
     const costos = [{ reason: "NoKnownCost" }];
     const notificaciones = 3;
 
     // 2 + 1 + 3 = 6
-    assert.equal(calcularBadge(deadlines, costos, notificaciones), 6);
+    assert.equal(calcularBadge(upcomingStarts, costos, notificaciones), 6);
 });
 
 test("badge: sin avisos nuevos y sin notificaciones devuelve 0", () => {
@@ -166,20 +218,15 @@ test("badge: sin avisos nuevos y sin notificaciones devuelve 0", () => {
 
 test("badge: NO suma urgentTrips ni supplierDebts (no van al badge)", () => {
     // Decisión del dueño: esos buckets viven en las tarjetas de Cobranzas, no en el badge.
-    // El badge solo toma lo que pasa como parámetro: deadlines + costos + notif.
-    const deadlines = [];
-    const costos = [];
-    const notificaciones = 0;
-    // urgentTrips y supplierDebts existen en el contexto pero NO se pasan al cálculo
-    assert.equal(calcularBadge(deadlines, costos, notificaciones), 0);
+    assert.equal(calcularBadge([], [], 0), 0);
 });
 
-test("badge: solo deadlines sin notificaciones ni costos", () => {
-    const deadlines = [{ deadline: "2026-12-01" }, { deadline: "2026-12-02" }, { deadline: "2026-12-03" }];
-    assert.equal(calcularBadge(deadlines, [], 0), 3);
+test("badge: solo upcomingStarts sin notificaciones ni costos", () => {
+    const upcomingStarts = [{ reservaPublicId: "a" }, { reservaPublicId: "b" }, { reservaPublicId: "c" }];
+    assert.equal(calcularBadge(upcomingStarts, [], 0), 3);
 });
 
-test("badge: solo costos sin notificaciones ni deadlines", () => {
+test("badge: solo costos sin notificaciones ni upcoming", () => {
     const costos = [{ reason: null }, { reason: "NoKnownCost" }];
     assert.equal(calcularBadge([], costos, 0), 2);
 });
@@ -188,33 +235,141 @@ test("badge: solo notificaciones sin avisos de flag", () => {
     assert.equal(calcularBadge([], [], 7), 7);
 });
 
-// ─── Tests: orden de deadlines ────────────────────────────────────────────────
+// ─── Tests: descarte optimista ────────────────────────────────────────────────
 
-test("ordenarDeadlines: ordena por fecha ascendente (vencidas quedan arriba)", () => {
+test("descarte optimista: al agregar un id al set, el ítem desaparece del filtro", () => {
     const items = [
-        { deadline: "2026-12-15", isOverdue: false },
-        { deadline: "2026-01-10", isOverdue: true },  // vencida = fecha menor = va arriba
-        { deadline: "2026-06-30", isOverdue: false },
+        { reservaPublicId: "aaa", daysLeft: 3 },
+        { reservaPublicId: "bbb", daysLeft: 0 },
     ];
+    const descartadas = new Set(["aaa"]);
 
-    const resultado = ordenarDeadlines(items);
+    const visibles = filtrarDescartados(items, descartadas);
 
-    assert.equal(resultado[0].deadline, "2026-01-10", "La más antigua queda primero");
-    assert.equal(resultado[1].deadline, "2026-06-30");
-    assert.equal(resultado[2].deadline, "2026-12-15");
+    assert.equal(visibles.length, 1, "Solo queda 1 ítem tras descartar uno");
+    assert.equal(visibles[0].reservaPublicId, "bbb");
 });
 
-test("ordenarDeadlines: lista vacía devuelve lista vacía", () => {
-    assert.deepEqual(ordenarDeadlines([]), []);
+test("descarte optimista: set vacío → todos los ítems visibles", () => {
+    const items = [
+        { reservaPublicId: "aaa" },
+        { reservaPublicId: "bbb" },
+    ];
+    const visibles = filtrarDescartados(items, new Set());
+    assert.equal(visibles.length, 2);
 });
 
-test("ordenarDeadlines: no muta el array original", () => {
-    const original = [
-        { deadline: "2026-12-01" },
-        { deadline: "2026-01-01" },
+test("descarte optimista: al revertir (sacar del set), el ítem reaparece", () => {
+    const items = [
+        { reservaPublicId: "aaa" },
+        { reservaPublicId: "bbb" },
     ];
-    const copia = [...original];
-    ordenarDeadlines(original);
-    // El array original no debe haber cambiado de orden
-    assert.deepEqual(original, copia, "ordenarDeadlines no debe mutar el original");
+
+    // 1. Descartar "aaa"
+    let descartadas = new Set(["aaa"]);
+    let visibles = filtrarDescartados(items, descartadas);
+    assert.equal(visibles.length, 1, "Después de descartar quedan 1");
+
+    // 2. POST falla → revertimos sacando "aaa" del set
+    const next = new Set(descartadas);
+    next.delete("aaa");
+    descartadas = next;
+
+    visibles = filtrarDescartados(items, descartadas);
+    assert.equal(visibles.length, 2, "Al revertir, reaparece el ítem");
+    assert.ok(visibles.some((i) => i.reservaPublicId === "aaa"), "aaa volvió a estar visible");
+});
+
+test("descarte optimista: badge refleja el filtro (no cuenta los descartados)", () => {
+    const items = [
+        { reservaPublicId: "aaa" },
+        { reservaPublicId: "bbb" },
+        { reservaPublicId: "ccc" },
+    ];
+    const descartadas = new Set(["aaa", "bbb"]);
+    const visibles = filtrarDescartados(items, descartadas);
+
+    // Badge debe usar los visibles (1), no el total (3)
+    assert.equal(calcularBadge(visibles, [], 0), 1);
+});
+
+// ─── Tests: poda del Set de descartados optimistas (B1) ───────────────────────
+// Contrato: el Set solo retiene ids que el server AÚN incluye en el payload.
+// Si el id ya no está en el payload → se lo quita del Set (el ítem puede volver a aparecer).
+// Si el server re-envía un ítem que fue descartado → el id sale del Set → vuelve a verse.
+
+/**
+ * Helper puro que replica la lógica del useEffect de poda de NotificationBell.
+ * Recibe el Set anterior y el payload actual del server; devuelve el Set podado.
+ */
+function podarDescartadasOptimistas(prev, upcomingStartsActuales) {
+    if (prev.size === 0) return prev;
+    const idsActuales = new Set(upcomingStartsActuales.map((i) => i.reservaPublicId));
+    const next = new Set([...prev].filter((id) => idsActuales.has(id)));
+    // Mismo invariante que el useEffect: si no cambió el tamaño, devuelve la misma ref
+    return next.size === prev.size ? prev : next;
+}
+
+test("poda: id descartado + ítem ausente del payload → sale del Set", () => {
+    // "aaa" fue descartado optimistamente, pero el server ya no lo manda (fue procesado).
+    const prevSet = new Set(["aaa"]);
+    const payloadActual = [
+        { reservaPublicId: "bbb", daysLeft: 2 },
+    ];
+
+    const podado = podarDescartadasOptimistas(prevSet, payloadActual);
+
+    assert.equal(podado.has("aaa"), false, "'aaa' debe salir del Set cuando el server ya no lo manda");
+    assert.equal(podado.size, 0);
+});
+
+test("poda: ítem que reaparece en el payload → sale del Set y vuelve a verse", () => {
+    // Decisión del dueño: si la fecha del primer servicio cambia, el server re-incluye
+    // el ítem → el cliente NO debe filtrarlo para siempre.
+    const prevSet = new Set(["res-reaparece"]);
+    const payloadConReaparicion = [
+        { reservaPublicId: "res-reaparece", daysLeft: 1 },
+        { reservaPublicId: "bbb", daysLeft: 3 },
+    ];
+
+    const podado = podarDescartadasOptimistas(prevSet, payloadConReaparicion);
+
+    // "res-reaparece" está en el payload actual → se MANTIENE en el Set (ventana POST→refresh)
+    // La poda solo lo suelta cuando el server deja de mandarlo.
+    assert.equal(podado.has("res-reaparece"), true, "Si el server lo volvió a mandar, permanece en el Set hasta el próximo poll sin él");
+});
+
+test("poda: id en vuelo POST que el server aún manda → permanece en el Set (cubre la ventana)", () => {
+    // Mientras el POST está en vuelo, el poll puede devolver el ítem todavía.
+    // La poda NO debe sacarlo hasta que el server deje de mandarlo.
+    const prevSet = new Set(["en-vuelo"]);
+    const payloadMientrasPostEnVuelo = [
+        { reservaPublicId: "en-vuelo", daysLeft: 0 },
+    ];
+
+    const podado = podarDescartadasOptimistas(prevSet, payloadMientrasPostEnVuelo);
+
+    assert.equal(podado.has("en-vuelo"), true, "El id se mantiene mientras el server aún lo incluye");
+    assert.equal(podado.size, 1);
+});
+
+test("poda: Set vacío → devuelve la misma referencia sin calcular (optimización)", () => {
+    const prevSet = new Set();
+    const payload = [{ reservaPublicId: "aaa" }];
+
+    const resultado = podarDescartadasOptimistas(prevSet, payload);
+
+    // Mismo objeto → no dispara re-render en React
+    assert.equal(resultado, prevSet, "Con Set vacío debe devolver la misma referencia");
+});
+
+test("poda: payload vacío → Set queda vacío (el server ya no manda nada)", () => {
+    const prevSet = new Set(["aaa", "bbb"]);
+    const payloadVacio = [];
+
+    const podado = podarDescartadasOptimistas(prevSet, payloadVacio);
+
+    assert.equal(podado.size, 0, "Con payload vacío, el Set queda vacío");
+    assert.equal(podado.has("aaa"), false);
+    assert.equal(podado.has("bbb"), false);
 });

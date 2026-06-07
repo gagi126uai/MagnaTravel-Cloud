@@ -149,7 +149,8 @@ function buildHotelFormInitial(serviceToEdit) {
             mealPlan: "Desayuno",
             roomType: "Doble",
             confirmationNumber: "",
-            operatorPaymentDeadline: "", address: "",
+            // operatorPaymentDeadline eliminado en F2 (Próximos Inicios)
+            address: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -172,7 +173,7 @@ function buildHotelFormInitial(serviceToEdit) {
         mealPlan: normalizarMealPlan(serviceToEdit.mealPlan),
         roomType: normalizarRoomType(serviceToEdit.roomType),
         confirmationNumber: serviceToEdit.confirmationNumber || "",
-        operatorPaymentDeadline: (serviceToEdit.operatorPaymentDeadline || "").split("T")[0] || "",
+        // operatorPaymentDeadline eliminado en F2 (Próximos Inicios)
         address: serviceToEdit.address || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,

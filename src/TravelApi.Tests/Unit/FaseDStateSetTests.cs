@@ -126,7 +126,7 @@ public class FaseDStateSetTests
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
         await context.SaveChangesAsync();
 
-        var service = new AlertService(context, SettingsMock().Object);
+        var service = new AlertService(context, SettingsMock().Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<AlertService>.Instance);
 
         // Fuga 2 (ADR-017 F1b): GetAlertsAsync ahora recibe la identidad del caller.
         // Los buckets financieros son solo-admin, asi que este test pasa un admin.
@@ -326,7 +326,7 @@ public class FaseDStateSetTests
         context.Reservas.Add(ReservaWithBalance(4, EstadoReserva.Closed));
         await context.SaveChangesAsync();
 
-        var service = new AlertService(context, SettingsMock().Object);
+        var service = new AlertService(context, SettingsMock().Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<AlertService>.Instance);
 
         // Fuga 2 (ADR-017 F1b): buckets financieros solo-admin -> caller admin.
         dynamic result = await service.GetAlertsAsync(new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);

@@ -13,6 +13,15 @@ namespace TravelApi.Infrastructure.Services;
 /// - BookingService.RecalculateReservationScheduleAsync (post-mutation de servicios)
 /// - ReservaLifecycleAutomationService (repair de reservas con EndDate=null)
 /// - ReservaService al construir el ReservaDto (sugerir fechas en la UI)
+///
+/// <para><b>OJO — este MIN INCLUYE servicios cancelados, A PROPOSITO. NO lo "arregles" filtrando
+/// por Status (ADR-019 R8)</b>: este calculo es historico y alimenta el StartDate persistido que
+/// mueve estados (el job <c>AutoTransitionConfirmedToTravelingAsync</c> promueve Confirmed →
+/// Traveling comparando ese StartDate persistido contra hoy). Para el aviso "Proximos inicios"
+/// de la campanita existe OTRO calculo, <see cref="UpcomingStartCalculator"/>, que EXCLUYE los
+/// cancelados — son dos definiciones distintas de "cuando empieza" que coexisten adrede; el
+/// comentario de aquel helper explica la tercera (el job). Cambiar el criterio de este MIN es
+/// otro alcance y otro riesgo (tocaria el lifecycle entero).</para>
 /// </summary>
 public static class ReservaScheduleCalculator
 {

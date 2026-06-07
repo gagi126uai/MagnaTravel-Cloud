@@ -277,10 +277,13 @@ export default function OperationalFinanceSettingsTab() {
               </div>
             </label>
 
-            {/* Avisos de fechas límite (señar y emitir).
-                Con ON aparecen avisos en la campanita: seña al operador (Hotel/Paquete) y
-                emisión de aéreo (Ticketing). Cada vendedor ve los suyos; los admins ven todos. */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+            {/* Avisos de próximos inicios.
+                Con ON, la campanita avisa unos días antes de que arranque cada reserva.
+                El backend calcula desde la primera fecha de inicio de los servicios (firstStartDate). */}
+            <div
+              className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4"
+              aria-label="Avisos de próximos inicios"
+            >
               <label className="flex items-start gap-3">
                 <input
                   type="checkbox"
@@ -289,16 +292,15 @@ export default function OperationalFinanceSettingsTab() {
                   className="mt-1 rounded border-slate-300"
                   disabled={loading}
                   data-testid="toggle-service-deadline-alerts"
-                  aria-label="Avisos de fechas límite (señar y emitir)"
+                  aria-label="Avisos de próximos inicios"
                 />
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
                     <CalendarClock className="w-4 h-4 text-amber-500" aria-hidden="true" />
-                    Avisos de fechas límite (señar y emitir)
+                    Avisos de próximos inicios
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    La campanita avisa cuando se acerca o ya pasó una fecha límite de seña al operador
-                    o de emisión de un aéreo. Cada vendedor ve los avisos de sus reservas; los admins ven todos.
+                    La campanita avisa unos días antes de que empiece cada reserva. Cada vendedor ve las suyas; los admins, todas.
                   </div>
                 </div>
               </label>

@@ -68,10 +68,6 @@ public class MappingProfile : Profile
             // del tarifario (byte-identico a hoy); con flag ON la asigna el service desde el request
             // (regla "request manda"). Sin este Ignore, el campo nuevo del request cambiaria el OFF.
             .ForMember(dest => dest.Currency, opt => opt.Ignore())
-            // ADR-017 F1.4 (§2.2): el deadline lo asigna el service NORMALIZADO a medianoche Kind=Utc
-            // (NormalizeDeadlineDate). Si se mapeara por convencion entraria con Kind=Unspecified y Npgsql
-            // rebotaria al escribir en la columna timestamp with time zone.
-            .ForMember(dest => dest.TicketingDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
             
         // Fuga 3 (ADR-017 §2.7, F1b): NetCost/Tax/Commission NO se mapean automaticamente
@@ -86,11 +82,6 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
-            // ADR-017 F1.1 (§2.2, R12): el deadline NUNCA se mapea por convencion. La asignacion
-            // sera manual en BookingService, gobernada por DeadlinesSpecified (F1.4). Sin este
-            // Ignore(), una edicion desde el modal viejo (que no manda el campo) borraria el deadline
-            // en silencio. En F1.1 el handler aun no lo asigna, asi que el deadline queda intacto.
-            .ForMember(dest => dest.TicketingDeadline, opt => opt.Ignore())
             // ADR-018 (anti-clobber): ProductName NO se mapea por convencion en el UPDATE. El modal viejo
             // edita estos vuelos pero NO manda ProductName (llega null) -> el map lo borraria y la identidad
             // del servicio revertiria a "Vuelo "/ruta. La ficha inline (producto-primero) SIEMPRE reenvia el
@@ -115,12 +106,10 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
             // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
             .ForMember(dest => dest.Currency, opt => opt.Ignore())
-            // ADR-017 F1.4 (§2.2): el deadline lo asigna el service normalizado a medianoche Kind=Utc. Ver Flight.
-            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
-            
+
         CreateMap<UpdateHotelRequest, HotelBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
@@ -128,8 +117,6 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
-            // ADR-017 F1.1 (§2.2, R12): deadline anti-clobber (ver UpdateFlightRequest arriba).
-            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
@@ -179,13 +166,11 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
             // ADR-017 F1.3: Currency la asigna el service (snapshot con OFF / request con ON). Ver Flight.
             .ForMember(dest => dest.Currency, opt => opt.Ignore())
-            // ADR-017 F1.4 (§2.2): el deadline lo asigna el service normalizado a medianoche Kind=Utc. Ver Flight.
-            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             // ADR-018: EndDate puede venir null (ficha "producto-primero"). Se coalesce a StartDate
             // para que Nights quede en 0 sin inventar fecha (NO se persiste una fecha de fin falsa).
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => ((src.EndDate ?? src.StartDate) - src.StartDate).Days));
-            
+
         CreateMap<UpdatePackageRequest, PackageBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
@@ -193,8 +178,6 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
-            // ADR-017 F1.1 (§2.2, R12): deadline anti-clobber (ver UpdateFlightRequest arriba).
-            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             // ADR-018: EndDate puede venir null (ficha "producto-primero"). Se coalesce a StartDate
             // para que Nights quede en 0 sin inventar fecha (NO se persiste una fecha de fin falsa).

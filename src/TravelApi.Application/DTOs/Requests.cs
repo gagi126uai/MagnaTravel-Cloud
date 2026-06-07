@@ -61,12 +61,9 @@ public record CreateFlightRequest(
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
     NewCatalogProductRequest? NewCatalogProduct = null,
-    // ADR-017 F1.4 (§2.2/§2.6): fecha limite de EMISION del ticket, opcional. La API la acepta y persiste
-    // aun con el flag OFF (precedente Currency traceability); sin UI que la cargue no cambia nada observable.
-    // El map la IGNORA (ver MappingProfile) y la asigna el service normalizada a medianoche Kind=Utc.
-    DateTime? TicketingDeadline = null,
     // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor en la ficha. Fuente UNICA de
     // FlightSegment.ProductName (se copia al crear, no se re-deriva del Rate). Opcional al final.
+    // (ADR-019: aca vivia TicketingDeadline; la fecha limite manual murio con el aviso automatico.)
     string? ProductName = null
 );
 
@@ -84,14 +81,10 @@ public record UpdateFlightRequest(
     // Cantidad de pasajeros de ESTE segmento. Opcional (nullable) para no romper
     // las llamadas existentes que no lo mandaban: si llega null, queda sin informar.
     int? PassengerCount = null,
-    // ADR-017 F1.1 (2026-06-05): fecha limite de EMISION del ticket. Mismo criterio que
-    // UpdateHotelRequest: Ignore() en el map + handler de persistencia gobernado por
-    // DeadlinesSpecified, que llega en F1.4. En F1.1 solo estructura.
-    DateTime? TicketingDeadline = null,
-    bool DeadlinesSpecified = false,
     // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor. La ficha inline lo reenvia en la
     // edicion (round-trip), pero el modal viejo NO lo manda (llega null): por eso el map lo IGNORA y el
     // service lo asigna a mano solo si viene con valor (anti-clobber, ver UpdateFlightAsync). Opcional al final.
+    // (ADR-019: aca vivian TicketingDeadline + DeadlinesSpecified; murieron con el aviso automatico.)
     string? ProductName = null
 );
 
@@ -112,9 +105,7 @@ public record CreateHotelRequest(
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
     // Para Hotel exige City (D6).
     NewCatalogProductRequest? NewCatalogProduct = null,
-    // ADR-017 F1.4 (§2.2/§2.6): fecha limite de seña/pago al operador, opcional. La API la acepta y
-    // persiste aun con el flag OFF; el map la IGNORA y la asigna el service normalizada a medianoche Kind=Utc.
-    DateTime? OperatorPaymentDeadline = null,
+    // (ADR-019: aca vivia OperatorPaymentDeadline; la fecha limite manual murio con el aviso automatico.)
     // Direccion del hotel (campo "Mas detalles" del form). Antes el front la mandaba y se descartaba
     // porque el request no la tenia. Opcional con default null para no romper los callers posicionales.
     // AutoMapper la mapea por nombre contra HotelBooking.Address (no es campo de costo, es inocuo).
@@ -132,12 +123,7 @@ public record UpdateHotelRequest(
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver HotelBooking.Tax.
     decimal Tax = 0,
-    // ADR-017 F1.1 (2026-06-05): fecha limite de seña/pago al operador. El map de update hace
-    // Ignore() de este campo (ver MappingProfile) — en F1.1 el handler NO lo persiste todavia
-    // (eso es F1.4). DeadlinesSpecified distingue "no lo mande" (modal viejo) de "borralo": con
-    // false (default) se preserva el valor persistido; con true se asigna lo que vino, null = borrar.
-    DateTime? OperatorPaymentDeadline = null,
-    bool DeadlinesSpecified = false,
+    // (ADR-019: aca vivian OperatorPaymentDeadline + DeadlinesSpecified; murieron con el aviso automatico.)
     // Direccion del hotel (campo "Mas detalles" del form). Opcional con default null para no romper los
     // callers posicionales. AutoMapper la mapea por nombre a HotelBooking.Address, igual que los demas
     // strings del hotel (Country/Notes): el modal la reenvia en cada edicion, no usa discriminador.
@@ -254,9 +240,7 @@ public record CreatePackageRequest(
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
     NewCatalogProductRequest? NewCatalogProduct = null,
-    // ADR-017 F1.4 (§2.2/§2.6): fecha limite de seña/pago al operador, opcional. La API la acepta y
-    // persiste aun con el flag OFF; el map la IGNORA y la asigna el service normalizada a medianoche Kind=Utc.
-    DateTime? OperatorPaymentDeadline = null,
+    // (ADR-019: aca vivia OperatorPaymentDeadline; la fecha limite manual murio con el aviso automatico.)
     // Ficha F2: base de ocupacion ("double"/"triple"/etc). Metadato operativo opcional, no afecta costos.
     // Opcional al final para no romper callers posicionales. Ver PackageBooking.OccupancyBase.
     string? OccupancyBase = null
@@ -274,11 +258,7 @@ public record UpdatePackageRequest(
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver PackageBooking.Tax.
     decimal Tax = 0,
-    // ADR-017 F1.1 (2026-06-05): fecha limite de seña/pago al operador. Mismo criterio que
-    // UpdateHotelRequest: Ignore() en el map + handler de persistencia gobernado por
-    // DeadlinesSpecified, que llega en F1.4. En F1.1 solo estructura.
-    DateTime? OperatorPaymentDeadline = null,
-    bool DeadlinesSpecified = false,
+    // (ADR-019: aca vivian OperatorPaymentDeadline + DeadlinesSpecified; murieron con el aviso automatico.)
     // Ficha F2: base de ocupacion ("double"/"triple"/etc). El front siempre lo reenvia en la edicion
     // (round-trip), por eso se mapea por convencion (sin Ignore): null pisa, igual que Notes.
     // Ver PackageBooking.OccupancyBase.

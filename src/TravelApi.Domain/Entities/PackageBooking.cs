@@ -98,12 +98,9 @@ public class PackageBooking : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
 
-    /// <summary>
-    /// ADR-017 F1.1 (2026-06-05): fecha limite de seña/pago al operador. Aditivo, nullable (filas
-    /// existentes en null). En F1.1 nadie lo escribe (ficha = F2; persistencia gobernada por
-    /// DeadlinesSpecified = F1.4). Date-only "de pared" igual que <see cref="StartDate"/>.
-    /// </summary>
-    public DateTime? OperatorPaymentDeadline { get; set; }
+    // (ADR-019, 2026-06-06: aca vivia OperatorPaymentDeadline — fecha limite manual de ADR-017 F1.4,
+    // nunca prendida en prod. La reemplazo el aviso automatico "Proximos inicios"; columna dropeada
+    // en la migracion Adr019_M1.)
 
     /// <summary>
     /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).

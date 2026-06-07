@@ -36,6 +36,7 @@ import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
+import { useAlerts } from "../../../contexts/AlertsContext";
 import CancelReservaModal from "../../cancellations/components/CancelReservaModal";
 import { hasPermission } from "../../../auth";
 
@@ -364,6 +365,14 @@ export default function ReservaDetailPage() {
   // ADR-017: cuando está ON, la carga de servicios usa la ficha en línea (ServiceInlineCard)
   // en lugar del modal (ServiceFormModal). Con OFF el comportamiento es idéntico al de hoy.
   const isCatalogFindOrCreateEnabled = flags.enableCatalogFindOrCreate;
+  // F2: flag de avisos de próximos inicios. Cuando está ON, ServiceList muestra la columna "Avisos".
+  // Es independiente de isCatalogFindOrCreateEnabled (catálogo OFF + avisos ON → columna visible).
+  const isServiceDeadlineAlertsEnabled = flags.enableServiceDeadlineAlerts;
+
+  // F2: windowDays viene del contexto de alertas (upcomingStartsWindowDays del backend).
+  // null cuando el flag está OFF o la respuesta aún no llegó → UpcomingStartPill muestra "—".
+  const { alerts } = useAlerts();
+  const windowDays = alerts?.upcomingStartsWindowDays ?? null;
 
   // Estado de la ficha inline (solo se usa cuando enableCatalogFindOrCreate está ON)
   const [showInlineCard, setShowInlineCard] = useState(false);
@@ -698,6 +707,8 @@ export default function ReservaDetailPage() {
                 serviceCollectionErrors={serviceCollectionErrors}
                 reservaId={publicId}
                 isCatalogFindOrCreateEnabled={isCatalogFindOrCreateEnabled}
+                isServiceDeadlineAlertsEnabled={isServiceDeadlineAlertsEnabled}
+                windowDays={windowDays}
                 onServiceConfirmed={(servicioActualizado, recordKind) => {
                   // El DTO devuelto por confirm-cost no trae recordKind (lo agrega el front al normalizar).
                   // ServiceList lo pasa como segundo argumento para saber en qué colección hacer el upsert.

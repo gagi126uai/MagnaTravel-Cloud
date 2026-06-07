@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -12,11 +13,16 @@ public class AlertService : IAlertService
 {
     private readonly AppDbContext _context;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
+    private readonly ILogger<AlertService> _logger;
 
-    public AlertService(AppDbContext context, IOperationalFinanceSettingsService operationalFinanceSettingsService)
+    public AlertService(
+        AppDbContext context,
+        IOperationalFinanceSettingsService operationalFinanceSettingsService,
+        ILogger<AlertService> logger)
     {
         _context = context;
         _operationalFinanceSettingsService = operationalFinanceSettingsService;
+        _logger = logger;
     }
 
     public async Task<object> GetAlertsAsync(AlertCallerContext caller, CancellationToken cancellationToken)
@@ -26,8 +32,7 @@ public class AlertService : IAlertService
         // --- Buckets financieros (admin-only, Fuga 2 ADR-017 §2.7 F1b) ---
         // UrgentTrips y SupplierDebts son informacion financiera de TODA la agencia (deudas a
         // proveedores, saldos de clientes). El gating "solo admin" vive en el SERVER: un no-admin
-        // los recibe vacios. Estos buckets NO cambian en F1.4 (siguen usando UtcNow.Date como "hoy",
-        // como manda el ADR §2.2: "los buckets existentes NO se tocan").
+        // los recibe vacios. Estos buckets siguen usando UtcNow.Date como "hoy" (no se tocan).
         IReadOnlyList<object> urgentTrips = Array.Empty<object>();
         IReadOnlyList<object> supplierDebts = Array.Empty<object>();
         if (caller.IsAdmin)
@@ -36,15 +41,18 @@ public class AlertService : IAlertService
         }
         var financialCount = urgentTrips.Count + supplierDebts.Count;
 
-        // --- Buckets nuevos F1.4 (cada uno detras de su gate) ---
-        var serviceDeadlinesActive = settings.EnableServiceDeadlineAlerts;
+        // --- Buckets gateados (cada uno detras de su flag) ---
+        // ADR-019: el flag EnableServiceDeadlineAlerts ahora gatea el bucket UpcomingStarts ("Proximos
+        // inicios"). El nombre interno NO se renombra (decision D7: renombrar = migracion + churn por
+        // cero valor de usuario); el nombre de cara al dueño es solo el texto de la UI.
+        var upcomingStartsActive = settings.EnableServiceDeadlineAlerts;
         // CostsToConfirm: gateado por el flag del catalogo + que el caller pueda ver costos (§2.8/D8b).
         var costsToConfirmActive = settings.EnableCatalogFindOrCreate && caller.CanSeeCost;
 
         // CAMINO BYTE-IDENTICO (default en prod): si ningun bucket nuevo esta activo, devolvemos el
         // MISMO objeto anonimo de siempre (mismas 3 propiedades, mismo orden) — /alerts no cambia en
         // nada para los consumidores actuales.
-        if (!serviceDeadlinesActive && !costsToConfirmActive)
+        if (!upcomingStartsActive && !costsToConfirmActive)
         {
             return new
             {
@@ -54,12 +62,12 @@ public class AlertService : IAlertService
             };
         }
 
-        // Con al menos un bucket nuevo activo, el "hoy" del corte de deadlines es la fecha LOCAL de
-        // Argentina (ADR §2.2): comparar contra UtcNow.Date marcaria "vencido" 3h antes (21:00 ART).
+        // Con al menos un bucket nuevo activo, el "hoy" del corte es la fecha LOCAL de Argentina:
+        // comparar contra UtcNow.Date correria el dia 3h antes (a las 21:00 ART ya seria "mañana").
         var today = AgencyTimezone.TodayWallClockUtc();
 
-        var serviceDeadlines = serviceDeadlinesActive
-            ? await ComputeServiceDeadlinesAsync(caller, settings.ServiceDeadlineAlertDays, today, cancellationToken)
+        var upcomingStarts = upcomingStartsActive
+            ? await ComputeUpcomingStartsAsync(caller, settings.ServiceDeadlineAlertDays, today, cancellationToken)
             : new List<object>();
 
         var costsToConfirm = costsToConfirmActive
@@ -71,11 +79,14 @@ public class AlertService : IAlertService
         // a las claves — un diccionario deja las claves verbatim (PascalCase) y prender el flag renombraria en
         // silencio urgentTrips->UrgentTrips, rompiendo a los consumidores. Ver AlertsResponse. Cada bucket nuevo
         // se incluye SOLO si su gate esta activo (null = se omite del JSON), misma presencia condicional que antes.
-        var totalCount = financialCount + serviceDeadlines.Count + costsToConfirm.Count;
+        var totalCount = financialCount + upcomingStarts.Count + costsToConfirm.Count;
         return new AlertsResponse(
             urgentTrips: urgentTrips,
             supplierDebts: supplierDebts,
-            serviceDeadlines: serviceDeadlinesActive ? serviceDeadlines : null,
+            upcomingStarts: upcomingStartsActive ? upcomingStarts : null,
+            // D1: la ventana viaja junto al bucket para que la pill por servicio (frontend) use el
+            // mismo umbral. NO va en OperationalFlagsResponse (regla dura "solo booleanos").
+            upcomingStartsWindowDays: upcomingStartsActive ? settings.ServiceDeadlineAlertDays : null,
             costsToConfirm: costsToConfirmActive ? costsToConfirm : null,
             totalCount: totalCount);
     }
@@ -131,149 +142,110 @@ public class AlertService : IAlertService
     }
 
     /// <summary>
-    /// ADR-017 F1.4 (§2.5, R9): bucket <c>ServiceDeadlines</c> compute-on-read. Avisa fechas limite de
-    /// seña/pago al operador (Hotel/Paquete) y de emision de ticket (Aereo) que caen dentro de la ventana
-    /// o ya vencieron (<c>isOverdue=true</c>), mientras la reserva siga activa y el viaje no haya empezado.
+    /// ADR-019 D2: bucket <c>UpcomingStarts</c> ("Proximos inicios") compute-on-read. UN aviso POR
+    /// RESERVA cuyo primer servicio NO cancelado empieza dentro de [hoy ... hoy + ventana]: "⏰ Empieza
+    /// el {dd/MM} (en {N} dias)" / "Empieza HOY" cuando <c>daysLeft == 0</c>. Reemplaza al bucket de
+    /// fechas limite manuales de ADR-017 F1.4 (nunca prendido en prod).
     ///
-    /// <para>Visibilidad (D2): admin ve todas; el vendedor ve solo las de SUS reservas
-    /// (<c>Reserva.ResponsibleUserId == caller.UserId</c>). Limitacion conocida: reservas con
-    /// <c>ResponsibleUserId</c> null (backfill historico pendiente) solo le suenan al admin.</para>
+    /// <para><b>Elegibilidad</b>: Status ∈ {Sold, Confirmed, Traveling}. Presupuestos NO avisan
+    /// (decision del dueño, Q2). <c>Traveling</c> entra porque el job de lifecycle promueve a las
+    /// 00:00 ART y sin el, el aviso rojo "Empieza HOY" no se veria nunca (B2-nuevo); no necesita
+    /// condicion extra: la ventana <c>hoy &lt;= firstStart</c> deja afuera sola a una reserva
+    /// genuinamente en viaje (su primer inicio quedo en el pasado).</para>
+    ///
+    /// <para><b>SIN prefiltro de fecha sobre Reserva.StartDate (B1-bis — NO lo reintroduzcas)</b>: ese
+    /// campo es editable a mano en ambas direcciones y borrable (<c>UpdateDatesAsync</c>), asi que
+    /// cualquier prefiltro sobre el puede SILENCIAR avisos de reservas cuyos servicios si caen en
+    /// ventana. La verdad sobre la ventana la dan SIEMPRE las fechas de los servicios
+    /// (<see cref="UpcomingStartCalculator"/>); el prefiltro es solo Status + ownership.</para>
+    ///
+    /// <para><b>Visibilidad</b>: admin ve todas; el vendedor solo SUS reservas
+    /// (<c>ResponsibleUserId == caller.UserId</c>), fail-closed sin UserId — identico a CostsToConfirm.</para>
     /// </summary>
-    private async Task<List<object>> ComputeServiceDeadlinesAsync(
+    private async Task<List<object>> ComputeUpcomingStartsAsync(
         AlertCallerContext caller, int alertDays, DateTime today, CancellationToken ct)
     {
-        // Seguridad (F1.4 review): un no-admin SIN identidad (token sin claim NameIdentifier -> UserId null) no
-        // debe ver los deadlines de NADIE. Sin esta guarda, el predicado de abajo "ResponsibleUserId == caller.UserId"
-        // se traduce a SQL como "ResponsibleUserId IS NULL" y le mostraria todas las reservas sin responsable
-        // asignado (backfill historico). Fail-closed: cortamos a vacio antes de tocar la base.
+        // Seguridad: un no-admin SIN identidad (token sin claim NameIdentifier -> UserId null) no debe ver
+        // avisos de NADIE. Sin esta guarda, el predicado "ResponsibleUserId == caller.UserId" se traduce a
+        // SQL como "ResponsibleUserId IS NULL" y mostraria todas las reservas sin responsable asignado.
         if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
             return new List<object>();
 
-        // Ventana inclusiva: un deadline entra si vence dentro de [hoy ... hoy + ventana]. Los ya vencidos
-        // (deadline < hoy) tambien entran (isOverdue=true): siguen siendo accionables.
-        var window = today.AddDays(Math.Max(alertDays, 1));
+        // Prefiltro = Status elegible + ownership, NADA mas (B1-bis). Se trae junto con los datos que
+        // necesita el item, incluido el titular (Q3): Payer.FullName -> primer Passenger por Id -> null.
+        var candidates = await _context.Reservas
+            .Where(r => (r.Status == EstadoReserva.Sold
+                         || r.Status == EstadoReserva.Confirmed
+                         || r.Status == EstadoReserva.Traveling)
+                        && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId))
+            .Select(r => new
+            {
+                r.Id,
+                r.PublicId,
+                r.NumeroReserva,
+                r.Name,
+                PayerName = r.Payer != null ? r.Payer.FullName : null,
+                FirstPassengerName = r.Passengers
+                    .OrderBy(p => p.Id)
+                    .Select(p => (string?)p.FullName)
+                    .FirstOrDefault()
+            })
+            .ToListAsync(ct);
+
+        if (candidates.Count == 0)
+            return new List<object>();
+
+        // Ventana inclusiva en ambos bordes: hoy <= firstStart <= hoy + X. No hay estado "vencido":
+        // pasado el inicio, el aviso desaparece solo (el viaje-en-curso ya lo cubre urgentTrips).
+        var windowEnd = today.AddDays(Math.Max(alertDays, 1));
+
+        var candidateIds = candidates.Select(c => c.Id).ToList();
+        var firstStartByReserva = await UpcomingStartCalculator.ComputeFirstStartsAsync(
+            _context, candidateIds, maxStartDateInclusive: windowEnd, ct);
+
+        // Descartes "Listo" (D3): el aviso se oculta SOLO si la fecha descartada coincide con el primer
+        // inicio ACTUAL. Si el primer inicio cambio (se adelanto O se atraso), el aviso reaparece.
+        var dismissedDateByReserva = await _context.UpcomingStartAlertDismissals
+            .Where(d => candidateIds.Contains(d.ReservaId))
+            .ToDictionaryAsync(d => d.ReservaId, d => d.DismissedFirstStartDate, ct);
+
         var alerts = new List<object>();
+        // Orden estable: lo que empieza antes primero; a igual fecha, por numero de reserva.
+        var candidatesInWindow = candidates
+            .Where(c => firstStartByReserva.ContainsKey(c.Id))
+            .OrderBy(c => firstStartByReserva[c.Id])
+            .ThenBy(c => c.NumeroReserva, StringComparer.Ordinal);
 
-        // Hotel (seña/pago al operador). Join explicito con Reservas (no navegacion) para que funcione
-        // igual en Postgres y en el provider InMemory de los tests. Los predicados van INLINE (no en un
-        // helper) porque EF Core no traduce llamadas a metodos propios dentro de la query.
-        var hotelDeadlines = await (
-            from hotel in _context.HotelBookings
-            join reserva in _context.Reservas on hotel.ReservaId equals reserva.Id
-            where hotel.OperatorPaymentDeadline != null
-                  && hotel.OperatorPaymentDeadline <= window
-                  && hotel.Status != "Cancelado"
-                  && (reserva.Status == EstadoReserva.Budget
-                      || reserva.Status == EstadoReserva.Sold
-                      || reserva.Status == EstadoReserva.Confirmed)
-                  && (reserva.StartDate == null || reserva.StartDate >= today)
-                  && (caller.IsAdmin || reserva.ResponsibleUserId == caller.UserId)
-            select new
+        foreach (var candidate in candidatesInWindow)
+        {
+            var firstStart = firstStartByReserva[candidate.Id];
+
+            // Borde inferior de la ventana: el primer inicio ya paso -> no avisa (cubre tambien el
+            // caso Traveling genuino del B2-nuevo). El borde superior ya lo aplico el calculator.
+            if (firstStart < today)
+                continue;
+
+            if (dismissedDateByReserva.TryGetValue(candidate.Id, out var dismissedDate)
+                && dismissedDate.Date == firstStart.Date)
+                continue; // descarte vigente: misma fecha que se apago con "Listo"
+
+            // Titular para la linea 2 del aviso (Q3): Payer -> primer pasajero -> null (el front cae
+            // al nombre de la reserva si viene null; nunca renderiza una linea rota).
+            var holderName = !string.IsNullOrWhiteSpace(candidate.PayerName)
+                ? candidate.PayerName
+                : (!string.IsNullOrWhiteSpace(candidate.FirstPassengerName) ? candidate.FirstPassengerName : null);
+
+            alerts.Add(new
             {
-                reserva.PublicId,
-                reserva.NumeroReserva,
-                Label = hotel.HotelName,
-                Deadline = hotel.OperatorPaymentDeadline!.Value
-            }).ToListAsync(ct);
-
-        foreach (var row in hotelDeadlines)
-        {
-            alerts.Add(BuildDeadlineAlert(
-                row.PublicId, row.NumeroReserva, "Hotel",
-                string.IsNullOrWhiteSpace(row.Label) ? "Hotel" : row.Label,
-                "OperatorPayment", row.Deadline, today));
-        }
-
-        // Paquete (seña/pago al operador).
-        var packageDeadlines = await (
-            from package in _context.PackageBookings
-            join reserva in _context.Reservas on package.ReservaId equals reserva.Id
-            where package.OperatorPaymentDeadline != null
-                  && package.OperatorPaymentDeadline <= window
-                  && package.Status != "Cancelado"
-                  && (reserva.Status == EstadoReserva.Budget
-                      || reserva.Status == EstadoReserva.Sold
-                      || reserva.Status == EstadoReserva.Confirmed)
-                  && (reserva.StartDate == null || reserva.StartDate >= today)
-                  && (caller.IsAdmin || reserva.ResponsibleUserId == caller.UserId)
-            select new
-            {
-                reserva.PublicId,
-                reserva.NumeroReserva,
-                Label = package.PackageName,
-                Deadline = package.OperatorPaymentDeadline!.Value
-            }).ToListAsync(ct);
-
-        foreach (var row in packageDeadlines)
-        {
-            alerts.Add(BuildDeadlineAlert(
-                row.PublicId, row.NumeroReserva, "Paquete",
-                string.IsNullOrWhiteSpace(row.Label) ? "Paquete" : row.Label,
-                "OperatorPayment", row.Deadline, today));
-        }
-
-        // Aereo (emision de ticket). Se trae a memoria para agrupar por (Reserva, PNR) con MIN(deadline):
-        // el deadline conceptual es del PNR, pero la columna es por segmento. Segmentos cancelados
-        // (UN/UC/HX/NO, ver WorkflowStatusHelper) quedan afuera.
-        var flightRows = await (
-            from flight in _context.FlightSegments
-            join reserva in _context.Reservas on flight.ReservaId equals reserva.Id
-            where flight.TicketingDeadline != null
-                  && flight.TicketingDeadline <= window
-                  && flight.Status != "UN" && flight.Status != "UC"
-                  && flight.Status != "HX" && flight.Status != "NO"
-                  && (reserva.Status == EstadoReserva.Budget
-                      || reserva.Status == EstadoReserva.Sold
-                      || reserva.Status == EstadoReserva.Confirmed)
-                  && (reserva.StartDate == null || reserva.StartDate >= today)
-                  && (caller.IsAdmin || reserva.ResponsibleUserId == caller.UserId)
-            select new
-            {
-                flight.ReservaId,
-                reserva.PublicId,
-                reserva.NumeroReserva,
-                flight.PNR,
-                flight.AirlineCode,
-                flight.FlightNumber,
-                flight.Origin,
-                flight.Destination,
-                // ADR-018: identidad de la ficha "producto-primero"; fallback cuando los estructurados son null.
-                flight.ProductName,
-                Deadline = flight.TicketingDeadline!.Value
-            }).ToListAsync(ct);
-
-        // PNR utilizable = no null/vacio y distinto de "TBD" (placeholder que generan ConvertToFile y
-        // cargas manuales). Sin PNR utilizable: cada segmento emite su propio aviso (no se agrupa).
-        static bool PnrUsable(string? pnr)
-            => !string.IsNullOrWhiteSpace(pnr) && !pnr.Trim().Equals("TBD", StringComparison.OrdinalIgnoreCase);
-
-        foreach (var group in flightRows.Where(r => PnrUsable(r.PNR))
-                     .GroupBy(r => new { r.ReservaId, Pnr = r.PNR!.Trim() }))
-        {
-            var earliest = group.Min(r => r.Deadline);
-            var sample = group.First();
-            // ADR-018: si la ficha "producto-primero" no cargo origen/destino, mostramos el ProductName
-            // en vez de "Aereo -". Orden: ruta cargada -> ProductName -> aerolinea+numero.
-            var groupedIdentity = ServiceDisplayName.FirstNonBlank(
-                ServiceDisplayName.RouteOrEmpty(sample.Origin, sample.Destination),
-                sample.ProductName,
-                $"{sample.AirlineCode}{sample.FlightNumber}".Trim());
-            alerts.Add(BuildDeadlineAlert(
-                sample.PublicId, sample.NumeroReserva, "Aereo",
-                $"Aereo {groupedIdentity} (PNR {group.Key.Pnr})",
-                "Ticketing", earliest, today));
-        }
-
-        foreach (var row in flightRows.Where(r => !PnrUsable(r.PNR)))
-        {
-            // ADR-018: identidad = ProductName si no hay aerolinea/numero; la ruta va entre parentesis solo si esta.
-            var identity = ServiceDisplayName.ForFlight(row.ProductName, row.AirlineCode, row.FlightNumber);
-            var route = ServiceDisplayName.RouteOrEmpty(row.Origin, row.Destination);
-            var label = string.IsNullOrEmpty(route) ? $"Aereo {identity}" : $"Aereo {identity} ({route})";
-            alerts.Add(BuildDeadlineAlert(
-                row.PublicId, row.NumeroReserva, "Aereo",
-                label,
-                "Ticketing", row.Deadline, today));
+                ReservaPublicId = candidate.PublicId,
+                NumeroReserva = candidate.NumeroReserva,
+                Name = candidate.Name,
+                HolderName = holderName,
+                FirstStartDate = firstStart,
+                // daysLeft == 0 => "Empieza HOY" (rojo). Ambas fechas son medianoche de pared Kind=Utc,
+                // asi que la resta da dias enteros exactos.
+                DaysLeft = (int)(firstStart - today).TotalDays
+            });
         }
 
         return alerts;
@@ -283,12 +255,12 @@ public class AlertService : IAlertService
     /// ADR-017 F1.4 (§2.8, D8b): bucket <c>CostsToConfirm</c> compute-on-read. Lista los servicios marcados
     /// "costo a confirmar" (D7) para que alguien con permiso los revise/confirme. NO expone montos (solo
     /// reserva, tipo, etiqueta y razon). Gateado server-side por <c>cobranzas.see_cost</c> (decidido en el
-    /// controller) + el flag del catalogo. Mismo filtro por caller que ServiceDeadlines: admin todas, el
+    /// controller) + el flag del catalogo. Mismo filtro por caller que UpcomingStarts: admin todas, el
     /// resto solo las de SUS reservas.
     /// </summary>
     private async Task<List<object>> ComputeCostsToConfirmAsync(AlertCallerContext caller, CancellationToken ct)
     {
-        // Seguridad (F1.4 review, defensa en profundidad): mismo borde que ServiceDeadlines. Hoy el controller ya
+        // Seguridad (F1.4 review, defensa en profundidad): mismo borde que UpcomingStarts. Hoy el controller ya
         // pone CanSeeCost=false cuando el UserId es null (asi este bucket ni se calcula), pero NO confiamos en eso
         // aca: un no-admin sin identidad corta a vacio antes de filtrar por "ResponsibleUserId == UserId".
         if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
@@ -297,7 +269,7 @@ public class AlertService : IAlertService
         var alerts = new List<object>();
 
         // Reserva "viva" a efectos de este bucket: no cancelada, no cerrada, no en espera de refund. Es
-        // menos estricta que el filtro de deadlines a proposito: un costo se puede confirmar aunque el viaje
+        // menos estricta que la elegibilidad de UpcomingStarts a proposito: un costo se puede confirmar aunque el viaje
         // ya este en curso (la confirmacion corrige el costo interno, no el comprobante — D8c). Los predicados
         // van INLINE en cada query porque EF no traduce helpers propios.
 
@@ -369,19 +341,105 @@ public class AlertService : IAlertService
         return alerts;
     }
 
-    private static object BuildDeadlineAlert(
-        Guid reservaPublicId, string numeroReserva, string serviceKind, string serviceLabel,
-        string deadlineKind, DateTime deadline, DateTime today)
-        => new
+    /// <summary>
+    /// ADR-019 D4: implementacion del "Listo" global. El controller ya paso el filtro de ownership
+    /// ([RequireOwnership] con bypass Admin/reservas.view_all), asi que aca solo queda: flag, existencia,
+    /// recalculo server-side del primer inicio y upsert idempotente del descarte.
+    /// </summary>
+    public async Task<UpcomingStartDismissOutcome> DismissUpcomingStartAsync(
+        string reservaPublicIdOrLegacyId, string dismissedByUserId, CancellationToken cancellationToken)
+    {
+        // Flag OFF -> la feature "no existe" (404 en el controller). OJO: el filtro de ownership corre
+        // ANTES que este check, asi que un no-owner recibe 403 aun con flag OFF — trade-off aceptado
+        // en el ADR (revela que la ruta existe, no revela datos).
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
+        if (!settings.EnableServiceDeadlineAlerts)
+            return UpcomingStartDismissOutcome.FeatureDisabled;
+
+        // Resolver la reserva por PublicId (Guid) o id legacy (int) — mismo contrato dual que
+        // OwnershipResolver.ParseId, para que el filtro y el controller hablen del mismo recurso.
+        var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
+        if (reservaId is null)
+            return UpcomingStartDismissOutcome.ReservaNotFound;
+
+        // El SERVER recalcula el primer inicio con el MISMO helper del bucket — el cliente no manda
+        // fecha (elimina la carrera "vi una fecha, descarto otra": se descarta lo que el server ve AHORA;
+        // si difiere de lo que vio el usuario, el re-armado de D3 lo cubre).
+        var firstStart = await UpcomingStartCalculator.ComputeFirstStartAsync(_context, reservaId.Value, cancellationToken);
+        if (firstStart is null)
+            return UpcomingStartDismissOutcome.NoUpcomingStart; // 204 no-op: no se escribe nada
+
+        try
         {
-            ReservaPublicId = reservaPublicId,
-            NumeroReserva = numeroReserva,
-            ServiceKind = serviceKind,
-            ServiceLabel = serviceLabel,
-            DeadlineKind = deadlineKind,
-            Deadline = deadline,
-            IsOverdue = deadline < today
-        };
+            await UpsertDismissalAsync(reservaId.Value, firstStart.Value, dismissedByUserId, cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // Carrera de dos POST simultaneos: ambos no encontraron fila y ambos insertaron; el indice
+            // UNIQUE de Postgres rechazo a uno. Reintentamos UNA vez como update — ahora la fila del
+            // ganador ya existe y el upsert la pisa. (El provider InMemory no aplica el UNIQUE, asi que
+            // este camino solo se ejercita en los tests de integracion Postgres — M4 del ADR.)
+            _context.ChangeTracker.Clear();
+            await UpsertDismissalAsync(reservaId.Value, firstStart.Value, dismissedByUserId, cancellationToken);
+        }
+
+        // Observabilidad (D4): la fila misma es el audit trail minimo; el log estructurado ayuda a
+        // reconstruir "quien apago que" sin query. Identificadores seguros, sin datos de pasajeros.
+        _logger.LogInformation(
+            "UpcomingStart dismissed. ReservaId={ReservaId} FirstStartDate={FirstStartDate} DismissedBy={UserId}",
+            reservaId.Value, firstStart.Value.ToString("yyyy-MM-dd"), dismissedByUserId);
+
+        return UpcomingStartDismissOutcome.Dismissed;
+    }
+
+    /// <summary>
+    /// Inserta o pisa LA fila de descarte de la reserva (a lo sumo una, UNIQUE en ReservaId).
+    /// Re-descartar actualiza fecha + auditoria; no se acumula historia (trade-off aceptado en D3).
+    /// </summary>
+    private async Task UpsertDismissalAsync(int reservaId, DateTime firstStart, string userId, CancellationToken ct)
+    {
+        var existing = await _context.UpcomingStartAlertDismissals
+            .FirstOrDefaultAsync(d => d.ReservaId == reservaId, ct);
+
+        if (existing is null)
+        {
+            existing = new UpcomingStartAlertDismissal { ReservaId = reservaId };
+            _context.UpcomingStartAlertDismissals.Add(existing);
+        }
+
+        existing.DismissedFirstStartDate = firstStart;
+        existing.DismissedByUserId = userId;
+        existing.DismissedAtUtc = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Traduce el id de ruta (PublicId Guid o id legacy int) al Id interno de la reserva.
+    /// Null = no existe (404 para quien paso el filtro de ownership: Admin / reservas.view_all).
+    /// </summary>
+    private async Task<int?> ResolveReservaIdAsync(string publicIdOrLegacyId, CancellationToken ct)
+    {
+        if (Guid.TryParse(publicIdOrLegacyId, out var publicId))
+        {
+            var byPublicId = await _context.Reservas
+                .Where(r => r.PublicId == publicId)
+                .Select(r => (int?)r.Id)
+                .FirstOrDefaultAsync(ct);
+            return byPublicId;
+        }
+
+        if (int.TryParse(publicIdOrLegacyId, out var legacyId) && legacyId > 0)
+        {
+            var byLegacyId = await _context.Reservas
+                .Where(r => r.Id == legacyId)
+                .Select(r => (int?)r.Id)
+                .FirstOrDefaultAsync(ct);
+            return byLegacyId;
+        }
+
+        return null;
+    }
 
     private static object BuildCostToConfirmAlert(
         Guid reservaPublicId, string numeroReserva, string serviceKind, string? serviceLabel, string? reason)

@@ -123,6 +123,9 @@ Ronda 9 (avisos automáticos, detalles finos — respuestas de Gastón, 2026-06-
 - **El aviso rojo "Empieza HOY" se ve durante TODO el día de inicio**, aunque el sistema ya haya pasado la reserva a "En viaje" a la medianoche (proceso automático). Desaparece al día siguiente o con "Listo". Es el último llamado de atención del día D.
 - **La etiqueta de la fila es INFORMACIÓN, no aviso: aparece siempre que el servicio empiece pronto**, sin importar el estado de la reserva (presupuesto, en viaje — sirve p.ej. para apurar la venta de un presupuesto). Nunca en servicios cancelados. La campanita SÍ mantiene el criterio estricto (solo vendidas/confirmadas).
 
+Ronda 10 (botón "Listo" de Próximos inicios, 2026-06-07):
+- **El "Listo" es un BOTÓN con la palabra "Listo", siempre visible**, a la derecha de cada aviso de la campanita (elegido sobre la tilde-al-pasar-el-mouse y el texto-chiquito). Sin ventana de confirmación. El click en "Listo" no navega a la reserva; el click en el resto del aviso sí.
+
 Ronda 7 (obligatoriedad heredada de la pantalla vieja — probando en vivo, 2026-06-06):
 - **REGLA GENERAL nueva de Gastón (textual): "que no asuma nada, nada que yo no le pida; que me pregunte así como lo hace el ux/ui; que no ponga campos que nadie le pidió y si eso lo hizo el backend o el arquitecto, que me pregunten primero".** La obligatoriedad de un campo es una decisión de producto de Gastón, NUNCA del código viejo ni de un implementador. Si una regla heredada choca con la ficha nueva, se le pregunta antes.
 - **Hotel: Régimen y Tipo de habitación A LA VISTA y OBLIGATORIOS** en la ficha principal (salen de "Más detalles"), como desplegables con las mismas opciones de siempre (Régimen: Solo Alojamiento/Desayuno/Media Pensión/Pensión Completa/All Inclusive, default Desayuno; Habitación: Single/Doble/Triple/Cuádruple/Familiar, default Doble).

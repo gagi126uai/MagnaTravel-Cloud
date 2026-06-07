@@ -484,35 +484,9 @@ public class Adr018ProductFirstReconciliationTests
         Assert.DoesNotContain(" -> ", html);
     }
 
-    // ======================================================================================
-    // AlertService: vuelo de catalogo usa ProductName, no "Aereo -".
-    // ======================================================================================
-
-    [Fact]
-    public async Task AlertService_CatalogFlightDeadline_LabelUsesProductName()
-    {
-        await using var context = CreateContext();
-        var today = DateTime.UtcNow.Date;
-        context.Reservas.Add(new Reserva
-        {
-            Id = 1, NumeroReserva = "R-ALERT", Name = "Reserva alerta",
-            Status = EstadoReserva.Confirmed, StartDate = today.AddDays(20)
-        });
-        context.FlightSegments.Add(new FlightSegment
-        {
-            Id = 1, ReservaId = 1, SupplierId = 1, ProductName = "AEP-IGR LATAM",
-            Status = "HK", PNR = null, TicketingDeadline = today.AddDays(3)
-        });
-        await context.SaveChangesAsync();
-
-        var alertService = BuildAlertService(context, deadlineAlerts: true);
-        var payload = await alertService.GetAlertsAsync(new AlertCallerContext("admin", IsAdmin: true), CancellationToken.None);
-
-        var item = Assert.Single(Bucket(payload, "ServiceDeadlines"));
-        var label = Prop<string>(item, "ServiceLabel");
-        Assert.Contains("AEP-IGR LATAM", label);
-        Assert.DoesNotContain("Aereo -", label); // antes emitia "Aereo -" con los estructurados null
-    }
+    // (ADR-019: aca vivia un test del bucket viejo ServiceDeadlines — "label del vuelo de catalogo usa
+    // ProductName". El bucket murio junto con las fechas limite manuales; el aviso nuevo upcomingStarts
+    // es por RESERVA y no tiene labels por servicio, asi que el caso ya no existe.)
 
     // ======================================================================================
     // ReportService: paquete/vuelo de catalogo aparecen en el ranking (no se pierde revenue).
@@ -652,20 +626,6 @@ public class Adr018ProductFirstReconciliationTests
             settings.Object);
     }
 
-    private static AlertService BuildAlertService(AppDbContext context, bool deadlineAlerts)
-    {
-        var settings = new Mock<IOperationalFinanceSettingsService>();
-        settings.Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new OperationalFinanceSettings
-            {
-                UpcomingUnpaidReservationAlertDays = 30,
-                EnableServiceDeadlineAlerts = deadlineAlerts,
-                EnableCatalogFindOrCreate = false,
-                ServiceDeadlineAlertDays = 7
-            });
-        return new AlertService(context, settings.Object);
-    }
-
     private static IHttpContextAccessor BuildHttpContextAccessor(string userId)
     {
         var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, userId) };
@@ -683,14 +643,4 @@ public class Adr018ProductFirstReconciliationTests
         return mock.Object;
     }
 
-    // Lee un bucket del payload de /alerts por reflexion (igual que AlertServiceDeadlineBucketsTests):
-    // el path OFF devuelve un objeto anonimo y el path ON un DTO; ambos se leen por nombre C#.
-    private static List<object> Bucket(object payload, string key)
-    {
-        var value = payload.GetType().GetProperty(key)?.GetValue(payload);
-        return value is IEnumerable items ? items.Cast<object>().ToList() : new List<object>();
-    }
-
-    private static T Prop<T>(object item, string name)
-        => (T)item.GetType().GetProperty(name)!.GetValue(item)!;
 }

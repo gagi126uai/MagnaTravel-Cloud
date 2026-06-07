@@ -117,8 +117,6 @@ public partial class BookingService
             // INSERT a timestamptz. Normalizamos a fecha de pared (medianoche Kind=Utc). Ver NormalizeCalendarDate.
             hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
             hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
-            // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
-            hotel.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
             var divisor = CatalogUnitization.HotelDivisor(hotel.Nights, hotel.Rooms);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -217,8 +215,6 @@ public partial class BookingService
             flight.Currency = currency;
             flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
             flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
-            // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
-            flight.TicketingDeadline = NormalizeDeadlineDate(req.TicketingDeadline);
             // ADR-018 (§4-bis): la identidad visible = el texto que vio el vendedor. Fuente unica = req.ProductName;
             // si no vino (path producto NUEVO), caemos al nombre del producto de catalogo. NUNCA se re-deriva del
             // Rate despues (preserva el snapshot de ADR-017 §6).
@@ -373,8 +369,6 @@ public partial class BookingService
             // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
             package.StartDate = NormalizeCalendarDate(package.StartDate);
             package.EndDate = NormalizeCalendarDate(package.EndDate);
-            // ADR-017 F1.4 (§2.2): el map ignora el deadline; lo asignamos normalizado a medianoche Kind=Utc.
-            package.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
             var divisor = CatalogUnitization.PackageDivisor(package.Adults, package.Children);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(

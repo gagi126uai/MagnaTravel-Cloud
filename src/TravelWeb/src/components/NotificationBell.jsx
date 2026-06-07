@@ -1,13 +1,13 @@
 /**
  * Campanita de notificaciones con tres secciones apiladas:
- *   1. "FECHAS LÍMITE" — deadlines de seña/emisión (flag EnableServiceDeadlineAlerts ON).
+ *   1. "PRÓXIMOS INICIOS" — reservas que arrancan pronto (flag EnableServiceDeadlineAlerts ON).
  *   2. "COSTOS A CONFIRMAR" — servicios sin costo conocido (flag EnableCatalogFindOrCreate ON).
  *   3. "NOTIFICACIONES" — notificaciones del sistema (SignalR + /notifications, siempre activo).
  *
  * Cada sección solo se renderiza si tiene items. Con flags OFF el panel queda
  * exactamente igual que antes (solo la sección de notificaciones, sin título).
  *
- * El badge suma: deadlines + costsToConfirm + notificaciones sin leer.
+ * El badge suma: upcomingStarts visibles + costsToConfirm + notificaciones sin leer.
  * NO suma urgentTrips ni supplierDebts (esos viven en las tarjetas de Cobranzas).
  */
 
@@ -24,7 +24,8 @@ import { useAlerts } from "../contexts/AlertsContext";
 
 /**
  * Formatea "2025-11-30" → "30/11" sin convertir a UTC.
- * Mismo patrón que DeadlinePill.jsx (formatearFechaDdMm).
+ * Usa string-split porque el backend serializa firstStartDate como "...T00:00:00Z"
+ * y new Date().toLocaleDateString() en UTC-3 podría devolver el día anterior.
  */
 function formatearDdMm(fechaIso) {
     const soloFecha = (fechaIso || "").split("T")[0];
@@ -35,16 +36,24 @@ function formatearDdMm(fechaIso) {
 }
 
 /**
- * Construye la línea 1 del item de deadline según tipo y si vencio.
- * Mismo criterio de texto que DeadlinePill.jsx (obtenerTextoPill).
+ * Construye el texto de la línea 1 de un ítem de próximo inicio.
+ *
+ * Regla: daysLeft >= 1 → emoji ámbar + "en N días" (singular si N==1).
+ *        daysLeft <= 0 → "Empieza HOY" en rojo, sin emoji.
+ *        daysLeft < 0  → nunca debería llegar acá (el server filtra), pero
+ *                         tratamos defensivamente igual a HOY.
+ *
+ * Exportada como helper puro para los tests (sin DOM).
  */
-function textoDeadline(deadlineKind, fechaIso, isOverdue) {
-    const fecha = formatearDdMm(fechaIso);
-    if (deadlineKind === "OperatorPayment") {
-        return isOverdue ? `Venció señar el ${fecha}` : `⏰ Señar antes del ${fecha}`;
+export function textoProximoInicio(daysLeft, firstStartDate) {
+    const fecha = formatearDdMm(firstStartDate);
+    // Defensivo: cubre daysLeft=0 (HOY) y negativos (server debería filtrarlos, pero por las dudas)
+    if (daysLeft <= 0) {
+        return `Empieza HOY ${fecha}`;
     }
-    // deadlineKind === "Ticketing"
-    return isOverdue ? `Venció emitir el ${fecha}` : `⏰ Emitir antes del ${fecha}`;
+    // Singular: "en 1 día", plural: "en N días"
+    const diasTexto = daysLeft === 1 ? "en 1 día" : `en ${daysLeft} días`;
+    return `⏰ Empieza el ${fecha} (${diasTexto})`;
 }
 
 // ─── Etiqueta de sección (título chico estilo "FECHAS LÍMITE") ────────────────
@@ -57,57 +66,91 @@ function TituloSeccion({ children }) {
     );
 }
 
-// ─── Sección 1: Fechas límite ─────────────────────────────────────────────────
+// ─── Sección 1: Próximos inicios ─────────────────────────────────────────────
 
 /**
- * Lista de deadlines de seña/emisión.
- * Solo se renderiza si hay items. Ordenada por deadline ascendente (vencidas quedan arriba).
+ * Lista de reservas por arrancar pronto.
+ * El servidor ya ordena por firstStartDate ascendente; no hace falta sort local.
+ * Solo se renderiza si hay items visibles (no descartados optimistamente).
+ *
+ * Props:
+ *   items              — upcomingStarts[] del contexto, ya filtrados por descartadasOptimistas
+ *   onClose            — cierra el panel (se llama al hacer clic en el Link)
+ *   onDescartar        — callback(reservaPublicId) para el botón "Listo"
+ *   descartando        — Set de publicIds cuyo botón ya está disabled (POST en vuelo)
  */
-function SeccionFechasLimite({ deadlines, onClose }) {
-    if (!deadlines || deadlines.length === 0) return null;
-
-    // Ordenar por deadline ascendente para que las vencidas queden arriba (fecha menor = más vieja)
-    const ordenadas = [...deadlines].sort((a, b) => {
-        const fa = (a.deadline || "").split("T")[0];
-        const fb = (b.deadline || "").split("T")[0];
-        if (fa < fb) return -1;
-        if (fa > fb) return 1;
-        return 0;
-    });
+function SeccionProximosInicios({ items, onClose, onDescartar, descartando }) {
+    if (!items || items.length === 0) return null;
 
     return (
-        <div data-testid="bell-deadlines-section">
-            <TituloSeccion>Fechas límite</TituloSeccion>
+        <div data-testid="bell-upcoming-section">
+            <TituloSeccion>Próximos inicios</TituloSeccion>
             <ul role="list" className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                {ordenadas.map((item, idx) => {
-                    const linea1 = textoDeadline(item.deadlineKind, item.deadline, item.isOverdue);
-                    const colorLinea1 = item.isOverdue
+                {items.map((item) => {
+                    // Decidimos color según daysLeft: 0 = rojo, >= 1 = ámbar
+                    const esHoy = item.daysLeft === 0;
+                    const colorLinea1 = esHoy
                         ? "text-red-600 dark:text-red-400"
                         : "text-amber-600 dark:text-amber-400";
-                    const colorPunto = item.isOverdue ? "bg-red-500" : "bg-amber-500";
+                    const colorPunto = esHoy ? "bg-red-500" : "bg-amber-500";
+
+                    const linea1 = textoProximoInicio(item.daysLeft, item.firstStartDate);
+
+                    // Línea 2: "Reserva {numero} · {titular}"
+                    // Fallback holderName null → name; ambos vacíos → solo el número sin separador.
+                    const titular = item.holderName || item.name || "";
+                    const linea2 = titular
+                        ? `Reserva ${item.numeroReserva} · ${titular}`
+                        : `Reserva ${item.numeroReserva}`;
+
+                    const estaDescartando = descartando.has(item.reservaPublicId);
 
                     return (
-                        <li key={`deadline-${item.reservaPublicId}-${item.deadlineKind}-${item.deadline}-${idx}`} role="listitem">
-                            <Link
-                                to={`/reservas/${item.reservaPublicId}`}
-                                onClick={onClose}
-                                className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                                data-testid="bell-deadline-item"
-                                data-overdue={item.isOverdue ? "true" : "false"}
-                            >
-                                {/* Punto de color indicador de urgencia */}
-                                <div className="mt-1 flex-shrink-0">
-                                    <div className={`h-2 w-2 rounded-full ${colorPunto}`} />
-                                </div>
-                                <div className="flex-1 space-y-0.5">
-                                    <p className={`text-sm font-semibold ${colorLinea1}`}>
-                                        {linea1}
-                                    </p>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                                        {item.serviceLabel} · Reserva {item.numeroReserva}
-                                    </p>
-                                </div>
-                            </Link>
+                        <li
+                            key={item.reservaPublicId}
+                            role="listitem"
+                            data-testid="bell-upcoming-item"
+                            data-today={esHoy ? "true" : "false"}
+                        >
+                            {/* Fila flex: zona clickeable (Link) + botón "Listo" separado.
+                                NO anidamos el botón dentro del Link porque un button dentro
+                                de un anchor es HTML inválido y rompe el click en algunos browsers. */}
+                            <div className="flex items-start gap-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                {/* Zona izquierda: navega a la reserva y cierra el panel */}
+                                <Link
+                                    to={`/reservas/${item.reservaPublicId}`}
+                                    onClick={onClose}
+                                    className="flex items-start gap-3 px-4 py-3 flex-1 min-w-0"
+                                >
+                                    {/* Punto de color indicador de urgencia */}
+                                    <div className="mt-1 flex-shrink-0">
+                                        <div className={`h-2 w-2 rounded-full ${colorPunto}`} />
+                                    </div>
+                                    <div className="flex-1 min-w-0 space-y-0.5">
+                                        <p className={`text-sm font-semibold ${colorLinea1}`}>
+                                            {linea1}
+                                        </p>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                            {linea2}
+                                        </p>
+                                    </div>
+                                </Link>
+
+                                {/* Botón "Listo": descarte optimista. Siempre visible, a la derecha.
+                                    Decisión UX: permite descartar sin navegar ni cerrar el panel.
+                                    Estilo: neutro/slate, mismo patrón que los botones de borde
+                                    del sistema (border + hover gris). NO usa color ámbar. */}
+                                <button
+                                    type="button"
+                                    onClick={() => onDescartar(item.reservaPublicId)}
+                                    disabled={estaDescartando}
+                                    aria-label={`Listo: reserva ${item.numeroReserva}`}
+                                    data-testid="bell-upcoming-dismiss"
+                                    className="self-center mr-3 px-2.5 py-1 text-[11px] font-medium border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap flex-shrink-0"
+                                >
+                                    Listo
+                                </button>
+                            </div>
                         </li>
                     );
                 })}
@@ -194,19 +237,91 @@ export default function NotificationBell() {
     const containerRef = useRef(null);
     const connectionRef = useRef(null);
 
-    // Consumimos alertas del contexto compartido (serviceDeadlines + costsToConfirm).
-    // El contexto ya hace el fetch y el poll por su cuenta.
-    const { alerts } = useAlerts();
+    // Set local de publicIds descartados optimistamente.
+    // Al hacer clic en "Listo", el ítem desaparece al instante del panel y del badge.
+    // Si el POST falla, el id se saca del set y el ítem reaparece con el próximo refresh.
+    const [descartadasOptimistas, setDescartadasOptimistas] = useState(new Set());
+    // Set de publicIds cuyo botón "Listo" está en vuelo (disabled mientras el POST va).
+    const [descartando, setDescartando] = useState(new Set());
 
-    const serviceDeadlines = alerts?.serviceDeadlines || [];
+    // Consumimos alertas del contexto compartido (upcomingStarts + costsToConfirm).
+    // El contexto ya hace el fetch y el poll por su cuenta.
+    const { alerts, refreshAlerts } = useAlerts();
+
+    const upcomingStarts = alerts?.upcomingStarts || [];
     const costsToConfirm = alerts?.costsToConfirm || [];
 
-    // Las secciones nuevas están activas (hay items para mostrar)
-    const hayAvisosNuevos = serviceDeadlines.length > 0 || costsToConfirm.length > 0;
+    // Poda del Set de descartados optimistas: cada vez que el servidor devuelve un nuevo
+    // payload de alertas, eliminamos del Set los ids que el server ya no incluye.
+    //
+    // Por qué: si la fecha del primer servicio cambia y el server re-incluye un ítem
+    // que el usuario había descartado, este cliente lo filtraría para siempre hasta recargar.
+    // Con la poda, el id permanece en el Set solo mientras el server SIGUE devolviendo ese
+    // ítem (cubre la ventana POST → refresh), y se libera cuando el server lo saca.
+    //
+    // Micro-carrera aceptada: si hay un poll en vuelo cuando se ejecuta la poda, el ítem
+    // puede reaparecer brevemente en el próximo ciclo. La misma staleness que tiene todo
+    // el contexto; no vale la pena resolverla con coordinación adicional.
+    //
+    // useEffect con [alerts]: corre cada vez que el contexto trae un nuevo payload del server.
+    useEffect(() => {
+        setDescartadasOptimistas((prev) => {
+            if (prev.size === 0) return prev;
+            const idsActuales = new Set(upcomingStarts.map((i) => i.reservaPublicId));
+            const next = new Set([...prev].filter((id) => idsActuales.has(id)));
+            // Solo actualizamos el estado si el Set efectivamente cambió para evitar re-renders
+            return next.size === prev.size ? prev : next;
+        });
+    }, [alerts]); // eslint-disable-line react-hooks/exhaustive-deps -- `upcomingStarts` deriva de `alerts`; depender de `alerts` es correcto
 
-    // Badge = deadlines + costsToConfirm + notificaciones sin leer.
+    // Filtramos los descartados optimistamente para el render y el badge
+    const upcomingStartsVisibles = upcomingStarts.filter(
+        (item) => !descartadasOptimistas.has(item.reservaPublicId)
+    );
+
+    // Hay avisos activos si alguna sección tiene items (sin contar notificaciones del sistema)
+    const hayAvisosNuevos = upcomingStartsVisibles.length > 0 || costsToConfirm.length > 0;
+
+    // Badge = próximos inicios visibles + costsToConfirm + notificaciones sin leer.
     // Decisión del dueño: urgentTrips y supplierDebts NO se suman (viven en Cobranzas).
-    const totalBadge = serviceDeadlines.length + costsToConfirm.length + unreadCount;
+    const totalBadge = upcomingStartsVisibles.length + costsToConfirm.length + unreadCount;
+
+    /**
+     * Handler del botón "Listo" de cada ítem de próximo inicio.
+     *
+     * Flujo optimista (decisión UX: respuesta inmediata):
+     *   1. Deshabilita el botón y oculta el ítem al instante.
+     *   2. Hace el POST dismiss al backend.
+     *   3. Si tiene éxito: llama refreshAlerts() para sincronizar con el server.
+     *   4. Si falla: saca el id del set de descartados → el ítem reaparece con el refresh.
+     *      Sin cartel de error (el ítem reaparece solo, que es señal suficiente).
+     */
+    const handleDescartar = async (reservaPublicId) => {
+        // 1. Efecto inmediato: ocultar el ítem y deshabilitar el botón
+        setDescartadasOptimistas((prev) => new Set([...prev, reservaPublicId]));
+        setDescartando((prev) => new Set([...prev, reservaPublicId]));
+
+        try {
+            // 2. Llamada al backend (204 idempotente)
+            await api.post(`/alerts/upcoming-starts/${reservaPublicId}/dismiss`);
+            // 3. Sincronizamos para que el poll/contexto quede limpio
+            refreshAlerts();
+        } catch {
+            // 4. Si falla: revertimos el descarte optimista → el ítem reaparece
+            setDescartadasOptimistas((prev) => {
+                const next = new Set(prev);
+                next.delete(reservaPublicId);
+                return next;
+            });
+        } finally {
+            // Siempre liberamos el estado "descartando" para que el botón no quede stuck
+            setDescartando((prev) => {
+                const next = new Set(prev);
+                next.delete(reservaPublicId);
+                return next;
+            });
+        }
+    };
 
     // Initial load de notificaciones del sistema (separadas del contexto de alertas)
     useEffect(() => {
@@ -310,7 +425,7 @@ export default function NotificationBell() {
                 data-testid="notification-bell-button"
             >
                 <Bell className="h-5 w-5" />
-                {/* Badge: suma deadlines + costos + notificaciones sin leer */}
+                {/* Badge: suma próximos inicios visibles + costos + notificaciones sin leer */}
                 {totalBadge > 0 && (
                     <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900 animate-pulse">
                         {totalBadge > 9 ? "9+" : totalBadge}
@@ -334,14 +449,19 @@ export default function NotificationBell() {
                     </div>
 
                     <div className="max-h-[60vh] overflow-y-auto">
-                        {/* Sección 1: Fechas límite (solo si hay items) */}
-                        <SeccionFechasLimite deadlines={serviceDeadlines} onClose={cerrarPanel} />
+                        {/* Sección 1: Próximos inicios (solo si hay items visibles) */}
+                        <SeccionProximosInicios
+                            items={upcomingStartsVisibles}
+                            onClose={cerrarPanel}
+                            onDescartar={handleDescartar}
+                            descartando={descartando}
+                        />
 
                         {/* Sección 2: Costos a confirmar (solo si hay items) */}
                         <SeccionCostosAConfirmar costos={costsToConfirm} onClose={cerrarPanel} />
 
                         {/* Sección 3: Notificaciones del sistema.
-                            Si hay avisos nuevos (deadlines o costos), agregamos el título de sección
+                            Si hay avisos nuevos (próximos inicios o costos), agregamos el título de sección
                             para distinguir visualmente las notificaciones del sistema. Si no hay nada
                             nuevo, el panel queda exactamente como antes (sin título extra). */}
                         {hayAvisosNuevos && notifications.length > 0 && (

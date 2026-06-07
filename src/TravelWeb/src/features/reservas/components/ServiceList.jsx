@@ -5,12 +5,15 @@
  *   - Desktop: tabla con columnas (Tipo, Descripción, Fecha/Estancia, Estado, Costo, Precio Venta, [Avisos], Acciones)
  *   - Mobile: tarjetas apiladas con la información clave
  *
- * Feature gateada por flag EnableCatalogFindOrCreate:
- *   - Flag OFF: render IDÉNTICO al anterior (ni una clase distinta, ni el gate de permisos cambia)
- *   - Flag ON: agrega columna "Avisos" (deadline), pill violeta "creado en venta",
- *              pill ámbar "A confirmar" y botón "Confirmar costo" (este último solo para cobranzas.see_cost)
+ * Columna "Avisos" (UpcomingStartPill):
+ *   Gateada por la prop isServiceDeadlineAlertsEnabled (flag EnableServiceDeadlineAlerts del backend).
+ *   Decisión del dueño: catálogo OFF + avisos ON → la columna APARECE igual.
+ *   Son dos flags independientes y la columna solo depende del flag de avisos.
  *
- * El gate de costo (quién ve el costo neto) cambia según el flag:
+ * Pill violeta "creado en venta":
+ *   Sigue gateada por isCatalogFindOrCreateEnabled (sin cambio).
+ *
+ * El gate de costo (quién ve el costo neto) cambia según el flag catálogo:
  *   - Flag OFF: isAdmin() (comportamiento original)
  *   - Flag ON:  hasPermission("cobranzas.see_cost") (admin sigue pasando porque admin tiene todo)
  */
@@ -22,7 +25,7 @@ import {
     SERVICE_RECORD_KIND,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
-import { DeadlinePill } from "./DeadlinePill";
+import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
 
 /**
@@ -81,15 +84,17 @@ function PillCreadoEnVenta({ service }) {
 
 /**
  * Props:
- *   services                    — lista de servicios normalizados
- *   serviceCollectionErrors     — objeto { tipoKey: mensajeError } para mostrar errores de carga
- *   onAddService                — callback para agregar un servicio nuevo
- *   onEditService               — callback(service) para editar un servicio existente
- *   onDeleteService             — callback(service) para eliminar un servicio
- *   reservaId                   — publicId de la reserva (necesario para los endpoints confirm-cost)
- *   isCatalogFindOrCreateEnabled — flag del servidor; cuando es false, el render es IDÉNTICO al original
- *   onServiceConfirmed          — callback(servicioActualizado) cuando confirm-cost tiene éxito;
- *                                  el padre actualiza el estado de la reserva con el DTO devuelto
+ *   services                        — lista de servicios normalizados
+ *   serviceCollectionErrors         — objeto { tipoKey: mensajeError } para mostrar errores de carga
+ *   onAddService                    — callback para agregar un servicio nuevo
+ *   onEditService                   — callback(service) para editar un servicio existente
+ *   onDeleteService                 — callback(service) para eliminar un servicio
+ *   reservaId                       — publicId de la reserva (necesario para los endpoints confirm-cost)
+ *   isCatalogFindOrCreateEnabled    — flag catálogo: cuando es false, el render es IDÉNTICO al original
+ *   isServiceDeadlineAlertsEnabled  — flag avisos: cuando es true, muestra columna "Avisos" (UpcomingStartPill).
+ *                                     Es INDEPENDIENTE del flag de catálogo (decisión del dueño).
+ *   windowDays                      — int|null, días de ventana para las pills (upcomingStartsWindowDays del contexto)
+ *   onServiceConfirmed              — callback(servicioActualizado) cuando confirm-cost tiene éxito
  */
 export function ServiceList({
     services,
@@ -99,6 +104,8 @@ export function ServiceList({
     onDeleteService,
     reservaId,
     isCatalogFindOrCreateEnabled = false,
+    isServiceDeadlineAlertsEnabled = false,
+    windowDays = null,
     onServiceConfirmed,
 }) {
     // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
@@ -171,8 +178,9 @@ export function ServiceList({
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
                                     {mostrarCosto && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Costo Neto</th>}
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Precio Venta</th>
-                                    {/* Columna Avisos: solo existe con flag ON. Con flag OFF ni el th se renderiza. */}
-                                    {isCatalogFindOrCreateEnabled && (
+                                    {/* Columna Avisos: aparece cuando enableServiceDeadlineAlerts está ON.
+                                        Es independiente del flag de catálogo (decisión del dueño). */}
+                                    {isServiceDeadlineAlertsEnabled && (
                                         <th className="pb-3 text-xs uppercase text-slate-400 font-medium pr-4">Avisos</th>
                                     )}
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Acciones</th>
@@ -283,10 +291,11 @@ export function ServiceList({
                                                 ${(svc.salePrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                             </td>
 
-                                            {/* Columna Avisos: solo con flag ON. Traslado/Asistencia/Genérico muestran "—" */}
-                                            {isCatalogFindOrCreateEnabled && (
+                                            {/* Columna Avisos: solo con flag enableServiceDeadlineAlerts ON.
+                                                Usa UpcomingStartPill (fecha de inicio del servicio). */}
+                                            {isServiceDeadlineAlertsEnabled && (
                                                 <td className="py-4 align-middle pr-4 whitespace-nowrap">
-                                                    <DeadlinePill service={svc} mostrarGuion={true} />
+                                                    <UpcomingStartPill service={svc} windowDays={windowDays} mostrarGuion={true} />
                                                 </td>
                                             )}
 
@@ -315,17 +324,17 @@ export function ServiceList({
                             const displayType = svc.displayType || svc._type || 'Servicio';
                             const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
 
-                            // Pills de avisos para mobile: violeta + deadline (si alguna aplica)
-                            // Solo con flag ON; sin deadline no hay "—" en mobile (solo omitimos)
+                            // Pills de avisos para mobile: violeta (catálogo) + upcoming start (avisos).
+                            // Sin pill no hay "—" en mobile (solo omitimos la línea entera).
                             const tienePillCreadoEnVenta = isCatalogFindOrCreateEnabled && svc.productCreatedInSale;
-                            // Decidimos si hay una deadline para mostrar en mobile (misma lógica que DeadlinePill)
-                            const esHotelOPaquete = svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE;
-                            const tieneDeadlineHotelOPaquete = esHotelOPaquete && Boolean(svc.operatorPaymentDeadline);
-                            const tieneDeadlineVuelo = svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && Boolean(svc.ticketingDeadline);
-                            const tieneDeadlineMobile = isCatalogFindOrCreateEnabled &&
+                            // Pill de próximo inicio: solo con flag avisos ON, sin cancelado,
+                            // Y con la fecha DENTRO de la ventana de alerta (no solo que exista).
+                            // Si la fecha está fuera de ventana, UpcomingStartPill devuelve null en mobile
+                            // → renderizar el div vacío produciría márgenes con nada adentro.
+                            const tieneUpcomingPillMobile = isServiceDeadlineAlertsEnabled &&
                                 svc.workflowStatus !== "Cancelado" &&
-                                (tieneDeadlineHotelOPaquete || tieneDeadlineVuelo);
-                            const mostrarLineaPills = tienePillCreadoEnVenta || tieneDeadlineMobile;
+                                estaEnVentana(svc.date, windowDays);
+                            const mostrarLineaPills = tienePillCreadoEnVenta || tieneUpcomingPillMobile;
 
                             return (
                                 <div key={serviceKey} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
@@ -349,11 +358,13 @@ export function ServiceList({
                                     </div>
                                     <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>
 
-                                    {/* Línea de pills (violeta + deadline): solo si hay al menos una pill */}
+                                    {/* Línea de pills (violeta + upcoming start): solo si hay al menos una pill */}
                                     {mostrarLineaPills && (
                                         <div className="flex flex-wrap gap-2 mt-1 mb-1">
                                             {tienePillCreadoEnVenta && <PillCreadoEnVenta service={svc} />}
-                                            {tieneDeadlineMobile && <DeadlinePill service={svc} mostrarGuion={false} />}
+                                            {tieneUpcomingPillMobile && (
+                                                <UpcomingStartPill service={svc} windowDays={windowDays} mostrarGuion={false} />
+                                            )}
                                         </div>
                                     )}
 

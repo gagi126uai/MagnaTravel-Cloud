@@ -388,22 +388,10 @@ public partial class BookingService : IBookingService
     }
 
     /// <summary>
-    /// ADR-017 F1.4 (§2.2, cierra M7): normaliza una fecha limite (deadline) a fecha "de pared" a medianoche
-    /// con <see cref="DateTimeKind.Utc"/>, SIN convertir el instante (mismo criterio que
-    /// <see cref="NormalizeAirportWallClock"/>). El deadline es date-only por convencion: descartamos la hora
-    /// (<c>.Date</c>) y marcamos Utc para que Npgsql lo acepte en la columna <c>timestamp with time zone</c>
-    /// sin correr el dia. <c>null</c> se preserva como <c>null</c> (sin deadline).
-    /// </summary>
-    private static DateTime? NormalizeDeadlineDate(DateTime? deadline)
-        => deadline.HasValue
-            ? DateTime.SpecifyKind(deadline.Value.Date, DateTimeKind.Utc)
-            : (DateTime?)null;
-
-    /// <summary>
     /// Bug en vivo 2026-06-06 (ficha inline): normaliza una fecha-calendario del request (date-only:
     /// check-in/check-out de hotel, inicio/fin de paquete, vigencia de asistencia) a medianoche con
     /// <see cref="DateTimeKind.Utc"/>, SIN convertir el instante — el mismo contrato "fecha de pared
-    /// disfrazada de Utc" de <see cref="NormalizeDeadlineDate"/> y <see cref="NormalizeAirportWallClock"/>.
+    /// disfrazada de Utc" de <see cref="NormalizeAirportWallClock"/>.
     ///
     /// POR QUE existe: la ficha inline manda el value crudo del input date ("2026-08-12") y el binder
     /// JSON lo deserializa con Kind=Unspecified. Npgsql (sin EnableLegacyTimestampBehavior) EXIGE
@@ -472,10 +460,6 @@ public partial class BookingService : IBookingService
         // que el voucher la muestre sin corrimiento. Ver NormalizeAirportWallClock.
         flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
         flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
-
-        // ADR-017 F1.4 (§2.2): el deadline lo ignora el map; lo asignamos aca normalizado. En el alta no
-        // hay valor previo que clobberear, asi que se persiste lo que vino (null = sin deadline).
-        flight.TicketingDeadline = NormalizeDeadlineDate(req.TicketingDeadline);
 
         // Snapshot desde tarifario: si viene RateId, congelamos precios del tarifario
         var rate = await GetRateAsync(req.RateId, ct);
@@ -560,14 +544,6 @@ public partial class BookingService : IBookingService
         // la cabina en cada edicion (round-trip), asi que null/vacio significa "el vendedor la dejo en
         // Sin especificar" y debe persistirse null (es un borrado legitimo, no un campo no enviado).
         flight.CabinClass = NormalizeOptionalText(flight.CabinClass);
-
-        // ADR-017 F1.4 (§2.2, R12 — anti-clobber): el map IGNORA TicketingDeadline, asi que tras el map el
-        // valor persistido sigue intacto. Solo lo tocamos si el request DECLARA que trae el bloque de
-        // deadlines (ficha nueva). El modal viejo manda DeadlinesSpecified=false y el deadline se preserva;
-        // sin este discriminador, "no lo mande" y "borralo" (null) serian indistinguibles y una edicion vieja
-        // borraria el deadline en silencio.
-        if (req.DeadlinesSpecified)
-            flight.TicketingDeadline = NormalizeDeadlineDate(req.TicketingDeadline);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (flight.NetCost, flight.Tax, flight.Commission) = await ResolveUpdateCostFieldsAsync(
@@ -725,9 +701,6 @@ public partial class BookingService : IBookingService
         hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
         hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
 
-        // ADR-017 F1.4 (§2.2): el deadline lo ignora el map; lo asignamos normalizado (null = sin deadline).
-        hotel.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
-
         if (rate != null)
         {
             ApplyHotelRateSnapshot(hotel, rate);
@@ -814,11 +787,6 @@ public partial class BookingService : IBookingService
         // (Kind=Unspecified) y Npgsql las rechaza en timestamptz. Ver NormalizeCalendarDate.
         hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
         hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
-
-        // ADR-017 F1.4 (§2.2, R12 — anti-clobber): ver UpdateFlightAsync. El map ignora el deadline; solo lo
-        // tocamos si el request declara el bloque (DeadlinesSpecified). El modal viejo lo preserva.
-        if (req.DeadlinesSpecified)
-            hotel.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         // (ApplyHotelRateSnapshot, mas abajo, no toca precios en Hotel: solo atributos.)
@@ -973,9 +941,6 @@ public partial class BookingService : IBookingService
         package.StartDate = NormalizeCalendarDate(package.StartDate);
         package.EndDate = NormalizeCalendarDate(package.EndDate);
 
-        // ADR-017 F1.4 (§2.2): el deadline lo ignora el map; lo asignamos normalizado (null = sin deadline).
-        package.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
-
         // Snapshot desde tarifario
         var rate = await GetRateAsync(req.RateId, ct);
         if (rate != null)
@@ -1049,11 +1014,6 @@ public partial class BookingService : IBookingService
         // ficha inline son rechazadas por Npgsql en timestamptz. Ver NormalizeCalendarDate.
         package.StartDate = NormalizeCalendarDate(package.StartDate);
         package.EndDate = NormalizeCalendarDate(package.EndDate);
-
-        // ADR-017 F1.4 (§2.2, R12 — anti-clobber): ver UpdateFlightAsync. El map ignora el deadline; solo lo
-        // tocamos si el request declara el bloque (DeadlinesSpecified). El modal viejo lo preserva.
-        if (req.DeadlinesSpecified)
-            package.OperatorPaymentDeadline = NormalizeDeadlineDate(req.OperatorPaymentDeadline);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (package.NetCost, package.Tax, package.Commission) = await ResolveUpdateCostFieldsAsync(

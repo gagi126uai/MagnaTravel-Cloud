@@ -111,14 +111,9 @@ public class FlightSegment : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
 
-    /// <summary>
-    /// ADR-017 F1.1 (2026-06-05): fecha limite de EMISION del ticket. Aditivo, nullable (filas
-    /// existentes en null). El deadline conceptual es del PNR, pero la entidad es por segmento: la
-    /// ficha de carga (F2) escribe el mismo valor en los segmentos de la operacion y la alerta (F3)
-    /// agrupa por (ReservaId, PNR) con MIN(TicketingDeadline). En F1.1 nadie lo escribe (persistencia
-    /// gobernada por DeadlinesSpecified = F1.4). Date-only "de pared".
-    /// </summary>
-    public DateTime? TicketingDeadline { get; set; }
+    // (ADR-019, 2026-06-06: aca vivia TicketingDeadline — fecha limite manual de emision de ADR-017
+    // F1.4, nunca prendida en prod. La reemplazo el aviso automatico "Proximos inicios"; columna
+    // dropeada en la migracion Adr019_M1.)
 
     /// <summary>
     /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).

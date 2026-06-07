@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -69,7 +70,7 @@ public class AlertServiceCallerGatingTests
     public async Task GetAlertsAsync_NonAdmin_ReturnsEmptyBucketsWithSameShape()
     {
         await using var context = await SeedContextAsync();
-        var service = new AlertService(context, SettingsMock().Object);
+        var service = new AlertService(context, SettingsMock().Object, NullLogger<AlertService>.Instance);
 
         dynamic result = await service.GetAlertsAsync(
             new AlertCallerContext("vendedor-test", IsAdmin: false), CancellationToken.None);
@@ -84,7 +85,7 @@ public class AlertServiceCallerGatingTests
     public async Task GetAlertsAsync_Admin_ReturnsFinancialBuckets()
     {
         await using var context = await SeedContextAsync();
-        var service = new AlertService(context, SettingsMock().Object);
+        var service = new AlertService(context, SettingsMock().Object, NullLogger<AlertService>.Instance);
 
         dynamic result = await service.GetAlertsAsync(
             new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);
@@ -100,7 +101,7 @@ public class AlertServiceCallerGatingTests
         // Garantia de "misma forma": el front actual (y el de F3) no debe romperse
         // segun quien llame. Comparamos los NOMBRES de propiedades de ambos payloads.
         await using var context = await SeedContextAsync();
-        var service = new AlertService(context, SettingsMock().Object);
+        var service = new AlertService(context, SettingsMock().Object, NullLogger<AlertService>.Instance);
 
         object adminPayload = await service.GetAlertsAsync(
             new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);

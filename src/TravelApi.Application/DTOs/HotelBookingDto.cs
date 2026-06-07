@@ -32,18 +32,12 @@ public class HotelBookingDto
     /// </summary>
     public string? Currency { get; set; }
     /// <summary>
-    /// ADR-017 F1.4 (§2.5): fecha limite de seña/pago al operador (date-only, null = sin fecha). Se expone
-    /// para que la fila/ficha pinte la etiqueta de vencimiento en F2; el dato debe viajar aunque todavia no
-    /// haya UI. NO es un dato de costo.
-    /// </summary>
-    public DateTime? OperatorPaymentDeadline { get; set; }
-    /// <summary>
     /// ADR-017 (pill ambar "costo a confirmar", D7): el costo de este servicio quedo pendiente de
     /// confirmacion (producto nuevo sin costo conocido o costo de referencia viejo). SEGURIDAD: es una
     /// MARCA de costo — para callers sin cobranzas.see_cost se enmascara a false (guia UX linea 81:
     /// quien no ve costos no ve montos NI marcas de costo). CostToConfirmReason NO se expone (interno).
-    /// Con flag EnableCatalogFindOrCreate OFF nadie la setea -> false (mismo patron aditivo que
-    /// OperatorPaymentDeadline en F1.4: el campo viaja siempre, el valor es neutro con flag OFF).
+    /// Con flag EnableCatalogFindOrCreate OFF nadie la setea -> false (patron aditivo: el campo viaja
+    /// siempre, el valor es neutro con flag OFF).
     /// </summary>
     public bool CostToConfirm { get; set; }
     /// <summary>

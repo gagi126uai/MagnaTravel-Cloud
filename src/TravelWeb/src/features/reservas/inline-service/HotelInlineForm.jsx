@@ -17,7 +17,7 @@
  * Footer: "Venta $X · Ganás $Y  + Más detalles" | "Cancelar" + "Guardar"
  *
  * Detrás de "+ Más detalles" (plegado por defecto):
- *   Confirmación del operador · Fecha límite de seña · Dirección
+ *   Confirmación del operador · Dirección
  *
  * Por qué Régimen y Habitación están a la vista y son obligatorios:
  *   CreateHotelRequest / UpdateHotelRequest exigen string RoomType y string MealPlan
@@ -167,10 +167,11 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
     const ganancia = canSeeCost && costoTotal !== null ? redondearDinero(ventaTotal - costoTotal) : null;
 
     // "Más detalles" plegado por defecto. Se abre automáticamente si ya hay datos
-    // (por ejemplo, al editar un hotel que ya tiene confirmación cargada).
+    // (por ejemplo, al editar un hotel que ya tiene confirmación o dirección cargada).
     // Régimen y Tipo de habitación ya NO están aquí: subieron a la vista principal.
+    // operatorPaymentDeadline NO se chequea: el campo fue eliminado en F2 y siempre es undefined.
     const tieneDetallesExistentes = Boolean(
-        form.confirmationNumber || form.operatorPaymentDeadline || form.address
+        form.confirmationNumber || form.address
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -550,19 +551,9 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                                 aria-label="Número de confirmación del operador"
                             />
                         </div>
-                        <div>
-                            {/* Fecha límite de seña/pago → se muestra como etiqueta ámbar en la fila guardada */}
-                            <label className={LABEL_BASE} htmlFor="hotel-fecha-limite">Fecha límite de seña/pago</label>
-                            <input
-                                id="hotel-fecha-limite"
-                                type="date"
-                                className={INPUT_NORMAL}
-                                value={form.operatorPaymentDeadline || ""}
-                                onChange={(event) => setForm((prev) => ({ ...prev, operatorPaymentDeadline: event.target.value }))}
-                                data-testid="hotel-fecha-limite"
-                                aria-label="Fecha límite de seña o pago al operador"
-                            />
-                        </div>
+                        {/* Campo "Fecha límite de seña/pago" eliminado en F2 (Próximos Inicios).
+                            El aviso de la campanita se calcula desde firstStartDate (backend),
+                            no desde un campo manual. Sin campo = sin dato viejo que desincronizar. */}
                         <div className="sm:col-span-2">
                             <label className={LABEL_BASE} htmlFor="hotel-direccion">Dirección</label>
                             <input

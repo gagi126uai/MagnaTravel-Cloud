@@ -48,10 +48,9 @@ function validarFormPaquete(form) {
  * Construye el payload del paquete para el backend.
  * ADR-018: la identidad del paquete va en packageName (campo pre-existente en PackageBooking).
  * endDate es OPCIONAL: si el form no lo tiene, se omite y el backend coalesce a startDate.
+ * F2: operatorPaymentDeadline eliminado del payload (el aviso viene del backend por firstStartDate).
  * Nota:
  *   - roomBase ("double"/"triple"/etc) → campo occupancyBase del backend (PackageBookingDto)
- *   - operatorPaymentDeadline → campo operatorPaymentDeadline del backend
- *   - ninguno de los dos va en notes
  */
 function buildPackagePayload(form, canSeeCost) {
     const pasajeros = Math.max(Number(form.passengers) || 1, 1);
@@ -73,8 +72,7 @@ function buildPackagePayload(form, canSeeCost) {
         confirmationNumber: form.fileNumber || null,
         // occupancyBase: "double", "triple", etc. — campo propio del backend
         occupancyBase: form.roomBase || null,
-        // operatorPaymentDeadline: fecha límite de pago al operador — campo propio del backend
-        operatorPaymentDeadline: form.operatorPaymentDeadline || null,
+        // operatorPaymentDeadline eliminado en F2 (Próximos Inicios)
     };
     if (form.rateId) {
         payload.rateId = form.rateId;
@@ -265,7 +263,7 @@ test("buildPackagePayload: sin permiso → netCost = 0", () => {
     assert.equal(payload.salePrice, 500000);
 });
 
-// ─── Tests: occupancyBase y operatorPaymentDeadline van como campos propios ───
+// ─── Tests: occupancyBase va como campo propio ────────────────────────────────
 
 test("buildPackagePayload: occupancyBase='double' llega como campo propio, no en notes", () => {
     // El select de "Base" usa value="double" (valor backend).
@@ -280,7 +278,6 @@ test("buildPackagePayload: occupancyBase='double' llega como campo propio, no en
         currency: "ARS",
         rateId: "rate-1",
         roomBase: "double",
-        operatorPaymentDeadline: "",
         newCatalogProduct: null,
     };
     const payload = buildPackagePayload(form, true);
@@ -300,14 +297,13 @@ test("buildPackagePayload: occupancyBase='triple' llega como campo propio", () =
         currency: "ARS",
         rateId: "rate-1",
         roomBase: "triple",
-        operatorPaymentDeadline: "",
         newCatalogProduct: null,
     };
     const payload = buildPackagePayload(form, true);
     assert.equal(payload.occupancyBase, "triple");
 });
 
-test("buildPackagePayload: roomBase vacío → occupancyBase null (no pisa notes con undefined)", () => {
+test("buildPackagePayload: roomBase vacío → occupancyBase null", () => {
     const form = {
         packageName: "Iguazú 7 noches",
         startDate: "2026-08-12",
@@ -318,15 +314,14 @@ test("buildPackagePayload: roomBase vacío → occupancyBase null (no pisa notes
         currency: "ARS",
         rateId: "rate-1",
         roomBase: "",
-        operatorPaymentDeadline: "",
         newCatalogProduct: null,
     };
     const payload = buildPackagePayload(form, true);
     assert.equal(payload.occupancyBase, null);
 });
 
-test("buildPackagePayload: operatorPaymentDeadline llega como campo propio, no como depositDeadline", () => {
-    // El backend espera operatorPaymentDeadline (no depositDeadline).
+test("buildPackagePayload: F2 → operatorPaymentDeadline no existe más en el payload (eliminado en F2)", () => {
+    // F2 (Próximos Inicios): el aviso de inicio se calcula en el backend desde firstStartDate.
     const form = {
         packageName: "Iguazú 7 noches",
         startDate: "2026-08-12",
@@ -337,31 +332,12 @@ test("buildPackagePayload: operatorPaymentDeadline llega como campo propio, no c
         currency: "ARS",
         rateId: "rate-1",
         roomBase: "",
-        operatorPaymentDeadline: "2026-07-20",
         newCatalogProduct: null,
     };
     const payload = buildPackagePayload(form, true);
-    assert.equal(payload.operatorPaymentDeadline, "2026-07-20");
-    // NO debe aparecer con el nombre viejo
+    // En F2 ya no va operatorPaymentDeadline en el payload
+    assert.equal(payload.operatorPaymentDeadline, undefined);
     assert.equal(payload.depositDeadline, undefined);
-});
-
-test("buildPackagePayload: operatorPaymentDeadline vacío → null", () => {
-    const form = {
-        packageName: "Iguazú 7 noches",
-        startDate: "2026-08-12",
-        passengers: 2,
-        supplierId: "supplier-1",
-        unitNetCost: 0,
-        unitSalePrice: 250000,
-        currency: "ARS",
-        rateId: "rate-1",
-        roomBase: "",
-        operatorPaymentDeadline: "",
-        newCatalogProduct: null,
-    };
-    const payload = buildPackagePayload(form, true);
-    assert.equal(payload.operatorPaymentDeadline, null);
 });
 
 // ─── Tests ADR-018: identidad en packageName, endDate opcional ────────────────
@@ -379,7 +355,7 @@ test("buildPackagePayload: ADR-018 — la identidad del paquete va en packageNam
         currency: "ARS",
         rateId: "rate-1",
         roomBase: "",
-        operatorPaymentDeadline: "",
+
         newCatalogProduct: null,
     };
     const payload = buildPackagePayload(form, true);
@@ -401,7 +377,7 @@ test("buildPackagePayload: ADR-018 — endDate ausente → null (no 500 por camp
         currency: "ARS",
         rateId: "rate-1",
         roomBase: "",
-        operatorPaymentDeadline: "",
+
         newCatalogProduct: null,
     };
     const payload = buildPackagePayload(form, true);
@@ -420,7 +396,7 @@ test("buildPackagePayload: ADR-018 — endDate presente → se serializa correct
         currency: "ARS",
         rateId: "rate-1",
         roomBase: "double",
-        operatorPaymentDeadline: "",
+
         newCatalogProduct: null,
     };
     const payload = buildPackagePayload(form, true);
@@ -449,7 +425,7 @@ function buildPackageFormInitial(serviceToEdit) {
         unitSalePrice: pasajeros > 0 ? String(redondearDinero((serviceToEdit.salePrice || 0) / pasajeros)) : "",
         currency: serviceToEdit.currency || "ARS",
         roomBase: serviceToEdit.occupancyBase || "",
-        operatorPaymentDeadline: (serviceToEdit.operatorPaymentDeadline || "").split("T")[0] || "",
+        // F2 Próximos Inicios: operatorPaymentDeadline eliminado del form inline (fecha queda en el backend).
         itinerary: serviceToEdit.itinerary || "",
         fileNumber: serviceToEdit.fileNumber || serviceToEdit.confirmationNumber || "",
         rateId: serviceToEdit.rateId || null,

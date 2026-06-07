@@ -29,8 +29,8 @@ namespace TravelApi.Tests.Unit;
 ///   - <c>ProductCreatedInSale</c>: derivado de <c>Rate.CreatedInSale</c> del producto vinculado.
 ///     NO es dato de costo: lo ven todos (NO se enmascara), incluso quien no ve costos.
 ///
-/// Patron de flag (mismo que OperatorPaymentDeadline en F1.4): los campos viajan SIEMPRE, sin gate;
-/// con EnableCatalogFindOrCreate OFF su valor es neutro (false) porque nada los escribe.
+/// Patron de flag: los campos viajan SIEMPRE, sin gate; con EnableCatalogFindOrCreate OFF su valor
+/// es neutro (false) porque nada los escribe.
 /// </summary>
 public class ServiceCatalogPillsDtoTests
 {
@@ -895,7 +895,7 @@ public class ServiceCatalogPillsDtoTests
         var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
         // Caso real: el producto nacio en venta mientras el flag estuvo ON; despues alguien apago el
         // flag y carga un servicio con ese rate desde el modal viejo. La derivacion es independiente
-        // del flag (refleja el dato persistido), igual que OperatorPaymentDeadline en F1.4.
+        // del flag (refleja el dato persistido).
         var rate = await SeedRateAsync(context, id: 50, createdInSale: true);
         var service = CreateServiceForUser(context, mapper, canSeeCost: true);
 

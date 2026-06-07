@@ -46,7 +46,7 @@ function validarFormVuelo(form) {
 /**
  * Construye el payload del vuelo para el backend.
  * ADR-018: la identidad del vuelo va en productName (no en description).
- * El estado interno usa emissionDeadline; el payload envía ticketingDeadline.
+ * F2: ticketingDeadline eliminado del payload (el aviso viene del backend por firstStartDate).
  */
 function buildFlightPayload(form, canSeeCost) {
     const payload = {
@@ -59,8 +59,7 @@ function buildFlightPayload(form, canSeeCost) {
         netCost: canSeeCost ? redondearDinero(Number(form.netCost) || 0) : 0,
         salePrice: redondearDinero(Number(form.salePrice) || 0),
         currency: form.currency || "ARS",
-        // El backend espera ticketingDeadline (no emissionDeadline)
-        ticketingDeadline: form.emissionDeadline || null,
+        // ticketingDeadline eliminado en F2 (Próximos Inicios)
         pnr: form.pnr || null,
         // cabinClass: null cuando no se eligió (""); el backend lo acepta como opcional.
         cabinClass: form.cabinClass || null,
@@ -338,12 +337,11 @@ test("buildFlightPayload: fecha de regreso vacía → arrivalTime null", () => {
     assert.equal(payload.arrivalTime, null);
 });
 
-// ─── Tests: nombre correcto del campo de deadline ────────────────────────────
+// ─── Tests: F2 — ticketingDeadline eliminado del payload ─────────────────────
 
-test("buildFlightPayload: el deadline va como ticketingDeadline, NO como emissionDeadline", () => {
-    // El backend (FlightSegmentDto) espera ticketingDeadline.
-    // El estado interno del form lo llama emissionDeadline, pero el payload
-    // debe renombrarlo al enviarlo.
+test("buildFlightPayload: F2 → ticketingDeadline no existe más en el payload (eliminado en F2)", () => {
+    // F2 (Próximos Inicios): el aviso de inicio se calcula en el backend desde firstStartDate.
+    // Los campos emissionDeadline/ticketingDeadline ya no se envían desde la ficha inline.
     const form = {
         routeName: "AEP–IGR LATAM",
         departureDate: "2026-08-12",
@@ -353,30 +351,12 @@ test("buildFlightPayload: el deadline va como ticketingDeadline, NO como emissio
         salePrice: 1800000,
         currency: "ARS",
         rateId: "rate-1",
-        emissionDeadline: "2026-07-15",
         newCatalogProduct: null,
     };
     const payload = buildFlightPayload(form, true);
-    // Debe aparecer con el nombre que el backend espera
-    assert.equal(payload.ticketingDeadline, "2026-07-15");
-    // NO debe aparecer con el nombre viejo
+    // En F2 ya no va ticketingDeadline en el payload
+    assert.equal(payload.ticketingDeadline, undefined);
     assert.equal(payload.emissionDeadline, undefined);
-});
-
-test("buildFlightPayload: emissionDeadline vacío → ticketingDeadline null", () => {
-    const form = {
-        routeName: "AEP–IGR",
-        departureDate: "2026-08-12",
-        supplierId: "supplier-1",
-        netCost: 0,
-        salePrice: 1800000,
-        currency: "ARS",
-        rateId: "rate-1",
-        emissionDeadline: "",
-        newCatalogProduct: null,
-    };
-    const payload = buildFlightPayload(form, true);
-    assert.equal(payload.ticketingDeadline, null);
 });
 
 // ─── Tests: cabinClass — desplegable opcional dentro de "Más detalles" ────────
@@ -392,7 +372,7 @@ test("buildFlightPayload: cabinClass elegida → va en payload con el valor exac
         salePrice: 1800000,
         currency: "ARS",
         rateId: "rate-1",
-        emissionDeadline: "",
+
         cabinClass: "Business",
         newCatalogProduct: null,
     };
@@ -411,7 +391,7 @@ test("buildFlightPayload: cabinClass 'Premium' (Premium Economy) va como 'Premiu
         salePrice: 1800000,
         currency: "ARS",
         rateId: "rate-1",
-        emissionDeadline: "",
+
         cabinClass: "Premium",
         newCatalogProduct: null,
     };
@@ -430,7 +410,7 @@ test("buildFlightPayload: cabinClass vacía → null en payload (Sin especificar
         salePrice: 1800000,
         currency: "ARS",
         rateId: "rate-1",
-        emissionDeadline: "",
+
         cabinClass: "",
         newCatalogProduct: null,
     };

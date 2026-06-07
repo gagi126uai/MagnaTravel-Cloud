@@ -508,13 +508,15 @@ public class OperationalFinanceSettings
     public bool EnableCatalogFindOrCreate { get; set; } = false;
 
     /// <summary>
-    /// ADR-017 (2026-06-05): feature flag de las alertas de fechas limite de servicio (seña/pago al
-    /// operador, emision de ticket). Independiente de <see cref="EnableCatalogFindOrCreate"/>: se puede
-    /// prender antes (riesgo mucho menor) para no acoplar el rollout.
+    /// Feature flag de los avisos "Proximos inicios" (UI: "Proximos inicios" — ADR-019, que reemplazo
+    /// a las fechas limite manuales de ADR-017 F1.4, nunca prendidas en prod). El nombre interno NO se
+    /// renombro a proposito (decision D7 del ADR: renombrar = migracion + churn por cero valor de
+    /// usuario). Independiente de <see cref="EnableCatalogFindOrCreate"/>.
     ///
-    /// <para><b>Con OFF (default)</b>: <c>/alerts</c> byte-identico al actual; la campanita sigue siendo
-    /// solo-admin como hoy. <b>Con ON</b> (F3): aparece el bucket <c>ServiceDeadlines</c> y el polling se
-    /// abre a los vendedores (cada uno ve los deadlines de SUS reservas). Sin dependencias cruzadas.</para>
+    /// <para><b>Con OFF (default)</b>: <c>/alerts</c> byte-identico al historico y el endpoint de
+    /// dismiss devuelve 404. <b>Con ON</b>: aparece el bucket <c>upcomingStarts</c> (un aviso POR
+    /// RESERVA vendida/confirmada cuyo primer servicio empieza dentro de la ventana) +
+    /// <c>upcomingStartsWindowDays</c>, y cada vendedor ve los avisos de SUS reservas.</para>
     ///
     /// <para>Default <c>false</c>. Editable desde el panel admin.</para>
     /// </summary>
@@ -529,12 +531,14 @@ public class OperationalFinanceSettings
     public int StaleCostReferenceDays { get; set; } = 60;
 
     /// <summary>
-    /// ADR-017 F1.4 (§2.5/§2.6, 2026-06-06): ventana en DIAS dentro de la cual una fecha limite de
-    /// servicio (seña/pago al operador, emision de ticket) entra al bucket de alertas <c>ServiceDeadlines</c>.
-    /// Un deadline se avisa cuando <c>deadline &lt;= hoy + ServiceDeadlineAlertDays</c> (los ya vencidos
-    /// tambien se avisan, con <c>isOverdue=true</c>). Default 7 (mismo orden que
-    /// <see cref="UpcomingUnpaidReservationAlertDays"/>). Solo importa con el flag
-    /// <see cref="EnableServiceDeadlineAlerts"/> ON; editable desde el panel admin.
+    /// Ventana en DIAS del aviso "Proximos inicios" (UI: "Dias de anticipacion del aviso" — ADR-019;
+    /// el nombre interno conserva el de ADR-017 F1.4 a proposito, ver
+    /// <see cref="EnableServiceDeadlineAlerts"/>). Una reserva avisa cuando su primer servicio empieza
+    /// dentro de <c>[hoy ... hoy + ServiceDeadlineAlertDays]</c> (bordes inclusivos; "hoy" en pared
+    /// Argentina). No hay estado "vencido": pasado el inicio el aviso desaparece solo. Default 7
+    /// (mismo orden que <see cref="UpcomingUnpaidReservationAlertDays"/>). Solo importa con el flag
+    /// ON; editable desde el panel admin y expuesto al front como <c>upcomingStartsWindowDays</c>
+    /// dentro del payload de <c>/alerts</c>.
     /// </summary>
     public int ServiceDeadlineAlertDays { get; set; } = 7;
 

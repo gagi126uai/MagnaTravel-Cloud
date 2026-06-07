@@ -330,6 +330,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<PartialCreditNoteReconciliation> PartialCreditNoteReconciliations => Set<PartialCreditNoteReconciliation>();
     public DbSet<PartialCreditNoteReconciliationReceipt> PartialCreditNoteReconciliationReceipts => Set<PartialCreditNoteReconciliationReceipt>();
 
+    // ADR-019 (2026-06-06): descartes manuales ("Listo") del aviso "Proximos inicios" de la
+    // campanita. Una fila por reserva (UNIQUE), borrado en cascada con la reserva. Configuracion
+    // (FK cascade + indice UNIQUE) en OnModelCreating.
+    public DbSet<UpcomingStartAlertDismissal> UpcomingStartAlertDismissals => Set<UpcomingStartAlertDismissal>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -1721,6 +1726,29 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(k => k.Key)
                   .IsUnique()
                   .HasDatabaseName("IX_ArcaIdempotencyKeys_Key");
+        });
+
+        // ===== ADR-019 (avisos "Proximos inicios", 2026-06-06) =====
+        // Descartes manuales del aviso por reserva (boton "Listo" de la campanita).
+        modelBuilder.Entity<UpcomingStartAlertDismissal>(entity =>
+        {
+            // Mismo ancho que el resto de las columnas de userId de auditoria (ej. Invoice.IssuedByUserId).
+            entity.Property(d => d.DismissedByUserId).IsRequired().HasMaxLength(450);
+
+            // Indice UNIQUE = la garantia "una fila por reserva" (descarte GLOBAL, Q1 del ADR).
+            // OJO (M4): esta garantia vive en POSTGRES; el provider InMemory de los tests NO aplica
+            // indices unicos, asi que la carrera de dos POST concurrentes se valida en los tests de
+            // integracion Postgres del VPS, no en la suite unit.
+            entity.HasIndex(d => d.ReservaId)
+                  .IsUnique()
+                  .HasDatabaseName("IX_UpcomingStartAlertDismissals_ReservaId");
+
+            // FK a Reservas (tabla legacy TravelFiles) SIN nav prop: borrar la reserva se lleva el
+            // descarte (CASCADE) — el descarte no tiene sentido sin su reserva.
+            entity.HasOne<Reserva>()
+                  .WithMany()
+                  .HasForeignKey(d => d.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ===== ADR-017 F1.1 (catalogo find-or-create, 2026-06-05) =====

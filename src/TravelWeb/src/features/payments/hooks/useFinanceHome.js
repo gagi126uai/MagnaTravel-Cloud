@@ -3,11 +3,12 @@ import { api } from "../../../api";
 import { showError } from "../../../alerts";
 
 // La API /alerts serializa camelCase (AlertsResponse.cs). Las claves deben coincidir exactamente.
-// serviceDeadlines y costsToConfirm se incluyen para no romper consumidores de fases siguientes.
+// Alineado con AlertsContext: upcomingStarts (F2) reemplaza serviceDeadlines (F1).
 const emptyAlerts = {
   urgentTrips: [],
   supplierDebts: [],
-  serviceDeadlines: [],
+  upcomingStarts: [],
+  upcomingStartsWindowDays: null,
   costsToConfirm: [],
   totalCount: 0,
 };

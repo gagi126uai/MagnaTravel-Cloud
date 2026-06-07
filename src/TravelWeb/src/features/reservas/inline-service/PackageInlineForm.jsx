@@ -3,7 +3,7 @@
  *
  * Campos a la vista SIEMPRE (sin revelado progresivo — guía UX ronda 1):
  *   Buscador del paquete · Operador · Salida · Fecha de fin · Pasajeros y base (doble/triple)
- *   Precio por persona · Costo · Venta · Moneda · Fecha límite de seña (a la vista)
+ *   Precio por persona · Costo · Venta · Moneda
  *
  * Más detalles (plegado):
  *   Qué incluye (texto libre) · Número de file del operador
@@ -393,22 +393,9 @@ export function PackageInlineForm({ form, setForm, suppliers, isEditing }) {
                 </div>
             </div>
 
-            {/* === FECHA LÍMITE DE SEÑA (a la vista — guía UX) === */}
-            <div>
-                <label className={LABEL_BASE} htmlFor="package-fecha-sena">
-                    <Calendar className="inline w-3 h-3 mr-1" />
-                    Fecha límite de seña
-                </label>
-                <input
-                    id="package-fecha-sena"
-                    type="date"
-                    className={INPUT_NORMAL}
-                    value={form.operatorPaymentDeadline || ""}
-                    onChange={(event) => setForm((prev) => ({ ...prev, operatorPaymentDeadline: event.target.value }))}
-                    data-testid="package-fecha-sena"
-                    aria-label="Fecha límite de seña al operador"
-                />
-            </div>
+            {/* Campo "Fecha límite de seña" eliminado en F2 (Próximos Inicios).
+                El aviso de la campanita se calcula desde firstStartDate (backend).
+                operatorPaymentDeadline NO se mantiene en el estado ni en el payload. */}
 
             {/* === MÁS DETALLES: Qué incluye · Nº de file === */}
             <div>

@@ -8,10 +8,13 @@ export function AlertsProvider({ children }) {
     // F3: quitamos el gate isAdmin() — ahora los vendedores también consultan /alerts.
     // El servidor filtra por vendedor/permiso y con flags OFF devuelve vacío.
     // UrgentTrips/SupplierDebts siguen siendo solo-admin en el backend (sin cambio).
+    // F2 (Próximos Inicios): serviceDeadlines renombrado a upcomingStarts + windowDays.
+    // El servidor devuelve upcomingStarts[] (uno por reserva) y upcomingStartsWindowDays (int|null).
     const [alerts, setAlerts] = useState({
         urgentTrips: [],
         supplierDebts: [],
-        serviceDeadlines: [],
+        upcomingStarts: [],
+        upcomingStartsWindowDays: null,
         costsToConfirm: [],
         totalCount: 0,
     });
@@ -26,7 +29,8 @@ export function AlertsProvider({ children }) {
             setAlerts(res || {
                 urgentTrips: [],
                 supplierDebts: [],
-                serviceDeadlines: [],
+                upcomingStarts: [],
+                upcomingStartsWindowDays: null,
                 costsToConfirm: [],
                 totalCount: 0,
             });

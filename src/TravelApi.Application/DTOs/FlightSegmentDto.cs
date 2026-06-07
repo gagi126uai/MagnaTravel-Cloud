@@ -50,11 +50,6 @@ public class FlightSegmentDto
     /// </summary>
     public string? Currency { get; set; }
     /// <summary>
-    /// ADR-017 F1.4 (§2.5): fecha limite de EMISION del ticket (date-only, null = sin fecha). Se expone para
-    /// que la fila/ficha pinte la etiqueta de vencimiento en F2. NO es un dato de costo.
-    /// </summary>
-    public DateTime? TicketingDeadline { get; set; }
-    /// <summary>
     /// ADR-017 (pill ambar "costo a confirmar", D7). Marca de costo: se enmascara a false para callers
     /// sin cobranzas.see_cost (ver comentario completo en <see cref="HotelBookingDto.CostToConfirm"/>).
     /// </summary>

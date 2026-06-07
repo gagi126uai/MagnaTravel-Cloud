@@ -3,7 +3,7 @@
  *
  * Campos a la vista SIEMPRE (sin revelado progresivo — guía UX ronda 1):
  *   Buscador de ruta/aerolínea · Operador/consolidador · Ida · Vuelta · Pasajeros
- *   Costo · Venta · Moneda · Fecha límite de emisión (a la vista, guía UX)
+ *   Costo · Venta · Moneda
  *
  * Más detalles (plegado):
  *   PNR · Números de ticket · Horarios y escalas · Equipaje
@@ -346,22 +346,9 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
                         <option value="USD">USD (dólares)</option>
                     </select>
                 </div>
-                <div>
-                    {/* Fecha límite de emisión: A LA VISTA (guía UX) — el sistema avisa cuando se acerca */}
-                    <label className={LABEL_BASE} htmlFor="flight-fecha-emision">
-                        <Calendar className="inline w-3 h-3 mr-1" />
-                        Límite de emisión
-                    </label>
-                    <input
-                        id="flight-fecha-emision"
-                        type="date"
-                        className={INPUT_NORMAL}
-                        value={form.emissionDeadline || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, emissionDeadline: event.target.value }))}
-                        data-testid="flight-fecha-emision"
-                        aria-label="Fecha límite de emisión del vuelo"
-                    />
-                </div>
+                {/* Campo "Límite de emisión" eliminado en F2 (Próximos Inicios).
+                    El aviso de la campanita se calcula desde firstStartDate (backend).
+                    emissionDeadline NO se mantiene en el estado ni en el payload. */}
             </div>
 
             {/* === MÁS DETALLES: PNR · Nº ticket · Horarios/escalas · Equipaje === */}

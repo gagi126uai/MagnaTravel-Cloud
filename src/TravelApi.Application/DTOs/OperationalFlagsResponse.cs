@@ -3,7 +3,7 @@ namespace TravelApi.Application.DTOs;
 /// <summary>
 /// Respuesta de <c>GET /api/settings/operational-flags</c>: SOLO los feature flags de
 /// comportamiento que el frontend necesita para decidir que UI montar (pestanas de reserva,
-/// selector de moneda, rama de Nota de Debito, buscador del catalogo, campanita de deadlines).
+/// selector de moneda, rama de Nota de Debito, buscador del catalogo, avisos de proximos inicios).
 ///
 /// <para><b>Por que existe</b> (bugfix 2026-06-06): el frontend leia los flags de
 /// <c>GET /afip/settings</c>, pero ese endpoint (a) esta gateado por el permiso
@@ -32,6 +32,6 @@ public class OperationalFlagsResponse
     /// <summary>Catalogo find-or-create desde la venta (ADR-017). Gobierna el buscador y la ficha inline del form de servicios.</summary>
     public bool EnableCatalogFindOrCreate { get; set; }
 
-    /// <summary>Alertas de fechas limite de servicio (ADR-017 F1.4/F3). Gobierna el bucket ServiceDeadlines de la campanita.</summary>
+    /// <summary>Avisos "Proximos inicios" (ADR-019). Gobierna el bucket upcomingStarts de la campanita y la columna "Avisos" de la fila.</summary>
     public bool EnableServiceDeadlineAlerts { get; set; }
 }
