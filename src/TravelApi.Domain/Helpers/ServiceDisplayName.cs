@@ -53,7 +53,8 @@ public static class ServiceDisplayName
 
     /// <summary>
     /// Identidad del traslado: nombre del producto; si no, la ruta pickup -> dropoff; si no, el tipo
-    /// de vehiculo (que tiene default "Sedan", asi que nunca queda vacio en datos validos).
+    /// de vehiculo. ADR-018 Ronda 7: el tipo de vehiculo tambien puede ser null (opcional), asi que
+    /// si TODO esta vacio devuelve cadena vacia y el caller muestra solo "Transfer"/"Traslado".
     /// </summary>
     public static string ForTransfer(string? productName, string? pickup, string? dropoff, string? vehicleType)
         => FirstNonBlank(productName, RouteOrEmpty(pickup, dropoff), vehicleType);

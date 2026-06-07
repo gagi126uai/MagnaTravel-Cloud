@@ -1229,7 +1229,9 @@ public class VoucherService : IVoucherService
                 column.Item().Element(x => ComposeSimpleTable(x, "Traslados", new[] { "Vehiculo", "Ruta", "Fecha", "Confirmacion" },
                     reserva.TransferBookings.Select(t => new[]
                     {
-                        t.VehicleType,
+                        // ADR-018 Ronda 7: VehicleType puede ser null (opcional) => celda vacia,
+                        // la identidad del traslado vive en la columna Ruta (ProductName/ruta).
+                        t.VehicleType ?? "",
                         // ADR-018: Ruta = pickup -> dropoff si ambos estan; si no, el ProductName (evita " -> ").
                         ServiceDisplayName.FirstNonBlank(
                             ServiceDisplayName.RouteOrEmpty(t.PickupLocation, t.DropoffLocation),

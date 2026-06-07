@@ -52,6 +52,10 @@ function validarFormHotel(form) {
     const noches = calcularNoches(form.checkIn, form.checkOut);
     if (noches <= 0) return "La fecha de salida debe ser posterior a la de entrada.";
     if (!form.unitSalePrice || Number(form.unitSalePrice) <= 0) return "Ingresá el precio de venta por noche.";
+    // RoomType y MealPlan son non-nullable en el backend. Fallback de seguridad:
+    // los selects con default hacen que esto raramente ocurra, pero se valida igual.
+    if (!form.mealPlan) return "Seleccioná el régimen del hotel.";
+    if (!form.roomType) return "Seleccioná el tipo de habitación.";
 
     // C1: operador SIEMPRE obligatorio (camino existente o manual, sin producto nuevo)
     if (!form.newCatalogProduct && !form.supplierId) {
@@ -69,6 +73,9 @@ function validarFormHotel(form) {
 /**
  * Simula la construcción del payload que envía ServiceInlineCard al backend.
  * canSeeCost: si false, netCost se manda 0 (el usuario no ve costos).
+ *
+ * RoomType y MealPlan son string NO-nullables en el backend. La función
+ * usa los mismos defaults que el componente: Doble / Desayuno.
  */
 function buildHotelPayload(form, canSeeCost) {
     const noches = calcularNoches(form.checkIn, form.checkOut);
@@ -85,6 +92,9 @@ function buildHotelPayload(form, canSeeCost) {
         salePrice: salePriceTotal,
         address: form.address || null,
         supplierId: form.supplierId || null,
+        // Siempre con valor: el backend rechaza null/vacío con 400 (non-nullable)
+        mealPlan: form.mealPlan || "Desayuno",
+        roomType: form.roomType || "Doble",
     };
 
     // Mutuamente excluyentes: rateId O newCatalogProduct
@@ -96,6 +106,77 @@ function buildHotelPayload(form, canSeeCost) {
     }
 
     return payload;
+}
+
+/**
+ * Copia de los normalizadores de vocabulario legacy de ServiceInlineCard (Ronda 7).
+ * Si cambian allá, actualizar acá.
+ */
+const MEAL_PLAN_CANONICOS = ["Solo Alojamiento", "Desayuno", "Media Pension", "Pension Completa", "All Inclusive"];
+const MEAL_PLAN_LEGACY = {
+    SinDesayuno: "Solo Alojamiento",
+    MediaPension: "Media Pension",
+    PensionCompleta: "Pension Completa",
+    TodoIncluido: "All Inclusive",
+};
+const ROOM_TYPE_CANONICOS = ["Single", "Doble", "Triple", "Cuadruple", "Familiar"];
+const ROOM_TYPE_LEGACY = {
+    Simple: "Single",
+};
+
+function normalizarMealPlan(valor) {
+    if (!valor) return "Desayuno";
+    if (MEAL_PLAN_CANONICOS.includes(valor)) return valor;
+    return MEAL_PLAN_LEGACY[valor] || "Desayuno";
+}
+
+function normalizarRoomType(valor) {
+    if (!valor) return "Doble";
+    if (ROOM_TYPE_CANONICOS.includes(valor)) return valor;
+    return ROOM_TYPE_LEGACY[valor] || "Doble";
+}
+
+/**
+ * Simula el estado inicial del formulario de Hotel (buildHotelFormInitial en ServiceInlineCard).
+ * Recibe el servicio a editar (null = modo creación).
+ */
+function buildHotelFormInitial(serviceToEdit) {
+    if (!serviceToEdit) {
+        return {
+            hotelName: "", city: "", checkIn: "", checkOut: "",
+            passengers: "", rooms: 1, supplierId: "",
+            unitNetCost: "", unitSalePrice: "", currency: "ARS",
+            mealPlan: "Desayuno",
+            roomType: "Doble",
+            confirmationNumber: "",
+            operatorPaymentDeadline: "", address: "",
+            rateId: null, newCatalogProduct: null,
+        };
+    }
+    const noches = calcularNoches(serviceToEdit.checkIn, serviceToEdit.checkOut);
+    const habitaciones = Math.max(serviceToEdit.rooms || 1, 1);
+    const divisor = Math.max(noches, 1) * habitaciones;
+    return {
+        hotelName: serviceToEdit.hotelName || serviceToEdit.name || "",
+        city: serviceToEdit.city || "",
+        checkIn: (serviceToEdit.checkIn || "").split("T")[0] || "",
+        checkOut: (serviceToEdit.checkOut || "").split("T")[0] || "",
+        passengers: serviceToEdit.paxCount || serviceToEdit.adults || serviceToEdit.passengers || "",
+        rooms: habitaciones,
+        supplierId: serviceToEdit.supplierId || serviceToEdit.supplierPublicId || "",
+        unitNetCost: noches > 0 ? String(redondearDinero((serviceToEdit.netCost || 0) / divisor)) : "",
+        unitSalePrice: noches > 0 ? String(redondearDinero((serviceToEdit.salePrice || 0) / divisor)) : "",
+        currency: serviceToEdit.currency || "ARS",
+        // Round-trip: valor persistido NORMALIZADO al vocabulario canonico (valores legacy
+        // de la ficha anterior dejarian el select controlado en blanco); fallback a defaults.
+        mealPlan: normalizarMealPlan(serviceToEdit.mealPlan),
+        roomType: normalizarRoomType(serviceToEdit.roomType),
+        confirmationNumber: serviceToEdit.confirmationNumber || "",
+        operatorPaymentDeadline: (serviceToEdit.operatorPaymentDeadline || "").split("T")[0] || "",
+        address: serviceToEdit.address || "",
+        rateId: serviceToEdit.rateId || null,
+        newCatalogProduct: null,
+    };
 }
 
 /**
@@ -266,6 +347,9 @@ test("validarFormHotel: form completo con supplierId → válido", () => {
         checkIn: "2026-07-10", checkOut: "2026-07-12",
         unitSalePrice: 5000,
         supplierId: "supplier-1",
+        // Ahora obligatorios en el backend: deben estar en el form para que valide OK
+        mealPlan: "Desayuno",
+        roomType: "Doble",
         newCatalogProduct: null,
     };
     assert.equal(validarFormHotel(form), null);
@@ -277,6 +361,8 @@ test("validarFormHotel: C1 — sin supplierId en camino existente → error de o
         checkIn: "2026-07-10", checkOut: "2026-07-12",
         unitSalePrice: 5000,
         supplierId: "",          // sin operador
+        mealPlan: "Desayuno",
+        roomType: "Doble",
         newCatalogProduct: null, // camino existente (no es producto nuevo)
     };
     const error = validarFormHotel(form);
@@ -320,6 +406,8 @@ test("validarFormHotel: producto nuevo sin ciudad → error de ciudad (D6)", () 
         checkIn: "2026-07-10", checkOut: "2026-07-12",
         unitSalePrice: 5000,
         supplierId: "",
+        mealPlan: "Desayuno",
+        roomType: "Doble",
         newCatalogProduct: { name: "Hotel Nuevo", city: "", supplierPublicId: "s1" },
     };
     const error = validarFormHotel(form);
@@ -332,6 +420,8 @@ test("validarFormHotel: producto nuevo sin operador → error de operador", () =
         checkIn: "2026-07-10", checkOut: "2026-07-12",
         unitSalePrice: 5000,
         supplierId: "",
+        mealPlan: "Desayuno",
+        roomType: "Doble",
         newCatalogProduct: { name: "Hotel Nuevo", city: "Posadas", supplierPublicId: "" },
     };
     const error = validarFormHotel(form);
@@ -432,4 +522,154 @@ test("navegación teclado: Enter en índice results.length activa 'Crear nuevo'"
     // Si keyboardIndex === results.length → es la opción crear
     assert.equal(keyboardIndex === results.length, true);
     assert.equal(keyboardIndex < results.length, false);
+});
+
+// ─── Tests: mealPlan y roomType — fix bug 400 backend ────────────────────────
+// Verifica que el payload SIEMPRE lleva mealPlan y roomType con valor,
+// y que el estado inicial y el round-trip de edición usan los defaults correctos.
+
+test("buildHotelPayload: payload siempre lleva mealPlan y roomType (nunca null/vacío)", () => {
+    const form = {
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        rooms: 1, unitSalePrice: 5000, unitNetCost: 3000,
+        supplierId: "supplier-1", rateId: "rate-abc",
+        mealPlan: "Desayuno", roomType: "Doble",
+    };
+    const payload = buildHotelPayload(form, true);
+    // El backend rechaza null/vacío con 400 (non-nullable string)
+    assert.ok(payload.mealPlan, "mealPlan debe tener valor en el payload");
+    assert.ok(payload.roomType, "roomType debe tener valor en el payload");
+    assert.equal(payload.mealPlan, "Desayuno");
+    assert.equal(payload.roomType, "Doble");
+});
+
+test("buildHotelPayload: con mealPlan/roomType vacíos → aplica defaults (protección extra)", () => {
+    // Caso hipotético: el form trae vacíos (no debería pasar con selects, pero se cubre)
+    const form = {
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        rooms: 1, unitSalePrice: 5000, unitNetCost: 3000,
+        supplierId: "supplier-1", rateId: "rate-abc",
+        mealPlan: "",   // vacío
+        roomType: null, // null
+    };
+    const payload = buildHotelPayload(form, true);
+    // El || "Desayuno" / || "Doble" del buildPayload asegura que siempre viaja algo
+    assert.equal(payload.mealPlan, "Desayuno");
+    assert.equal(payload.roomType, "Doble");
+});
+
+test("buildHotelPayload: respeta el régimen 'All Inclusive' cuando el usuario lo elige", () => {
+    const form = {
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        rooms: 1, unitSalePrice: 5000, unitNetCost: 3000,
+        supplierId: "supplier-1", rateId: "rate-abc",
+        mealPlan: "All Inclusive", roomType: "Triple",
+    };
+    const payload = buildHotelPayload(form, true);
+    assert.equal(payload.mealPlan, "All Inclusive");
+    assert.equal(payload.roomType, "Triple");
+});
+
+test("buildHotelFormInitial: estado inicial en creación usa defaults Desayuno/Doble", () => {
+    const form = buildHotelFormInitial(null);
+    // Los defaults deben coincidir con el modal viejo (ServiceFormModal.jsx:921/938)
+    assert.equal(form.mealPlan, "Desayuno");
+    assert.equal(form.roomType, "Doble");
+});
+
+test("buildHotelFormInitial: round-trip edición — carga el valor persistido del backend", () => {
+    const serviceToEdit = {
+        hotelName: "Hotel Sol",
+        checkIn: "2026-08-01", checkOut: "2026-08-03",
+        netCost: 10000, salePrice: 14000,
+        rooms: 2, adults: 2,
+        // Valores reales que ya estaban guardados en el backend
+        mealPlan: "Pension Completa",
+        roomType: "Triple",
+        supplierId: "s-999",
+        rateId: "r-xyz",
+    };
+    const form = buildHotelFormInitial(serviceToEdit);
+    // Al editar, el form debe mostrar los valores que tenía el servicio guardado
+    assert.equal(form.mealPlan, "Pension Completa");
+    assert.equal(form.roomType, "Triple");
+});
+
+test("buildHotelFormInitial: round-trip edición — fallback a defaults si el backend devuelve vacío", () => {
+    // Servicios guardados antes del fix pueden traer mealPlan/roomType vacío o null
+    const serviceToEdit = {
+        hotelName: "Hotel Viejo",
+        checkIn: "2026-08-01", checkOut: "2026-08-03",
+        netCost: 5000, salePrice: 7000,
+        rooms: 1, adults: 1,
+        mealPlan: "",    // vacío (guardado antes del fix)
+        roomType: null,  // null (guardado antes del fix)
+        supplierId: "s-1",
+        rateId: "r-1",
+    };
+    const form = buildHotelFormInitial(serviceToEdit);
+    // Aplica el fallback para no mandar vacío al editar
+    assert.equal(form.mealPlan, "Desayuno");
+    assert.equal(form.roomType, "Doble");
+});
+
+test("buildHotelFormInitial: valores legacy de la ficha anterior se normalizan al vocabulario canónico", () => {
+    // Hoteles guardados con la versión anterior de la ficha inline (pre-Ronda 7) pueden traer
+    // estos strings; sin normalización el select controlado quedaría EN BLANCO al editar.
+    const base = {
+        hotelName: "Hotel Legacy", checkIn: "2026-08-01", checkOut: "2026-08-03",
+        netCost: 5000, salePrice: 7000, rooms: 1, adults: 1, supplierId: "s-1", rateId: "r-1",
+    };
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "MediaPension", roomType: "Simple" }).mealPlan, "Media Pension");
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "MediaPension", roomType: "Simple" }).roomType, "Single");
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "SinDesayuno", roomType: "Doble" }).mealPlan, "Solo Alojamiento");
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "TodoIncluido", roomType: "Doble" }).mealPlan, "All Inclusive");
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "PensionCompleta", roomType: "Doble" }).mealPlan, "Pension Completa");
+    // Valores canónicos pasan tal cual (no se tocan)
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Media Pension", roomType: "Triple" }).mealPlan, "Media Pension");
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "Triple" }).roomType, "Triple");
+    // Desconocidos sin equivalencia inequívoca caen al default (Suite no es Familiar: decisión del dueño si importara)
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "Suite" }).roomType, "Doble");
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "FamiliarCuadruple" }).roomType, "Doble");
+});
+
+test("validarFormHotel: mealPlan vacío → error de régimen", () => {
+    const form = {
+        hotelName: "Hotel Test",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        unitSalePrice: 5000, supplierId: "s1",
+        mealPlan: "",      // falta
+        roomType: "Doble",
+        newCatalogProduct: null,
+    };
+    const error = validarFormHotel(form);
+    assert.ok(error, "debe devolver un error");
+    assert.match(error, /r[eé]gimen/i);
+});
+
+test("validarFormHotel: roomType vacío → error de habitación", () => {
+    const form = {
+        hotelName: "Hotel Test",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        unitSalePrice: 5000, supplierId: "s1",
+        mealPlan: "Desayuno",
+        roomType: "",      // falta
+        newCatalogProduct: null,
+    };
+    const error = validarFormHotel(form);
+    assert.ok(error, "debe devolver un error");
+    assert.match(error, /habitaci[oó]n/i);
+});
+
+test("validarFormHotel: form completo con mealPlan y roomType → válido", () => {
+    const form = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        unitSalePrice: 5000,
+        supplierId: "supplier-1",
+        mealPlan: "Desayuno",
+        roomType: "Doble",
+        newCatalogProduct: null,
+    };
+    assert.equal(validarFormHotel(form), null);
 });

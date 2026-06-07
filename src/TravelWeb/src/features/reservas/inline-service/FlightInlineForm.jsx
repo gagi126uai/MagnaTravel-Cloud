@@ -98,9 +98,10 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
     const costoTotal = canSeeCost ? redondearDinero(Number(form.netCost) || 0) : null;
     const ganancia = canSeeCost && costoTotal !== null ? redondearDinero(ventaTotal - costoTotal) : null;
 
-    // "Más detalles" se abre automáticamente al editar si ya hay datos en esos campos
+    // "Más detalles" se abre automáticamente al editar si ya hay datos en esos campos.
+    // cabinClass también se considera: si viene persistido del backend, expandimos la sección.
     const tieneDetallesExistentes = Boolean(
-        form.pnr || form.ticketNumber || form.baggage || form.scheduleNotes
+        form.pnr || form.ticketNumber || form.baggage || form.scheduleNotes || form.cabinClass
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -429,6 +430,27 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
                                 data-testid="flight-equipaje"
                                 aria-label="Equipaje incluido"
                             />
+                        </div>
+                        <div>
+                            {/*
+                             * Cabina: opcional, igual que en el modal viejo (ServiceFormModal:377-386).
+                             * Opciones y values exactos copiados del modal para coherencia con el backend.
+                             */}
+                            <label className={LABEL_BASE} htmlFor="flight-cabina">Cabina</label>
+                            <select
+                                id="flight-cabina"
+                                className={INPUT_NORMAL}
+                                value={form.cabinClass || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, cabinClass: event.target.value }))}
+                                data-testid="inline-flight-cabin-class"
+                                aria-label="Clase de cabina del vuelo"
+                            >
+                                <option value="">Sin especificar</option>
+                                <option value="Economy">Economy</option>
+                                <option value="Premium">Premium Economy</option>
+                                <option value="Business">Business</option>
+                                <option value="First">Primera Clase</option>
+                            </select>
                         </div>
                     </div>
                 )}

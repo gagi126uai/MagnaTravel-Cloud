@@ -53,13 +53,48 @@ const TAB_ENDPOINTS = {
 
 // ─── Estado inicial por tipo ──────────────────────────────────────────────────
 
+// Traductor de valores guardados con el vocabulario de la version anterior de esta ficha
+// (commits previos al fix de Ronda 7): el select nuevo usa los valores canonicos del modal
+// viejo; un valor fuera de la lista dejaria el select controlado EN BLANCO al editar.
+// Valores desconocidos caen al default canonico (Desayuno / Doble).
+const MEAL_PLAN_CANONICOS = ["Solo Alojamiento", "Desayuno", "Media Pension", "Pension Completa", "All Inclusive"];
+const MEAL_PLAN_LEGACY = {
+    SinDesayuno: "Solo Alojamiento",
+    MediaPension: "Media Pension",
+    PensionCompleta: "Pension Completa",
+    TodoIncluido: "All Inclusive",
+};
+const ROOM_TYPE_CANONICOS = ["Single", "Doble", "Triple", "Cuadruple", "Familiar"];
+// Solo equivalencias INEQUIVOCAS. "Suite" y "FamiliarCuadruple" no tienen equivalente claro
+// en la lista canonica -> caen al default (son datos de prueba pre-lanzamiento; si algun dia
+// importara, la decision de equivalencia es del dueño, no nuestra).
+const ROOM_TYPE_LEGACY = {
+    Simple: "Single",
+};
+
+function normalizarMealPlan(valor) {
+    if (!valor) return "Desayuno";
+    if (MEAL_PLAN_CANONICOS.includes(valor)) return valor;
+    return MEAL_PLAN_LEGACY[valor] || "Desayuno";
+}
+
+function normalizarRoomType(valor) {
+    if (!valor) return "Doble";
+    if (ROOM_TYPE_CANONICOS.includes(valor)) return valor;
+    return ROOM_TYPE_LEGACY[valor] || "Doble";
+}
+
 function buildHotelFormInitial(serviceToEdit) {
     if (!serviceToEdit) {
         return {
             hotelName: "", city: "", checkIn: "", checkOut: "",
             passengers: "", rooms: 1, supplierId: "",
             unitNetCost: "", unitSalePrice: "", currency: "ARS",
-            mealPlan: "", roomType: "", confirmationNumber: "",
+            // Defaults que coinciden con el modal viejo y con el backend (no-nullables).
+            // Los selects siempre muestran un valor, así que estos nunca quedan vacíos.
+            mealPlan: "Desayuno",
+            roomType: "Doble",
+            confirmationNumber: "",
             operatorPaymentDeadline: "", address: "",
             rateId: null, newCatalogProduct: null,
         };
@@ -78,8 +113,11 @@ function buildHotelFormInitial(serviceToEdit) {
         unitNetCost: noches > 0 ? String(redondearDinero((serviceToEdit.netCost || 0) / divisor)) : "",
         unitSalePrice: noches > 0 ? String(redondearDinero((serviceToEdit.salePrice || 0) / divisor)) : "",
         currency: serviceToEdit.currency || "ARS",
-        mealPlan: serviceToEdit.mealPlan || "",
-        roomType: serviceToEdit.roomType || "",
+        // Al editar: cargar el valor persistido NORMALIZADO al vocabulario canonico del select
+        // (servicios guardados con la version anterior de la ficha pueden traer valores legacy
+        // que dejarian el select controlado en blanco). Fallback al default del modal viejo.
+        mealPlan: normalizarMealPlan(serviceToEdit.mealPlan),
+        roomType: normalizarRoomType(serviceToEdit.roomType),
         confirmationNumber: serviceToEdit.confirmationNumber || "",
         operatorPaymentDeadline: (serviceToEdit.operatorPaymentDeadline || "").split("T")[0] || "",
         address: serviceToEdit.address || "",
@@ -96,7 +134,11 @@ function buildFlightFormInitial(serviceToEdit) {
             // El estado interno sigue llamándose emissionDeadline para legibilidad del form,
             // pero al armar el payload se envía como ticketingDeadline (nombre del backend).
             emissionDeadline: "", pnr: "", ticketNumber: "", scheduleNotes: "",
-            baggage: "", rateId: null, newCatalogProduct: null,
+            baggage: "",
+            // cabinClass: "" = "Sin especificar" (igual que el modal viejo). El select
+            // siempre tiene opciones, así que "" nunca queda colgado.
+            cabinClass: "",
+            rateId: null, newCatalogProduct: null,
         };
     }
     return {
@@ -117,6 +159,8 @@ function buildFlightFormInitial(serviceToEdit) {
         ticketNumber: serviceToEdit.ticketNumber || "",
         scheduleNotes: serviceToEdit.scheduleNotes || serviceToEdit.notes || "",
         baggage: serviceToEdit.baggage || "",
+        // Round-trip: el backend devuelve cabinClass en FlightSegmentDto; fallback "" (Sin especificar).
+        cabinClass: serviceToEdit.cabinClass || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
     };
@@ -136,7 +180,10 @@ function buildTransferFormInitial(serviceToEdit) {
             transferType: "",
             netCost: "", salePrice: "",
             currency: "ARS", associatedFlightNumber: "", pickupTime: "",
-            confirmationNumber: "", rateId: null, newCatalogProduct: null,
+            confirmationNumber: "",
+            // vehicleType: texto libre, igual que el modal viejo. "" = no especificado.
+            vehicleType: "",
+            rateId: null, newCatalogProduct: null,
         };
     }
     return {
@@ -161,6 +208,8 @@ function buildTransferFormInitial(serviceToEdit) {
             return tIdx >= 0 ? dt.slice(tIdx + 1, tIdx + 6) : "";
         })(),
         confirmationNumber: serviceToEdit.confirmationNumber || "",
+        // Round-trip: el backend devuelve vehicleType en TransferBookingDto; fallback "" (no especificado).
+        vehicleType: serviceToEdit.vehicleType || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
     };
@@ -311,6 +360,10 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             const noches = calcularNoches(formHotel.checkIn, formHotel.checkOut);
             if (noches <= 0) return "La fecha de salida debe ser posterior a la de entrada.";
             if (!formHotel.unitSalePrice || Number(formHotel.unitSalePrice) <= 0) return "Ingresá el precio de venta por noche.";
+            // RoomType y MealPlan son obligatorios en el backend (non-nullable). Los selects
+            // tienen defaults así que esto solo puede pasar si el estado se cargó mal externamente.
+            if (!formHotel.mealPlan) return "Seleccioná el régimen del hotel.";
+            if (!formHotel.roomType) return "Seleccioná el tipo de habitación.";
             if (!formHotel.newCatalogProduct && !formHotel.supplierId) return "Elegí el operador.";
             if (formHotel.newCatalogProduct) {
                 if (!formHotel.newCatalogProduct.name?.trim()) return "Ingresá el nombre del hotel nuevo.";
@@ -396,8 +449,12 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 salePrice: salePriceTotal,
                 tax: 0,
                 currency: formHotel.currency || "ARS",
-                mealPlan: formHotel.mealPlan || null,
-                roomType: formHotel.roomType || null,
+                // RoomType y MealPlan son string NO-nullables en el backend (CreateHotelRequest /
+                // UpdateHotelRequest). Con null el backend responde 400. Usamos el mismo default
+                // que el modal viejo: Doble / Desayuno. Los selects siempre tienen un valor
+                // seleccionado, así que || "X" es solo un fallback de seguridad extra.
+                mealPlan: formHotel.mealPlan || "Desayuno",
+                roomType: formHotel.roomType || "Doble",
                 confirmationNumber: formHotel.confirmationNumber || null,
                 address: formHotel.address || null,
                 operatorPaymentDeadline: formHotel.operatorPaymentDeadline || null,
@@ -433,6 +490,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 ticketNumber: formVuelo.ticketNumber || null,
                 notes: formVuelo.scheduleNotes || null,
                 baggage: formVuelo.baggage || null,
+                // cabinClass: null cuando no se eligió (backend lo relaja a opcional).
+                // Con || null: "" → null, "Economy" → "Economy", etc.
+                cabinClass: formVuelo.cabinClass || null,
             };
             if (formVuelo.rateId) {
                 payload.rateId = formVuelo.rateId;
@@ -452,8 +512,6 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                     ? `${formTraslado.pickupDate}T${formTraslado.pickupTime || "00:00"}:00`
                     : null,
                 passengers: formTraslado.passengers ? Number(formTraslado.passengers) : null,
-                // Privado/compartido va en serviceMode (abajo), NO en vehicleType (Sedan/Van/Bus).
-                // La ficha en linea no carga tipo de vehiculo; el backend mantiene su default.
                 supplierId: formTraslado.supplierId || null,
                 netCost: canSeeCost ? redondearDinero(Number(formTraslado.netCost) || 0) : 0,
                 salePrice: redondearDinero(Number(formTraslado.salePrice) || 0),
@@ -465,6 +523,8 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 direction: formTraslado.movementType || null,
                 // serviceMode: "private" o "shared"; el select ya almacena el valor backend.
                 serviceMode: formTraslado.transferType || null,
+                // vehicleType: texto libre opcional; null cuando no se especificó.
+                vehicleType: formTraslado.vehicleType || null,
                 isRoundTrip: false,
             };
             if (formTraslado.rateId) {

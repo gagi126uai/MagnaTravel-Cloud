@@ -218,8 +218,9 @@ public partial class BookingService
             // si no vino (path producto NUEVO), caemos al nombre del producto de catalogo. NUNCA se re-deriva del
             // Rate despues (preserva el snapshot de ADR-017 §6).
             flight.ProductName = ResolveCatalogProductName(req.ProductName, req.NewCatalogProduct);
-            // ADR-018 (§2): CabinClass NO se relaja (tiene default de negocio). Si la ficha lo omite, se coalesce.
-            if (string.IsNullOrWhiteSpace(flight.CabinClass)) flight.CabinClass = "Economy";
+            // ADR-018 Ronda 7 (2026-06-06): la cabina es OPCIONAL — vacio/null se persiste null
+            // ("Sin especificar"). Derogado el coalesce a "Economy" de ADR-018 §2.
+            flight.CabinClass = NormalizeOptionalText(flight.CabinClass);
 
             var divisor = CatalogUnitization.FlightDivisor(flight.PassengerCount ?? 1);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -293,8 +294,9 @@ public partial class BookingService
                 transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
             // ADR-018 (§4-bis): identidad visible = texto del vendedor (ver Flight).
             transfer.ProductName = ResolveCatalogProductName(req.ProductName, req.NewCatalogProduct);
-            // ADR-018 (§2): VehicleType NO se relaja (tiene default de negocio). Si la ficha lo omite, se coalesce.
-            if (string.IsNullOrWhiteSpace(transfer.VehicleType)) transfer.VehicleType = "Sedan";
+            // ADR-018 Ronda 7 (2026-06-06): el tipo de vehiculo es OPCIONAL — vacio/null se persiste
+            // null (no informado). Derogado el coalesce a "Sedan" de ADR-018 §2.
+            transfer.VehicleType = NormalizeOptionalText(transfer.VehicleType);
 
             var divisor = CatalogUnitization.TransferDivisor();
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(

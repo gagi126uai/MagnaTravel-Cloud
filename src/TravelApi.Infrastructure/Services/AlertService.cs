@@ -335,9 +335,12 @@ public class AlertService : IAlertService
                   && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Closed
                   && r.Status != EstadoReserva.PendingOperatorRefund
                   && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
-            select new { r.PublicId, r.NumeroReserva, Label = t.VehicleType, t.CostToConfirmReason }).ToListAsync(ct);
+            select new { r.PublicId, r.NumeroReserva, t.ProductName, t.PickupLocation, t.DropoffLocation, t.VehicleType, t.CostToConfirmReason }).ToListAsync(ct);
+        // ADR-018 Ronda 7: VehicleType puede ser null (opcional). La etiqueta sale del contrato unico
+        // ServiceDisplayName (ProductName -> ruta -> vehiculo), igual que el bucket de Aereo.
         alerts.AddRange(transfer.Select(x =>
-            BuildCostToConfirmAlert(x.PublicId, x.NumeroReserva, "Traslado", x.Label, x.CostToConfirmReason)));
+            BuildCostToConfirmAlert(x.PublicId, x.NumeroReserva, "Traslado",
+                ServiceDisplayName.ForTransfer(x.ProductName, x.PickupLocation, x.DropoffLocation, x.VehicleType), x.CostToConfirmReason)));
 
         // Paquete
         var package = await (

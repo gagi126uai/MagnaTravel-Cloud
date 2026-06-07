@@ -400,6 +400,15 @@ public partial class BookingService : IBookingService
             : (DateTime?)null;
 
     /// <summary>
+    /// ADR-018 Ronda 7 (2026-06-06): normaliza un texto OPCIONAL del request — vacio o solo espacios
+    /// se persiste como null ("Sin especificar"), nunca como "". Reemplaza al viejo coalesce a default
+    /// de negocio ("Economy"/"Sedan" de ADR-018 §2): Gaston decidio que el sistema deja de exigir
+    /// Cabina y Tipo de vehiculo, asi que el server ya NO inventa un valor que el vendedor no eligio.
+    /// </summary>
+    internal static string? NormalizeOptionalText(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>
     /// ADR-017 (pill violeta "creado en esta venta"): resuelve si el producto del tarifario vinculado al
     /// servicio nacio inline durante una venta (<see cref="Rate.CreatedInSale"/>).
     ///
@@ -433,9 +442,9 @@ public partial class BookingService : IBookingService
         flight.ReservaId = reservaId;
         flight.SupplierId = supplierId;
 
-        // ADR-018 (§2): CabinClass tiene default de negocio. Si la ficha lo manda vacio, coalescemos a
-        // "Economy" (mismo criterio que el path catalogo) para no persistir "" en vez del default.
-        if (string.IsNullOrWhiteSpace(flight.CabinClass)) flight.CabinClass = "Economy";
+        // ADR-018 Ronda 7 (2026-06-06): la cabina es OPCIONAL. Vacio/null = "Sin especificar" y se
+        // persiste null (antes se coalesceaba a "Economy"; ese default de negocio quedo derogado).
+        flight.CabinClass = NormalizeOptionalText(flight.CabinClass);
 
         // B1 (zona horaria): la hora de vuelo es "hora local del aeropuerto" (la que figura
         // en el ticket), NO un instante UTC. La guardamos tal cual la cargo el usuario para
@@ -525,6 +534,11 @@ public partial class BookingService : IBookingService
         // PRESERVAMOS el valor persistido, para que la identidad del servicio no revierta a "Vuelo "/ruta.
         if (!string.IsNullOrWhiteSpace(req.ProductName))
             flight.ProductName = req.ProductName.Trim();
+
+        // ADR-018 Ronda 7: cabina opcional. OJO, aca NO hay anti-clobber a proposito: la ficha reenvia
+        // la cabina en cada edicion (round-trip), asi que null/vacio significa "el vendedor la dejo en
+        // Sin especificar" y debe persistirse null (es un borrado legitimo, no un campo no enviado).
+        flight.CabinClass = NormalizeOptionalText(flight.CabinClass);
 
         // ADR-017 F1.4 (§2.2, R12 — anti-clobber): el map IGNORA TicketingDeadline, asi que tras el map el
         // valor persistido sigue intacto. Solo lo tocamos si el request DECLARA que trae el bloque de
@@ -1130,9 +1144,9 @@ public partial class BookingService : IBookingService
         transfer.ReservaId = reservaId;
         transfer.SupplierId = supplierId;
 
-        // ADR-018 (§2): VehicleType tiene default de negocio. Si la ficha lo manda vacio, coalescemos a
-        // "Sedan" (mismo criterio que el path catalogo) para no persistir "" en vez del default.
-        if (string.IsNullOrWhiteSpace(transfer.VehicleType)) transfer.VehicleType = "Sedan";
+        // ADR-018 Ronda 7 (2026-06-06): el tipo de vehiculo es OPCIONAL. Vacio/null = no informado y se
+        // persiste null (antes se coalesceaba a "Sedan"; ese default de negocio quedo derogado).
+        transfer.VehicleType = NormalizeOptionalText(transfer.VehicleType);
 
         // B1 (zona horaria): la hora del traslado es hora local (la que ve el pasajero en el
         // itinerario), NO un instante UTC. Se guarda tal cual, sin corrimiento. ReturnDateTime
@@ -1215,6 +1229,10 @@ public partial class BookingService : IBookingService
         // para que la identidad del traslado no revierta a "Transfer "/ruta.
         if (!string.IsNullOrWhiteSpace(req.ProductName))
             transfer.ProductName = req.ProductName.Trim();
+
+        // ADR-018 Ronda 7: tipo de vehiculo opcional. Sin anti-clobber a proposito: la ficha lo reenvia
+        // en cada edicion (round-trip), asi que null/vacio es un borrado legitimo y se persiste null.
+        transfer.VehicleType = NormalizeOptionalText(transfer.VehicleType);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (transfer.NetCost, transfer.Tax, transfer.Commission) = await ResolveUpdateCostFieldsAsync(

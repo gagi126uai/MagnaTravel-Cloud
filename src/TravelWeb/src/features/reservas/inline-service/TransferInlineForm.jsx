@@ -95,8 +95,10 @@ export function TransferInlineForm({ form, setForm, suppliers, isEditing }) {
     const costoTotal = canSeeCost ? redondearDinero(Number(form.netCost) || 0) : null;
     const ganancia = canSeeCost && costoTotal !== null ? redondearDinero(ventaTotal - costoTotal) : null;
 
+    // "Más detalles" se abre automáticamente al editar si ya hay datos en esos campos.
+    // vehicleType también se considera: si viene persistido del backend, expandimos la sección.
     const tieneDetallesExistentes = Boolean(
-        form.associatedFlightNumber || form.pickupTime || form.confirmationNumber
+        form.associatedFlightNumber || form.pickupTime || form.confirmationNumber || form.vehicleType
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -413,6 +415,23 @@ export function TransferInlineForm({ form, setForm, suppliers, isEditing }) {
                                 placeholder="Número o código de confirmación"
                                 data-testid="transfer-confirmacion"
                                 aria-label="Número de confirmación del operador"
+                            />
+                        </div>
+                        <div>
+                            {/*
+                             * Tipo de vehículo: texto libre, igual que el modal viejo (ServiceFormModal:1089-1096).
+                             * Ejemplos: "Van", "Sedan", "Micro". Opcional, no afecta el precio.
+                             */}
+                            <label className={LABEL_BASE} htmlFor="transfer-tipo-vehiculo">Tipo de vehículo</label>
+                            <input
+                                id="transfer-tipo-vehiculo"
+                                type="text"
+                                className={INPUT_NORMAL}
+                                value={form.vehicleType || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, vehicleType: event.target.value }))}
+                                placeholder="Van, sedan, microbus..."
+                                data-testid="inline-transfer-vehicle-type"
+                                aria-label="Tipo de vehículo del traslado"
                             />
                         </div>
                     </div>

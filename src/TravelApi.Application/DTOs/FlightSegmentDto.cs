@@ -22,7 +22,9 @@ public class FlightSegmentDto
     public string? DestinationCity { get; set; }
     public DateTime DepartureTime { get; set; }
     public DateTime ArrivalTime { get; set; }
-    public string CabinClass { get; set; } = "Economy";
+    // ADR-018 Ronda 7 (2026-06-06): la cabina es opcional. Null = "Sin especificar" (el front
+    // muestra esa opcion en el desplegable; ya no se rellena con "Economy" del lado del server).
+    public string? CabinClass { get; set; }
     public string Status { get; set; } = "HK";
     // PNR / localizador para gestionar la reserva en la aerolinea.
     public string? PNR { get; set; }

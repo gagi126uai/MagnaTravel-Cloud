@@ -62,6 +62,8 @@ function buildFlightPayload(form, canSeeCost) {
         // El backend espera ticketingDeadline (no emissionDeadline)
         ticketingDeadline: form.emissionDeadline || null,
         pnr: form.pnr || null,
+        // cabinClass: null cuando no se eligió (""); el backend lo acepta como opcional.
+        cabinClass: form.cabinClass || null,
     };
     if (form.rateId) {
         payload.rateId = form.rateId;
@@ -75,13 +77,16 @@ function buildFlightPayload(form, canSeeCost) {
 /**
  * Simula el builder de estado de edición para Aéreo.
  * ADR-018: lee productName como fuente primaria de la identidad.
+ * cabinClass: lee del backend con fallback "" (Sin especificar).
  */
 function buildFlightFormInitial(serviceToEdit) {
-    if (!serviceToEdit) return { routeName: "", rateId: null, newCatalogProduct: null };
+    if (!serviceToEdit) return { routeName: "", rateId: null, newCatalogProduct: null, cabinClass: "" };
     return {
         routeName: serviceToEdit.productName || serviceToEdit.description || serviceToEdit.name || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
+        // Round-trip: el backend devuelve cabinClass en FlightSegmentDto; fallback "" (Sin especificar).
+        cabinClass: serviceToEdit.cabinClass || "",
     };
 }
 
@@ -372,4 +377,87 @@ test("buildFlightPayload: emissionDeadline vacío → ticketingDeadline null", (
     };
     const payload = buildFlightPayload(form, true);
     assert.equal(payload.ticketingDeadline, null);
+});
+
+// ─── Tests: cabinClass — desplegable opcional dentro de "Más detalles" ────────
+
+test("buildFlightPayload: cabinClass elegida → va en payload con el valor exacto del select", () => {
+    // Los valores del select (Economy, Premium, Business, First) son los mismos que
+    // el modal viejo (ServiceFormModal:382-386) para coherencia con el backend.
+    const form = {
+        routeName: "AEP–IGR LATAM",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        emissionDeadline: "",
+        cabinClass: "Business",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.cabinClass, "Business");
+});
+
+test("buildFlightPayload: cabinClass 'Premium' (Premium Economy) va como 'Premium' en payload", () => {
+    // El select muestra "Premium Economy" al usuario pero el value es "Premium"
+    // (igual que el modal viejo). El backend espera "Premium".
+    const form = {
+        routeName: "AEP–IGR",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        emissionDeadline: "",
+        cabinClass: "Premium",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.cabinClass, "Premium");
+});
+
+test("buildFlightPayload: cabinClass vacía → null en payload (Sin especificar no se envía)", () => {
+    // "" (Sin especificar) se convierte en null con || null.
+    // El backend acepta null en cabinClass (campo opcional).
+    const form = {
+        routeName: "AEP–IGR",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        emissionDeadline: "",
+        cabinClass: "",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.cabinClass, null);
+});
+
+test("buildFlightFormInitial: round-trip cabinClass persistida → se precarga en el form", () => {
+    // Al editar un vuelo que tiene cabinClass guardada (ej: "First"), el select debe
+    // mostrarlo seleccionado para que el vendedor lo vea y pueda corregirlo.
+    const serviceDesdeBackend = {
+        productName: "AEP–IGR LATAM",
+        cabinClass: "First",
+        rateId: "rate-1",
+    };
+    const form = buildFlightFormInitial(serviceDesdeBackend);
+    assert.equal(form.cabinClass, "First");
+});
+
+test("buildFlightFormInitial: round-trip cabinClass null del backend → '' en el form (no undefined)", () => {
+    // Vuelos guardados antes de este campo traen cabinClass=null; debe mapearse a ""
+    // para que el select tenga value controlado (no undefined que causa warning React).
+    const serviceDesdeBackend = {
+        productName: "AEP–IGR",
+        cabinClass: null,
+        rateId: null,
+    };
+    const form = buildFlightFormInitial(serviceDesdeBackend);
+    assert.equal(form.cabinClass, "");
 });

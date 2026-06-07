@@ -49,6 +49,9 @@ public class ServicioReservaService : IServicioReservaService
         segment.ServicioReservaId = servicioId;
         segment.DepartureTime = NormalizeUtc(segment.DepartureTime);
         segment.ArrivalTime = NormalizeUtc(segment.ArrivalTime);
+        // Ronda 7 (guia UX): Cabina es OPCIONAL — vacio/espacios se persiste como null, nunca "".
+        // Se normaliza aca (y no en el controller) para que CUALQUIER caller respete el invariante.
+        segment.CabinClass = BookingService.NormalizeOptionalText(segment.CabinClass);
  
         _dbContext.FlightSegments.Add(segment);
         await _dbContext.SaveChangesAsync(cancellationToken);

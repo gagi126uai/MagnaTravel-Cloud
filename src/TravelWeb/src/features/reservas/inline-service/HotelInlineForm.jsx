@@ -9,6 +9,7 @@
  *
  * Campos a la vista SIEMPRE (sin revelado progresivo — decisión Gastón ronda 1):
  *   Buscador · Operador · Entrada · Salida · Noches (calculadas) · Habitaciones · Pasajeros
+ *   Régimen · Tipo de habitación (OBLIGATORIOS — decisión Gastón 2026-06-06, fix bug 400)
  *   Costo por noche · Venta por noche · Moneda
  *
  * Total = noches × habitaciones × precio por noche (decisión Gastón 2026-06-06).
@@ -16,7 +17,12 @@
  * Footer: "Venta $X · Ganás $Y  + Más detalles" | "Cancelar" + "Guardar"
  *
  * Detrás de "+ Más detalles" (plegado por defecto):
- *   Régimen · Tipo de habitación · Confirmación del operador · Fecha límite de seña · Dirección
+ *   Confirmación del operador · Fecha límite de seña · Dirección
+ *
+ * Por qué Régimen y Habitación están a la vista y son obligatorios:
+ *   CreateHotelRequest / UpdateHotelRequest exigen string RoomType y string MealPlan
+ *   (NO nullables). Con null o vacío el backend responde 400. Los selects con default
+ *   garantizan que siempre se envíe un valor válido. Decisión UX aprobada por Gastón.
  *
  * Permiso `cobranzas.see_cost`:
  *   - Con permiso: ve Costo por noche + ganancia en el footer.
@@ -161,10 +167,10 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
     const ganancia = canSeeCost && costoTotal !== null ? redondearDinero(ventaTotal - costoTotal) : null;
 
     // "Más detalles" plegado por defecto. Se abre automáticamente si ya hay datos
-    // (por ejemplo, al editar un hotel que ya tiene confirmación o régimen cargado).
+    // (por ejemplo, al editar un hotel que ya tiene confirmación cargada).
+    // Régimen y Tipo de habitación ya NO están aquí: subieron a la vista principal.
     const tieneDetallesExistentes = Boolean(
-        form.mealPlan || form.roomType || form.confirmationNumber ||
-        form.operatorPaymentDeadline || form.address
+        form.confirmationNumber || form.operatorPaymentDeadline || form.address
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -408,6 +414,53 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                 </div>
             </div>
 
+            {/* === RÉGIMEN + TIPO DE HABITACIÓN (obligatorios — a la vista, no en "Más detalles") === */}
+            {/* Razón: CreateHotelRequest/UpdateHotelRequest tienen RoomType y MealPlan como
+                string no-nullable. Con null o vacío el backend responde 400. Los selects con
+                default garantizan que SIEMPRE se envíe un valor válido. Decisión Gastón 2026-06-06. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label className={LABEL_BASE} htmlFor="hotel-regimen">
+                        Régimen *
+                    </label>
+                    <select
+                        id="hotel-regimen"
+                        className={INPUT_NORMAL}
+                        value={form.mealPlan || "Desayuno"}
+                        onChange={(event) => setForm((prev) => ({ ...prev, mealPlan: event.target.value }))}
+                        required
+                        data-testid="inline-hotel-meal-plan"
+                        aria-label="Régimen de comidas del hotel"
+                    >
+                        <option value="Solo Alojamiento">Solo Alojamiento</option>
+                        <option value="Desayuno">Desayuno</option>
+                        <option value="Media Pension">Media Pensión</option>
+                        <option value="Pension Completa">Pensión Completa</option>
+                        <option value="All Inclusive">All Inclusive</option>
+                    </select>
+                </div>
+                <div>
+                    <label className={LABEL_BASE} htmlFor="hotel-tipo-habitacion">
+                        Tipo de habitación *
+                    </label>
+                    <select
+                        id="hotel-tipo-habitacion"
+                        className={INPUT_NORMAL}
+                        value={form.roomType || "Doble"}
+                        onChange={(event) => setForm((prev) => ({ ...prev, roomType: event.target.value }))}
+                        required
+                        data-testid="inline-hotel-room-type"
+                        aria-label="Tipo de habitación del hotel"
+                    >
+                        <option value="Single">Single</option>
+                        <option value="Doble">Doble</option>
+                        <option value="Triple">Triple</option>
+                        <option value="Cuadruple">Cuádruple</option>
+                        <option value="Familiar">Familiar</option>
+                    </select>
+                </div>
+            </div>
+
             {/* === PRECIOS + MONEDA (tercera fila) === */}
             <div className={`grid gap-3 ${canSeeCost ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2"}`}>
                 {/* Costo por noche: solo visible para quien tiene permiso de ver costos */}
@@ -484,42 +537,6 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
 
                 {mostrarDetalles && (
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                            <label className={LABEL_BASE} htmlFor="hotel-regimen">Régimen</label>
-                            <select
-                                id="hotel-regimen"
-                                className={INPUT_NORMAL}
-                                value={form.mealPlan || ""}
-                                onChange={(event) => setForm((prev) => ({ ...prev, mealPlan: event.target.value }))}
-                                data-testid="hotel-regimen"
-                                aria-label="Régimen de comidas"
-                            >
-                                <option value="">Sin especificar</option>
-                                <option value="SinDesayuno">Sin desayuno</option>
-                                <option value="Desayuno">Con desayuno</option>
-                                <option value="MediaPension">Media pensión</option>
-                                <option value="PensionCompleta">Pensión completa</option>
-                                <option value="TodoIncluido">Todo incluido</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className={LABEL_BASE} htmlFor="hotel-tipo-habitacion">Tipo de habitación</label>
-                            <select
-                                id="hotel-tipo-habitacion"
-                                className={INPUT_NORMAL}
-                                value={form.roomType || ""}
-                                onChange={(event) => setForm((prev) => ({ ...prev, roomType: event.target.value }))}
-                                data-testid="hotel-tipo-habitacion"
-                                aria-label="Tipo de habitación"
-                            >
-                                <option value="">Sin especificar</option>
-                                <option value="Simple">Simple</option>
-                                <option value="Doble">Doble</option>
-                                <option value="Triple">Triple</option>
-                                <option value="Suite">Suite</option>
-                                <option value="FamiliarCuadruple">Familiar/Cuádruple</option>
-                            </select>
-                        </div>
                         <div>
                             <label className={LABEL_BASE} htmlFor="hotel-confirmacion">Confirmación del operador</label>
                             <input

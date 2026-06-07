@@ -15,7 +15,9 @@ public class TransferBookingDto
     public string? PickupLocation { get; set; }
     public string? DropoffLocation { get; set; }
     public DateTime PickupDateTime { get; set; }
-    public string VehicleType { get; set; } = "Private";
+    // ADR-018 Ronda 7 (2026-06-06): el tipo de vehiculo es opcional. Null = no informado (ya no se
+    // rellena con un default del lado del server; los consumidores muestran celda vacia u omiten).
+    public string? VehicleType { get; set; }
     // Ficha F2: sentido del traslado ("in" = llegada / "out" = salida). Se expone para que la ficha
     // de edicion lo recupere y lo reenvie sin pisarlo (round-trip). Null en filas legacy.
     public string? Direction { get; set; }

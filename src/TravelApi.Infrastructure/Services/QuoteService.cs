@@ -432,7 +432,9 @@ public class QuoteService : IQuoteService
                     Destination = rate?.Destination ?? "TBD",
                     DepartureTime = quote.TravelStartDate ?? DateTime.UtcNow,
                     ArrivalTime = quote.TravelStartDate?.AddHours(2) ?? DateTime.UtcNow.AddHours(2),
-                    CabinClass = rate?.CabinClass ?? "Economy",
+                    // Ronda 7 (guia UX): Cabina es OPCIONAL — si la tarifa no la tiene, queda null.
+                    // El server nunca fabrica un valor que el vendedor no eligio (antes coalescia "Economy").
+                    CabinClass = BookingService.NormalizeOptionalText(rate?.CabinClass),
                     Status = "HK",
                     NetCost = item.TotalCost,
                     SalePrice = item.TotalPrice,
@@ -460,7 +462,9 @@ public class QuoteService : IQuoteService
                     PickupLocation = rate?.PickupLocation ?? "TBD",
                     DropoffLocation = rate?.DropoffLocation ?? "TBD",
                     PickupDateTime = quote.TravelStartDate ?? DateTime.UtcNow,
-                    VehicleType = rate?.VehicleType ?? "Private",
+                    // Ronda 7 (guia UX): Tipo de vehiculo es OPCIONAL — si la tarifa no lo tiene, queda null.
+                    // El viejo coalesce "Private" ademas era un valor fuera del set documentado (Sedan/Van/Minibus/Bus).
+                    VehicleType = BookingService.NormalizeOptionalText(rate?.VehicleType),
                     Passengers = 1,
                     Status = "Solicitado",
                     NetCost = item.TotalCost,

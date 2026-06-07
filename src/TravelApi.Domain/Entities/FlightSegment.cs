@@ -52,9 +52,11 @@ public class FlightSegment : IHasPublicId
     public DateTime DepartureTime { get; set; }
     public DateTime ArrivalTime { get; set; }
     
-    // Clase y equipaje
+    // Clase y equipaje. ADR-018 Ronda 7 (2026-06-06): la cabina deja de ser obligatoria —
+    // null = "Sin especificar" (antes era NOT NULL con default "Economy"; la columna se
+    // relaja en la migracion Adr017_M6).
     [MaxLength(20)]
-    public string CabinClass { get; set; } = "Economy"; // Economy, Premium Economy, Business, First
+    public string? CabinClass { get; set; } // Economy, Premium Economy, Business, First
     
     [MaxLength(50)]
     public string? Baggage { get; set; } // "23kg" o "2PC"

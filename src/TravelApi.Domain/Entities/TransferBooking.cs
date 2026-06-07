@@ -41,8 +41,10 @@ public class TransferBooking : IHasPublicId
     [MaxLength(20)]
     public string? FlightNumber { get; set; } // Vuelo asociado
     
+    // ADR-018 Ronda 7 (2026-06-06): el tipo de vehiculo deja de ser obligatorio — null = no
+    // informado (antes era NOT NULL con default "Sedan"; la columna se relaja en Adr017_M6).
     [MaxLength(50)]
-    public string VehicleType { get; set; } = "Sedan"; // Sedan, Van, Minibus, Bus
+    public string? VehicleType { get; set; } // Sedan, Van, Minibus, Bus
 
     /// <summary>
     /// Ficha F2 (guia-ux-gaston): sentido del traslado. "in" = llegada (del aeropuerto al hotel),

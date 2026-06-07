@@ -59,7 +59,6 @@ function buildTransferPayload(form, canSeeCost) {
             ? `${form.pickupDate}T${form.pickupTime || "00:00"}:00`
             : null,
         passengers: form.passengers ? Number(form.passengers) : null,
-        vehicleType: form.transferType || null,
         supplierId: form.supplierId || null,
         netCost: canSeeCost ? redondearDinero(Number(form.netCost) || 0) : 0,
         salePrice: redondearDinero(Number(form.salePrice) || 0),
@@ -69,6 +68,8 @@ function buildTransferPayload(form, canSeeCost) {
         direction: form.movementType || null,
         // serviceMode: "private" o "shared" — campo propio del backend
         serviceMode: form.transferType || null,
+        // vehicleType: texto libre opcional (Van, Sedan, etc.) — campo propio, NO es serviceMode
+        vehicleType: form.vehicleType || null,
     };
     if (form.rateId) {
         payload.rateId = form.rateId;
@@ -419,4 +420,116 @@ test("buildTransferFormInitial: ADR-018 — fallback a description para servicio
     };
     const form = buildTransferFormInitial(serviceLegacy);
     assert.equal(form.routeName, "EZE → Hotel (legacy)");
+});
+
+// ─── Tests: vehicleType — texto libre opcional ────────────────────────────────
+
+test("buildTransferPayload: vehicleType presente → va en payload como campo propio", () => {
+    // vehicleType es texto libre (Van, Sedan, etc.) y va en su propio campo,
+    // separado de serviceMode (private/shared) y de direction (in/out).
+    const form = {
+        routeName: "EZE → Sheraton",
+        pickupDate: "2026-08-12",
+        pickupTime: "",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 85000,
+        currency: "ARS",
+        rateId: "rate-1",
+        movementType: "in",
+        transferType: "private",
+        vehicleType: "Van",
+        newCatalogProduct: null,
+    };
+    const payload = buildTransferPayload(form, true);
+    assert.equal(payload.vehicleType, "Van");
+});
+
+test("buildTransferPayload: vehicleType vacío → null en payload (no se envía string vacío)", () => {
+    // Con || null: "" → null. El backend acepta null (campo opcional).
+    const form = {
+        routeName: "EZE → Sheraton",
+        pickupDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 85000,
+        currency: "ARS",
+        rateId: "rate-1",
+        movementType: "",
+        transferType: "",
+        vehicleType: "",
+        newCatalogProduct: null,
+    };
+    const payload = buildTransferPayload(form, true);
+    assert.equal(payload.vehicleType, null);
+});
+
+test("buildTransferPayload: vehicleType NO es lo mismo que serviceMode", () => {
+    // serviceMode = "private"/"shared" (tipo de servicio).
+    // vehicleType = "Van", "Sedan", etc. (tipo físico del vehículo).
+    // Son campos independientes; no deben pisarse entre sí.
+    const form = {
+        routeName: "EZE → Sheraton",
+        pickupDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 85000,
+        currency: "ARS",
+        rateId: "rate-1",
+        movementType: "in",
+        transferType: "private",
+        vehicleType: "Sedan",
+        newCatalogProduct: null,
+    };
+    const payload = buildTransferPayload(form, true);
+    assert.equal(payload.serviceMode, "private", "serviceMode debe ser el valor del transferType");
+    assert.equal(payload.vehicleType, "Sedan", "vehicleType debe ser el texto libre del vehículo");
+    // Verificar que no se pisaron
+    assert.notEqual(payload.serviceMode, payload.vehicleType);
+});
+
+// ─── Tests: round-trip de edición con vehicleType ────────────────────────────
+
+/**
+ * Simula el builder de estado de edición para Traslado con todos los campos nuevos.
+ * vehicleType: lee del backend con fallback "" (no especificado).
+ */
+function buildTransferFormInitialCompleto(serviceToEdit) {
+    if (!serviceToEdit) {
+        return {
+            routeName: "", rateId: null, newCatalogProduct: null,
+            vehicleType: "",
+        };
+    }
+    return {
+        routeName: serviceToEdit.productName || serviceToEdit.description || serviceToEdit.name || "",
+        rateId: serviceToEdit.rateId || null,
+        newCatalogProduct: null,
+        // Round-trip: el backend devuelve vehicleType en TransferBookingDto; fallback "" (no especificado).
+        vehicleType: serviceToEdit.vehicleType || "",
+    };
+}
+
+test("buildTransferFormInitial: round-trip vehicleType persistido → se precarga en el form", () => {
+    // Al editar un traslado que tiene vehicleType guardado, el campo debe precargarse
+    // para que el vendedor lo vea y pueda corregirlo si es necesario.
+    const serviceDesdeBackend = {
+        productName: "EZE → Sheraton Tigre",
+        vehicleType: "Van",
+        rateId: "rate-transfer-1",
+    };
+    const form = buildTransferFormInitialCompleto(serviceDesdeBackend);
+    assert.equal(form.vehicleType, "Van");
+});
+
+test("buildTransferFormInitial: round-trip vehicleType null del backend → '' en el form (no undefined)", () => {
+    // Traslados guardados antes de este campo traen vehicleType=null; debe mapearse a ""
+    // para que el input tenga value controlado (no undefined que causa error React).
+    const serviceDesdeBackend = {
+        productName: "EZE → Hotel",
+        vehicleType: null,
+        rateId: null,
+    };
+    const form = buildTransferFormInitialCompleto(serviceDesdeBackend);
+    assert.equal(form.vehicleType, "");
 });

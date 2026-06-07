@@ -106,6 +106,13 @@ Ronda 5 (fila del servicio guardado en la lista — etiquetas y Confirmar costo,
 - **Confirmar costo: corrección EN LA MISMA FILA, nada se abre encima.** Al apretar "Confirmar costo", el costo de la fila se vuelve un casillero editable con el número actual ya puesto, más un casillero de impuesto al lado, y botones Confirmar / Cancelar en la misma línea. La ventana que frena al confirmar $0 ("¿Seguro?" · "Va a quedar costo $0 como sugerencia para todos." · Volver / Sí, confirmar) sigue aplicando sobre el valor final del casillero.
 - **Etiqueta violeta "creado en venta": CON el tipo de servicio.** Texto: "Hotel creado en venta" (la versión del dibujo aprobado, no la corta). Mismo patrón para los demás tipos: "Aéreo creado en venta", "Traslado creado en venta", "Paquete creado en venta", "Asistencia creada en venta".
 
+Ronda 7 (obligatoriedad heredada de la pantalla vieja — probando en vivo, 2026-06-06):
+- **REGLA GENERAL nueva de Gastón (textual): "que no asuma nada, nada que yo no le pida; que me pregunte así como lo hace el ux/ui; que no ponga campos que nadie le pidió y si eso lo hizo el backend o el arquitecto, que me pregunten primero".** La obligatoriedad de un campo es una decisión de producto de Gastón, NUNCA del código viejo ni de un implementador. Si una regla heredada choca con la ficha nueva, se le pregunta antes.
+- **Hotel: Régimen y Tipo de habitación A LA VISTA y OBLIGATORIOS** en la ficha principal (salen de "Más detalles"), como desplegables con las mismas opciones de siempre (Régimen: Solo Alojamiento/Desayuno/Media Pensión/Pensión Completa/All Inclusive, default Desayuno; Habitación: Single/Doble/Triple/Cuádruple/Familiar, default Doble).
+- **Aéreo: "Cabina" va en "Más detalles", OPCIONAL** (desplegable con Sin especificar/Economy/Premium/Business/Primera). El sistema deja de exigirla.
+- **Traslado: "Tipo de vehículo" va en "Más detalles", OPCIONAL** (texto libre). El sistema deja de exigirlo.
+- **"Más detalles" queda CERRADA por defecto** (se abre con un click), en todas las fichas.
+
 Ronda 6 (campanita de avisos + llaves en Configuración, 2026-06-06):
 - **Campanita: secciones apiladas en la misma ventanita.** Primero "Fechas límite", después "Tenés N costos a confirmar", abajo las notificaciones de siempre. Sin pestañas. Cada sección aparece solo si tiene avisos; sin avisos, la campanita se ve igual que hoy. Tocar un aviso lleva derecho a esa reserva.
 - **El numerito de la campanita SUMA TODO**: avisos de fechas límite + costos a confirmar + notificaciones sin leer. Un solo número. (Los avisos de Cobranzas — salida próxima con deuda / deuda con proveedores — NO entran en este numerito: viven en sus tarjetas de Cobranzas.)

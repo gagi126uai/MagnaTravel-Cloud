@@ -12,13 +12,17 @@ namespace TravelApi.Application.DTOs;
 public record NewCatalogProductRequest(
     // Nombre del producto tal como lo escribio el vendedor (hotel, ruta, plan...). De aca sale el
     // SearchName normalizado para el anti-duplicados.
-    [property: Required, MaxLength(200)] string Name,
+    // OJO: en records los atributos de validacion van en el PARAMETRO del constructor primario
+    // (sin "property:"). Con [property:] ASP.NET tira InvalidOperationException (500) al validar
+    // el request ("validation metadata must be associated with the constructor parameter").
+    // Bug real reportado por Gaston el 2026-06-06 al crear un hotel nuevo desde la ficha.
+    [Required, MaxLength(200)] string Name,
     // Hotel: OBLIGATORIA (decision D6 — 400 si falta o viene en blanco). Otros tipos: destino/ruta,
     // opcional. La validacion "obligatoria para Hotel" se hace en el service (depende del tipo).
-    [property: MaxLength(100)] string? City,
+    [MaxLength(100)] string? City,
     // Operador con el que se crea el producto. Obligatorio: un producto del catalogo siempre nace con
     // un proveedor (su primera combinacion en RateSupplierSale).
-    [property: Required] string SupplierPublicId);
+    [Required] string SupplierPublicId);
 
 /// <summary>
 /// ADR-017 F1.3 (§2.8, D8c): body OPCIONAL del boton "Confirmar costo". Si trae montos, el confirmador
@@ -33,9 +37,12 @@ public record CreateFlightRequest(
     // ADR-018: AirlineCode/FlightNumber/Origin/Destination pasan a opcionales (string?). La ficha
     // "producto-primero" identifica el vuelo con ProductName (un solo texto) y puede omitirlos; el
     // modal viejo los sigue mandando. Siguen siendo posicionales (no llevan default).
+    // ADR-018 Ronda 7 (guia UX, 2026-06-06): CabinClass tambien pasa a opcional. "Cabina" deja de ser
+    // exigida ("Sin especificar" es una opcion real del desplegable); null/vacio se persiste como null
+    // y YA NO se coalesce a "Economy" (supersede el default de negocio de ADR-018 §2).
     string SupplierId, string? AirlineCode, string? AirlineName, string? FlightNumber,
     string? Origin, string? OriginCity, string? Destination, string? DestinationCity,
-    DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage, string? PNR,
+    DateTime DepartureTime, DateTime ArrivalTime, string? CabinClass, string? Baggage, string? PNR,
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
@@ -64,10 +71,11 @@ public record CreateFlightRequest(
 );
 
 public record UpdateFlightRequest(
-    // ADR-018: estructurados opcionales (ver CreateFlightRequest).
+    // ADR-018: estructurados opcionales. Ronda 7 (2026-06-06): CabinClass opcional, sin default de
+    // negocio — null = "Sin especificar" (ver CreateFlightRequest).
     string SupplierId, string? AirlineCode, string? AirlineName, string? FlightNumber,
     string? Origin, string? OriginCity, string? Destination, string? DestinationCity,
-    DateTime DepartureTime, DateTime ArrivalTime, string CabinClass, string? Baggage,
+    DateTime DepartureTime, DateTime ArrivalTime, string? CabinClass, string? Baggage,
     string? TicketNumber, string? PNR,
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes,
     string? RateId = null,
@@ -139,8 +147,11 @@ public record UpdateHotelRequest(
 public record CreateTransferRequest(
     // ADR-018: PickupLocation/DropoffLocation pasan a opcionales (string?). La ficha "producto-primero"
     // identifica el traslado con ProductName (un solo texto) y puede omitirlos; el modal viejo los manda.
+    // ADR-018 Ronda 7 (guia UX, 2026-06-06): VehicleType tambien pasa a opcional. "Tipo de vehiculo"
+    // deja de ser exigido; null/vacio se persiste como null y YA NO se coalesce a "Sedan" (supersede
+    // el default de negocio de ADR-018 §2).
     string SupplierId, string? PickupLocation, string? DropoffLocation,
-    DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
+    DateTime PickupDateTime, string? FlightNumber, string? VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
     decimal NetCost, decimal SalePrice, decimal Commission, string? Notes,
     string? RateId = null,
@@ -164,9 +175,10 @@ public record CreateTransferRequest(
 );
 
 public record UpdateTransferRequest(
-    // ADR-018: estructurados opcionales (ver CreateTransferRequest).
+    // ADR-018: estructurados opcionales. Ronda 7 (2026-06-06): VehicleType opcional, sin default de
+    // negocio — null = no informado (ver CreateTransferRequest).
     string SupplierId, string? PickupLocation, string? DropoffLocation,
-    DateTime PickupDateTime, string? FlightNumber, string VehicleType, int Passengers,
+    DateTime PickupDateTime, string? FlightNumber, string? VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
     string? ConfirmationNumber,
     decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,

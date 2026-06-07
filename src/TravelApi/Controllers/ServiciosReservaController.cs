@@ -110,7 +110,10 @@ public record FlightSegmentUpsertRequest(
     string? DestinationCity,
     DateTime DepartureTime,
     DateTime ArrivalTime,
-    string CabinClass,
+    // Ronda 7 (guia UX): Cabina es OPCIONAL en todos los paths, incluido este (tramos del servicio
+    // generico). Nullable para que el cliente pueda omitirla; vacio/espacios se normaliza a null
+    // en ServicioReservaService.CreateSegmentAsync (nunca se persiste "").
+    string? CabinClass,
     string? Baggage,
     string? TicketNumber,
     string? FareBase,

@@ -27,7 +27,8 @@ namespace TravelApi.Tests.Unit;
 /// ADR-018 (2026-06-06): reconcilia la ficha "producto-primero" (un solo campo de busqueda por servicio)
 /// con el esquema estructurado de los bookings no-Hotel. Cubre:
 ///  - el alta por catalogo SIN campos estructurados (persiste, identidad poblada, CabinClass/VehicleType
-///    coalescidos, Nights=0 y schedule OK con EndDate null);
+///    opcionales — Ronda 7: vacio/null se persiste null, ya NO se coalesce a "Economy"/"Sedan" —,
+///    Nights=0 y schedule OK con EndDate null);
 ///  - los fallbacks downstream a ProductName en voucher, alertas y reportes (que antes mostraban basura
 ///    como "Aereo -" o " -> " y perdian revenue del ranking);
 ///  - el contrato unico <see cref="ServiceDisplayName"/>.
@@ -71,6 +72,8 @@ public class Adr018ProductFirstReconciliationTests
         Assert.Equal("Traslado VIP", ServiceDisplayName.ForTransfer("Traslado VIP", null, null, "Sedan"));
         Assert.Equal("Aeropuerto -> Hotel", ServiceDisplayName.ForTransfer(null, "Aeropuerto", "Hotel", "Sedan"));
         Assert.Equal("Sedan", ServiceDisplayName.ForTransfer(null, null, null, "Sedan"));
+        // Ronda 7: VehicleType tambien puede faltar => todo vacio devuelve "", no inventa identidad.
+        Assert.Equal(string.Empty, ServiceDisplayName.ForTransfer(null, null, null, null));
     }
 
     [Fact]
@@ -119,11 +122,12 @@ public class Adr018ProductFirstReconciliationTests
     }
 
     // ======================================================================================
-    // Alta por catalogo SIN campos estructurados: identidad poblada + coalesce de defaults.
+    // Alta por catalogo SIN campos estructurados: identidad poblada + opcionales en null.
+    // Ronda 7 (2026-06-06): CabinClass/VehicleType son opcionales — vacio/null persiste null.
     // ======================================================================================
 
     [Fact]
-    public async Task CreateFlightWithCatalog_NoStructuredFields_PersistsWithProductNameAndDefaultCabin()
+    public async Task CreateFlightWithCatalog_NoStructuredFields_PersistsWithProductNameAndNullCabin()
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
@@ -146,12 +150,12 @@ public class Adr018ProductFirstReconciliationTests
         var flight = await context.FlightSegments.SingleAsync();
         Assert.Equal("AEP-IGR LATAM", flight.ProductName);
         Assert.Equal("AEP-IGR LATAM", dto.ProductName);
-        Assert.Equal("Economy", flight.CabinClass); // CabinClass vacio => default de negocio
+        Assert.Null(flight.CabinClass); // Ronda 7: cabina vacia => "Sin especificar" (null), ya no "Economy"
         Assert.Null(flight.Origin);
     }
 
     [Fact]
-    public async Task CreateTransferWithCatalog_NoStructuredFields_PersistsWithProductNameAndDefaultVehicle()
+    public async Task CreateTransferWithCatalog_NoStructuredFields_PersistsWithProductNameAndNullVehicle()
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
@@ -173,7 +177,7 @@ public class Adr018ProductFirstReconciliationTests
         var transfer = await context.TransferBookings.SingleAsync();
         Assert.Equal("Traslado privado aeropuerto", transfer.ProductName);
         Assert.Equal("Traslado privado aeropuerto", dto.ProductName);
-        Assert.Equal("Sedan", transfer.VehicleType); // VehicleType vacio => default de negocio
+        Assert.Null(transfer.VehicleType); // Ronda 7: vehiculo vacio => no informado (null), ya no "Sedan"
         Assert.Null(transfer.PickupLocation);
     }
 
@@ -343,12 +347,15 @@ public class Adr018ProductFirstReconciliationTests
     }
 
     // ======================================================================================
-    // Coalesce de defaults en el path NO-catalogo (legacy, flag OFF): CabinClass/VehicleType
-    // vacios deben caer al default de negocio, igual que el path catalogo (no persistir "").
+    // Ronda 7 (guia UX, 2026-06-06) en el path NO-catalogo (legacy, flag OFF): CabinClass y
+    // VehicleType son OPCIONALES. Vacio ("") y null se persisten como null — el server ya NO
+    // inventa "Economy"/"Sedan" (el viejo coalesce de ADR-018 §2 quedo derogado).
     // ======================================================================================
 
-    [Fact]
-    public async Task CreateFlight_LegacyPath_EmptyCabinClass_CoalescesToEconomy()
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task CreateFlight_LegacyPath_BlankCabinClass_PersistsNull(string? cabinClass)
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
@@ -360,15 +367,17 @@ public class Adr018ProductFirstReconciliationTests
             AirlineCode: "AR", AirlineName: "Aerolineas", FlightNumber: "1234",
             Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
             DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
-            CabinClass: "", Baggage: null, PNR: null,
+            CabinClass: cabinClass, Baggage: null, PNR: null,
             NetCost: 500m, SalePrice: 900m, Commission: 400m, Tax: 0m, Notes: null), CancellationToken.None);
 
         var stored = await context.FlightSegments.SingleAsync();
-        Assert.Equal("Economy", stored.CabinClass); // "" => default, no se persiste vacio
+        Assert.Null(stored.CabinClass); // ""/null => "Sin especificar" (null); ya no se inventa "Economy"
     }
 
-    [Fact]
-    public async Task CreateTransfer_LegacyPath_EmptyVehicleType_CoalescesToSedan()
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task CreateTransfer_LegacyPath_BlankVehicleType_PersistsNull(string? vehicleType)
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
@@ -378,12 +387,62 @@ public class Adr018ProductFirstReconciliationTests
         await service.CreateTransferAsync(reserva.Id, new CreateTransferRequest(
             SupplierId: supplier.PublicId.ToString(),
             PickupLocation: "Aeropuerto", DropoffLocation: "Hotel",
-            PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: "",
+            PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: vehicleType,
             Passengers: 2, IsRoundTrip: false, ReturnDateTime: null,
             NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null), CancellationToken.None);
 
         var stored = await context.TransferBookings.SingleAsync();
-        Assert.Equal("Sedan", stored.VehicleType); // "" => default, no se persiste vacio
+        Assert.Null(stored.VehicleType); // ""/null => no informado (null); ya no se inventa "Sedan"
+    }
+
+    [Fact]
+    public async Task UpdateFlight_NullCabinClass_ClearsPersistedValue()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplier) = await SeedAsync(context);
+        var service = BuildBookingService(context, mapper, flagOn: false, canSeeCost: true);
+
+        // Alta con cabina elegida; despues el vendedor la pasa a "Sin especificar" (la ficha manda null).
+        var created = await service.CreateFlightAsync(reserva.Id, new CreateFlightRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            AirlineCode: "AR", AirlineName: "Aerolineas", FlightNumber: "1234",
+            Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
+            DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
+            CabinClass: "Business", Baggage: null, PNR: null,
+            NetCost: 500m, SalePrice: 900m, Commission: 400m, Tax: 0m, Notes: null), CancellationToken.None);
+
+        await service.UpdateFlightAsync(
+            reserva.Id.ToString(), created.PublicId.ToString(),
+            BuildFlightUpdate(supplier.PublicId.ToString(), productName: null, salePrice: 900m, cabinClass: null),
+            CancellationToken.None);
+
+        var stored = await context.FlightSegments.SingleAsync();
+        Assert.Null(stored.CabinClass); // null es un borrado legitimo (round-trip de la ficha), se persiste
+    }
+
+    [Fact]
+    public async Task UpdateTransfer_NullVehicleType_ClearsPersistedValue()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplier) = await SeedAsync(context);
+        var service = BuildBookingService(context, mapper, flagOn: false, canSeeCost: true);
+
+        var created = await service.CreateTransferAsync(reserva.Id, new CreateTransferRequest(
+            SupplierId: supplier.PublicId.ToString(),
+            PickupLocation: "Aeropuerto", DropoffLocation: "Hotel",
+            PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: "Van",
+            Passengers: 2, IsRoundTrip: false, ReturnDateTime: null,
+            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null), CancellationToken.None);
+
+        await service.UpdateTransferAsync(
+            reserva.Id.ToString(), created.PublicId.ToString(),
+            BuildTransferUpdate(supplier.PublicId.ToString(), productName: null, salePrice: 180m, vehicleType: null),
+            CancellationToken.None);
+
+        var stored = await context.TransferBookings.SingleAsync();
+        Assert.Null(stored.VehicleType); // null es un borrado legitimo (round-trip de la ficha), se persiste
     }
 
     // ======================================================================================
@@ -516,22 +575,26 @@ public class Adr018ProductFirstReconciliationTests
 
     // Update de vuelo tal como lo manda el form. productName=null simula el modal viejo (no envia el
     // campo); con valor simula la ficha inline. Los estructurados van null (vuelo de catalogo).
-    private static UpdateFlightRequest BuildFlightUpdate(string supplierPublicId, string? productName, decimal salePrice)
+    // cabinClass: Ronda 7 — null simula "Sin especificar" en la ficha (sin anti-clobber: null borra).
+    private static UpdateFlightRequest BuildFlightUpdate(
+        string supplierPublicId, string? productName, decimal salePrice, string? cabinClass = "Economy")
         => new(
             SupplierId: supplierPublicId,
             AirlineCode: null, AirlineName: null, FlightNumber: null,
             Origin: null, OriginCity: null, Destination: null, DestinationCity: null,
             DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
-            CabinClass: "Economy", Baggage: null, TicketNumber: null, PNR: null,
+            CabinClass: cabinClass, Baggage: null, TicketNumber: null, PNR: null,
             NetCost: 500m, SalePrice: salePrice, Commission: 400m, Tax: 0m, Status: "HL", Notes: null,
             ProductName: productName);
 
     // Update de traslado. productName=null simula el modal viejo; con valor, la ficha inline.
-    private static UpdateTransferRequest BuildTransferUpdate(string supplierPublicId, string? productName, decimal salePrice)
+    // vehicleType: Ronda 7 — null simula "sin tipo de vehiculo" (sin anti-clobber: null borra).
+    private static UpdateTransferRequest BuildTransferUpdate(
+        string supplierPublicId, string? productName, decimal salePrice, string? vehicleType = "Sedan")
         => new(
             SupplierId: supplierPublicId,
             PickupLocation: null, DropoffLocation: null,
-            PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: "Sedan", Passengers: 2,
+            PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: vehicleType, Passengers: 2,
             IsRoundTrip: false, ReturnDateTime: null, ConfirmationNumber: null,
             NetCost: 100m, SalePrice: salePrice, Commission: 80m, Status: "Solicitado", Notes: null,
             ProductName: productName);
