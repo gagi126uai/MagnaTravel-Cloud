@@ -70,6 +70,36 @@ export function esServicioConfirmadoPorOperador(svc) {
 }
 
 /**
+ * Devuelve la etiqueta de texto del badge de estado del servicio.
+ *
+ * Regla de negocio (Gaston 2026-06-08):
+ *   - En Cotizacion (Quotation) y Presupuesto (Budget) todavia no se le solicito
+ *     nada al operador — el badge dice "En espera", no "Solicitado".
+ *   - A partir de "En gestion" (InManagement) en adelante, si el workflowStatus
+ *     esta vacio o es el valor por defecto, el badge dice "Solicitado" (ya se pidio).
+ *   - "Confirmado" y "Cancelado" siempre se muestran tal cual (llegan del backend).
+ *
+ * @param {string|null} workflowStatus - Estado workflow del servicio (puede ser null/undefined)
+ * @param {string} reservaStatus - Estado de la reserva (ej. "Quotation", "Budget", "InManagement")
+ */
+function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
+    // "Confirmado" y "Cancelado" son estados concretos del backend: mostrar tal cual.
+    if (workflowStatus === 'Confirmado' || workflowStatus === 'Cancelado') {
+        return workflowStatus;
+    }
+
+    // Si hay otro valor en workflowStatus (ej. "Emitido", "HK"), mostrarlo directo.
+    if (workflowStatus) {
+        return workflowStatus;
+    }
+
+    // workflowStatus vacio o nulo: el texto depende del estado de la reserva.
+    // En Cotizacion y Presupuesto, todavia no se pidio nada al operador.
+    const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
+    return estaEnEtapaPrevia ? 'En espera' : 'Solicitado';
+}
+
+/**
  * Formatea una fecha para mostrar en la tabla. Devuelve '-' si el valor
  * no existe o no es una fecha válida (evita que aparezca "Invalid Date").
  *
@@ -573,12 +603,14 @@ export function ServiceList({
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap">
                                                 <div className="flex flex-col gap-1.5">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                                                    {/* px-1.5 (en vez de px-2) para que el área de color no se extienda
+                                                        de más en textos cortos como "En espera" o "Emitido". */}
+                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
                                                         svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
                                                         svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
                                                         'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
                                                     }`}>
-                                                        {svc.workflowStatus || 'Solicitado'}
+                                                        {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                                     </span>
                                                     {/* Pelotita ADR-020 (decision 4): solo en estado InManagement.
                                                         Verde = resuelto; Amarilla con texto = que falta resolver. */}
@@ -721,12 +753,14 @@ export function ServiceList({
                                                 </span>
                                             )}
                                         </div>
-                                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+                                        {/* px-1.5 en vez de px-2: mismo ajuste que desktop para que el área
+                                            de color no se extienda de más en textos cortos. */}
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
                                             svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' :
                                             svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30' :
                                             'bg-amber-100 text-amber-700 dark:bg-amber-900/30'
                                         }`}>
-                                            {svc.workflowStatus || 'Solicitado'}
+                                            {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                         </span>
                                     </div>
                                     <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>

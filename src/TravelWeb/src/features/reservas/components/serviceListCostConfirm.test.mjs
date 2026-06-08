@@ -410,3 +410,90 @@ test("handleServiceUpdated: delta cero cuando costo no cambió (confirm sin modi
     assert.equal(resultado.totalCost, 1000, "totalCost no debe cambiar si el costo no varió");
     assert.equal(resultado.transferBookings[0].costToConfirm, false, "costToConfirm debe actualizarse igual");
 });
+
+// ─── Tests: etiquetaEstadoServicio (FIX 3: En espera vs Solicitado) ───────────
+// Regla Gaston 2026-06-08: en Cotización/Presupuesto el badge dice "En espera"
+// (nada se pidió al operador); recién en En gestión en adelante dice "Solicitado".
+// "Confirmado" y "Cancelado" siempre pasan directo (son estados del backend).
+
+function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
+    if (workflowStatus === 'Confirmado' || workflowStatus === 'Cancelado') {
+        return workflowStatus;
+    }
+    if (workflowStatus) {
+        return workflowStatus;
+    }
+    const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
+    return estaEnEtapaPrevia ? 'En espera' : 'Solicitado';
+}
+
+test("etiquetaEstadoServicio: workflowStatus null + Quotation → 'En espera'", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Quotation'), 'En espera');
+});
+
+test("etiquetaEstadoServicio: workflowStatus null + Budget → 'En espera'", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Budget'), 'En espera');
+});
+
+test("etiquetaEstadoServicio: workflowStatus null + InManagement → 'Solicitado'", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'InManagement'), 'Solicitado');
+});
+
+test("etiquetaEstadoServicio: workflowStatus null + Confirmed → 'Solicitado'", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Confirmed'), 'Solicitado');
+});
+
+test("etiquetaEstadoServicio: workflowStatus null + Traveling → 'Solicitado'", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Traveling'), 'Solicitado');
+});
+
+test("etiquetaEstadoServicio: workflowStatus 'Confirmado' → siempre 'Confirmado' sin importar la etapa", () => {
+    assert.equal(etiquetaEstadoServicio('Confirmado', 'Quotation'), 'Confirmado');
+    assert.equal(etiquetaEstadoServicio('Confirmado', 'InManagement'), 'Confirmado');
+});
+
+test("etiquetaEstadoServicio: workflowStatus 'Cancelado' → siempre 'Cancelado'", () => {
+    assert.equal(etiquetaEstadoServicio('Cancelado', 'Budget'), 'Cancelado');
+    assert.equal(etiquetaEstadoServicio('Cancelado', 'Confirmed'), 'Cancelado');
+});
+
+test("etiquetaEstadoServicio: workflowStatus 'Emitido' → pasa directo (estado del backend)", () => {
+    // Otros valores del backend como 'Emitido', 'HK', etc. se muestran tal cual
+    assert.equal(etiquetaEstadoServicio('Emitido', 'InManagement'), 'Emitido');
+});
+
+// ─── Tests: regla de 0 pasajeros (FIX 4a) ────────────────────────────────────
+// Regla Gaston 2026-06-08: NUNCA avanzar con 0 pasajeros.
+
+function totalPasajeros(adults, children, infants) {
+    return adults + children + infants;
+}
+
+function botonDeshabilitadoPorPasajeros(adults, children, infants, slotsToFillLength, allValid, blockingCount) {
+    const total = totalPasajeros(adults, children, infants);
+    const tieneCero = total === 0;
+    return tieneCero ||
+        blockingCount > 0 ||
+        (slotsToFillLength > 0 && !allValid);
+}
+
+test("regla 0 pasajeros: adultos=0, menores=0, infantes=0 → botón deshabilitado", () => {
+    assert.equal(botonDeshabilitadoPorPasajeros(0, 0, 0, 0, true, 0), true);
+});
+
+test("regla 0 pasajeros: 1 adulto → botón habilitado (0 pendientes, valid)", () => {
+    assert.equal(botonDeshabilitadoPorPasajeros(1, 0, 0, 0, true, 0), false);
+});
+
+test("regla 0 pasajeros: solo infante (0 adultos, 0 menores, 1 infante) → habilitado", () => {
+    // Un infante solo ya cumple el mínimo de 1
+    assert.equal(botonDeshabilitadoPorPasajeros(0, 0, 1, 0, true, 0), false);
+});
+
+test("regla 0 pasajeros: formulario incompleto → botón deshabilitado aunque haya 1 adulto", () => {
+    assert.equal(botonDeshabilitadoPorPasajeros(1, 0, 0, 1, false, 0), true);
+});
+
+test("regla 0 pasajeros: bloqueo por razón no-pax → deshabilitado aunque haya pasajeros", () => {
+    assert.equal(botonDeshabilitadoPorPasajeros(2, 1, 0, 0, true, 1), true);
+});

@@ -119,10 +119,33 @@ function SearchResultItem({ result, onSelect, isStrongMatch, canSeeCost, isKeybo
 }
 
 /**
+ * Mapeo de serviceType (valor del backend/form) → nombre legible en español
+ * para el texto de creación: "crear X como aéreo nuevo", "como hotel nuevo", etc.
+ *
+ * Si llega un tipo desconocido, cae al genérico "servicio nuevo".
+ */
+const NOMBRE_TIPO_SERVICIO = {
+    Aereo: "aéreo",
+    Hotel: "hotel",
+    Traslado: "traslado",
+    Paquete: "paquete",
+    Asistencia: "asistencia",
+};
+
+function nombreTipoServicio(serviceType) {
+    return NOMBRE_TIPO_SERVICIO[serviceType] || "servicio";
+}
+
+/**
  * Última opción del dropdown: crear el producto nuevo.
  * Según la guía UX: "Revisá los de arriba antes — si ya existe, elegirlo evita duplicados."
+ *
+ * Recibe serviceType para mostrar el tipo correcto en el texto (no siempre "hotel").
  */
-function CreateNewOption({ searchText, onCreateNew, isKeyboardFocused, optionId }) {
+function CreateNewOption({ searchText, serviceType, onCreateNew, isKeyboardFocused, optionId }) {
+    // Nombre legible para el usuario: "aéreo nuevo", "hotel nuevo", etc.
+    const nombreTipo = nombreTipoServicio(serviceType);
+
     return (
         <button
             type="button"
@@ -136,7 +159,7 @@ function CreateNewOption({ searchText, onCreateNew, isKeyboardFocused, optionId 
         >
             <div className="flex items-center gap-2 text-sm font-semibold text-blue-600">
                 <Plus className="w-4 h-4 shrink-0" />
-                <span>No es ninguno: crear "{searchText}" como hotel nuevo</span>
+                <span>No es ninguno: crear "{searchText}" como {nombreTipo} nuevo</span>
             </div>
             <div className="text-xs text-slate-400 mt-0.5 ml-6">
                 Revisá los de arriba antes — si ya existe, elegirlo evita duplicados.
@@ -376,10 +399,13 @@ export function ProductSearchField({
                         </div>
                     )}
 
-                    {/* La opción crear SIEMPRE va al final (candado 2 anti-duplicados) */}
+                    {/* La opción crear SIEMPRE va al final (candado 2 anti-duplicados).
+                        Pasamos serviceType para que el texto diga el tipo correcto:
+                        "crear X como aéreo nuevo" / "como hotel nuevo" / etc. */}
                     {showCreateOption && (
                         <CreateNewOption
                             searchText={(value || "").trim()}
+                            serviceType={serviceType}
                             onCreateNew={handleCreateNew}
                             isKeyboardFocused={keyboardIndex === results.length}
                             optionId={getOptionId(results.length)}

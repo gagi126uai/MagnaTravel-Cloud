@@ -161,3 +161,51 @@ test("re-foco con texto muy corto → NO debe re-abrir", () => {
     });
     assert.equal(resultado, false);
 });
+
+// ─── Tests: helper nombreTipoServicio (FIX 1: texto del botón "Crear nuevo") ──
+// El botón "crear X como TIPO nuevo" usaba "hotel" hardcodeado para cualquier tipo.
+// Ahora usa el mapa NOMBRE_TIPO_SERVICIO que mapea el serviceType al nombre correcto.
+
+const NOMBRE_TIPO_SERVICIO = {
+    Aereo: "aéreo",
+    Hotel: "hotel",
+    Traslado: "traslado",
+    Paquete: "paquete",
+    Asistencia: "asistencia",
+};
+
+function nombreTipoServicio(serviceType) {
+    return NOMBRE_TIPO_SERVICIO[serviceType] || "servicio";
+}
+
+test("Aereo → 'aéreo'", () => {
+    assert.equal(nombreTipoServicio("Aereo"), "aéreo");
+});
+
+test("Hotel → 'hotel'", () => {
+    assert.equal(nombreTipoServicio("Hotel"), "hotel");
+});
+
+test("Traslado → 'traslado'", () => {
+    assert.equal(nombreTipoServicio("Traslado"), "traslado");
+});
+
+test("Paquete → 'paquete'", () => {
+    assert.equal(nombreTipoServicio("Paquete"), "paquete");
+});
+
+test("Asistencia → 'asistencia'", () => {
+    assert.equal(nombreTipoServicio("Asistencia"), "asistencia");
+});
+
+test("tipo desconocido → 'servicio' (fallback genérico)", () => {
+    assert.equal(nombreTipoServicio("Generico"), "servicio");
+});
+
+test("tipo null → 'servicio' (fallback genérico)", () => {
+    assert.equal(nombreTipoServicio(null), "servicio");
+});
+
+test("tipo undefined → 'servicio' (fallback genérico)", () => {
+    assert.equal(nombreTipoServicio(undefined), "servicio");
+});
