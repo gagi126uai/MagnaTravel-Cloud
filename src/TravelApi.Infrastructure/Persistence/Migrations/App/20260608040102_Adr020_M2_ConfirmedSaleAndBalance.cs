@@ -31,28 +31,28 @@ namespace TravelApi.Infrastructure.Persistence.Migrations.App
             migrationBuilder.Sql("""
                 UPDATE "TravelFiles" tf SET "ConfirmedSale" =
                     COALESCE((SELECT SUM(h."SalePrice") FROM "HotelBookings" h
-                        WHERE h."ReservaId" = tf."Id"
+                        WHERE h."TravelFileId" = tf."Id"
                           AND lower(h."Status") NOT LIKE '%cancel%'
                           AND (lower(h."Status") LIKE '%confirm%' OR lower(h."Status") LIKE '%emit%')), 0)
                   + COALESCE((SELECT SUM(p."SalePrice") FROM "PackageBookings" p
-                        WHERE p."ReservaId" = tf."Id"
+                        WHERE p."TravelFileId" = tf."Id"
                           AND lower(p."Status") NOT LIKE '%cancel%'
                           AND (lower(p."Status") LIKE '%confirm%' OR lower(p."Status") LIKE '%emit%')), 0)
                   + COALESCE((SELECT SUM(a."SalePrice") FROM "AssistanceBookings" a
-                        WHERE a."ReservaId" = tf."Id"
+                        WHERE a."TravelFileId" = tf."Id"
                           AND lower(a."Status") NOT LIKE '%cancel%'
                           AND (lower(a."Status") LIKE '%confirm%' OR lower(a."Status") LIKE '%emit%')), 0)
                   + COALESCE((SELECT SUM(s."SalePrice") FROM "Reservations" s
-                        WHERE s."ReservaId" = tf."Id"
+                        WHERE s."TravelFileId" = tf."Id"
                           AND lower(s."Status") NOT LIKE '%cancel%'
                           AND (lower(s."Status") LIKE '%confirm%' OR lower(s."Status") LIKE '%emit%')), 0)
                   + COALESCE((SELECT SUM(t."SalePrice") FROM "TransferBookings" t
-                        WHERE t."ReservaId" = tf."Id"
+                        WHERE t."TravelFileId" = tf."Id"
                           AND lower(t."Status") NOT LIKE '%cancel%'
                           AND ((lower(t."Status") LIKE '%confirm%' OR lower(t."Status") LIKE '%emit%')
                                OR t."NoConfirmationRequired" = true)), 0)
                   + COALESCE((SELECT SUM(f."SalePrice") FROM "FlightSegments" f
-                        WHERE f."ReservaId" = tf."Id"
+                        WHERE f."TravelFileId" = tf."Id"
                           AND f."TicketIssuedAt" IS NOT NULL
                           AND upper(trim(f."Status")) NOT IN ('UN','UC','HX','NO')), 0);
 
