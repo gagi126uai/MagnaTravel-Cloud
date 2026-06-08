@@ -248,30 +248,36 @@ export function ReservaHeader({
                         </button>
                     )}
 
-                    {/* ACCIONES SECUNDARIAS */}
-                    <div className="flex gap-2 ml-2 pl-4 border-l border-slate-200 dark:border-slate-800">
+                    {/* ACCIONES SECUNDARIAS — cada botón muestra icono + palabra siempre visible (spec UX 2026-06-08).
+                        El separador border-l solo se muestra en sm: hacia arriba para que no quede raro al envolver en mobile. */}
+                    <div className="flex flex-wrap gap-2 ml-2 pl-4 sm:border-l border-slate-200 dark:border-slate-800">
 
-                        {/* Boton "Perdido": discreto, solo desde Cotizacion/Presupuesto */}
+                        {/* Boton "Perdida": discreto, solo desde Cotizacion/Presupuesto */}
                         {showMarkLostButton && (
                             <button
                                 onClick={onMarkLost}
                                 data-testid="reserva-action-mark-lost"
-                                className="p-2.5 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors"
+                                aria-label="Perdida"
+                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors text-sm font-semibold"
                                 title="Marcar como Perdida (el cliente no compro)"
                             >
-                                <XCircle className="w-5 h-5" />
+                                <XCircle className="w-4 h-4" />
+                                Perdida
                             </button>
                         )}
 
-                        {/* Boton "Cancelar reserva": proceso fiscal, solo en estados operativos */}
+                        {/* Boton "Cancelar reserva": proceso fiscal, solo en estados operativos.
+                            El title mantiene la advertencia AFIP porque el texto corto "Cancelar" no la comunica. */}
                         {showCancelButton && (
                             <button
                                 onClick={onCancelReserva}
                                 data-testid="reserva-action-cancel"
-                                className="p-2.5 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300 rounded-xl transition-colors"
+                                aria-label="Cancelar reserva"
+                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300 rounded-xl transition-colors text-sm font-semibold"
                                 title="Cancelar reserva (emite nota de credito en AFIP/ARCA)"
                             >
-                                <Ban className="w-5 h-5" />
+                                <Ban className="w-4 h-4" />
+                                Cancelar
                             </button>
                         )}
 
@@ -279,10 +285,12 @@ export function ReservaHeader({
                         {canRevert && onRevert && (
                             <button
                                 onClick={onRevert}
-                                className="p-2.5 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors"
+                                aria-label="Volver atrás"
+                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors text-sm font-semibold"
                                 title="Revertir estado (requiere autorizacion si la reserva tiene candado)"
                             >
-                                <Undo2 className="w-5 h-5" />
+                                <Undo2 className="w-4 h-4" />
+                                Volver atrás
                             </button>
                         )}
 
@@ -290,21 +298,25 @@ export function ReservaHeader({
                         {canDelete && (
                             <button
                                 onClick={onDelete}
-                                className="p-2.5 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-400 rounded-xl transition-colors"
-                                title="Eliminar Reserva"
+                                aria-label="Eliminar reserva"
+                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-400 rounded-xl transition-colors text-sm font-semibold"
                             >
-                                <Trash2 className="w-5 h-5" />
+                                <Trash2 className="w-4 h-4" />
+                                Eliminar
                             </button>
                         )}
 
-                        {/* Archivar */}
+                        {/* Archivar: el title conserva el motivo de bloqueo cuando está deshabilitado,
+                            porque "Archivar" solo no explica por qué no se puede. */}
                         <button
                             onClick={canArchive ? onArchive : undefined}
                             disabled={!canArchive}
-                            className={`p-2.5 rounded-xl transition-colors ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
+                            aria-label="Archivar reserva"
+                            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
                             title={archiveBlockReason || "Archivar"}
                         >
-                            <Archive className="w-5 h-5" />
+                            <Archive className="w-4 h-4" />
+                            Archivar
                         </button>
                     </div>
                 </div>

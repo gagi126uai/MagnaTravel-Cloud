@@ -58,21 +58,6 @@ function puedeConfirmarCosto(isCatalogFindOrCreateEnabled, mostrarCosto) {
     return isCatalogFindOrCreateEnabled && mostrarCosto;
 }
 
-// ─── Lógica pura para pill "creado en venta" ─────────────────────────────────
-
-const TEXTOS_PILL_CREADO = {
-    hotel: "Hotel creado en venta",
-    flight: "Aéreo creado en venta",
-    transfer: "Traslado creado en venta",
-    package: "Paquete creado en venta",
-    assistance: "Asistencia creada en venta",
-};
-
-function obtenerTextoPillCreadoEnVenta(service) {
-    if (!service.productCreatedInSale) return null;
-    return TEXTOS_PILL_CREADO[service.recordKind] || null;
-}
-
 // ─── Tests: buildConfirmCostUrl ───────────────────────────────────────────────
 
 test("buildConfirmCostUrl: hotel → URL correcta", () => {
@@ -177,49 +162,6 @@ test("puedeConfirmarCosto: flag ON + mostrarCosto=true → puede", () => {
 
 test("puedeConfirmarCosto: flag ON + mostrarCosto=false → no puede", () => {
     assert.equal(puedeConfirmarCosto(true, false), false);
-});
-
-// ─── Tests: pill "creado en venta" ───────────────────────────────────────────
-
-test("pill creado en venta: hotel → texto masculino", () => {
-    const service = { recordKind: "hotel", productCreatedInSale: true };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), "Hotel creado en venta");
-});
-
-test("pill creado en venta: asistencia → texto FEMENINO 'creada'", () => {
-    // Solo asistencia va en femenino por regla de negocio del dueño
-    const service = { recordKind: "assistance", productCreatedInSale: true };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), "Asistencia creada en venta");
-});
-
-test("pill creado en venta: vuelo → texto masculino 'Aéreo creado en venta'", () => {
-    const service = { recordKind: "flight", productCreatedInSale: true };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), "Aéreo creado en venta");
-});
-
-test("pill creado en venta: traslado → texto masculino", () => {
-    const service = { recordKind: "transfer", productCreatedInSale: true };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), "Traslado creado en venta");
-});
-
-test("pill creado en venta: paquete → texto masculino", () => {
-    const service = { recordKind: "package", productCreatedInSale: true };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), "Paquete creado en venta");
-});
-
-test("pill creado en venta: productCreatedInSale=false → null (no se muestra)", () => {
-    const service = { recordKind: "hotel", productCreatedInSale: false };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), null);
-});
-
-test("pill creado en venta: sin productCreatedInSale → null", () => {
-    const service = { recordKind: "hotel" };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), null);
-});
-
-test("pill creado en venta: tipo genérico + productCreatedInSale=true → null (genérico no tiene pill)", () => {
-    const service = { recordKind: "generic", productCreatedInSale: true };
-    assert.equal(obtenerTextoPillCreadoEnVenta(service), null);
 });
 
 // ─── Tests: flag OFF = render idéntico (gate invariante) ─────────────────────

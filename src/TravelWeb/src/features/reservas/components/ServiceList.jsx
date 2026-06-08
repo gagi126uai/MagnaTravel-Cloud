@@ -10,9 +10,6 @@
  *   Decisión del dueño: catálogo OFF + avisos ON → la columna APARECE igual.
  *   Son dos flags independientes y la columna solo depende del flag de avisos.
  *
- * Pill violeta "creado en venta":
- *   Sigue gateada por isCatalogFindOrCreateEnabled (sin cambio).
- *
  * El gate de costo (quién ve el costo neto) cambia según el flag catálogo:
  *   - Flag OFF: isAdmin() (comportamiento original)
  *   - Flag ON:  hasPermission("cobranzas.see_cost") (admin sigue pasando porque admin tiene todo)
@@ -70,6 +67,21 @@ function textoFaltante(svc) {
  */
 export function esServicioConfirmadoPorOperador(svc) {
     return esServicioResuelto(svc);
+}
+
+/**
+ * Formatea una fecha para mostrar en la tabla. Devuelve '-' si el valor
+ * no existe o no es una fecha válida (evita que aparezca "Invalid Date").
+ *
+ * Se usa en la columna Fecha/Estancia para fechas de inicio Y fin,
+ * porque Paquete puede no tener fecha de fin informada por el operador.
+ */
+function formatFechaSegura(valor) {
+    if (!valor) return '-';
+    const fecha = new Date(valor);
+    // getTime() devuelve NaN si la fecha no es válida
+    if (Number.isNaN(fecha.getTime())) return '-';
+    return fecha.toLocaleDateString('es-AR');
 }
 
 /**
@@ -331,37 +343,6 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
     return <Package className={`${className} text-violet-500`} />;
 }
 
-/**
- * Pill violeta que indica que el producto fue creado durante la venta
- * (es un producto nuevo en el catálogo, no uno preexistente).
- *
- * Solo visible con flag ON. La ven todos (no requiere permiso especial).
- * La condición: productCreatedInSale === true en el DTO del servicio.
- */
-function PillCreadoEnVenta({ service }) {
-    if (!service.productCreatedInSale) return null;
-
-    // Texto varía por tipo: "Asistencia creada en venta" (femenino) vs el resto "creado en venta"
-    const textosPorTipo = {
-        [SERVICE_RECORD_KIND.HOTEL]: "Hotel creado en venta",
-        [SERVICE_RECORD_KIND.FLIGHT]: "Aéreo creado en venta",
-        [SERVICE_RECORD_KIND.TRANSFER]: "Traslado creado en venta",
-        [SERVICE_RECORD_KIND.PACKAGE]: "Paquete creado en venta",
-        [SERVICE_RECORD_KIND.ASSISTANCE]: "Asistencia creada en venta",
-    };
-
-    const texto = textosPorTipo[service.recordKind];
-    if (!texto) return null;
-
-    return (
-        <span
-            className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
-            data-testid="pill-created-in-sale"
-        >
-            {texto}
-        </span>
-    );
-}
 
 /**
  * Props:
@@ -541,10 +522,7 @@ export function ServiceList({
                                             <td className="py-4 align-middle">
                                                 <div className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-1">{svc.name}</div>
                                                 <div className="flex flex-wrap gap-2 mt-1">
-                                                    {/* Pill violeta "creado en venta": solo con flag ON, la ven todos */}
-                                                    {isCatalogFindOrCreateEnabled && (
-                                                        <PillCreadoEnVenta service={svc} />
-                                                    )}
+                                                    {/* FIX 4: pill "creado en venta" eliminada (no aporta al usuario) */}
                                                     {svc.pnr && (
                                                         <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded font-mono font-bold">PNR: {svc.pnr}</span>
                                                     )}
@@ -574,19 +552,23 @@ export function ServiceList({
                                             <td className="py-4 align-middle whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
                                                 {svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ? (
                                                     <div className="flex flex-col">
-                                                        <span>{new Date(svc.date || svc.startDate || svc.checkIn).toLocaleDateString('es-AR')}</span>
-                                                        <span className="text-[10px] opacity-60">al {new Date(svc.endDate || svc.checkOut).toLocaleDateString('es-AR')}</span>
+                                                        <span>{formatFechaSegura(svc.date || svc.startDate || svc.checkIn)}</span>
+                                                        {/* FIX: solo mostrar "al ..." si hay fecha de fin válida.
+                                                            Paquete puede no tener endDate si el operador no la informa. */}
+                                                        {formatFechaSegura(svc.endDate || svc.checkOut) !== '-' && (
+                                                            <span className="text-[10px] opacity-60">al {formatFechaSegura(svc.endDate || svc.checkOut)}</span>
+                                                        )}
                                                     </div>
                                                 ) : svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE ? (
                                                     // Asistencia: muestra vigencia desde/hasta (fechas date-only)
                                                     <div className="flex flex-col">
-                                                        <span>{svc.validFrom ? new Date(svc.validFrom).toLocaleDateString('es-AR') : '-'}</span>
-                                                        {svc.validTo && (
-                                                            <span className="text-[10px] opacity-60">al {new Date(svc.validTo).toLocaleDateString('es-AR')}</span>
+                                                        <span>{formatFechaSegura(svc.validFrom)}</span>
+                                                        {formatFechaSegura(svc.validTo) !== '-' && (
+                                                            <span className="text-[10px] opacity-60">al {formatFechaSegura(svc.validTo)}</span>
                                                         )}
                                                     </div>
                                                 ) : (
-                                                    svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-'
+                                                    formatFechaSegura(svc.date)
                                                 )}
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap">
@@ -670,24 +652,34 @@ export function ServiceList({
                                                             )}
                                                         </>
                                                     )}
+                                                    {/* Desktop: icono + palabra siempre visible (spec UX 2026-06-08).
+                                                        textoTacho es dinámico: "Cancelar" si el operador ya confirmó, "Borrar" si no.
+                                                        aria-label y texto visible dicen lo mismo para coherencia con lectores de pantalla. */}
                                                     <div className="flex justify-end gap-1 transition-opacity">
                                                         <button
                                                             onClick={() => onEditService(svc)}
                                                             data-testid={`btn-edit-service-${getReservationServicePublicId(svc)}`}
                                                             aria-label="Editar servicio"
-                                                            className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
+                                                            className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-xs font-semibold"
                                                         >
                                                             <Edit2 className="w-4 h-4" />
+                                                            Editar
                                                         </button>
                                                         {/* Papelera: abre el modal que decide borrar vs cancelar según decisión #9 */}
-                                                        <button
-                                                            onClick={() => handleTrashClick(svc)}
-                                                            data-testid={`btn-delete-service-${getReservationServicePublicId(svc)}`}
-                                                            aria-label={esServicioConfirmadoPorOperador(svc) ? 'Cancelar servicio' : 'Borrar servicio'}
-                                                            className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
+                                                        {(() => {
+                                                            const textoTacho = esServicioConfirmadoPorOperador(svc) ? 'Cancelar' : 'Borrar';
+                                                            return (
+                                                                <button
+                                                                    onClick={() => handleTrashClick(svc)}
+                                                                    data-testid={`btn-delete-service-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label={`${textoTacho} servicio`}
+                                                                    className="inline-flex items-center gap-1 p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded text-xs font-semibold"
+                                                                >
+                                                                    <Trash2 className="w-4 h-4" />
+                                                                    {textoTacho}
+                                                                </button>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 </div>
                                             </td>
@@ -706,9 +698,8 @@ export function ServiceList({
                             const displayType = svc.displayType || svc._type || 'Servicio';
                             const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
 
-                            // Pills de avisos para mobile: violeta (catálogo) + upcoming start (avisos).
+                            // FIX 4: pill "creado en venta" eliminada. Solo queda la pill de próximo inicio.
                             // Sin pill no hay "—" en mobile (solo omitimos la línea entera).
-                            const tienePillCreadoEnVenta = isCatalogFindOrCreateEnabled && svc.productCreatedInSale;
                             // Pill de próximo inicio: solo con flag avisos ON, sin cancelado,
                             // Y con la fecha DENTRO de la ventana de alerta (no solo que exista).
                             // Si la fecha está fuera de ventana, UpcomingStartPill devuelve null en mobile
@@ -716,7 +707,7 @@ export function ServiceList({
                             const tieneUpcomingPillMobile = isServiceDeadlineAlertsEnabled &&
                                 svc.workflowStatus !== "Cancelado" &&
                                 estaEnVentana(svc.date, windowDays);
-                            const mostrarLineaPills = tienePillCreadoEnVenta || tieneUpcomingPillMobile;
+                            const mostrarLineaPills = tieneUpcomingPillMobile;
 
                             return (
                                 <div key={serviceKey} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
@@ -740,10 +731,9 @@ export function ServiceList({
                                     </div>
                                     <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>
 
-                                    {/* Línea de pills (violeta + upcoming start): solo si hay al menos una pill */}
+                                    {/* Línea de pill de próximo inicio: solo si aplica */}
                                     {mostrarLineaPills && (
                                         <div className="flex flex-wrap gap-2 mt-1 mb-1">
-                                            {tienePillCreadoEnVenta && <PillCreadoEnVenta service={svc} />}
                                             {tieneUpcomingPillMobile && (
                                                 <UpcomingStartPill service={svc} windowDays={windowDays} mostrarGuion={false} />
                                             )}
@@ -754,12 +744,14 @@ export function ServiceList({
                                         <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
                                             <span>
                                                 {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE
-                                                    ? (svc.validFrom ? `Vigencia: ${new Date(svc.validFrom).toLocaleDateString('es-AR')}` : '-')
-                                                    : (svc.date ? new Date(svc.date).toLocaleDateString('es-AR') : '-')}
+                                                    ? (svc.validFrom ? `Vigencia: ${formatFechaSegura(svc.validFrom)}` : '-')
+                                                    : formatFechaSegura(svc.date)}
+                                                {/* FIX: solo agregar "al ..." si la fecha de fin es válida */}
                                                 {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE) &&
-                                                    ` al ${new Date(svc.endDate || svc.checkOut).toLocaleDateString('es-AR')}`}
+                                                    formatFechaSegura(svc.endDate || svc.checkOut) !== '-' &&
+                                                    ` al ${formatFechaSegura(svc.endDate || svc.checkOut)}`}
                                                 {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE && svc.validTo &&
-                                                    ` al ${new Date(svc.validTo).toLocaleDateString('es-AR')}`}
+                                                    ` al ${formatFechaSegura(svc.validTo)}`}
                                             </span>
                                             <div className="flex gap-2 items-center mt-1">
                                                 <span className="font-bold text-slate-900 dark:text-white">Venta: ${(svc.salePrice || 0).toLocaleString()}</span>
@@ -813,25 +805,34 @@ export function ServiceList({
                                                     )}
                                                 </>
                                             )}
-                                            <div className="flex items-center gap-2">
-                                                <button
-                                                    onClick={() => onEditService(svc)}
-                                                    data-testid={`btn-edit-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                    aria-label="Editar servicio"
-                                                    className="p-2 text-slate-400 rounded-lg bg-slate-50 dark:bg-slate-800"
-                                                >
-                                                    <Edit2 className="w-3.5 h-3.5" />
-                                                </button>
-                                                {/* Papelera mobile: mismo modal borrar vs cancelar */}
-                                                <button
-                                                    onClick={() => handleTrashClick(svc)}
-                                                    data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                    aria-label={esServicioConfirmadoPorOperador(svc) ? 'Cancelar servicio' : 'Borrar servicio'}
-                                                    className="p-2 text-red-400 rounded-lg bg-red-50 dark:bg-red-900/20"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
+                                            {/* Mobile: mismo patrón icono + palabra (spec UX 2026-06-08).
+                                                textoTachoMobile sincronizado con la lógica desktop para no bifurcar. */}
+                                            {(() => {
+                                                const textoTachoMobile = esServicioConfirmadoPorOperador(svc) ? 'Cancelar' : 'Borrar';
+                                                return (
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => onEditService(svc)}
+                                                            data-testid={`btn-edit-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                            aria-label="Editar servicio"
+                                                            className="inline-flex items-center gap-1 p-2 text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
+                                                        >
+                                                            <Edit2 className="w-3.5 h-3.5" />
+                                                            Editar
+                                                        </button>
+                                                        {/* Papelera mobile: mismo modal borrar vs cancelar */}
+                                                        <button
+                                                            onClick={() => handleTrashClick(svc)}
+                                                            data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                            aria-label={`${textoTachoMobile} servicio`}
+                                                            className="inline-flex items-center gap-1 p-2 text-red-500 rounded-lg bg-red-50 dark:bg-red-900/20 text-xs font-semibold"
+                                                        >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                            {textoTachoMobile}
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     </div>
                                 </div>

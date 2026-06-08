@@ -34,6 +34,10 @@ import {
     getServiceCreateEndpoint,
     getServiceMutationEndpoint
 } from "../features/reservas/lib/reservationServiceModel";
+// isStatusLocked es la fuente canonica del candado (ADR-020).
+// Centraliza los 4 estados bloqueados: Confirmed, Traveling, ToSettle, Closed.
+// Usarla aqui evita que el modal y el header diverjan si cambian los estados.
+import { isStatusLocked } from "../features/reservas/components/ReservaStatusBadge";
 import RoomingPlanner from "./RoomingPlanner";
 
 const SERVICE_TYPES = [
@@ -249,7 +253,7 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
  *     una tarifa del tarifario (form.rateId) o toca "Cargar a mano" (showManualFields).
  *   - Al EDITAR (isEditing=true): los campos aparecen directamente sin buscador de por medio.
  */
-function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing, activeServiceType }) {
     // Controla si el usuario ya eligio "cargar a mano" (sin pasar por el tarifario).
     // Una vez revelado, NO se puede volver a ocultar en la misma sesion del modal.
     const [showManualFields, setShowManualFields] = useState(false);
@@ -269,7 +273,10 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
             <div>
                 <label className={labelClass}>Aerolinea / ruta</label>
                 <RateSelector
-                    serviceType={form.serviceType || "Aereo"}
+                    // FIX: usamos activeServiceType (estado del modal padre, siempre sincronizado
+                    // con la pestaña activa) en lugar de form.serviceType, que puede estar
+                    // desactualizado si el usuario cambió de tipo sin reiniciar el form.
+                    serviceType={activeServiceType || "Aereo"}
                     supplierId={form.supplierId}
                     onSelect={(rate) => {
                         onRateSelect(rate);
@@ -984,7 +991,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
  * Flujo "servicio primero": igual que FlightForm, los campos se revelan
  * cuando el usuario elige del tarifario o toca "Cargar a mano".
  */
-function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing, activeServiceType }) {
     // Controla la revelacion progresiva de campos al crear un traslado nuevo.
     const [showManualFields, setShowManualFields] = useState(false);
 
@@ -999,7 +1006,8 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
             <div>
                 <label className={labelClass}>Trayecto</label>
                 <RateSelector
-                    serviceType={form.serviceType || "Traslado"}
+                    // FIX: ver FlightForm — usamos activeServiceType para evitar stale de form.serviceType.
+                    serviceType={activeServiceType || "Traslado"}
                     supplierId={form.supplierId}
                     onSelect={(rate) => {
                         onRateSelect(rate);
@@ -1206,7 +1214,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
  * Flujo "servicio primero": el agente busca el paquete en el tarifario antes de ver
  * los campos de detalle. Al editar (isEditing=true) los campos aparecen directo.
  */
-function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing, activeServiceType }) {
     // Controla la revelacion progresiva de campos al crear un paquete nuevo.
     const [showManualFields, setShowManualFields] = useState(false);
 
@@ -1220,7 +1228,8 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
             <div>
                 <label className={labelClass}>Nombre del paquete</label>
                 <RateSelector
-                    serviceType={form.serviceType || "Paquete"}
+                    // FIX: ver FlightForm — usamos activeServiceType para evitar stale de form.serviceType.
+                    serviceType={activeServiceType || "Paquete"}
                     supplierId={form.supplierId}
                     onSelect={(rate) => {
                         onRateSelect(rate);
@@ -1421,7 +1430,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
  * Flujo "servicio primero": el agente busca el plan de asistencia en el tarifario.
  * Al editar (isEditing=true) los campos aparecen directo.
  */
-function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing }) {
+function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget, isEditing, activeServiceType }) {
     // Controla la revelacion progresiva de campos al crear una asistencia nueva.
     const [showManualFields, setShowManualFields] = useState(false);
 
@@ -1435,7 +1444,8 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
             <div>
                 <label className={labelClass}>Plan / asistencia</label>
                 <RateSelector
-                    serviceType={form.serviceType || "Asistencia"}
+                    // FIX: ver FlightForm — usamos activeServiceType para evitar stale de form.serviceType.
+                    serviceType={activeServiceType || "Asistencia"}
                     supplierId={form.supplierId}
                     onSelect={(rate) => {
                         onRateSelect(rate);
@@ -1982,7 +1992,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     const [manualHotelPricing, setManualHotelPricing] = useState({ netCost: false, salePrice: false });
 
     const isGenericEdit = serviceToEdit?.recordKind === SERVICE_RECORD_KIND.GENERIC;
-    const isLocked = reservaStatus === "Traveling" || reservaStatus === "Closed";
+    // Candado canonico: usa el helper de ReservaStatusBadge que cubre los 4 estados
+    // bloqueados (Confirmed, Traveling, ToSettle, Closed). El set local anterior
+    // solo cubria Traveling y Closed, dejando afuera Confirmed y ToSettle — agujero B1.
+    const isLocked = isStatusLocked(reservaStatus);
     // En Cotizacion y Presupuesto el agente NO elige el estado del servicio — siempre queda en
     // "Solicitado" hasta que la reserva pase a InManagement (regla de negocio ADR-020: en
     // early-stage los servicios todavia no se confirman con el proveedor).
@@ -2475,31 +2488,40 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                                 key={value}
                                 type="button"
                                 onClick={() => {
-                                    if (!serviceToEdit) {
-                                        setServiceType(value);
-                                        // Al cambiar de TIPO limpiamos la tarifa y los precios para
-                                        // evitar "bleed": una tarifa de Aéreo no aplica a Traslado.
-                                        // El proveedor también se limpia porque pertenece a la tarifa
-                                        // del tipo anterior. Los datos de identidad del viajero
-                                        // (pasajeros, fechas de viaje) NO se borran porque el usuario
-                                        // puede necesitarlos en el nuevo tipo.
-                                        setManualHotelPricing({ netCost: false, salePrice: false });
-                                        setForm((prev) => ({
-                                            ...prev,
-                                            serviceType: value,
-                                            rateId: "",
-                                            supplierId: "",
-                                            netCost: 0,
-                                            salePrice: 0,
-                                            commission: 0,
-                                            unitNetCost: 0,
-                                            unitSalePrice: 0,
-                                            unitCommission: 0,
-                                            description: "",
-                                        }));
-                                    }
+                                    // Candado: nunca editar si la reserva está bloqueada.
+                                    if (isLocked) return;
+
+                                    // Al EDITAR un servicio existente el tipo queda FIJO al tipo original.
+                                    // Cambiar de Aéreo a Hotel durante una edición rompería el submit:
+                                    // el endpoint se resuelve por el recordKind original (serviceToEdit)
+                                    // y el payload del nuevo tipo iría al endpoint equivocado.
+                                    // El "cambiar tipo" implica borrar el servicio y crear uno nuevo —
+                                    // eso se definirá como feature aparte (B2 reviewer 2026-06-08).
+                                    if (serviceToEdit && value !== serviceType) return;
+
+                                    setServiceType(value);
+                                    // Al cambiar de TIPO limpiamos la tarifa y los precios para
+                                    // evitar "bleed": una tarifa de Aéreo no aplica a Traslado.
+                                    // El proveedor también se limpia porque pertenece a la tarifa
+                                    // del tipo anterior. Los datos de identidad del viajero
+                                    // (pasajeros, fechas de viaje) NO se borran porque el usuario
+                                    // puede necesitarlos en el nuevo tipo.
+                                    setManualHotelPricing({ netCost: false, salePrice: false });
+                                    setForm((prev) => ({
+                                        ...prev,
+                                        serviceType: value,
+                                        rateId: "",
+                                        supplierId: "",
+                                        netCost: 0,
+                                        salePrice: 0,
+                                        commission: 0,
+                                        unitNetCost: 0,
+                                        unitSalePrice: 0,
+                                        unitCommission: 0,
+                                        description: "",
+                                    }));
                                 }}
-                                disabled={!!serviceToEdit}
+                                disabled={isLocked || !!serviceToEdit}
                                 className={`flex flex-1 items-center justify-center gap-2 py-3.5 text-sm font-medium transition-all ${
                                     serviceType === value
                                         ? `border-b-2 ${serviceTabClassMap[color] || "border-indigo-500 text-indigo-600 bg-white dark:bg-slate-900"}`
@@ -2524,13 +2546,15 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     {/* isEditing=true en todos los sub-forms cuando hay un servicio en edicion,
                         para que los campos aparezcan directamente sin gatear por el buscador */}
                     {isGenericEdit ? <GenericServiceForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isEditing={!!serviceToEdit} /> : null}
-                    {!isGenericEdit && serviceType === "Aereo" ? <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
+                    {/* activeServiceType pasa el tipo activo del modal (siempre fresco) al RateSelector
+                        interno de cada sub-form, evitando que use form.serviceType que puede estar stale. */}
+                    {!isGenericEdit && serviceType === "Aereo" ? <FlightForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} activeServiceType={serviceType} /> : null}
                     {!isGenericEdit && serviceType === "Hotel" ? (
                         <HotelForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} reservaPax={reservaPax} isBudget={isBudget} />
                     ) : null}
-                    {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
-                    {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
-                    {!isGenericEdit && serviceType === "Asistencia" ? <AssistanceForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} /> : null}
+                    {!isGenericEdit && serviceType === "Traslado" ? <TransferForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} activeServiceType={serviceType} /> : null}
+                    {!isGenericEdit && serviceType === "Paquete" ? <PackageForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} activeServiceType={serviceType} /> : null}
+                    {!isGenericEdit && serviceType === "Asistencia" ? <AssistanceForm form={form} setForm={setForm} suppliers={sortedSuppliers} onRateSelect={handleRateSelect} disabled={isLocked} isBudget={isBudget} isEditing={!!serviceToEdit} activeServiceType={serviceType} /> : null}
 
                     {showPricingForm ? (
                         <PricingForm
