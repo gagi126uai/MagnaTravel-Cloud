@@ -42,9 +42,12 @@ public static class ReservaScheduleCalculator
             .Select(f => f.DepartureTime)
             .ToListAsync(ct));
 
+        // BUG 2 (2026-06-08): ArrivalTime es nullable (vuelos solo de ida). Si no hay hora de llegada,
+        // el "fin" del segmento es su salida — mismo patron que el transfer (ReturnDateTime ?? PickupDateTime)
+        // de mas abajo. Asi una reserva con un unico vuelo de ida no queda sin EndDate.
         endDates.AddRange(await db.FlightSegments
             .Where(f => f.ReservaId == reservaId)
-            .Select(f => f.ArrivalTime)
+            .Select(f => f.ArrivalTime ?? f.DepartureTime)
             .ToListAsync(ct));
 
         startDates.AddRange(await db.HotelBookings

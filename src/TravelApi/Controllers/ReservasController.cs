@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Contracts.Reservations;
@@ -302,6 +303,16 @@ public class ReservasController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (DbUpdateException ex) when (!DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            // BUG 4 (2026-06-08): un fallo al persistir que NO es de conectividad (violacion de constraint,
+            // dato fuera de rango, FK invalida) es un error de DATOS del request, no "base no disponible".
+            // Antes el catch-all lo clasificaba como 503 porque PostgresException hereda de NpgsqlException.
+            // Ahora devolvemos 422 con un mensaje claro y logueamos el detalle REAL (SqlState + inner)
+            // para diagnosticar — sin volcar PII del pasajero (nombre/documento).
+            LogPassengerPersistenceFailure(ex, "adding", publicIdOrLegacyId);
+            return UnprocessableEntity(new { message = "No se pudo guardar el pasajero: los datos no cumplen una restriccion de la base. Revisá los campos e intentá de nuevo." });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error adding passenger to reserva {ReservaId}", publicIdOrLegacyId);
@@ -312,6 +323,20 @@ public class ReservasController : ControllerBase
 
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo agregar el pasajero.");
         }
+    }
+
+    /// <summary>
+    /// BUG 4 (2026-06-08): loguea el detalle REAL de un fallo al persistir un pasajero (SqlState +
+    /// mensaje del servidor Postgres + inner exception), SIN exponer PII (nombre/documento). Sirve para
+    /// distinguir en los logs un constraint/dato invalido de una caida de base. No loguea el payload.
+    /// </summary>
+    private void LogPassengerPersistenceFailure(DbUpdateException ex, string operation, string reservaOrPassengerRef)
+    {
+        var sqlState = (ex.InnerException as Npgsql.PostgresException)?.SqlState;
+        var innerMessage = ex.InnerException?.Message;
+        _logger.LogError(ex,
+            "Passenger persistence failed while {Operation}. Ref={Ref} SqlState={SqlState} Inner={Inner}",
+            operation, reservaOrPassengerRef, sqlState, innerMessage);
     }
 
     // ============= Phase 2.1 — Pasajero <-> Servicio =============
@@ -561,6 +586,13 @@ public class ReservasController : ControllerBase
             // B1.15 Fase 0' (CODE-14): MutationGuards rechaza cambios de datos
             // personales con voucher emitido o factura AFIP viva. 409 Conflict.
             return Conflict(new { message = ex.Message });
+        }
+        catch (DbUpdateException ex) when (!DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            // BUG 4 (2026-06-08): constraint/dato invalido al persistir = error de datos (422), no 503.
+            // Ver AddPassenger para el detalle del bug y LogPassengerPersistenceFailure.
+            LogPassengerPersistenceFailure(ex, "updating", passengerPublicIdOrLegacyId);
+            return UnprocessableEntity(new { message = "No se pudo guardar el pasajero: los datos no cumplen una restriccion de la base. Revisá los campos e intentá de nuevo." });
         }
         catch (Exception ex)
         {

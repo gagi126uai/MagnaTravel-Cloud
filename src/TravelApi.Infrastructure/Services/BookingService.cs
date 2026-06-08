@@ -408,6 +408,13 @@ public partial class BookingService : IBookingService
     }
 
     /// <summary>
+    /// BUG 2 (2026-06-08): variante nullable de <see cref="NormalizeAirportWallClock(DateTime)"/> para
+    /// la hora de llegada de un vuelo solo de ida (null = sin hora de llegada). null se preserva tal cual.
+    /// </summary>
+    private static DateTime? NormalizeAirportWallClock(DateTime? wallClock)
+        => wallClock.HasValue ? NormalizeAirportWallClock(wallClock.Value) : (DateTime?)null;
+
+    /// <summary>
     /// Bug en vivo 2026-06-06 (ficha inline): normaliza una fecha-calendario del request (date-only:
     /// check-in/check-out de hotel, inicio/fin de paquete, vigencia de asistencia) a medianoche con
     /// <see cref="DateTimeKind.Utc"/>, SIN convertir el instante — el mismo contrato "fecha de pared

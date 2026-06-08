@@ -50,7 +50,12 @@ public class FlightSegment : IHasPublicId
     public string? DestinationCity { get; set; } // Buenos Aires
     
     public DateTime DepartureTime { get; set; }
-    public DateTime ArrivalTime { get; set; }
+
+    // BUG 2 (2026-06-08): ArrivalTime es NULLABLE. Existen vuelos solo de ida: un segmento puede no
+    // tener hora de llegada. El modelo es POR SEGMENTO (ida y vuelta = 2 segmentos distintos), asi que
+    // esto NO modela "vuelta" — solo permite que un segmento quede sin hora de llegada. DepartureTime
+    // sigue siendo obligatorio. Los consumidores (ReservaScheduleCalculator, validaciones) toleran null.
+    public DateTime? ArrivalTime { get; set; }
     
     // Clase y equipaje. ADR-018 Ronda 7 (2026-06-06): la cabina deja de ser obligatoria —
     // null = "Sin especificar" (antes era NOT NULL con default "Economy"; la columna se

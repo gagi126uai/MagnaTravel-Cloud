@@ -852,10 +852,11 @@ public class BookingServiceTests
         var stored = await context.FlightSegments.SingleAsync();
         // La hora de pared no se movio: 14:30 sigue siendo 14:30 (no se convirtio a 17:30).
         Assert.Equal(new DateTime(2026, 6, 15, 14, 30, 0), stored.DepartureTime);
-        Assert.Equal(new DateTime(2026, 6, 15, 23, 45, 0), stored.ArrivalTime);
+        // BUG 2: ArrivalTime es nullable; este vuelo SI tiene hora de llegada.
+        Assert.Equal(new DateTime(2026, 6, 15, 23, 45, 0), stored.ArrivalTime!.Value);
         // Y queda marcada como Utc para que la columna timestamptz la acepte en Postgres.
         Assert.Equal(DateTimeKind.Utc, stored.DepartureTime.Kind);
-        Assert.Equal(DateTimeKind.Utc, stored.ArrivalTime.Kind);
+        Assert.Equal(DateTimeKind.Utc, stored.ArrivalTime!.Value.Kind);
     }
 
     [Fact]

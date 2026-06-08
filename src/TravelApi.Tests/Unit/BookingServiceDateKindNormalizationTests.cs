@@ -338,7 +338,8 @@ public class BookingServiceDateKindNormalizationTests
 
         var stored = await context.FlightSegments.SingleAsync();
         AssertWallClockUtc(stored.DepartureTime, DateTime.SpecifyKind(BareWallClock, DateTimeKind.Utc));
-        AssertWallClockUtc(stored.ArrivalTime, DateTime.SpecifyKind(BareWallClock.AddHours(2), DateTimeKind.Utc));
+        // BUG 2: ArrivalTime es nullable; aca siempre viene con valor (vuelo ida+vuelta de un segmento).
+        AssertWallClockUtc(stored.ArrivalTime!.Value, DateTime.SpecifyKind(BareWallClock.AddHours(2), DateTimeKind.Utc));
     }
 
     [Fact]
@@ -352,7 +353,7 @@ public class BookingServiceDateKindNormalizationTests
 
         var stored = await context.FlightSegments.SingleAsync();
         AssertWallClockUtc(stored.DepartureTime, DateTime.SpecifyKind(BareWallClock, DateTimeKind.Utc));
-        AssertWallClockUtc(stored.ArrivalTime, DateTime.SpecifyKind(BareWallClock.AddHours(2), DateTimeKind.Utc));
+        AssertWallClockUtc(stored.ArrivalTime!.Value, DateTime.SpecifyKind(BareWallClock.AddHours(2), DateTimeKind.Utc));
     }
 
     [Fact]
@@ -380,7 +381,7 @@ public class BookingServiceDateKindNormalizationTests
 
         var stored = await context.FlightSegments.SingleAsync(f => f.Id == 40);
         AssertWallClockUtc(stored.DepartureTime, DateTime.SpecifyKind(BareWallClock, DateTimeKind.Utc));
-        AssertWallClockUtc(stored.ArrivalTime, DateTime.SpecifyKind(BareWallClock.AddHours(2), DateTimeKind.Utc));
+        AssertWallClockUtc(stored.ArrivalTime!.Value, DateTime.SpecifyKind(BareWallClock.AddHours(2), DateTimeKind.Utc));
     }
 
     // ===================== TRANSFER (PickupDateTime/ReturnDateTime hora de pared) =====================

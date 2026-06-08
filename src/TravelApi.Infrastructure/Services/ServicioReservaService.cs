@@ -43,12 +43,15 @@ public class ServicioReservaService : IServicioReservaService
         if (servicio is null)
             throw new ArgumentException("Servicio no encontrado.");
  
-        if (segment.ArrivalTime < segment.DepartureTime)
+        // BUG 2 (2026-06-08): ArrivalTime es nullable (vuelos solo de ida). Solo validamos el orden
+        // de fechas cuando HAY hora de llegada; un segmento sin llegada no puede estar "antes" de la salida.
+        if (segment.ArrivalTime.HasValue && segment.ArrivalTime.Value < segment.DepartureTime)
             throw new ArgumentException("La fecha de llegada no puede ser anterior a la de salida.");
- 
+
         segment.ServicioReservaId = servicioId;
         segment.DepartureTime = NormalizeUtc(segment.DepartureTime);
-        segment.ArrivalTime = NormalizeUtc(segment.ArrivalTime);
+        // null se preserva (sin hora de llegada); con valor se normaliza el Kind a Utc.
+        segment.ArrivalTime = segment.ArrivalTime.HasValue ? NormalizeUtc(segment.ArrivalTime.Value) : (DateTime?)null;
         // Ronda 7 (guia UX): Cabina es OPCIONAL — vacio/espacios se persiste como null, nunca "".
         // Se normaliza aca (y no en el controller) para que CUALQUIER caller respete el invariante.
         segment.CabinClass = BookingService.NormalizeOptionalText(segment.CabinClass);

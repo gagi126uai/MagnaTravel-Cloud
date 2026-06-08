@@ -42,7 +42,9 @@ public record CreateFlightRequest(
     // y YA NO se coalesce a "Economy" (supersede el default de negocio de ADR-018 §2).
     string SupplierId, string? AirlineCode, string? AirlineName, string? FlightNumber,
     string? Origin, string? OriginCity, string? Destination, string? DestinationCity,
-    DateTime DepartureTime, DateTime ArrivalTime, string? CabinClass, string? Baggage, string? PNR,
+    // BUG 2 (2026-06-08): ArrivalTime nullable — vuelos solo de ida (segmento sin hora de llegada).
+    // DepartureTime sigue obligatorio. Ver FlightSegment.ArrivalTime.
+    DateTime DepartureTime, DateTime? ArrivalTime, string? CabinClass, string? Baggage, string? PNR,
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Notes,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
@@ -72,9 +74,15 @@ public record UpdateFlightRequest(
     // negocio — null = "Sin especificar" (ver CreateFlightRequest).
     string SupplierId, string? AirlineCode, string? AirlineName, string? FlightNumber,
     string? Origin, string? OriginCity, string? Destination, string? DestinationCity,
-    DateTime DepartureTime, DateTime ArrivalTime, string? CabinClass, string? Baggage,
+    // BUG 2 (2026-06-08): ArrivalTime pasa a NULLABLE — existen vuelos solo de ida (un segmento sin
+    // hora de llegada). DepartureTime sigue obligatorio. Ver FlightSegment.ArrivalTime.
+    DateTime DepartureTime, DateTime? ArrivalTime, string? CabinClass, string? Baggage,
     string? TicketNumber, string? PNR,
-    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string Status, string? Notes,
+    // BUG 1 (2026-06-08): Status pasa a OPCIONAL (string? = null). El form de edicion no manda este
+    // campo y antes el binder rechazaba con "The Status field is required". El valor NO se usa en el
+    // mapeo: el estado real del servicio sale de WorkflowStatus (ver MappingProfile) y, en Presupuesto,
+    // BookingService lo fuerza a "Solicitado". Mantenerlo solo por compatibilidad de forma del request.
+    decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Status = null, string? Notes = null,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
     string? ConfirmationNumber = null,
@@ -116,7 +124,10 @@ public record UpdateHotelRequest(
     string SupplierId, string HotelName, int? StarRating, string City, string? Country,
     DateTime CheckIn, DateTime CheckOut, string RoomType, string MealPlan,
     int Adults, int Children, int Rooms, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
+    // BUG 1 (2026-06-08): Status pasa a OPCIONAL (string? = null). El form de edicion no lo manda y antes
+    // el binder rechazaba con "The Status field is required". No se usa en el mapeo (el estado real sale
+    // de WorkflowStatus; en Presupuesto BookingService lo fuerza a "Solicitado"). Ver MappingProfile.
+    decimal NetCost, decimal SalePrice, decimal Commission, string? Status = null, string? Notes = null,
     string? RoomingAssignments = null,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
@@ -167,7 +178,8 @@ public record UpdateTransferRequest(
     DateTime PickupDateTime, string? FlightNumber, string? VehicleType, int Passengers,
     bool IsRoundTrip, DateTime? ReturnDateTime,
     string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
+    // BUG 1 (2026-06-08): Status OPCIONAL (string? = null). Ver UpdateHotelRequest / MappingProfile.
+    decimal NetCost, decimal SalePrice, decimal Commission, string? Status = null, string? Notes = null,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
@@ -211,7 +223,8 @@ public record UpdateAssistanceRequest(
     DateTime ValidFrom, DateTime ValidTo,
     int Adults, int Children,
     decimal NetCost, decimal SalePrice, decimal Commission,
-    string Status,
+    // BUG 1 (2026-06-08): Status OPCIONAL (string? = null). Ver UpdateHotelRequest / MappingProfile.
+    string? Status = null,
     string? PolicyNumber = null, string? PlanType = null, string? CoverageLimit = null,
     string? CoverageZone = null, string? ConfirmationNumber = null, string? Notes = null,
     string? RateId = null,
@@ -252,7 +265,8 @@ public record UpdatePackageRequest(
     DateTime StartDate, DateTime? EndDate,
     bool IncludesHotel, bool IncludesFlight, bool IncludesTransfer, bool IncludesExcursions, bool IncludesMeals,
     int Adults, int Children, string? Itinerary, string? ConfirmationNumber,
-    decimal NetCost, decimal SalePrice, decimal Commission, string Status, string? Notes,
+    // BUG 1 (2026-06-08): Status OPCIONAL (string? = null). Ver UpdateHotelRequest / MappingProfile.
+    decimal NetCost, decimal SalePrice, decimal Commission, string? Status = null, string? Notes = null,
     string? RateId = null,
     string WorkflowStatus = "Solicitado",
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para

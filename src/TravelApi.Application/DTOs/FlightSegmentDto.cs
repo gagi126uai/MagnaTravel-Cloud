@@ -21,7 +21,9 @@ public class FlightSegmentDto
     public string? Destination { get; set; }
     public string? DestinationCity { get; set; }
     public DateTime DepartureTime { get; set; }
-    public DateTime ArrivalTime { get; set; }
+    // BUG 2 (2026-06-08): ArrivalTime nullable — vuelos solo de ida (segmento sin hora de llegada).
+    // Null = no informado; el front muestra el segmento sin hora de llegada (no como 01/01/0001).
+    public DateTime? ArrivalTime { get; set; }
     // ADR-018 Ronda 7 (2026-06-06): la cabina es opcional. Null = "Sin especificar" (el front
     // muestra esa opcion en el desplegable; ya no se rellena con "Economy" del lado del server).
     public string? CabinClass { get; set; }
