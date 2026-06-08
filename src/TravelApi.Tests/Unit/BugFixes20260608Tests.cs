@@ -237,6 +237,10 @@ public class BugFixes20260608Tests
               {
                   PublicId = r.PublicId, NumeroReserva = r.NumeroReserva, Name = r.Name, Status = r.Status
               });
+        // AddPassengerAsync mapea el pasajero creado a PassengerDto; sin este setup el mock
+        // devuelve null y el camino feliz (carga exitosa) no se puede asertar.
+        mapper.Setup(m => m.Map<PassengerDto>(It.IsAny<Passenger>()))
+              .Returns((Passenger p) => new PassengerDto { FullName = p.FullName });
         return new ReservaService(context, mapper.Object, settings.Object,
             BuildUserManager(), NullLogger<ReservaService>.Instance);
     }
@@ -247,8 +251,13 @@ public class BugFixes20260608Tests
     public async Task ReturnFromLost_WithCompletePassengers_CanAdvanceBudgetToInManagement()
     {
         await using var context = NewContext();
-        // Reserva Perdida que venia de Presupuesto, con 1 hotel (2 adultos) y los 2 pasajeros YA cargados.
-        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-LOST", Name = "Reserva perdida", Status = EstadoReserva.Lost };
+        // Reserva Perdida que venia de Presupuesto, con 2 pasajeros DECLARADOS y los 2 nominales YA
+        // cargados. El conteo esperado se basa en la cantidad DECLARADA de la reserva, no en el hotel.
+        var reserva = new Reserva
+        {
+            Id = 1, NumeroReserva = "F-2026-LOST", Name = "Reserva perdida", Status = EstadoReserva.Lost,
+            AdultCount = 2, ChildCount = 0, InfantCount = 0
+        };
         context.Reservas.Add(reserva);
         context.HotelBookings.Add(new HotelBooking
         {
@@ -286,15 +295,12 @@ public class BugFixes20260608Tests
     {
         // El guard de capacidad sigue protegiendo contra crear un pasajero de mas: es una regla de
         // negocio (InvalidOperationException -> 409), NO un fallo de base. Esto confirma que NO
-        // ablandamos la integridad al arreglar el BUG 3.
+        // ablandamos la integridad al arreglar el BUG 3. El tope es la cantidad DECLARADA (1 adulto).
         await using var context = NewContext();
-        context.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-2026-CAP", Name = "Cap", Status = EstadoReserva.Budget });
-        context.HotelBookings.Add(new HotelBooking
+        context.Reservas.Add(new Reserva
         {
-            Id = 90, ReservaId = 1, HotelName = "Hotel Z", City = "Salta",
-            RoomType = "Single", MealPlan = "Desayuno",
-            CheckIn = DateTime.UtcNow.Date.AddDays(5), CheckOut = DateTime.UtcNow.Date.AddDays(6),
-            Adults = 1, Children = 0, Rooms = 1, Status = "Solicitado", SalePrice = 100m
+            Id = 1, NumeroReserva = "F-2026-CAP", Name = "Cap", Status = EstadoReserva.Budget,
+            AdultCount = 1, ChildCount = 0, InfantCount = 0
         });
         context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Unico Pasajero" });
         await context.SaveChangesAsync();
@@ -306,6 +312,126 @@ public class BugFixes20260608Tests
                 new PassengerUpsertRequest("Pasajero Extra", null, null, null, null, null, null, null, null),
                 CancellationToken.None));
         Assert.Contains("pasajeros", ex.Message);
+    }
+
+    // ===================== Conteo de pasajeros: fuente unica = cantidad DECLARADA =====================
+    // Bug 2026-06-08: el "esperado" se inferia de la capacidad de los servicios de forma
+    // inconsistente (Hotel/Package con Sum, Transfer con Max, sin Flight) -> daba 0 a veces y 3
+    // otras, dejaba avanzar con 0 pasajeros, y bloqueaba la carga sin coherencia. Ahora el conteo
+    // esperado/tope = Reserva.AdultCount + ChildCount + InfantCount (lo que el usuario declara).
+
+    private static Reserva BudgetReservaWithDeclaredPax(int adults, int children, int infants) => new()
+    {
+        Id = 1, NumeroReserva = "F-2026-PAX", Name = "Pax", Status = EstadoReserva.Budget,
+        AdultCount = adults, ChildCount = children, InfantCount = infants
+    };
+
+    private static HotelBooking SolicitadoHotel(int reservaId, int adults) => new()
+    {
+        Id = 100, ReservaId = reservaId, HotelName = "Hotel Pax", City = "Cordoba",
+        RoomType = "Doble", MealPlan = "Desayuno",
+        CheckIn = DateTime.UtcNow.Date.AddDays(5), CheckOut = DateTime.UtcNow.Date.AddDays(7),
+        Adults = adults, Children = 0, Rooms = 1, Status = "Solicitado", SalePrice = 100m
+    };
+
+    // (1) No se puede avanzar a En gestion con 0 pasajeros declarados.
+    [Fact]
+    public async Task AdvanceToInManagement_WithZeroDeclaredPassengers_IsRejected()
+    {
+        await using var context = NewContext();
+        // Hay servicio (requisito previo) pero 0 pasajeros declarados. Antes esto avanzaba en silencio.
+        context.Reservas.Add(BudgetReservaWithDeclaredPax(adults: 0, children: 0, infants: 0));
+        context.HotelBookings.Add(SolicitadoHotel(reservaId: 1, adults: 2));
+        await context.SaveChangesAsync();
+
+        var service = NewReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateStatusAsync(1, EstadoReserva.InManagement));
+        Assert.Contains("sin pasajeros", ex.Message);
+        // No transiciono.
+        Assert.Equal(EstadoReserva.Budget, (await context.Reservas.FindAsync(1))!.Status);
+    }
+
+    // (2) El esperado = AdultCount+ChildCount+InfantCount, sin importar la capacidad de los servicios.
+    [Fact]
+    public async Task ExpectedCount_ComesFromDeclaredReserva_NotFromServices()
+    {
+        await using var context = NewContext();
+        // Declarados: 3 (2 adultos + 1 menor). El hotel declara 2 adultos: NO debe mandar el conteo.
+        context.Reservas.Add(BudgetReservaWithDeclaredPax(adults: 2, children: 1, infants: 0));
+        context.HotelBookings.Add(SolicitadoHotel(reservaId: 1, adults: 2));
+        // Solo 2 nominales cargados de los 3 declarados -> debe faltar 1.
+        context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Pasajero Uno" });
+        context.Passengers.Add(new Passenger { Id = 2, ReservaId = 1, FullName = "Pasajero Dos" });
+        await context.SaveChangesAsync();
+
+        var service = NewReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateStatusAsync(1, EstadoReserva.InManagement));
+        // El mensaje refleja el esperado DECLARADO (3), no la capacidad del hotel (2).
+        Assert.Contains("esperados: 3", ex.Message);
+        Assert.Contains("Faltan 1", ex.Message);
+    }
+
+    // (3a) Cargar exactamente la cantidad declarada funciona.
+    [Fact]
+    public async Task AddPassenger_UpToDeclaredCount_Succeeds()
+    {
+        await using var context = NewContext();
+        context.Reservas.Add(BudgetReservaWithDeclaredPax(adults: 2, children: 0, infants: 0));
+        context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Pasajero Uno" });
+        await context.SaveChangesAsync();
+
+        var service = NewReservaService(context);
+
+        // Cargar el segundo (de 2 declarados) debe funcionar.
+        var dto = await service.AddPassengerAsync("1",
+            new PassengerUpsertRequest("Pasajero Dos", null, null, null, null, null, null, null, null),
+            CancellationToken.None);
+
+        Assert.NotNull(dto);
+        Assert.Equal(2, await context.Passengers.CountAsync(p => p.ReservaId == 1));
+    }
+
+    // (3b) Uno mas que la cantidad declarada se rechaza con mensaje claro.
+    [Fact]
+    public async Task AddPassenger_BeyondDeclaredCount_IsRejectedWithClearMessage()
+    {
+        await using var context = NewContext();
+        context.Reservas.Add(BudgetReservaWithDeclaredPax(adults: 2, children: 0, infants: 0));
+        context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Pasajero Uno" });
+        context.Passengers.Add(new Passenger { Id = 2, ReservaId = 1, FullName = "Pasajero Dos" });
+        await context.SaveChangesAsync();
+
+        var service = NewReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddPassengerAsync("1",
+                new PassengerUpsertRequest("Pasajero Extra", null, null, null, null, null, null, null, null),
+                CancellationToken.None));
+        Assert.Contains("declara 2", ex.Message);
+        // No se creo el tercero.
+        Assert.Equal(2, await context.Passengers.CountAsync(p => p.ReservaId == 1));
+    }
+
+    // (4) Declarar 0 da mensaje claro al intentar cargar (guia a declarar primero, no al guard confuso).
+    [Fact]
+    public async Task AddPassenger_WithZeroDeclared_GuidesToDeclareCountFirst()
+    {
+        await using var context = NewContext();
+        context.Reservas.Add(BudgetReservaWithDeclaredPax(adults: 0, children: 0, infants: 0));
+        await context.SaveChangesAsync();
+
+        var service = NewReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddPassengerAsync("1",
+                new PassengerUpsertRequest("Pasajero Uno", null, null, null, null, null, null, null, null),
+                CancellationToken.None));
+        Assert.Contains("declará la cantidad de pasajeros", ex.Message);
+        Assert.Equal(0, await context.Passengers.CountAsync(p => p.ReservaId == 1));
     }
 
     // ===================== BUG 4: clasificador de excepciones de base =====================

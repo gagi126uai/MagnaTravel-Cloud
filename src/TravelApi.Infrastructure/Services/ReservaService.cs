@@ -228,6 +228,17 @@ public class ReservaService : IReservaService
         if (counts.AdultCount < 0 || counts.ChildCount < 0 || counts.InfantCount < 0)
             throw new ArgumentException("Las cantidades no pueden ser negativas.");
 
+        // Coherencia: no permitir bajar la cantidad DECLARADA por debajo de los pasajeros
+        // NOMINALES ya cargados. Si lo permitieramos, quedarian pasajeros "huerfanos" (mas
+        // nominales que la cantidad declarada) y el gate de readiness (currentPax < declaredPax)
+        // pasaria de forma enganosa, dejando que esos pasajeros se cuelen en vouchers/facturas.
+        // NO borramos pasajeros automaticamente: perderia datos cargados sin confirmacion del usuario.
+        var declaredTotal = counts.AdultCount + counts.ChildCount + counts.InfantCount;
+        var loadedPassengers = await _context.Passengers.CountAsync(p => p.ReservaId == reservaId, ct);
+        if (declaredTotal < loadedPassengers)
+            throw new InvalidOperationException(
+                $"Hay {loadedPassengers} pasajeros cargados en la reserva; quitá los que sobren antes de bajar la cantidad a {declaredTotal}.");
+
         reserva.AdultCount = counts.AdultCount;
         reserva.ChildCount = counts.ChildCount;
         reserva.InfantCount = counts.InfantCount;
@@ -650,18 +661,25 @@ public class ReservaService : IReservaService
             .FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
-        // Composicion derivada de los servicios cargados.
-        var (adults, children, infants, ambiguous) = ComputePaxCompositionFromServices(reserva);
+        // Composicion derivada de los servicios cargados. Se usa SOLO como SUGERENCIA para
+        // pre-rellenar el modal de confirmacion (cuantos adultos/menores proponer), NO para
+        // contar. El conteo esperado real es la cantidad DECLARADA de la reserva (abajo).
+        var (suggestedAdults, suggestedChildren, suggestedInfants, ambiguous) = ComputePaxCompositionFromServices(reserva);
+
+        // Fuente UNICA del conteo esperado = cantidad DECLARADA de la reserva. Debe coincidir
+        // con la regla de EnsureReadinessForSaleAsync para que el modal del front y el gate del
+        // backend nunca se contradigan.
+        var declaredPax = reserva.AdultCount + reserva.ChildCount + reserva.InfantCount;
 
         var dto = new TransitionReadinessDto
         {
             TargetStatus = targetStatus,
             Allowed = true,
-            ExpectedAdults = adults,
-            ExpectedChildren = children,
-            ExpectedInfants = infants,
+            ExpectedAdults = suggestedAdults,
+            ExpectedChildren = suggestedChildren,
+            ExpectedInfants = suggestedInfants,
             AmbiguousComposition = ambiguous,
-            ExpectedPassengerCount = adults + children + infants,
+            ExpectedPassengerCount = declaredPax,
             CurrentPassengerCount = reserva.Passengers?.Count ?? 0
         };
 
@@ -682,7 +700,16 @@ public class ReservaService : IReservaService
                 dto.BlockingReasons.Add("Cargá al menos un servicio (hotel, vuelo, transfer, paquete o asistencia) antes de confirmar la reserva.");
             }
 
-            if (dto.ExpectedPassengerCount > 0 && dto.CurrentPassengerCount < dto.ExpectedPassengerCount)
+            // Regla A: sin pasajeros declarados no se puede avanzar (coherente con el gate del
+            // backend). Antes este bloque solo validaba si ExpectedPassengerCount>0, asi que con
+            // 0 declarados el front mostraba "permitido" y el backend rechazaba — contradiccion.
+            if (dto.ExpectedPassengerCount <= 0)
+            {
+                dto.Allowed = false;
+                dto.BlockingReasons.Add(
+                    "No se puede continuar sin pasajeros: declará al menos 1 pasajero en la reserva.");
+            }
+            else if (dto.CurrentPassengerCount < dto.ExpectedPassengerCount)
             {
                 dto.MissingPassengers = dto.ExpectedPassengerCount - dto.CurrentPassengerCount;
                 dto.Allowed = false;
@@ -1868,17 +1895,14 @@ public class ReservaService : IReservaService
         throw new KeyNotFoundException("Servicio no encontrado en ninguna categoría.");
     }
 
-    private static int ComputeMaxExpectedPaxCount(Reserva reserva)
-    {
-        var hotel = reserva.HotelBookings?.Sum(h => h.GetExpectedPaxCount()) ?? 0;
-        var transfer = reserva.TransferBookings?.Max(t => (int?)t.GetExpectedPaxCount()) ?? 0;
-        var package = reserva.PackageBookings?.Sum(p => p.GetExpectedPaxCount()) ?? 0;
-        var assistance = reserva.AssistanceBookings?.Sum(a => a.GetExpectedPaxCount()) ?? 0;
-        return Math.Max(hotel, Math.Max(transfer, Math.Max(package, assistance)));
-    }
-
-    // La logica de capacidad pasajeros vs servicios vive en ReservaCapacityRules
-    // (clase estatica compartida con ReservaLifecycleAutomationService).
+    // ComputeMaxExpectedPaxCount fue ELIMINADO: infiere el "esperado" de la capacidad de los
+    // servicios (Hotel/Package con Sum, Transfer con Max, sin FlightSegment) de forma
+    // inconsistente. El conteo de pasajeros nominales ahora se basa SIEMPRE en la cantidad
+    // DECLARADA de la reserva (AdultCount+ChildCount+InfantCount). Ver AddPassengerAsync y
+    // EnsureReadinessForSaleAsync.
+    //
+    // La logica de capacidad pasajeros-vs-servicios (otra dimension, no nominales) vive en
+    // ReservaCapacityRules (clase estatica compartida con ReservaLifecycleAutomationService).
 
     /// <summary>
     /// ADR-020 (F5): valida que un servicio se pueda BORRAR. Manda el servicio: si fue confirmado por
@@ -1911,27 +1935,37 @@ public class ReservaService : IReservaService
     {
         var file = await _context.Reservas
             .Include(r => r.Passengers)
-            .Include(r => r.HotelBookings)
-            .Include(r => r.TransferBookings)
-            .Include(r => r.PackageBookings)
-            .Include(r => r.AssistanceBookings)
             .FirstOrDefaultAsync(r => r.Id == reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
         // Nota: NO se bloquea la carga en estado Presupuesto. El modal de Confirmar
-        // Reserva (Phase 1.2) carga los pasajeros nominales JUSTO ANTES de transicionar
-        // a Reservado. La transicion misma valida via UpdateStatusAsync que la cantidad
-        // de pasajeros == cantidad esperada por los servicios — eso garantiza coherencia.
+        // Reserva carga los pasajeros nominales JUSTO ANTES de transicionar a En gestion.
+        // La transicion misma valida via EnsureReadinessForSaleAsync que la cantidad de
+        // pasajeros nominales == cantidad DECLARADA de la reserva.
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (passenger.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
 
-        var maxExpected = ComputeMaxExpectedPaxCount(file);
-        if (maxExpected > 0 && file.Passengers.Count >= maxExpected)
+        // Tope de pasajeros nominales = cantidad DECLARADA de la reserva (misma fuente unica
+        // que usa EnsureReadinessForSaleAsync). NO se infiere de la capacidad de los servicios:
+        // eso daba un tope inconsistente (recalculaba 3 con 0 cargados y bloqueaba, o quedaba
+        // en 0). La capacidad pax de cada servicio es dato del servicio y no cuenta nominales.
+        var declaredPax = file.AdultCount + file.ChildCount + file.InfantCount;
+
+        // Regla C: si todavia no se declaro la cantidad, el mensaje guia a declararla primero
+        // en lugar del guard de capacidad confuso anterior.
+        if (declaredPax <= 0)
         {
             throw new InvalidOperationException(
-                $"La reserva ya tiene los {maxExpected} pasajeros que esperan los servicios cargados. " +
-                "Para sumar mas, ampliá la capacidad de algun servicio o agregá uno nuevo.");
+                "Primero declará la cantidad de pasajeros de la reserva (adultos, menores e infantes) " +
+                "antes de cargar los nombres.");
+        }
+
+        if (file.Passengers.Count >= declaredPax)
+        {
+            throw new InvalidOperationException(
+                $"La reserva declara {declaredPax} pasajero(s) y ya están todos cargados. " +
+                "Para sumar más, aumentá la cantidad declarada de pasajeros de la reserva.");
         }
 
         if (passenger.BirthDate.HasValue)
@@ -2283,27 +2317,36 @@ public class ReservaService : IReservaService
         // los confirma uno por uno antes de pasar a Operativo.
         await NormalizeAllServicesToSolicitadoAsync(id);
 
-        // Derivamos pax esperados de los servicios (no del campo AdultCount viejo).
-        // El frontend ya hace este check via /transition-readiness y un modal forzado
-        // (ConfirmReservaModal); esto es last-line defense para evitar bypass via API directa.
-        var fullForPax = await _context.Reservas
+        // Fuente UNICA del conteo esperado = la cantidad DECLARADA de la RESERVA
+        // (AdultCount + ChildCount + InfantCount), la que el usuario carga en
+        // Cotizacion/Presupuesto via PATCH /passenger-counts. Antes esto se inferia de los
+        // servicios (ComputePaxCompositionFromServices), lo que daba resultados inconsistentes
+        // (0 a veces, 3 otras) y dejaba pasar reservas con 0 pasajeros. La cantidad de pax
+        // de cada servicio (FlightSegment.PassengerCount, HotelBooking.Adults, etc.) es dato
+        // del servicio y NO se usa para contar pasajeros nominales de la reserva.
+        var reservaForPax = await _context.Reservas
             .AsNoTracking()
-            .Include(r => r.HotelBookings)
-            .Include(r => r.PackageBookings)
-            .Include(r => r.TransferBookings)
-            .Include(r => r.AssistanceBookings)
             .FirstAsync(r => r.Id == id);
-        var (adA, adC, adI, _) = ComputePaxCompositionFromServices(fullForPax);
-        var expectedPax = adA + adC + adI;
-        if (expectedPax > 0)
+        var declaredPax = reservaForPax.AdultCount + reservaForPax.ChildCount + reservaForPax.InfantCount;
+
+        // Regla A: NUNCA 0 pasajeros. Una reserva no puede avanzar a En gestion sin al menos
+        // un pasajero declarado. Antes, con declaredPax==0, el if>0 saltaba toda la validacion
+        // y permitia avanzar en silencio con 0 pasajeros.
+        if (declaredPax <= 0)
         {
-            var currentPax = await _context.Passengers.CountAsync(p => p.ReservaId == id);
-            if (currentPax < expectedPax)
-            {
-                throw new InvalidOperationException(
-                    $"Faltan {expectedPax - currentPax} pasajero(s) nominales para confirmar la reserva " +
-                    $"(cargados: {currentPax} / esperados: {expectedPax}). Cargá los nombres y documentos antes de continuar.");
-            }
+            throw new InvalidOperationException(
+                "No se puede continuar sin pasajeros: declará al menos 1 pasajero en la reserva.");
+        }
+
+        // last-line defense ante bypass via API directa: deben estar cargados los nominales
+        // (nombre + documento) por la cantidad declarada. El frontend ya fuerza esto en el
+        // modal de confirmacion antes de transicionar.
+        var currentPax = await _context.Passengers.CountAsync(p => p.ReservaId == id);
+        if (currentPax < declaredPax)
+        {
+            throw new InvalidOperationException(
+                $"Faltan {declaredPax - currentPax} pasajero(s) nominales para confirmar la reserva " +
+                $"(cargados: {currentPax} / esperados: {declaredPax}). Cargá los nombres y documentos antes de continuar.");
         }
     }
 
