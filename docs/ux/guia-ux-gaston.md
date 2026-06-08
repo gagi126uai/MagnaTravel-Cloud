@@ -207,3 +207,15 @@ Ronda 2:
 - **Buscador sin resultados: directo a crear** ("No encontramos '{texto}' en tu tarifario" + botón crear). Mientras busca, mostrar un "Buscando…" sutil (estándar).
 - **Hotel: agregar campo "Cantidad de habitaciones"** a la vista (al lado de Noches). Total = noches × habitaciones × precio/noche. Coherente con "precio por noche POR HABITACIÓN" (el dibujo no lo mostraba; Gastón confirmó agregarlo 2026-06-06).
 - **"Más detalles" por tipo: confirmado tal cual** — Hotel: Régimen · Tipo de habitación · Confirmación operador · Fecha límite de seña · Dirección. Aéreo: PNR · Nº ticket · Horarios/escalas · Equipaje. Traslado: Nº vuelo · Horario · Confirmación. Paquete: Qué incluye · Nº file. Asistencia: Nº voucher por pax · Upgrades. (Ajustable si después falta/sobra algo.)
+
+## Estado de los servicios de una reserva — wording y reglas (2026-06-08)
+
+- **(2026-06-08) Badge "En espera" vs. "Solicitado":** el badge de estado del servicio muestra textos distintos según la etapa de la reserva:
+  - En **Cotización** y **Presupuesto**: muestra **"En espera"** (el operador todavía no sabe que existe este servicio; no se le pidió nada).
+  - En **En gestión** y etapas posteriores: muestra **"Solicitado"** (ya se gestionó la solicitud al operador).
+  - "Confirmado" y "Cancelado" (estados concretos que vienen del backend) siempre se muestran tal cual, sin importar la etapa.
+  - Cualquier otro valor que venga del backend (ej. "Emitido", "HK") se muestra tal cual.
+
+## Pasajeros de una reserva — reglas de negocio (2026-06-08)
+
+- **(2026-06-08) Una reserva NUNCA puede tener 0 pasajeros:** no se puede avanzar de etapa (ej. de Presupuesto a En gestión) si la composición declarada es 0 adultos + 0 menores + 0 infantes. El sistema bloquea el botón y muestra aviso claro ("Tiene que haber al menos 1 pasajero"). El usuario debe ajustar la composición antes de continuar.
