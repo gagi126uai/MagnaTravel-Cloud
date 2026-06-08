@@ -23,7 +23,17 @@ _(pendiente)_
 
 ## Botones y acciones
 
-_(pendiente)_
+- **(2026-06-08) Los iconitos de acción llevan la PALABRA al lado, SIEMPRE visible.** Nada de tooltip ni "apoyar el mouse para enterarse". Cada icono de acción muestra su texto pegado al lado, a la vista, en todo momento. Vale para los iconos de acción de la cabecera de la reserva y para los iconos de cada servicio de la lista. (Decisión de Gastón sobre la opción "Palabra siempre al lado".)
+- **(2026-06-08) Wording de las acciones de la cabecera de la reserva** (cada una aparece solo en el/los estados donde corresponde; la palabra acompaña al icono que esté visible en cada estado):
+  - **Perdida** (icono ⊗) — solo en Cotización / Presupuesto.
+  - **Cancelar** (icono ⊘) — en En gestión / Confirmada / En viaje / A liquidar (estados con proceso fiscal).
+  - **Volver atrás** (icono ↩) — donde se permite regresar de etapa.
+  - **Eliminar** (icono 🗑) — solo en Cotización / Presupuesto (sin pagos).
+  - **Archivar** (icono 🗄) — siempre que se pueda archivar.
+- **(2026-06-08) Wording de los iconos de cada servicio de la lista:**
+  - **Editar** (lápiz) — texto fijo "Editar".
+  - **Tacho con texto dinámico:** "Borrar" si el servicio NO está confirmado por el operador (era un borrador, sin compromiso); "Cancelar" si YA está confirmado por el operador (hubo compromiso real, puede haber penalidad/plata del cliente). Esto respeta la decisión #9 del ciclo de vida (borrar vs. cancelar).
+- **(2026-06-08) Estos textos visibles NO reemplazan la accesibilidad:** el icono mantiene además su etiqueta para lectores de pantalla. El texto que ve el vendedor y la etiqueta accesible dicen lo mismo.
 
 ## Ventanas emergentes y avisos
 
@@ -156,7 +166,7 @@ Ronda 5 (fila del servicio guardado en la lista — etiquetas y Confirmar costo,
 - **La etiqueta de fecha límite se muestra SIEMPRE que la fecha esté cargada**, sin importar si el servicio está Solicitado o Confirmado. En servicios CANCELADOS no aparece. Si ya se señó/emitió y la etiqueta molesta, se edita el servicio y se borra la fecha — no hay lógica oculta que la apague sola.
 - **Etiqueta de fecha límite VENCIDA: en rojo, avisando que ya pasó.** Texto: "Venció señar el 10/07" / "Venció emitir el 15/07" (fecha en formato dd/MM). Mientras no venció, sigue la etiqueta ámbar del dibujo aprobado ("⏰ Señar antes del 10/07" / "⏰ Emitir antes del 15/07").
 - **Confirmar costo: corrección EN LA MISMA FILA, nada se abre encima.** Al apretar "Confirmar costo", el costo de la fila se vuelve un casillero editable con el número actual ya puesto, más un casillero de impuesto al lado, y botones Confirmar / Cancelar en la misma línea. La ventana que frena al confirmar $0 ("¿Seguro?" · "Va a quedar costo $0 como sugerencia para todos." · Volver / Sí, confirmar) sigue aplicando sobre el valor final del casillero.
-- **Etiqueta violeta "creado en venta": CON el tipo de servicio.** Texto: "Hotel creado en venta" (la versión del dibujo aprobado, no la corta). Mismo patrón para los demás tipos: "Aéreo creado en venta", "Traslado creado en venta", "Paquete creado en venta", "Asistencia creada en venta".
+- ~~**Etiqueta violeta "creado en venta": CON el tipo de servicio.** Texto: "Hotel creado en venta" (la versión del dibujo aprobado, no la corta). Mismo patrón para los demás tipos: "Aéreo creado en venta", "Traslado creado en venta", "Paquete creado en venta", "Asistencia creada en venta".~~ **DEROGADO (Gastón, 2026-06-08):** "saca eso de Creado en venta, no tiene sentido que un usuario cualquiera vea eso, si fue creado en el tarifario o en la venta no es necesario mostrarlo." La etiqueta se eliminó de la lista de servicios (desktop y mobile).
 
 Ronda 8 (avisos de fechas límite: AUTOMÁTICOS, 2026-06-06):
 - **Los avisos de fechas límite pasan a ser AUTOMÁTICOS para TODAS las reservas** (textual: "quiero que tenga el mecanismo que está hoy en configuración para todas las reservas"). Funcionan como las "Alertas por reservas próximas con deuda" que ya existen: el sistema avisa solo, X días antes del inicio de cada servicio, sin que nadie cargue fechas a mano. Los días de anticipación se manejan desde Configuración ("Días de anticipación del aviso", ya construido).
