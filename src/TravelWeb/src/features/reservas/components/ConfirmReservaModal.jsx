@@ -20,31 +20,26 @@ function buildSlots(adults, children, infants) {
 }
 
 /**
- * Modal de carga de pasajeros antes de una transicion de estado.
+ * Modal para cargar pasajeros antes de avanzar una reserva de estado.
  *
- * Con ciclo base (flag OFF): se usa para Budget → Confirmed ("Confirmar reserva").
- * Con ciclo extendido (flag ON): se usa para Budget → Sold ("Vender reserva").
- *   El comportamiento interno es identico — lo que cambia es el titulo y el
- *   texto del boton de submit, y el estado al que se transiciona al final.
+ * ADR-020 (ciclo unico): se usa cuando el cliente acepta el presupuesto
+ * (Budget → InManagement) y hay pasajeros faltantes que cargar.
+ *
+ * Si no hay pasajeros faltantes, la transicion es directa (sin modal).
+ * El padre (ReservaDetailPage) decide cuando abrir este modal basandose
+ * en la respuesta de GET /reservas/{id}/transition-readiness.
  *
  * Props:
- * - targetStatus: "Confirmed" o "Sold". Controla el titulo y la transicion.
- * - readiness: objeto devuelto por GET /reservas/{id}/transition-readiness.
+ * - targetStatus: el estado destino (tipicamente "InManagement")
+ * - readiness: objeto devuelto por GET /reservas/{id}/transition-readiness
  */
-export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, targetStatus = "Confirmed" }) {
-    // Determina si estamos en modo "Vender" (ciclo extendido) o "Confirmar" (ciclo base).
-    // Esto cambia el titulo y el copy del modal, pero no la logica de pasajeros.
-    const isSellMode = targetStatus === "Sold";
-
-    // Composicion derivada de los servicios (backend la calcula). Si difieren entre
-    // servicios, AmbiguousComposition=true y mostramos warning.
+export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, targetStatus = "InManagement" }) {
     const detectedAdults = readiness?.expectedAdults ?? 0;
     const detectedChildren = readiness?.expectedChildren ?? 0;
     const detectedInfants = readiness?.expectedInfants ?? 0;
     const isAmbiguous = readiness?.ambiguousComposition ?? false;
     const alreadyLoadedCount = readiness?.currentPassengerCount ?? 0;
 
-    // Permitir override manual de la composicion (boton "Ajustar")
     const [editingComp, setEditingComp] = useState(false);
     const [adults, setAdults] = useState(detectedAdults);
     const [children, setChildren] = useState(detectedChildren);
@@ -69,12 +64,12 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
 
     const handleSubmit = async () => {
         if (slotsToFill.length > 0 && !allValid) {
-            showError("Completa nombre y documento de cada pasajero antes de confirmar.");
+            showError("Completa nombre y documento de cada pasajero antes de continuar.");
             return;
         }
         setSubmitting(true);
         try {
-            // 1) Crear los pasajeros faltantes uno por uno
+            // 1) Crear los pasajeros faltantes
             for (let i = 0; i < slotsToFill.length; i++) {
                 const form = forms[i];
                 await api.post(`/reservas/${reserva.publicId}/passengers`, {
@@ -89,14 +84,12 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
                     notes: null,
                 });
             }
-            // 2) Disparar la transicion al estado correcto segun el ciclo activo.
-            // Con ciclo base: targetStatus = "Confirmed".
-            // Con ciclo extendido: targetStatus = "Sold".
+            // 2) Disparar la transicion al estado destino
             await api.put(`/reservas/${reserva.publicId}/status`, { status: targetStatus });
-            showSuccess(isSellMode ? "Reserva vendida" : "Reserva confirmada");
+            showSuccess("Reserva en gestion");
             onConfirmed();
         } catch (error) {
-            showError(getApiErrorMessage(error, "No se pudo confirmar la reserva."));
+            showError(getApiErrorMessage(error, "No se pudo avanzar la reserva."));
         } finally {
             setSubmitting(false);
         }
@@ -113,9 +106,8 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
                     <div className="flex items-center gap-2">
                         <Users className="h-5 w-5 text-indigo-600" />
                         <div>
-                            {/* Titulo dinamico: "Vender reserva" en modo Sold, "Confirmar reserva" en modo base */}
                             <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                                {isSellMode ? "Vender reserva" : "Confirmar reserva"}
+                                Pasar a En gestion
                             </h3>
                             <p className="text-xs text-muted-foreground">{reserva.numeroReserva} - {reserva.customerName}</p>
                         </div>
@@ -131,7 +123,7 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
                             <div className="flex items-start gap-2">
                                 <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                                 <div>
-                                    <strong className="font-bold">No se puede confirmar todavia:</strong>
+                                    <strong className="font-bold">No se puede avanzar todavia:</strong>
                                     <ul className="list-disc list-inside mt-1 space-y-1">
                                         {blockingNonPax.map((r, i) => <li key={i}>{r}</li>)}
                                     </ul>
@@ -140,7 +132,6 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
                         </div>
                     )}
 
-                    {/* Composicion derivada de los servicios + override manual */}
                     {totalDetected > 0 && (
                         <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 text-sm dark:border-slate-700 dark:bg-slate-800/30">
                             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -180,7 +171,7 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
                             {isAmbiguous && (
                                 <div className="mt-2 flex items-start gap-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
                                     <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-                                    <span>Algunos servicios declaran composicion distinta entre si. Verifica antes de confirmar — podes ajustar arriba.</span>
+                                    <span>Algunos servicios declaran composicion distinta entre si. Verifica antes de continuar — podes ajustar arriba.</span>
                                 </div>
                             )}
                         </div>
@@ -188,18 +179,12 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
 
                     {slotsToFill.length === 0 ? (
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-200">
-                            {isSellMode
-                                ? "Todos los pasajeros ya estan cargados. Al vender se marca la reserva como Vendida."
-                                : "Todos los pasajeros ya estan cargados. Confirmando se cambia el estado a Reservado."
-                            }
+                            Todos los pasajeros ya estan cargados. Al continuar la reserva pasa a En gestion.
                         </div>
                     ) : (
                         <>
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
-                                {isSellMode
-                                    ? <>Carga los <strong>{slotsToFill.length}</strong> pasajero(s) faltantes para poder vender la reserva.</>
-                                    : <>Carga los <strong>{slotsToFill.length}</strong> pasajero(s) faltantes con nombre y documento.</>
-                                }
+                                Carga los <strong>{slotsToFill.length}</strong> pasajero(s) faltantes con nombre y documento.
                             </div>
 
                             <div className="space-y-3">
@@ -251,14 +236,10 @@ export function ConfirmReservaModal({ reserva, readiness, onClose, onConfirmed, 
                         type="button"
                         onClick={handleSubmit}
                         disabled={submitting || blockingNonPax.length > 0 || (slotsToFill.length > 0 && !allValid)}
-                        className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                        className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                     >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        {/* Texto del boton depende del modo y si hay pasajeros para cargar */}
-                        {isSellMode
-                            ? (slotsToFill.length === 0 ? "Vender reserva" : `Cargar y vender (${slotsToFill.length})`)
-                            : (slotsToFill.length === 0 ? "Confirmar reserva" : `Cargar y confirmar (${slotsToFill.length})`)
-                        }
+                        {slotsToFill.length === 0 ? "Pasar a En gestion" : `Cargar pasajeros y pasar (${slotsToFill.length})`}
                     </button>
                 </div>
             </div>

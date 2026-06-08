@@ -90,21 +90,6 @@ public class OperationalFinanceSettingsDto
     public bool? EnableMultiCurrencyInvoicing { get; set; }
 
     /// <summary>
-    /// Rediseño estados Reserva (Fase A+B, 2026-05-30): feature flag del ciclo de vida
-    /// extendido (estados "Vendida" y "A liquidar"). Hasta hoy solo se prendia por SQL;
-    /// ahora el admin lo prende/apaga desde el panel de Configuracion.
-    ///
-    /// <para>Es un flag de COMPORTAMIENTO puro: NO emite nada fiscal, NO tiene dependencias
-    /// con otros flags. Con OFF (default) el ciclo de vida es el clasico de siempre; con ON
-    /// se habilitan las dos etapas nuevas. Por eso no hay validacion cruzada para este flag.</para>
-    ///
-    /// <para>Nullable y patch-like (mismo criterio B-002 que el resto del DTO): enviar null
-    /// u omitir el campo en el PUT = no se modifica el valor actual. Solo se persiste si viene
-    /// con valor. Asi un PUT legacy o un frontend que olvide el campo no lo apaga sin querer.</para>
-    /// </summary>
-    public bool? EnableSoldToSettleStates { get; set; }
-
-    /// <summary>
     /// ADR-013 (Nota de Debito en cancelacion, 2026-06-01): feature flag de la emision de
     /// Nota de Debito por penalidad propia de la agencia en el flujo de cancelacion. Hasta
     /// hoy solo se prendia por SQL; ahora el admin lo prende/apaga desde el panel.

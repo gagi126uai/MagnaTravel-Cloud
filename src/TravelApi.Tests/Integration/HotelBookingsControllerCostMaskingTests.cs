@@ -87,8 +87,11 @@ public class HotelBookingsControllerCostMaskingTests : IClassFixture<CustomWebAp
             Name = "Reserva mask " + Guid.NewGuid().ToString("N")[..6],
             NumeroReserva = "F-MSK-" + Guid.NewGuid().ToString("N")[..6],
             ResponsibleUserId = vendedorId,
-            // Confirmed: no fuerza "Solicitado" ni exige status confirmado en el servicio nuevo.
-            Status = EstadoReserva.Confirmed
+            // ADR-020: estado EDITABLE (En gestion). Antes era Confirmed, pero ahora Confirmed pone la
+            // reserva bajo candado y el POST de un servicio devuelve 409 sin autorizacion previa. En
+            // gestion permite cargar servicios libremente, que es lo unico que necesita este test
+            // (verifica el enmascarado de NetCost, no el candado).
+            Status = EstadoReserva.InManagement
         };
         var supplier = new Supplier
         {
@@ -188,6 +191,32 @@ public class HotelBookingsControllerCostMaskingTests : IClassFixture<CustomWebAp
         Assert.Equal(800m, dto!.SalePrice);
         // Admin bypass: ve el costo real del proveedor.
         Assert.Equal(500m, dto.NetCost);
+    }
+
+    [Fact]
+    public async Task POST_Hotel_OnLockedConfirmedReserva_Returns409Conflict()
+    {
+        // BLOQUEANTE 3: el candado en el POST (Create) de un servicio tipado debe devolver 409
+        // (igual que Update y el generico), para que el frontend abra el flujo de autorizacion.
+        var vendedorId = "vend-lock-post-" + Guid.NewGuid().ToString("N")[..8];
+        var seed = await SeedAsync(vendedorId, vendedorId + "@test.local");
+
+        // Poner la reserva bajo candado (Confirmed) sin autorizacion viva.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var reserva = await db.Reservas.FirstAsync(r => r.PublicId == seed.ReservaPublicId);
+            reserva.Status = EstadoReserva.Confirmed;
+            await db.SaveChangesAsync();
+        }
+
+        var client = _factory.CreateClient(); // Admin por defecto (el candado aplica a TODOS, Admin incl.)
+
+        var resp = await client.PostAsJsonAsync(
+            $"/api/reservas/{seed.ReservaPublicId}/hotels",
+            BuildCreateRequest(seed.SupplierPublicId));
+
+        Assert.Equal(HttpStatusCode.Conflict, resp.StatusCode);
     }
 
     private sealed record SeedData(

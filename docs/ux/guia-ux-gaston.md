@@ -78,6 +78,23 @@ CANCELADA: desde cualquier etapa (cotiz/presup → Perdido sin proceso de plata;
 - **Edición: LIBRE hasta Confirmada** (cotización/presupuesto/en gestión: cualquier vendedor en sus reservas toca servicios, precios, fechas). **Confirmada = candado: bloqueada salvo autorización explícita** (queda registrado quién autorizó, qué cambió y por qué; vale para todos, admin incluido).
 - **"En gestión" muestra el detalle por servicio de un vistazo** (hotel ✔, aéreo pendiente de emitir, traslado mudo) — no hace falta estado "confirmada parcial".
 
+**Borrar vs. cancelar un servicio (aprobado por Gastón 2026-06-07 — "dale y terminalo"):**
+- **Manda EL SERVICIO, no la etapa de la reserva.** Servicio que todavía NO confirmó el operador → se BORRA del todo, libre (era un borrador, sin compromiso con nadie). Servicio YA confirmado por el operador → NO se borra: se CANCELA (queda en la reserva tachado, con quién y cuándo — hubo compromiso real, puede haber penalidad o plata del cliente). Su monto se resta solo de la deuda del cliente.
+- Si la reserva está Confirmada (candado), tanto borrar como cancelar piden autorización registrada primero.
+- "Vendida" muere con el rediseño; la traba actual "no se puede eliminar el servicio: la reserva está en estado 'Sold'" desaparece de raíz. El rediseño se construye DIRECTO, SIN llave nueva (regla de Gastón 2026-06-07: "basta de llaves, esto es un producto").
+
+**Pantallas del ciclo de vida — 10 decisiones de UI (aprobadas por Gastón 2026-06-08, "dale, me cierra todo"):**
+1. **Candado de una Confirmada:** candadito 🔒 al lado del estado **+** franja explicativa arriba ("🔒 Reserva confirmada. Para cambiar algo, pedí autorización.").
+2. **Editar una reserva trabada:** el vendedor común ve "Pedile a un administrador que la destrabe"; el **admin** escribe el motivo y la destraba **entera por 30 minutos** (no servicio por servicio).
+3. **Botones de "resolver" servicio:** en la misma fila del servicio, a la derecha. Textos: aéreo = "Marcar emitido"; traslado = "No requiere confirmación".
+4. **"En gestión" de un vistazo:** resumen arriba ("1 de 3 servicios resueltos") + pelotita de color por fila (🟢 resuelto / 🟡 pendiente con la palabra de qué falta).
+5. **Dos números de plata:** "SALDO A COBRAR" grande (solo lo confirmado) y debajo, chiquito, "de $X presupuestado".
+6. **Regresión automática a En gestión:** franja naranja en la reserva **+** aviso en la campanita, con el motivo ("El operador canceló el aéreo").
+7. **Marcar "Perdido":** botón discreto + confirmación "¿Seguro?" + campo de motivo **opcional** (queda en historial).
+8. **(Negocio) Cancelación que vino del operador NO pide autorización de candado:** registrar que el operador canceló un servicio se puede hacer sin destrabar (es informar algo que pasó afuera, no una decisión de la agencia). La autorización se pide solo si después se quiere cambiar otra cosa.
+9. **Papelera de un servicio:** el sistema decide solo — no confirmado → "¿Borrar?" (desaparece); confirmado → "¿Cancelar?" (queda tachado), con motivo **opcional**.
+10. **Colores de las 3 etapas nuevas:** Cotización = gris claro (borrador); En gestión = celeste/cian (en movimiento); Perdido = gris oscuro/tachado. Las etapas que ya existían no cambian de color.
+
 # Reglas por pantalla
 
 ## Carga de servicios de una reserva (ServiceFormModal)

@@ -365,31 +365,6 @@ public class OperationalFinanceSettings
     public bool EnableMultiCurrencyInvoicing { get; set; } = false;
 
     // ============================================================
-    // Rediseño maquina de estados Reserva (Fase A+B, 2026-05-30): agrega dos
-    // estados nuevos al ciclo de vida (Sold "Vendida" y ToSettle "A liquidar")
-    // y reorganiza las transiciones. TODO el rediseño vive detras de este flag.
-    // ============================================================
-
-    /// <summary>
-    /// Rediseño Fase A+B (2026-05-30): feature flag MAESTRO de los dos estados nuevos
-    /// (<see cref="EstadoReserva.Sold"/> y <see cref="EstadoReserva.ToSettle"/>).
-    ///
-    /// <para><b>Con OFF (default)</b>: el ciclo de vida se comporta EXACTAMENTE como hoy.
-    /// La cadena sigue siendo Budget -&gt; Confirmed -&gt; Traveling -&gt; Closed, con los
-    /// mismos gates y reverts de siempre. Byte-identico al comportamiento historico.
-    /// Cero riesgo de regresion mientras este flag siga apagado.</para>
-    ///
-    /// <para><b>Con ON</b>: se activa la cadena nueva Budget -&gt; Sold -&gt; Confirmed -&gt;
-    /// Traveling -&gt; ToSettle -&gt; Closed. Los gates de readiness se mueven a Budget-&gt;Sold,
-    /// el gate de "operador confirmo" a Sold-&gt;Confirmed, y el cierre pasa por ToSettle.
-    /// Se prohibe el salto directo Budget-&gt;Confirmed y Traveling-&gt;Closed.</para>
-    ///
-    /// <para>Default <c>false</c>. Se prende en staging para QA y en prod una vez que el
-    /// frontend (otra fase) muestre los chips/labels de los estados nuevos.</para>
-    /// </summary>
-    public bool EnableSoldToSettleStates { get; set; } = false;
-
-    // ============================================================
     // ADR-013 (Nota de Debito por penalidad en cancelacion, 2026-06-01): flag
     // maestro de la emision de ND en el flujo de cancelacion. Default conservador
     // (OFF), igual que todos los flags fiscales nuevos.

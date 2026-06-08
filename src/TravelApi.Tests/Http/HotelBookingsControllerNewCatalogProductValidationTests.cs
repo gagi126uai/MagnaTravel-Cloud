@@ -57,8 +57,11 @@ public class HotelBookingsControllerNewCatalogProductValidationTests : IClassFix
             Name = "Reserva catalogo " + Guid.NewGuid().ToString("N")[..6],
             NumeroReserva = "F-CAT-" + Guid.NewGuid().ToString("N")[..6],
             ResponsibleUserId = "test-user",
-            // Confirmed: no fuerza "Solicitado" ni bloquea el alta de servicios.
-            Status = EstadoReserva.Confirmed
+            // InManagement: no fuerza "Solicitado" (no es etapa de presupuesto) y NO esta bajo el
+            // candado de ADR-020 F4 (que arranca en Confirmed). Antes esta seed usaba Confirmed solo
+            // por la primera razon; con el candado, Confirmed exigiria autorizacion para el alta y el
+            // POST daria 409 — InManagement preserva el objetivo del test (pipeline + create OK).
+            Status = EstadoReserva.InManagement
         };
         var supplier = new Supplier
         {

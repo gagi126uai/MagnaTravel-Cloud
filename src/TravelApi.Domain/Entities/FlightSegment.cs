@@ -71,8 +71,12 @@ public class FlightSegment : IHasPublicId
     [MaxLength(20)]
     public string? PNR { get; set; } // Record locator
     
+    // ADR-020 (2026-06-07): el default pasa de "HK" (confirmado) a "NN" (solicitado/"need").
+    // El ciclo nuevo exige que un vuelo NUEVO nazca SIN confirmar (sino nace no-borrable y con
+    // ConfirmedAt). "NN" cabe en MaxLength(2) y MapFlightStatus lo mapea a "Solicitado" por la
+    // rama default. Las filas historicas conservan su Status real (el default de C# no las toca).
     [MaxLength(2)]
-    public string Status { get; set; } = "HK"; // HK, HL, UC, UN
+    public string Status { get; set; } = "NN"; // NN=solicitado, HK/TK/KK/KL=confirmado, UN/UC/HX/NO=cancelado
 
     // Numero de confirmacion que devuelve la aerolinea/operador para este segmento.
     // Es distinto del PNR/localizador (que sirve para gestionar la reserva en la GDS):
@@ -126,6 +130,35 @@ public class FlightSegment : IHasPublicId
     /// </summary>
     [MaxLength(30)]
     public string? CostToConfirmReason { get; set; }
+
+    // === ADR-020 (2026-06-07): confirmacion del operador vs emision del ticket (DOS hechos distintos) ===
+    // En el aereo la CONFIRMACION (PNR HK/TK/KK/KL) y la EMISION del ticket son hechos separados:
+    //  - ConfirmedAt: el operador se comprometio (PNR confirmado). Desde aca el segmento NO se borra,
+    //    solo se cancela, y corren penalidades / deuda al consolidador.
+    //  - TicketIssuedAt: el ticket esta EMITIDO. Esto es lo que RESUELVE el segmento para que el file
+    //    pase a Confirmada y para que su venta entre al saldo del cliente (ConfirmedSale).
+    // Un PNR confirmado (HK) SIN ticket es confirmado-pero-NO-resuelto: no se borra, pero no resuelve.
+
+    /// <summary>ADR-020: cuando el operador confirmo el PNR (Status -> HK/TK/KK/KL). Null = no confirmado.</summary>
+    public DateTime? ConfirmedAt { get; set; }
+
+    /// <summary>ADR-020: cuando se emitio el ticket (accion "Marcar emitido"). Null = no emitido. RESUELVE el segmento.</summary>
+    public DateTime? TicketIssuedAt { get; set; }
+
+    [MaxLength(200)]
+    public string? TicketIssuedByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? TicketIssuedByUserName { get; set; }
+
+    /// <summary>ADR-020: cuando se cancelo el segmento (Status -> HX). Null = no cancelado.</summary>
+    public DateTime? CancelledAt { get; set; }
+
+    [MaxLength(200)]
+    public string? CancelledByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? CancelledByUserName { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

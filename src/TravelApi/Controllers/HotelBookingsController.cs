@@ -64,7 +64,10 @@ public class HotelBookingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // ADR-020: el candado de la reserva confirmada (y los guards de mutacion) lanzan
+            // InvalidOperationException. El frontend del candado abre el flujo de autorizacion al
+            // recibir 409 (igual que en Update); con 400 no lo distinguia de un error de validacion.
+            return Conflict(new { message = ex.Message });
         }
         catch
         {
@@ -147,6 +150,9 @@ public class HotelBookingsController : ControllerBase
     [Route("/api/hotel-bookings/{publicIdOrLegacyId}/status")]
     [Authorize]
     [RequirePermission(Permissions.ReservasEdit)]
+    // ADR-020: ownership fino por el id del hotel (la ruta no trae reservaId). Antes faltaba y un
+    // vendedor podia mover el status (= mover plata / disparar auto-confirm) sobre reservas ajenas.
+    [RequireOwnership(OwnedEntity.HotelBooking, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try

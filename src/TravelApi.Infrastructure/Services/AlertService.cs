@@ -101,12 +101,10 @@ public class AlertService : IAlertService
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
-        // Fase D (rediseño Sold/ToSettle): "viajes urgentes" = reservas activas con viaje inminente y
-        // saldo pendiente. Sumamos Sold (vendida pero el operador todavia no confirmo). NO sumamos
-        // ToSettle (post-viaje). Con el flag EnableSoldToSettleStates OFF nunca hay filas en Sold, asi
-        // que el resultado es identico al historico.
+        // ADR-020 (2026-06-07): "viajes urgentes" = reservas activas con viaje inminente y saldo
+        // pendiente. InManagement (En gestion) reemplaza al viejo Sold. NO sumamos ToSettle (post-viaje).
         var urgentTrips = await _context.Reservas
-            .Where(f => (f.Status == EstadoReserva.Sold ||
+            .Where(f => (f.Status == EstadoReserva.InManagement ||
                          f.Status == EstadoReserva.Confirmed ||
                          f.Status == EstadoReserva.Traveling) &&
                         f.StartDate >= today &&
@@ -147,8 +145,9 @@ public class AlertService : IAlertService
     /// el {dd/MM} (en {N} dias)" / "Empieza HOY" cuando <c>daysLeft == 0</c>. Reemplaza al bucket de
     /// fechas limite manuales de ADR-017 F1.4 (nunca prendido en prod).
     ///
-    /// <para><b>Elegibilidad</b>: Status ∈ {Sold, Confirmed, Traveling}. Presupuestos NO avisan
-    /// (decision del dueño, Q2). <c>Traveling</c> entra porque el job de lifecycle promueve a las
+    /// <para><b>Elegibilidad</b>: Status ∈ {InManagement, Confirmed, Traveling} (ADR-020: InManagement
+    /// reemplaza al viejo Sold). Cotizacion/Presupuesto/Perdido NO avisan (no hay compromiso). <c>Traveling</c>
+    /// entra porque el job de lifecycle promueve a las
     /// 00:00 ART y sin el, el aviso rojo "Empieza HOY" no se veria nunca (B2-nuevo); no necesita
     /// condicion extra: la ventana <c>hoy &lt;= firstStart</c> deja afuera sola a una reserva
     /// genuinamente en viaje (su primer inicio quedo en el pasado).</para>
@@ -174,7 +173,7 @@ public class AlertService : IAlertService
         // Prefiltro = Status elegible + ownership, NADA mas (B1-bis). Se trae junto con los datos que
         // necesita el item, incluido el titular (Q3): Payer.FullName -> primer Passenger por Id -> null.
         var candidates = await _context.Reservas
-            .Where(r => (r.Status == EstadoReserva.Sold
+            .Where(r => (r.Status == EstadoReserva.InManagement
                          || r.Status == EstadoReserva.Confirmed
                          || r.Status == EstadoReserva.Traveling)
                         && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId))

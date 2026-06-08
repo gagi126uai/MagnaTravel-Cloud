@@ -97,6 +97,31 @@ public class BookingCancellationService
     // Comandos publicos (IBookingCancellationService)
     // =========================================================================
 
+    /// <summary>
+    /// ADR-020 F6 (M7): deja rastro auditable ADITIVO de un cambio de <c>Reserva.Status</c> hecho por
+    /// el flujo de cancelacion (ADR-002). Estos sitios escriben <c>bc.Reserva.Status</c> por FUERA de
+    /// <c>UpdateStatusAsync</c>/<c>RevertStatusAsync</c>, asi que no quedaban en <c>ReservaStatusChangeLog</c>.
+    /// No persiste: el caller hace el <c>SaveChanges</c>. NO cambia la logica de cancelacion, solo registra
+    /// el cambio (de -> a, quien, cuando). Cuando el cambio lo dispara un callback sin actor humano (ARCA,
+    /// consumo de credito), <paramref name="actorUserId"/> va null y la razon lo documenta como del sistema.
+    /// </summary>
+    private void LogReservaStatusChange(
+        Reserva reserva, string fromStatus, string toStatus,
+        string? actorUserId, string? actorUserName, string reason)
+    {
+        _db.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+        {
+            ReservaId = reserva.Id,
+            FromStatus = fromStatus,
+            ToStatus = toStatus,
+            Direction = "Forward",
+            ByUserId = actorUserId,
+            ByUserName = actorUserName,
+            Reason = reason,
+            OccurredAt = DateTime.UtcNow,
+        });
+    }
+
     public async Task<BookingCancellationDto> DraftAsync(
         DraftCancellationRequest request,
         string userId,
@@ -818,7 +843,11 @@ public class BookingCancellationService
         // AllowedRevertTransitions no contempla esta salida. La transicion
         // queda visible en el audit log + la query de Reservas filtra por
         // status.
+        var reservaFromStatusConfirm = bc.Reserva.Status;
         bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+        // ADR-020 F6 (M7): rastro aditivo del cambio de estado (este path lo escribe por fuera de la maquina).
+        LogReservaStatusChange(bc.Reserva, reservaFromStatusConfirm, EstadoReserva.PendingOperatorRefund,
+            userId, userName, "Cancelacion (ADR-002): confirmada con el cliente, a la espera del reembolso del operador.");
 
         // 9) Guardar BC + Reserva ANTES de encolar la annulacion (asi el job
         //    encuentra el BC en AwaitingFiscalConfirmation cuando arranca).
@@ -1045,7 +1074,11 @@ public class BookingCancellationService
         bc.CreditNoteInvoiceId = creditNote.Id;
         bc.ArcaConfirmedManuallyAt = DateTime.UtcNow;
         bc.ArcaConfirmedManuallyByUserId = userId;
+        var reservaFromStatusForce = bc.Reserva.Status;
         bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+        // ADR-020 F6 (M7): rastro aditivo del cambio de estado (escape hatch fiscal manual).
+        LogReservaStatusChange(bc.Reserva, reservaFromStatusForce, EstadoReserva.PendingOperatorRefund,
+            userId, userName, "Cancelacion (ADR-002): confirmacion fiscal forzada por admin, a la espera del reembolso del operador.");
 
         // 7) Consumir approval.
         await _approvalService.MarkConsumedAsync(approval.Id, ct);
@@ -1295,7 +1328,13 @@ public class BookingCancellationService
 
         bc.Status = BookingCancellationStatus.Closed;
         bc.ClosedAt = DateTime.UtcNow;
+        var reservaFromStatusClosed = bc.Reserva.Status;
         bc.Reserva.Status = EstadoReserva.Cancelled;
+        // ADR-020 F6 (M7): rastro aditivo. Lo dispara el consumo total del credito (callback del sistema),
+        // sin actor humano -> ByUserId null, documentado en la razon.
+        LogReservaStatusChange(bc.Reserva, reservaFromStatusClosed, EstadoReserva.Cancelled,
+            actorUserId: null, actorUserName: null,
+            reason: "Cancelacion (ADR-002): credito del cliente consumido en su totalidad, cancelacion cerrada (sistema).");
 
         // Audit dedicado del cierre del BC para que el contador pueda buscar
         // "cuando se cerro la cancelacion #X" sin tener que mirar el ultimo
@@ -1839,7 +1878,12 @@ public class BookingCancellationService
 
         bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
         bc.CreditNoteInvoiceId = creditNoteInvoiceId;
+        var reservaFromStatusArca = bc.Reserva.Status;
         bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+        // ADR-020 F6 (M7): rastro aditivo. Lo dispara el callback de exito de ARCA (sistema), sin actor humano.
+        LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
+            actorUserId: null, actorUserName: null,
+            reason: "Cancelacion (ADR-002): ARCA confirmo la NC, a la espera del reembolso del operador (sistema).");
 
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.BookingCancellationArcaSucceeded,
@@ -2918,7 +2962,11 @@ public class BookingCancellationService
                 bc.ConfirmedByUserId ??= resolverUserId;
                 bc.ConfirmedByUserName ??= resolverUserName;
                 bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+                var reservaFromStatusFase1 = bc.Reserva.Status;
                 bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+                // ADR-020 F6 (M7): rastro aditivo del cambio de estado (path FC1.3 Fase 1, NC total real).
+                LogReservaStatusChange(bc.Reserva, reservaFromStatusFase1, EstadoReserva.PendingOperatorRefund,
+                    resolverUserId, resolverUserName, "Cancelacion (ADR-002 / FC1.3 Fase 1): aprobada, a la espera del reembolso del operador.");
 
                 await _db.SaveChangesAsync(ct);
 
@@ -3765,7 +3813,11 @@ public class BookingCancellationService
         bc.ConfirmedByUserId ??= resolverUserId;
         bc.ConfirmedByUserName ??= resolverUserName;
         bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+        var reservaFromStatusFase2 = bc.Reserva.Status;
         bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+        // ADR-020 F6 (M7): rastro aditivo del cambio de estado (path F2.2, NC parcial real).
+        LogReservaStatusChange(bc.Reserva, reservaFromStatusFase2, EstadoReserva.PendingOperatorRefund,
+            resolverUserId, resolverUserName, "Cancelacion (ADR-002 / F2.2 NC parcial): aprobada, a la espera del reembolso del operador.");
 
         await _db.SaveChangesAsync(ct);
 

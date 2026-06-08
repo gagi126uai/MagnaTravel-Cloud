@@ -156,6 +156,12 @@ public class ReservasController : ControllerBase
         {
             return BadRequest(new { message = "No se pudo agregar el servicio." });
         }
+        catch (InvalidOperationException ex)
+        {
+            // ADR-020 F4: reserva confirmada con candado (o agregar servicio dispara regresion sin
+            // autorizacion). 409 Conflict, mismo patron que el resto de los write-paths.
+            return Conflict(new { message = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error adding service to reserva {ReservaId}", publicIdOrLegacyId);
@@ -410,6 +416,39 @@ public class ReservasController : ControllerBase
         catch (UnauthorizedAccessException ex)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    // ADR-020 F4 (candado): destrabar la edicion de una reserva confirmada. Cualquiera que pueda
+    // editar la reserva (ReservasEdit + ownership) puede pedir la autorizacion; el SERVICE valida
+    // que quien autoriza tenga reservas.authorize_locked_edit (auto-autorizacion si el actor lo
+    // tiene, Admin incluido — siempre queda registrado). Devuelve la ventana viva.
+    [HttpPost("{publicIdOrLegacyId}/edit-authorizations")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<ReservaEditAuthorizationDto>> CreateEditAuthorization(
+        string publicIdOrLegacyId, [FromBody] CreateEditAuthorizationRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "System";
+            var actorUserName = User.FindFirstValue("FullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name;
+            var isAdmin = User.IsInRole("Admin");
+            var dto = await _reservaService.CreateEditAuthorizationAsync(
+                publicIdOrLegacyId, request, actorUserId, actorUserName, isAdmin, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
         catch (InvalidOperationException ex)
         {

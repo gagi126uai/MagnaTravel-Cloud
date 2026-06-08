@@ -66,6 +66,21 @@ public class ServicioReserva : IHasPublicId
 
     public string? SupplierName { get; set; }
 
+    // === ADR-020 (2026-06-07): trazabilidad de confirmacion del operador y de cancelacion del servicio ===
+
+    /// <summary>
+    /// ADR-020: fecha en que el operador CONFIRMO este servicio (la estampa el motor de estados).
+    /// Null = nunca confirmado. NO se borra al des-confirmar. Gobierna borrar-vs-cancelar y penalidades.
+    /// </summary>
+    public DateTime? ConfirmedAt { get; set; }
+
+    /// <summary>ADR-020: cuando se cancelo el servicio (Status -> Cancelado). Null = no cancelado.</summary>
+    public DateTime? CancelledAt { get; set; }
+
+    public string? CancelledByUserId { get; set; }
+
+    public string? CancelledByUserName { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();

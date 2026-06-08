@@ -3,6 +3,7 @@ using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -88,6 +89,24 @@ public partial class BookingService : IBookingService
         var rateId = await ResolveRateIdAsync(ratePublicIdOrLegacyId, ct);
         if (!rateId.HasValue) return null;
         return await _db.Set<Rate>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == rateId.Value, ct);
+    }
+
+    /// <summary>
+    /// ADR-020 F4 (candado): aplica la regla de candado a un write-path de servicio tipado.
+    /// Resuelve el actor del HttpContext (null en tests) y delega en <see cref="ReservaLockGuard"/>.
+    /// Si la reserva esta confirmada y no hay autorizacion viva, lanza
+    /// <see cref="InvalidOperationException"/> (-> 409 Conflict); si la hay, registra el cambio.
+    /// El registro se persiste junto con la mutacion (mismo AppDbContext scoped por request).
+    /// </summary>
+    private Task GuardReservaLockAsync(int reservaId, string operation, string entityType, int? entityId, string? summary, CancellationToken ct)
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        var userId = user?.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier);
+        var userName = user?.FindFirstValue("FullName")
+            ?? user?.FindFirstValue(System.Security.Claims.ClaimTypes.Name)
+            ?? user?.Identity?.Name;
+        return ReservaLockGuard.EnsureCanEditAsync(
+            _db, reservaId, operation, userId, userName, entityType, entityId, summary, ct);
     }
 
     /// <summary>
@@ -350,6 +369,7 @@ public partial class BookingService : IBookingService
     public async Task<FlightSegmentDto> CreateFlightAsync(string reservaPublicIdOrLegacyId, CreateFlightRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "FlightSegment", null, "Aereo", ct);
         return await CreateFlightAsync(reservaId, req, ct);
     }
 
@@ -508,6 +528,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "FlightSegment", flightId, "Aereo", ct);
         return await UpdateFlightAsync(reservaId, flightId, req, ct);
     }
 
@@ -603,6 +624,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "FlightSegment", flightId, "Aereo", ct);
         await DeleteFlightAsync(reservaId, flightId, ct);
     }
 
@@ -611,7 +633,10 @@ public partial class BookingService : IBookingService
         var flight = await _flightRepo.GetByIdAsync(id, ct);
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
-        await EnsureCanRemoveServiceAsync(reservaId, ct);
+        var flightConfirmed = flight.ConfirmedAt != null
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(flight)
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(flight);
+        await EnsureCanRemoveServiceAsync(reservaId, flightConfirmed, ct);
 
         await _flightRepo.DeleteAsync(flight, ct);
         if (flight.SupplierId > 0)
@@ -675,6 +700,7 @@ public partial class BookingService : IBookingService
     public async Task<HotelBookingDto> CreateHotelAsync(string reservaPublicIdOrLegacyId, CreateHotelRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "HotelBooking", null, "Hotel", ct);
         return await CreateHotelAsync(reservaId, req, ct);
     }
 
@@ -741,6 +767,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "HotelBooking", hotelId, "Hotel", ct);
         return await UpdateHotelAsync(reservaId, hotelId, req, ct);
     }
 
@@ -848,6 +875,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "HotelBooking", hotelId, "Hotel", ct);
         await DeleteHotelAsync(reservaId, hotelId, ct);
     }
 
@@ -856,7 +884,10 @@ public partial class BookingService : IBookingService
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
-        await EnsureCanRemoveServiceAsync(reservaId, ct);
+        var hotelConfirmed = hotel.ConfirmedAt != null
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(hotel)
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(hotel);
+        await EnsureCanRemoveServiceAsync(reservaId, hotelConfirmed, ct);
 
         await _hotelRepo.DeleteAsync(hotel, ct);
         if (hotel.SupplierId > 0)
@@ -918,6 +949,7 @@ public partial class BookingService : IBookingService
     public async Task<PackageBookingDto> CreatePackageAsync(string reservaPublicIdOrLegacyId, CreatePackageRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "PackageBooking", null, "Paquete", ct);
         return await CreatePackageAsync(reservaId, req, ct);
     }
 
@@ -983,6 +1015,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "PackageBooking", packageId, "Paquete", ct);
         return await UpdatePackageAsync(reservaId, packageId, req, ct);
     }
 
@@ -1060,6 +1093,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "PackageBooking", packageId, "Paquete", ct);
         await DeletePackageAsync(reservaId, packageId, ct);
     }
 
@@ -1068,7 +1102,10 @@ public partial class BookingService : IBookingService
         var package = await _packageRepo.GetByIdAsync(id, ct);
         if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
-        await EnsureCanRemoveServiceAsync(reservaId, ct);
+        var packageConfirmed = package.ConfirmedAt != null
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(package)
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(package);
+        await EnsureCanRemoveServiceAsync(reservaId, packageConfirmed, ct);
 
         await _packageRepo.DeleteAsync(package, ct);
         if (package.SupplierId > 0)
@@ -1130,6 +1167,7 @@ public partial class BookingService : IBookingService
     public async Task<TransferBookingDto> CreateTransferAsync(string reservaPublicIdOrLegacyId, CreateTransferRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "TransferBooking", null, "Traslado", ct);
         return await CreateTransferAsync(reservaId, req, ct);
     }
 
@@ -1201,6 +1239,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "TransferBooking", transferId, "Traslado", ct);
         return await UpdateTransferAsync(reservaId, transferId, req, ct);
     }
 
@@ -1289,6 +1328,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "TransferBooking", transferId, "Traslado", ct);
         await DeleteTransferAsync(reservaId, transferId, ct);
     }
 
@@ -1297,7 +1337,10 @@ public partial class BookingService : IBookingService
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
         if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
-        await EnsureCanRemoveServiceAsync(reservaId, ct);
+        var transferConfirmed = transfer.ConfirmedAt != null
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(transfer)
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(transfer);
+        await EnsureCanRemoveServiceAsync(reservaId, transferConfirmed, ct);
 
         await _transferRepo.DeleteAsync(transfer, ct);
         if (transfer.SupplierId > 0)
@@ -1309,12 +1352,13 @@ public partial class BookingService : IBookingService
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
-    private async Task EnsureCanRemoveServiceAsync(int reservaId, CancellationToken ct)
+    // ADR-020 (F5): manda el servicio. Si fue confirmado por el operador no se borra, se cancela.
+    // Los servicios tipados (flight/hotel/...) no tienen el link Payment.ServicioReservaId, asi que
+    // genericServiceId es siempre null aca.
+    private async Task EnsureCanRemoveServiceAsync(int reservaId, bool serviceIsOperatorConfirmed, CancellationToken ct)
     {
-        // Reglas de borrado de servicios viven en DeleteGuards (compartidas con ReservaService).
-        // GetServiceDeleteBlockReasonAsync incluye el state guard C26 (solo Budget) ademas
-        // de los guards historicos (pagos vivos, vouchers emitidos).
-        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(_db, reservaId, ct, _logger);
+        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(
+            _db, reservaId, serviceIsOperatorConfirmed, genericServiceId: null, ct, _logger);
         if (blockReason != null)
         {
             _logger.LogInformation(
@@ -1393,6 +1437,7 @@ public partial class BookingService : IBookingService
     public async Task<AssistanceBookingDto> CreateAssistanceAsync(string reservaPublicIdOrLegacyId, CreateAssistanceRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "AssistanceBooking", null, "Asistencia", ct);
         return await CreateAssistanceAsync(reservaId, req, ct);
     }
 
@@ -1453,6 +1498,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "AssistanceBooking", assistanceId, "Asistencia", ct);
         return await UpdateAssistanceAsync(reservaId, assistanceId, req, ct);
     }
 
@@ -1535,6 +1581,7 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "AssistanceBooking", assistanceId, "Asistencia", ct);
         await DeleteAssistanceAsync(reservaId, assistanceId, ct);
     }
 
@@ -1543,7 +1590,10 @@ public partial class BookingService : IBookingService
         var assistance = await _assistanceRepo.GetByIdAsync(id, ct);
         if (assistance == null || assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada");
 
-        await EnsureCanRemoveServiceAsync(reservaId, ct);
+        var assistanceConfirmed = assistance.ConfirmedAt != null
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(assistance)
+            || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(assistance);
+        await EnsureCanRemoveServiceAsync(reservaId, assistanceConfirmed, ct);
 
         await _assistanceRepo.DeleteAsync(assistance, ct);
         if (assistance.SupplierId > 0)
@@ -1570,6 +1620,12 @@ public partial class BookingService : IBookingService
         var hotel = await _hotelRepo.GetByIdAsync(hotelId, ct)
             ?? throw new KeyNotFoundException("Hotel no encontrado");
 
+        // ADR-020 decision #8 (2026-06-08): cambiar el ESTADO/RESOLUCION de un servicio NO pide
+        // candado, aunque la reserva este confirmada. Esto refleja lo que hizo el OPERADOR afuera
+        // (confirmo / cambio / cancelo el servicio), no una decision de la agencia; ademas es
+        // justo la accion que dispara la regresion automatica Confirmed->InManagement (que reabre
+        // la edicion), asi que pedir candado para esto seria contradictorio. La cancelacion/borrado
+        // iniciado por la agencia (papelera, Delete*Async) SI sigue bajo candado.
         var oldStatus = hotel.Status;
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, hotel.ReservaId, ct))
             newStatus = "Solicitado";
@@ -1581,10 +1637,18 @@ public partial class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         hotel.Status = newStatus;
+        StampServiceCancellation(
+            wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
+            isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            setCancelledAt: value => hotel.CancelledAt = value,
+            setCancelledBy: (id, name) => { hotel.CancelledByUserId = id; hotel.CancelledByUserName = name; });
         if (confirmationNumber != null)
             hotel.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _hotelRepo.UpdateAsync(hotel, ct);
         if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
+        // ADR-020: el cambio de estado mueve la resolucion -> recalcular saldo (ConfirmedSale) y
+        // disparar el motor de estados (puede confirmar/regresar el file).
+        await _reservaService.UpdateBalanceAsync(hotel.ReservaId);
         var dto = _mapper.Map<HotelBookingDto>(hotel);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
         // Mismo enmascarado de NetCost que Create/Update: si el caller no es Admin
@@ -1602,6 +1666,8 @@ public partial class BookingService : IBookingService
         var transfer = await _transferRepo.GetByIdAsync(transferId, ct)
             ?? throw new KeyNotFoundException("Transfer no encontrado");
 
+        // ADR-020 decision #8: cambiar el estado/resolucion del traslado refleja lo que hizo el
+        // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).
         var oldStatus = transfer.Status;
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, transfer.ReservaId, ct))
             newStatus = "Solicitado";
@@ -1613,10 +1679,17 @@ public partial class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         transfer.Status = newStatus;
+        StampServiceCancellation(
+            wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
+            isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            setCancelledAt: value => transfer.CancelledAt = value,
+            setCancelledBy: (id, name) => { transfer.CancelledByUserId = id; transfer.CancelledByUserName = name; });
         if (confirmationNumber != null)
             transfer.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _transferRepo.UpdateAsync(transfer, ct);
         if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
+        // ADR-020: recalcular saldo (ConfirmedSale) + disparar el motor de estados.
+        await _reservaService.UpdateBalanceAsync(transfer.ReservaId);
         var dto = _mapper.Map<TransferBookingDto>(transfer);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
@@ -1631,6 +1704,8 @@ public partial class BookingService : IBookingService
         var package = await _packageRepo.GetByIdAsync(packageId, ct)
             ?? throw new KeyNotFoundException("Paquete no encontrado");
 
+        // ADR-020 decision #8: cambiar el estado/resolucion del paquete refleja lo que hizo el
+        // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).
         var oldStatus = package.Status;
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, package.ReservaId, ct))
             newStatus = "Solicitado";
@@ -1642,10 +1717,17 @@ public partial class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         package.Status = newStatus;
+        StampServiceCancellation(
+            wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
+            isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            setCancelledAt: value => package.CancelledAt = value,
+            setCancelledBy: (id, name) => { package.CancelledByUserId = id; package.CancelledByUserName = name; });
         if (confirmationNumber != null)
             package.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _packageRepo.UpdateAsync(package, ct);
         if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
+        // ADR-020: recalcular saldo (ConfirmedSale) + disparar el motor de estados.
+        await _reservaService.UpdateBalanceAsync(package.ReservaId);
         var dto = _mapper.Map<PackageBookingDto>(package);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
@@ -1660,6 +1742,8 @@ public partial class BookingService : IBookingService
         var flight = await _flightRepo.GetByIdAsync(flightId, ct)
             ?? throw new KeyNotFoundException("Vuelo no encontrado");
 
+        // ADR-020 decision #8: cambiar el estado/resolucion del aereo refleja lo que hizo el
+        // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).
         var oldStatus = flight.Status;
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, flight.ReservaId, ct))
             newStatus = "Solicitado";
@@ -1672,17 +1756,119 @@ public partial class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         flight.Status = newStatus;
+        // El aereo mapea por codigo IATA (UN/UC/HX/NO = cancelado), no por texto generico.
+        StampServiceCancellation(
+            wasCancelled: WorkflowStatusHelper.MapFlightStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
+            isCancelled: WorkflowStatusHelper.MapFlightStatus(newStatus) == WorkflowStatuses.Cancelado,
+            setCancelledAt: value => flight.CancelledAt = value,
+            setCancelledBy: (id, name) => { flight.CancelledByUserId = id; flight.CancelledByUserName = name; });
         // FlightSegment no tiene ConfirmationNumber; el codigo de confirmacion del proveedor
         // se almacena en PNR (ver SupplierService.BuildSupplierServicesQuery).
         if (confirmationNumber != null)
             flight.PNR = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _flightRepo.UpdateAsync(flight, ct);
         if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
+        // ADR-020: recalcular saldo (ConfirmedSale) + disparar el motor de estados.
+        await _reservaService.UpdateBalanceAsync(flight.ReservaId);
         var dto = _mapper.Map<FlightSegmentDto>(flight);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.
         await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
+    }
+
+    /// <summary>
+    /// ADR-020 F2: accion "Marcar emitido" del aereo. Estampa TicketIssuedAt + quien (lo que RESUELVE
+    /// el segmento). El TicketNumber es opcional (A3): si viene vacio igual se permite (el ticket suele
+    /// llegar despues por mail). Recalcula el saldo (ConfirmedSale) y dispara el motor (puede confirmar).
+    /// </summary>
+    public async Task<FlightSegmentDto> MarkFlightTicketIssuedAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, string? ticketNumber, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        var flight = await _flightRepo.GetByIdAsync(flightId, ct) ?? throw new KeyNotFoundException("Vuelo no encontrado");
+        if (flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
+
+        // ADR-020 decision #8: marcar emitido RESUELVE el segmento (es la realidad del operador),
+        // no es una edicion de la agencia -> sin candado (ver detalle en UpdateHotelStatusAsync).
+        var (userId, userName) = GetActor();
+        flight.TicketIssuedAt = DateTime.UtcNow;
+        flight.TicketIssuedByUserId = userId;
+        flight.TicketIssuedByUserName = userName;
+        if (!string.IsNullOrWhiteSpace(ticketNumber)) flight.TicketNumber = ticketNumber.Trim();
+
+        await _flightRepo.UpdateAsync(flight, ct);
+        await _reservaService.UpdateBalanceAsync(flight.ReservaId);
+
+        var dto = _mapper.Map<FlightSegmentDto>(flight);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
+        await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
+    }
+
+    /// <summary>
+    /// ADR-020 F2: marca "no requiere confirmacion" del traslado (cualquier vendedor). Con la marca el
+    /// traslado cuenta como RESUELTO aunque su Status no sea Confirmado. Registra quien/cuando. Recalcula
+    /// el saldo y dispara el motor.
+    /// </summary>
+    public async Task<TransferBookingDto> MarkTransferNoConfirmationRequiredAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        var transfer = await _transferRepo.GetByIdAsync(transferId, ct) ?? throw new KeyNotFoundException("Traslado no encontrado");
+        if (transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
+
+        // ADR-020 decision #8: marcar "no requiere confirmacion" RESUELVE el traslado (realidad del
+        // operador), no es una edicion de la agencia -> sin candado (ver detalle en UpdateHotelStatusAsync).
+        var (userId, userName) = GetActor();
+        transfer.NoConfirmationRequired = true;
+        transfer.NoConfirmationMarkedAt = DateTime.UtcNow;
+        transfer.NoConfirmationMarkedByUserId = userId;
+        transfer.NoConfirmationMarkedByUserName = userName;
+
+        await _transferRepo.UpdateAsync(transfer, ct);
+        await _reservaService.UpdateBalanceAsync(transfer.ReservaId);
+
+        var dto = _mapper.Map<TransferBookingDto>(transfer);
+        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
+        await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
+        return dto;
+    }
+
+    /// <summary>Identidad del actor desde el HttpContext (claims). Null en contextos sin request.</summary>
+    private (string? userId, string? userName) GetActor()
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        var userId = user?.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier);
+        var userName = user?.FindFirstValue(System.Security.Claims.ClaimTypes.Name) ?? user?.Identity?.Name;
+        return (userId, userName);
+    }
+
+    /// <summary>
+    /// ADR-020 (decision #8): estampa o limpia la marca de cancelacion de un servicio cuando un
+    /// cambio de estado via Update*StatusAsync lo lleva a (o lo saca de) CANCELADO. Este camino NO
+    /// pide candado — refleja la realidad del operador, no una edicion de la agencia —, pero el
+    /// movimiento de plata que provoca (el servicio sale de ConfirmedSale, baja el saldo del cliente)
+    /// tiene que quedar auditado con quien/cuando, igual que la cancelacion de la papelera (F5).
+    /// Si el servicio sale de cancelado (se re-solicito o re-confirmo), la marca se limpia.
+    /// </summary>
+    private void StampServiceCancellation(
+        bool wasCancelled,
+        bool isCancelled,
+        Action<DateTime?> setCancelledAt,
+        Action<string?, string?> setCancelledBy)
+    {
+        if (isCancelled && !wasCancelled)
+        {
+            var (userId, userName) = GetActor();
+            setCancelledAt(DateTime.UtcNow);
+            setCancelledBy(userId, userName);
+        }
+        else if (!isCancelled && wasCancelled)
+        {
+            setCancelledAt(null);
+            setCancelledBy(null, null);
+        }
     }
 
     public async Task<AssistanceBookingDto> UpdateAssistanceStatusAsync(string publicIdOrLegacyId, string newStatus, string? confirmationNumber, CancellationToken ct)
@@ -1692,6 +1878,8 @@ public partial class BookingService : IBookingService
         var assistance = await _assistanceRepo.GetByIdAsync(assistanceId, ct)
             ?? throw new KeyNotFoundException("Asistencia no encontrada");
 
+        // ADR-020 decision #8: cambiar el estado/resolucion de la asistencia refleja lo que hizo el
+        // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).
         var oldStatus = assistance.Status;
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, assistance.ReservaId, ct))
             newStatus = "Solicitado";
@@ -1703,10 +1891,17 @@ public partial class BookingService : IBookingService
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
         assistance.Status = newStatus;
+        StampServiceCancellation(
+            wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
+            isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            setCancelledAt: value => assistance.CancelledAt = value,
+            setCancelledBy: (id, name) => { assistance.CancelledByUserId = id; assistance.CancelledByUserName = name; });
         if (confirmationNumber != null)
             assistance.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _assistanceRepo.UpdateAsync(assistance, ct);
         if (assistance.SupplierId > 0) await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
+        // ADR-020: recalcular saldo (ConfirmedSale) + disparar el motor de estados.
+        await _reservaService.UpdateBalanceAsync(assistance.ReservaId);
         var dto = _mapper.Map<AssistanceBookingDto>(assistance);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);
         // Enmascarar NetCost igual que el resto de los endpoints de booking.

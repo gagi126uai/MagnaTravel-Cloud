@@ -298,19 +298,34 @@ export function useReservaDetail(reservaId, navigate) {
                     const serviceId = getReservationServicePublicId(service);
                     const prevService = currentCollection.find(s => getReservationServicePublicId(s) === serviceId);
 
+                    // D2 del reviewer: determinamos si el servicio está confirmado por el operador.
+                    // Solo los servicios confirmados/resueltos generan deuda (ADR-020: "balance nace por servicio confirmado").
+                    // Un servicio recién agregado nace en estado Solicitado → NO suma al balance (saldo a cobrar).
+                    // Sí suma al totalSale (venta presupuestada), que es el acumulado de todos los servicios.
+                    const ESTADOS_CONFIRMADOS = new Set(['Confirmado', 'Emitido', 'HK', 'TK', 'KK', 'KL', 'NoConfirmation']);
+                    const workflowStatus = service.workflowStatus || service.status || '';
+                    const servicioEstaConfirmado = ESTADOS_CONFIRMADOS.has(workflowStatus);
+
                     if (!prevService) {
                         nextReserva[collectionKey] = [...currentCollection, service];
-                        // Add to totals
+                        // totalSale suma siempre (presupuestado = confirmados + solicitados).
                         nextReserva.totalSale = (nextReserva.totalSale || 0) + (service.salePrice || 0);
                         nextReserva.totalCost = (nextReserva.totalCost || 0) + (service.netCost || 0);
-                        nextReserva.balance = (nextReserva.balance || 0) + (service.salePrice || 0);
+                        // balance solo suma si el servicio ya está confirmado (deuda real del cliente).
+                        // Un servicio recién agregado nace Solicitado: no suma al saldo.
+                        if (servicioEstaConfirmado) {
+                            nextReserva.balance = (nextReserva.balance || 0) + (service.salePrice || 0);
+                        }
                     } else {
-                        // Apply delta to totals
+                        // Delta para servicios existentes que cambiaron (edicion de precio/estado).
                         const deltaSale = (service.salePrice || 0) - (prevService.salePrice || 0);
                         const deltaCost = (service.netCost || 0) - (prevService.netCost || 0);
                         nextReserva.totalSale = (nextReserva.totalSale || 0) + deltaSale;
                         nextReserva.totalCost = (nextReserva.totalCost || 0) + deltaCost;
-                        nextReserva.balance = (nextReserva.balance || 0) + deltaSale;
+                        // balance solo aplica el delta si el servicio actualizado sigue confirmado.
+                        if (servicioEstaConfirmado) {
+                            nextReserva.balance = (nextReserva.balance || 0) + deltaSale;
+                        }
 
                         nextReserva[collectionKey] = currentCollection.map(s =>
                             getReservationServicePublicId(s) === serviceId ? service : s
@@ -444,6 +459,72 @@ export function useReservaDetail(reservaId, navigate) {
         }
     };
 
+    /**
+     * Cancela un servicio ya confirmado por el operador.
+     *
+     * Decisión #9 (guia UX 2026-06-08): el servicio queda con workflowStatus="Cancelado"
+     * (tachado en la lista) en vez de desaparecer. Hubo compromiso real con el operador.
+     *
+     * Endpoint: PATCH /api/{tipo}-bookings/{publicId}/status (o flight-segments)
+     * Body: { status: "Cancelado" }
+     *
+     * La ruta de status es ABSOLUTA (no anidada bajo reservas/{id}) — así lo expone el backend.
+     * Mapeo de recordKind a segmento de ruta verificado en los controllers (.cs).
+     */
+    const handleCancelService = async (service, motivo = null) => {
+        // Mapeo de recordKind al segmento de ruta del endpoint de status.
+        // Verificado contra controllers: HotelBookings, FlightSegments, TransferBookings,
+        // PackageBookings, AssistanceBookings.
+        const STATUS_ENDPOINT_SEGMENT = {
+            hotel: 'hotel-bookings',
+            flight: 'flight-segments',
+            transfer: 'transfer-bookings',
+            package: 'package-bookings',
+            assistance: 'assistance-bookings',
+        };
+
+        const segmento = STATUS_ENDPOINT_SEGMENT[service?.recordKind];
+        if (!segmento) {
+            // Servicios genéricos (ServicioReserva) no tienen endpoint de status propio.
+            // No deberían llegar aquí porque esServicioResuelto no aplica a genéricos.
+            showError('Este tipo de servicio no se puede cancelar desde aquí.');
+            return false;
+        }
+
+        const servicePublicId = service.publicId || service.id;
+        if (!servicePublicId) {
+            showError('No se pudo identificar el servicio para cancelarlo.');
+            return false;
+        }
+
+        const endpoint = `/api/${segmento}/${servicePublicId}/status`;
+
+        try {
+            await api.patch(endpoint, {
+                status: 'Cancelado',
+                // El motivo no forma parte del ServiceStatusUpdateRequest del backend hoy,
+                // pero lo enviamos por si el backend evoluciona para aceptarlo.
+                // Si el backend lo ignora, la cancelación igualmente funciona.
+                ...(motivo ? { notes: motivo } : {}),
+            });
+
+            // Recargamos la colección del tipo de servicio para que el workflowStatus
+            // "Cancelado" aparezca en la fila y el tachado sea visible de inmediato.
+            const collectionKey = getReservationCollectionKeyForRecordKind(service?.recordKind);
+            await fetchReserva({
+                showLoading: false,
+                collectionKeys: collectionKey ? [collectionKey] : undefined,
+                preserveOnError: true,
+            });
+
+            showSuccess('Servicio cancelado. Quedó tachado en la lista de la reserva.');
+            return true;
+        } catch (error) {
+            showError(getApiErrorMessage(error, 'No se pudo cancelar el servicio.'));
+            return false;
+        }
+    };
+
     const handleDeletePassenger = async (passengerId) => {
         try {
             await api.delete(`/reservas/passengers/${passengerId}`);
@@ -567,6 +648,7 @@ export function useReservaDetail(reservaId, navigate) {
         handleDeleteReserva,
         handleStatusChange,
         handleDeleteService,
+        handleCancelService,
         handleDeletePassenger,
         handleServiceUpdated,
         allServices,

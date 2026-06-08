@@ -21,17 +21,12 @@ public class TreasuryService : ITreasuryService
     {
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         // Estados de Reserva que cuentan para tesoreria / cuentas por cobrar (AR).
-        // Fase D (rediseño Sold/ToSettle): sumamos Sold y ToSettle. Sold = la vieja Confirmed
-        // (vendida, con AR vivo); ToSettle = file abierto post-viaje pendiente de liquidar, su
-        // saldo sigue siendo cuenta por cobrar. Con el flag EnableSoldToSettleStates OFF nunca hay
-        // filas en esos estados -> resultado identico al historico (Confirmed, Traveling).
-        //
-        // NOTA Q3 (contador): la inclusion de Sold/ToSettle en AR es la decision por defecto y
-        // debe quedar confirmada por el contador ANTES de prender el flag en produccion. Si el
-        // criterio cambiara, ajustar aca. Mientras el flag este OFF no hay impacto fiscal/contable.
+        // ADR-020 (2026-06-07): InManagement (En gestion) reemplaza al viejo Sold; ToSettle es el
+        // file post-viaje pendiente de liquidar, su saldo sigue siendo cuenta por cobrar.
+        // Quotation/Budget/Lost no entran (no hay AR exigible todavia).
         var activeStatuses = new[]
         {
-            EstadoReserva.Sold,
+            EstadoReserva.InManagement,
             EstadoReserva.Confirmed,
             EstadoReserva.Traveling,
             EstadoReserva.ToSettle

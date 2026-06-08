@@ -74,15 +74,6 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.EnableMultiCurrencyInvoicing = request.EnableMultiCurrencyInvoicing.Value;
         }
 
-        // Rediseño estados Reserva (Fase A+B, 2026-05-30): persistimos el flag del ciclo de
-        // vida extendido (Vendida / A liquidar). Update CONDICIONAL (patch-like, criterio B-002):
-        // solo se aplica si el request trae valor. Es un flag de comportamiento puro, sin
-        // dependencias con otros flags, por eso NO tiene validacion cruzada mas abajo.
-        if (request.EnableSoldToSettleStates.HasValue)
-        {
-            entity.EnableSoldToSettleStates = request.EnableSoldToSettleStates.Value;
-        }
-
         // ADR-013 (Nota de Debito en cancelacion, 2026-06-01): persistimos el flag de emision
         // de ND. Update CONDICIONAL (patch-like, criterio B-002): solo se aplica si el request
         // trae valor. La pre-condicion (requiere EnableNewCancellationFlow) se valida mas abajo
@@ -258,8 +249,6 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             // ADR-012 MVP: el GET devuelve el estado actual del flag de multimoneda para que la
             // pantalla de Configuracion -> Facturacion lo muestre como un toggle.
             EnableMultiCurrencyInvoicing = entity.EnableMultiCurrencyInvoicing,
-            // Rediseño estados Reserva: el GET expone el flag del ciclo de vida extendido.
-            EnableSoldToSettleStates = entity.EnableSoldToSettleStates,
             // ADR-013: el GET expone el flag de emision de Nota de Debito en cancelacion.
             EnableCancellationDebitNote = entity.EnableCancellationDebitNote,
             // ADR-016 F0a: el GET expone el flag maestro del copiloto de IA.

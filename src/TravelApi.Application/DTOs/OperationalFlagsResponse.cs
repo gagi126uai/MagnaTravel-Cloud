@@ -20,9 +20,6 @@ namespace TravelApi.Application.DTOs;
 /// </summary>
 public class OperationalFlagsResponse
 {
-    /// <summary>Ciclo de reserva extendido (Vendida / A liquidar). Gobierna pestanas y botonera de Reservas.</summary>
-    public bool EnableSoldToSettleStates { get; set; }
-
     /// <summary>MVP facturar en USD (ADR-012). Gobierna el selector de moneda del modal de factura.</summary>
     public bool EnableMultiCurrencyInvoicing { get; set; }
 

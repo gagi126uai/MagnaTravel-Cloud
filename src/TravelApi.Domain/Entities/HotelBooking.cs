@@ -130,6 +130,26 @@ public class HotelBooking : IHasPublicId
     [Column(TypeName = "jsonb")]
     public string? NonRefundableConceptsJson { get; set; }
 
+    // === ADR-020 (2026-06-07): trazabilidad de confirmacion del operador y de cancelacion del servicio ===
+
+    /// <summary>
+    /// ADR-020: fecha en que el operador CONFIRMO este servicio (la estampa el motor de estados
+    /// al detectar que el Status paso a confirmado). Null = nunca confirmado. NO se borra si el
+    /// servicio se des-confirma: queda como historia y se re-estampa si se vuelve a confirmar.
+    /// Gobierna borrar-vs-cancelar (un servicio con ConfirmedAt no se borra, solo se cancela) y
+    /// el inicio de las penalidades.
+    /// </summary>
+    public DateTime? ConfirmedAt { get; set; }
+
+    /// <summary>ADR-020: cuando se cancelo el servicio (Status -> Cancelado). Null = no cancelado.</summary>
+    public DateTime? CancelledAt { get; set; }
+
+    [MaxLength(200)]
+    public string? CancelledByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? CancelledByUserName { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public int GetExpectedPaxCount() => Adults + Children;

@@ -26,20 +26,16 @@ import { api } from "../api";
 // Valores default seguros: si el contexto se usa fuera del provider, no rompe.
 // Cada flag arranca en false (comportamiento base conservador).
 const defaultFlags = {
-    enableSoldToSettleStates: false,
+    // ADR-012: facturacion multimoneda (USD/ARS en el modal de factura).
     enableMultiCurrencyInvoicing: false,
-    // ADR-013: flag de emisión de Nota de Débito fiscal en cancelaciones.
-    // No se usa todavía en la UI de reservas/cancelaciones (solo en el panel de settings),
-    // pero se incluye en el contexto global para que el día que un componente necesite
-    // saber si la ND está activa, lo lea desde acá en lugar de hacer un fetch propio.
+    // ADR-013: emision de Nota de Debito fiscal en cancelaciones con penalidad.
     enableCancellationDebitNote: false,
-    // ADR-017: flag del tarifario find-or-create desde la venta.
-    // OFF = render idéntico a hoy (modal viejo ServiceFormModal).
-    // ON  = muestra la ficha de carga en línea (ServiceInlineCard) + buscador de catálogo.
+    // ADR-017: tarifario find-or-create desde la venta (ficha inline ServiceInlineCard).
     enableCatalogFindOrCreate: false,
-    // ADR-017: avisos de fechas límite (campanita). El front no lo necesita para gatear
-    // (el server omite los buckets con flag OFF), pero lo leemos por completitud.
+    // ADR-019: avisos "Proximos inicios" (campanita + columna en ServiceList).
     enableServiceDeadlineAlerts: false,
+    // NOTA: enableSoldToSettleStates fue eliminado en ADR-020.
+    // El ciclo "Vendida" murio y el nuevo ciclo es directo sin flags.
 };
 
 const OperationalFlagsContext = createContext(undefined);
@@ -63,8 +59,9 @@ export function OperationalFlagsProvider({ children }) {
                 // /afip/settings les daba 403 → flags siempre false).
                 const data = await api.get("/settings/operational-flags");
                 if (!cancelled && data) {
+                    // ADR-020: enableSoldToSettleStates fue eliminado del backend.
+                    // El ciclo es unico y directo, sin flags de ciclo.
                     setFlags({
-                        enableSoldToSettleStates: Boolean(data.enableSoldToSettleStates),
                         enableMultiCurrencyInvoicing: Boolean(data.enableMultiCurrencyInvoicing),
                         enableCancellationDebitNote: Boolean(data.enableCancellationDebitNote),
                         enableCatalogFindOrCreate: Boolean(data.enableCatalogFindOrCreate),

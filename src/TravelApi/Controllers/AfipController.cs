@@ -48,7 +48,6 @@ public class AfipController : ControllerBase
         return Ok(MapResponse(
             settings,
             financeSettings.EnableMultiCurrencyInvoicing,
-            financeSettings.EnableSoldToSettleStates,
             financeSettings.EnableCancellationDebitNote,
             financeSettings.EnableAiCopilot));
     }
@@ -118,7 +117,6 @@ public class AfipController : ControllerBase
             return Ok(MapResponse(
                 settings,
                 financeSettings.EnableMultiCurrencyInvoicing,
-                financeSettings.EnableSoldToSettleStates,
                 financeSettings.EnableCancellationDebitNote,
                 financeSettings.EnableAiCopilot));
         }
@@ -135,14 +133,12 @@ public class AfipController : ControllerBase
     private static AfipSettingsResponse MapResponse(
         AfipSettings settings,
         bool enableMultiCurrencyInvoicing,
-        bool enableSoldToSettleStates,
         bool enableCancellationDebitNote,
         bool enableAiCopilot)
     {
         return new AfipSettingsResponse
         {
             EnableMultiCurrencyInvoicing = enableMultiCurrencyInvoicing,
-            EnableSoldToSettleStates = enableSoldToSettleStates,
             EnableCancellationDebitNote = enableCancellationDebitNote,
             EnableAiCopilot = enableAiCopilot,
 

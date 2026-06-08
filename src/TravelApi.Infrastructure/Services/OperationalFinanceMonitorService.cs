@@ -35,12 +35,11 @@ public class OperationalFinanceMonitorService
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
-        // Predicado NEGATIVO (todo lo que NO esta cancelado ni cerrado). Fase D
-        // (rediseño Sold/ToSettle): este patron YA incluye Sold y ToSettle automaticamente y eso
-        // es CORRECTO -> una reserva Sold o ToSettle con saldo pendiente y viaje proximo debe
-        // generar la notificacion de "sale pronto sin pagar". NO se reescribe a un conjunto
-        // positivo (seria puro riesgo de regresion). Con el flag OFF no hay filas en esos estados,
-        // asi que el comportamiento es identico al historico.
+        // Predicado NEGATIVO (todo lo que NO esta cancelado/cerrado/perdido). ADR-020 (2026-06-07):
+        // este patron ya incluye automaticamente InManagement/Confirmed/Traveling/ToSettle y eso es
+        // CORRECTO -> una reserva en gestion o a liquidar con saldo pendiente y viaje proximo debe
+        // generar el aviso "sale pronto sin pagar". Excluimos Lost igual que Cancelled (nunca tuvo
+        // venta exigible; ademas el gate de -> Lost ya garantiza que no tiene pagos vivos).
         var reservas = await _dbContext.Reservas
             .Include(r => r.Payer)
             .Where(r =>
@@ -49,7 +48,8 @@ public class OperationalFinanceMonitorService
                 r.StartDate.Value.Date >= today &&
                 r.StartDate.Value.Date <= threshold &&
                 r.Status != EstadoReserva.Cancelled &&
-                r.Status != EstadoReserva.Closed)
+                r.Status != EstadoReserva.Closed &&
+                r.Status != EstadoReserva.Lost)
             .ToListAsync();
 
         if (reservas.Count == 0)

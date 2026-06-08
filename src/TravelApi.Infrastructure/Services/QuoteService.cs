@@ -332,22 +332,18 @@ public class QuoteService : IQuoteService
         // Create Reserva from quote
         quote.CustomerId = await ResolveCustomerFromLeadAsync(quote.CustomerId, quote.LeadId, cancellationToken);
 
-        // Rediseño Fase A+B (2026-05-30): el estado de nacimiento depende del flag.
-        //  - flag OFF (default historico): nace en Confirmed (como hoy).
-        //  - flag ON: nace en Sold ("vendida", esperando confirmacion del operador), que es
-        //    el primer estado del ciclo nuevo despues de Presupuesto.
-        var settings = await _settingsService.GetEntityAsync(cancellationToken);
-        var initialStatus = settings.EnableSoldToSettleStates
-            ? EstadoReserva.Sold
-            : EstadoReserva.Confirmed;
-
+        // ADR-020 (2026-06-07): toda reserva nace en Cotizacion (INV-020-01). La cotizacion del
+        // modulo de leads se convierte en una reserva que arranca su ciclo de vida desde cero; los
+        // items entran como servicios en borrador/solicitados (NO resueltos), asi que el saldo nace
+        // en 0 (Balance = ConfirmedSale - TotalPaid = 0 - 0). TotalSale conserva el valor comercial
+        // del presupuesto. El vendedor avanza el ciclo a mano (Presupuesto -> En gestion).
         var fileCount = await _db.Reservas.CountAsync(cancellationToken);
         var file = new Reserva
         {
             NumeroReserva = $"RES-{(fileCount + 1).ToString().PadLeft(5, '0')}",
             Name = quote.Title,
             Description = quote.Description,
-            Status = initialStatus,
+            Status = EstadoReserva.Quotation,
             PayerId = quote.CustomerId,
             SourceLeadId = quote.LeadId,
             SourceQuoteId = quote.Id,
@@ -356,7 +352,8 @@ public class QuoteService : IQuoteService
             // Even though generic File Service calculates dynamically, we still populate DB bounds
             TotalCost = quote.TotalCost,
             TotalSale = quote.TotalSale,
-            Balance = quote.TotalSale,
+            ConfirmedSale = 0m, // nace sin servicios resueltos
+            Balance = 0m,       // ADR-020: saldo = ConfirmedSale - TotalPaid = 0
             AdultCount = quote.Adults,
             ChildCount = quote.Children,
             CreatedAt = DateTime.UtcNow
@@ -557,9 +554,10 @@ public class QuoteService : IQuoteService
         await _db.SaveChangesAsync(cancellationToken);
 
         // ADR-017 F1.3 (§2.3.b.7): upsert POST-EXITO best-effort de la "ultima venta" por (producto, operador).
-        // Solo con flag ON. Skip de supplier 0 lo hace el propio helper. Asistencia NO entra (cae al servicio
-        // generico, que no snapshotea Rate). Si un upsert falla, se loguea y se sigue: la conversion ya quedo
-        // commiteada y la tabla es estadistica de sugerencia (la reconciliacion R7 detecta faltantes).
+        // Solo con flag ON (catalog find-or-create). Skip de supplier 0 lo hace el propio helper. Asistencia
+        // NO entra (cae al servicio generico, que no snapshotea Rate). Si un upsert falla, se loguea y se
+        // sigue: la conversion ya quedo commiteada y la tabla es estadistica de sugerencia.
+        var settings = await _settingsService.GetEntityAsync(cancellationToken);
         if (settings.EnableCatalogFindOrCreate)
         {
             foreach (var sale in pendingCatalogUpserts)

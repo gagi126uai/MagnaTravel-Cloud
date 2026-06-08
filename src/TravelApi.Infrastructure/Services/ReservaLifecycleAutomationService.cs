@@ -42,21 +42,25 @@ public class ReservaLifecycleAutomationService
     private readonly AppDbContext _db;
     private readonly ILogger<ReservaLifecycleAutomationService> _logger;
     private readonly IOperationalFinanceSettingsService _settingsService;
+    // ADR-020 F3: motor de estados, para la pasada de reconciliacion nocturna.
+    private readonly TravelApi.Infrastructure.Services.Reservations.ReservaAutoStateService _autoStateService;
 
     public ReservaLifecycleAutomationService(
         AppDbContext db,
         ILogger<ReservaLifecycleAutomationService> logger,
-        IOperationalFinanceSettingsService settingsService)
+        IOperationalFinanceSettingsService settingsService,
+        TravelApi.Infrastructure.Services.Reservations.ReservaAutoStateService autoStateService)
     {
         _db = db;
         _logger = logger;
         _settingsService = settingsService;
+        _autoStateService = autoStateService;
     }
 
     public async Task<int> RunDailyAsync(CancellationToken ct = default)
     {
         var result = await RunDailyDetailedAsync(ct);
-        return result.Promoted + result.Closed + result.Repaired;
+        return result.Promoted + result.Closed + result.Repaired + result.Reconciled;
     }
 
     /// <summary>
@@ -73,22 +77,60 @@ public class ReservaLifecycleAutomationService
     /// </summary>
     public async Task<LifecycleRunResult> RunDailyDetailedAsync(CancellationToken ct = default)
     {
-        var settings = await _settingsService.GetEntityAsync(ct);
-        var soldToSettleEnabled = settings.EnableSoldToSettleStates;
+        // ADR-020 F3 (cura del motor): re-evalua el motor sobre todas las reservas En gestion /
+        // Confirmada y corrige las que hayan esquivado el chokepoint o quedado en la ventana entre
+        // los dos saves. Corre PRIMERO para que el resto del job vea estados ya reconciliados.
+        var reconciled = await ReconcileAutoStatesAsync(ct);
 
         var repaired = await AutoRepairTravelingDatesAsync(ct);
-        var promoted = await AutoTransitionConfirmedToTravelingAsync(soldToSettleEnabled, ct);
+        var promoted = await AutoTransitionConfirmedToTravelingAsync(ct);
 
-        // Cierre por fin de viaje: Traveling -> Closed (EndDate pasada + Balance == 0) en AMBOS
-        // ciclos. ToSettle ("a liquidar") es un desvio MANUAL OPCIONAL: el job nunca lo crea ni lo
-        // cierra. La unica diferencia entre ciclos es que el ciclo nuevo (flag ON) deja rastro
-        // auditable (ReservaStatusChangeLog), igual que el resto de las transiciones de la cadena nueva.
-        var closed = await AutoTransitionTravelingToClosedAsync(soldToSettleEnabled, ct);
+        // ADR-020: cierre por fin de viaje Traveling -> Closed (EndDate pasada + Balance <= 0). El
+        // <= 0 (no == 0) cubre el saldo a favor: una reserva cuyo cliente pago de mas debe poder
+        // cerrarse igual (coherente con el gate manual, que solo bloquea Balance > 0). ToSettle es
+        // un desvio MANUAL OPCIONAL: el job nunca lo crea ni lo cierra.
+        var closed = await AutoTransitionTravelingToClosedAsync(ct);
 
         _logger.LogInformation(
-            "Lifecycle automation finished (soldToSettle={Flag}). Repaired: {Repaired}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
-            soldToSettleEnabled, repaired, promoted, closed);
-        return new LifecycleRunResult(promoted, closed, repaired);
+            "Lifecycle automation finished. Reconciled (motor): {Reconciled}. Repaired: {Repaired}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
+            reconciled, repaired, promoted, closed);
+        return new LifecycleRunResult(promoted, closed, repaired, reconciled);
+    }
+
+    /// <summary>
+    /// ADR-020 F3 (reconciliacion nocturna): re-evalua el motor de estados sobre todas las reservas
+    /// en En gestion / Confirmada y corrige las que quedaron desincronizadas (esquivaron el chokepoint
+    /// post-commit o quedaron en la ventana entre los dos saves). Devuelve cuantas curo y lo loguea:
+    /// un valor &gt; 0 sostenido es accionable (hay un chokepoint de mutacion sin cubrir).
+    /// </summary>
+    public async Task<int> ReconcileAutoStatesAsync(CancellationToken ct = default)
+    {
+        var candidateIds = await _db.Reservas
+            .Where(r => r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed)
+            .Select(r => r.Id)
+            .ToListAsync(ct);
+
+        var cured = 0;
+        foreach (var reservaId in candidateIds)
+        {
+            // EvaluateAndApplyAsync devuelve true si hubo un cambio de estado real. La reconciliacion
+            // es una CURA en lote: NO notifica regresiones (suppressNotifications: true). Asi la primera
+            // corrida tras el deploy, que regresa en masa historicas Confirmed con servicios sin
+            // resolver, no dispara una avalancha de avisos. La franja naranja (LastRegressionReason) si
+            // queda. Aca solo contamos cuantas curo.
+            var changed = await _autoStateService.EvaluateAndApplyAsync(reservaId, suppressNotifications: true, ct);
+            if (changed) cured++;
+        }
+
+        if (cured > 0)
+        {
+            _logger.LogWarning(
+                "Lifecycle reconciliation: el motor curo {Cured} reserva(s) desincronizada(s). " +
+                "Un valor sostenido > 0 indica un chokepoint de mutacion de servicio sin cubrir.",
+                cured);
+        }
+
+        return cured;
     }
 
     /// <summary>
@@ -135,7 +177,7 @@ public class ReservaLifecycleAutomationService
     ///  - flag OFF: lo chequea aca (igual que el flujo manual clasico).
     ///  - flag ON: NO lo chequea (ya se garantizo en Sold-&gt;Confirmed).
     /// </summary>
-    public async Task<int> AutoTransitionConfirmedToTravelingAsync(bool soldToSettleEnabled, CancellationToken ct = default)
+    public async Task<int> AutoTransitionConfirmedToTravelingAsync(CancellationToken ct = default)
     {
         var today = DateTime.UtcNow.Date;
         var candidates = await _db.Reservas
@@ -148,8 +190,9 @@ public class ReservaLifecycleAutomationService
 
         foreach (var reserva in candidates)
         {
-            // Inconsistencia de capacidad pasajeros vs servicios bloquea el pase
-            // (independiente del saldo). Igual que el flujo manual.
+            // Inconsistencia de capacidad pasajeros vs servicios bloquea el pase (independiente del
+            // saldo). ADR-020: NO re-chequeamos servicios sin resolver — para estar en Confirmed el
+            // motor ya garantizo que todos estan resueltos.
             var capacityReason = await ReservaCapacityRules.GetBlockReasonAsync(_db, reserva.Id, ct);
             if (!string.IsNullOrWhiteSpace(capacityReason))
             {
@@ -160,30 +203,12 @@ public class ReservaLifecycleAutomationService
                 continue;
             }
 
-            if (!soldToSettleEnabled)
-            {
-                // Ciclo clasico: aca todavia se chequean los servicios sin confirmar, porque
-                // en el ciclo clasico ese gate no se garantizo en un paso anterior.
-                var unconfirmedReason = await ReservaCapacityRules.GetUnconfirmedServicesBlockReasonAsync(_db, reserva.Id, ct);
-                if (!string.IsNullOrWhiteSpace(unconfirmedReason))
-                {
-                    blocked++;
-                    _logger.LogWarning(
-                        "Reserva {ReservaId} ({NumeroReserva}) NO promovida automaticamente Confirmed->Traveling por servicios sin confirmar: {Reason}",
-                        reserva.Id, reserva.NumeroReserva, unconfirmedReason);
-                    continue;
-                }
-            }
-
-            // FIX 5: Confirmed->Traveling existe en ambos ciclos. Solo dejamos rastro auditable
-            // cuando estamos en la cadena nueva (flag ON); el ciclo clasico no se loguea (deuda
-            // preexistente, fuera de scope).
             planned.Add(new PlannedTransition(
                 Reserva: reserva,
                 FromStatus: EstadoReserva.Confirmed,
                 ToStatus: EstadoReserva.Traveling,
                 StampClosedAt: false,
-                WriteForwardLog: soldToSettleEnabled,
+                WriteForwardLog: true,
                 Reason: "Inicio de viaje (StartDate alcanzada)"));
         }
 
@@ -206,24 +231,23 @@ public class ReservaLifecycleAutomationService
     /// diferencia es el rastro auditable: con flag ON se escribe ReservaStatusChangeLog (como el
     /// resto de la cadena nueva); con flag OFF no (deuda preexistente, fuera de scope del FIX 5).</para>
     /// </summary>
-    public async Task<int> AutoTransitionTravelingToClosedAsync(bool soldToSettleEnabled, CancellationToken ct = default)
+    public async Task<int> AutoTransitionTravelingToClosedAsync(CancellationToken ct = default)
     {
         var today = DateTime.UtcNow.Date;
         var candidates = await _db.Reservas
             .Where(r => r.Status == EstadoReserva.Traveling
                 && r.EndDate.HasValue
                 && r.EndDate.Value.Date < today
-                && r.Balance == 0)
+                && r.Balance <= 0) // ADR-020 (M3): <= 0 cubre el saldo a favor, coherente con el gate manual
             .ToListAsync(ct);
 
-        // WriteForwardLog depende del flag: ON = cadena nueva (deja rastro), OFF = clasico (no).
         var planned = candidates.Select(reserva => new PlannedTransition(
             Reserva: reserva,
             FromStatus: EstadoReserva.Traveling,
             ToStatus: EstadoReserva.Closed,
             StampClosedAt: true,
-            WriteForwardLog: soldToSettleEnabled,
-            Reason: soldToSettleEnabled ? "Fin de viaje (EndDate pasada) con saldo cero: cierre directo" : null)).ToList();
+            WriteForwardLog: true,
+            Reason: "Fin de viaje (EndDate pasada) con saldo saldado: cierre directo")).ToList();
 
         var saved = await ApplyTransitionsAsync(planned, "AutoTransitionTravelingToClosed", ct);
         if (saved > 0)
@@ -329,4 +353,4 @@ public class ReservaLifecycleAutomationService
 /// Closed = cantidad que el job cerro Traveling->Closed (EndDate vencido + Balance cero), en AMBOS
 ///          ciclos. El job NO mueve a ToSettle (es un desvio manual opcional, fuera del automatico).
 /// </summary>
-public record LifecycleRunResult(int Promoted, int Closed, int Repaired);
+public record LifecycleRunResult(int Promoted, int Closed, int Repaired, int Reconciled = 0);

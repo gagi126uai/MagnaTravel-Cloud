@@ -37,7 +37,6 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
     /// Cada test setea TODOS los flags que le importan para no depender del orden de ejecucion.
     /// </summary>
     private async Task SetFlagsAsync(
-        bool soldToSettle,
         bool multiCurrency,
         bool cancellationDebitNote,
         bool catalogFindOrCreate,
@@ -48,7 +47,6 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var settings = await settingsService.GetEntityAsync(CancellationToken.None);
-        settings.EnableSoldToSettleStates = soldToSettle;
         settings.EnableMultiCurrencyInvoicing = multiCurrency;
         settings.EnableCancellationDebitNote = cancellationDebitNote;
         settings.EnableCatalogFindOrCreate = catalogFindOrCreate;
@@ -71,7 +69,6 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
     {
         // Mezcla a proposito (catalogo ON, ND ON, resto OFF) para detectar proyecciones cruzadas.
         await SetFlagsAsync(
-            soldToSettle: false,
             multiCurrency: false,
             cancellationDebitNote: true,
             catalogFindOrCreate: true,
@@ -84,7 +81,6 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
 
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = body.RootElement;
-        Assert.False(root.GetProperty("enableSoldToSettleStates").GetBoolean());
         Assert.False(root.GetProperty("enableMultiCurrencyInvoicing").GetBoolean());
         Assert.True(root.GetProperty("enableCancellationDebitNote").GetBoolean());
         Assert.True(root.GetProperty("enableCatalogFindOrCreate").GetBoolean());
@@ -95,7 +91,6 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
     public async Task Get_AllFlagsOff_ReturnsAllFalse()
     {
         await SetFlagsAsync(
-            soldToSettle: false,
             multiCurrency: false,
             cancellationDebitNote: false,
             catalogFindOrCreate: false,
@@ -121,7 +116,6 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
     public async Task Get_ResponseShape_ExactlyFiveBooleanKeys_NoFiscalData()
     {
         await SetFlagsAsync(
-            soldToSettle: true,
             multiCurrency: true,
             cancellationDebitNote: true,
             catalogFindOrCreate: true,
@@ -141,7 +135,6 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
             "enableCatalogFindOrCreate",
             "enableMultiCurrencyInvoicing",
             "enableServiceDeadlineAlerts",
-            "enableSoldToSettleStates",
         };
         Assert.Equal(expectedKeys, keys);
 
@@ -161,7 +154,8 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
     {
         var properties = typeof(OperationalFlagsResponse).GetProperties();
 
-        Assert.Equal(5, properties.Length);
+        // ADR-020: bajo de 5 a 4 (murio EnableSoldToSettleStates).
+        Assert.Equal(4, properties.Length);
         Assert.All(properties, p => Assert.Equal(typeof(bool), p.PropertyType));
     }
 }

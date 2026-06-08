@@ -1700,6 +1700,7 @@ public class AfipService : IAfipService
 
         var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
         reserva.TotalSale = summary.TotalSale;
+        reserva.ConfirmedSale = summary.ConfirmedSale; // ADR-020: venta confirmada (alimenta el saldo)
         reserva.TotalCost = summary.TotalCost;
         reserva.TotalPaid = summary.TotalPaid;
         reserva.Balance = summary.Balance;

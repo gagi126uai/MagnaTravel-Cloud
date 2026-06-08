@@ -653,6 +653,17 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<int>("Adults")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CancelledByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CancelledByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<int>("Children")
                         .HasColumnType("integer");
 
@@ -662,6 +673,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<string>("ConfirmationNumber")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("CostToConfirm")
                         .HasColumnType("boolean");
@@ -1783,12 +1797,26 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CancelledByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CancelledByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<decimal>("Commission")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("ConfirmationNumber")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("CostToConfirm")
                         .HasColumnType("boolean");
@@ -1877,6 +1905,17 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("Tax")
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<DateTime?>("TicketIssuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TicketIssuedByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TicketIssuedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<string>("TicketNumber")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
@@ -1912,6 +1951,17 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<int>("Adults")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CancelledByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CancelledByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<DateTime>("CheckIn")
                         .HasColumnType("timestamp with time zone");
 
@@ -1932,6 +1982,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<string>("ConfirmationNumber")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("CostToConfirm")
                         .HasColumnType("boolean");
@@ -2677,9 +2730,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<bool>("EnableServiceDeadlineAlerts")
                         .HasColumnType("boolean");
 
-                    b.Property<bool>("EnableSoldToSettleStates")
-                        .HasColumnType("boolean");
-
                     b.Property<bool>("EnableTotalPlusNewInvoiceAutoProcessing")
                         .HasColumnType("boolean");
 
@@ -2910,6 +2960,17 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<int>("Adults")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CancelledByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CancelledByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<int>("Children")
                         .HasColumnType("integer");
 
@@ -2919,6 +2980,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<string>("ConfirmationNumber")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("CostToConfirm")
                         .HasColumnType("boolean");
@@ -3883,6 +3947,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("ClosedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal>("ConfirmedSale")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -3894,6 +3961,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("InfantCount")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastRegressionAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastRegressionReason")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -4011,6 +4085,106 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.ToTable("ReservaAttachments", (string)null);
                 });
 
+            modelBuilder.Entity("TravelApi.Domain.Entities.ReservaEditAuthorization", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AuthorizedByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("AuthorizedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("RequestedByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("RequestedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("ReservaId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReservaStatusSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("ReservaId", "ExpiresAt");
+
+                    b.ToTable("ReservaEditAuthorizations", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.ReservaEditAuthorizationChange", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AuthorizationId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("EntityId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EntityType")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("PerformedByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("PerformedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Summary")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AuthorizationId");
+
+                    b.ToTable("ReservaEditAuthorizationChanges", (string)null);
+                });
+
             modelBuilder.Entity("TravelApi.Domain.Entities.ReservaStatusChangeLog", b =>
                 {
                     b.Property<int>("Id")
@@ -4107,12 +4281,24 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CancelledByUserId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CancelledByUserName")
+                        .HasColumnType("text");
+
                     b.Property<decimal>("Commission")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("ConfirmationNumber")
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -4328,12 +4514,26 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CancelledByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CancelledByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<decimal>("Commission")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("ConfirmationNumber")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("CostToConfirm")
                         .HasColumnType("boolean");
@@ -4366,6 +4566,20 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Property<decimal>("NetCost")
                         .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("NoConfirmationMarkedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NoConfirmationMarkedByUserId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("NoConfirmationMarkedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("NoConfirmationRequired")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Notes")
                         .HasMaxLength(500)
@@ -5774,6 +5988,28 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("Reserva");
                 });
 
+            modelBuilder.Entity("TravelApi.Domain.Entities.ReservaEditAuthorization", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
+                        .WithMany("EditAuthorizations")
+                        .HasForeignKey("ReservaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Reserva");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.ReservaEditAuthorizationChange", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.ReservaEditAuthorization", "Authorization")
+                        .WithMany("Changes")
+                        .HasForeignKey("AuthorizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Authorization");
+                });
+
             modelBuilder.Entity("TravelApi.Domain.Entities.ReservaStatusChangeLog", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
@@ -6016,6 +6252,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Attachments");
 
+                    b.Navigation("EditAuthorizations");
+
                     b.Navigation("FlightSegments");
 
                     b.Navigation("HotelBookings");
@@ -6039,6 +6277,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("Vouchers");
 
                     b.Navigation("WhatsAppDeliveries");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.ReservaEditAuthorization", b =>
+                {
+                    b.Navigation("Changes");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ServicioReserva", b =>

@@ -13,9 +13,7 @@ const defaultSettings = {
   // OFF por defecto: el sistema factura solo en pesos hasta que el dueño lo active manualmente.
   // Ver: CreateInvoiceModal.jsx — el selector ARS/USD solo aparece cuando este flag es true.
   enableMultiCurrencyInvoicing: false,
-  // OFF por defecto: la UI de reservas muestra el ciclo clásico (sin "Vendida" ni "A liquidar").
-  // Con ON se habilitan las pestañas y la botonera del ciclo extendido.
-  enableSoldToSettleStates: false,
+  // ADR-020: enableSoldToSettleStates fue eliminado. El ciclo nuevo es directo y sin flags.
   // OFF por defecto: ZONA FISCAL. Cuando se prende, el sistema emite una Nota de Débito real
   // a ARCA cada vez que se aprueba una cancelación con penalidad. Requiere que el flujo de
   // cancelación nuevo (EnableNewCancellationFlow) ya esté activo en la base de datos.
@@ -222,34 +220,10 @@ export default function OperationalFinanceSettingsTab() {
               </div>
             </label>
 
-            {/* Ciclo extendido de estados de reserva (Vendida / A liquidar).
-                Flag de comportamiento puro: no emite comprobantes fiscales, no
-                bloquea nada. Con ON aparecen las pestañas "Vendidas" y "A liquidar"
-                en la lista de reservas y la botonera de detalle cambia. */}
-            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
-              <input
-                type="checkbox"
-                checked={form.enableSoldToSettleStates}
-                onChange={(event) => updateField("enableSoldToSettleStates", event.target.checked)}
-                className="mt-1 rounded border-slate-300"
-                disabled={loading}
-                data-testid="toggle-sold-to-settle"
-                aria-label="Habilitar ciclo extendido de estados de reserva (Vendida / A liquidar)"
-              />
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
-                  <GitBranch className="w-4 h-4 text-indigo-500" aria-hidden="true" />
-                  Ciclo extendido de estados de reserva (Vendida / A liquidar)
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Suma dos pasos al seguimiento de tus reservas:{" "}
-                  <span className="font-medium">Vendida</span>, para marcar la venta antes de que el
-                  operador la confirme, y <span className="font-medium">A liquidar</span>, para apartar
-                  a mano las reservas que tengas que saldar con el operador después del viaje.
-                  Si lo dejás apagado, las reservas se manejan como hasta ahora.
-                </div>
-              </div>
-            </label>
+            {/* ADR-020: la llave "Ciclo extendido (Vendida / A liquidar)" fue eliminada.
+                El ciclo nuevo (Cotizacion → Presupuesto → En gestion → Confirmada → ...)
+                es el UNICO ciclo y no tiene flag. Quedo el estado "A liquidar" como desvio
+                opcional sin necesidad de activacion. */}
 
             {/* Tarifario find-or-create.
                 Flag de catálogo (ADR-017): con ON el vendedor puede buscar un producto al cargar un

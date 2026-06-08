@@ -31,9 +31,13 @@ import { EditReservaDatesModal } from "../components/EditReservaDatesModal";
 import { PassengerAssignmentsPanel } from "../components/PassengerAssignmentsPanel";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
+import { ReservaLockBanner } from "../components/ReservaLockBanner";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
+import { EditAuthorizationModal } from "../components/EditAuthorizationModal";
+import { MarkLostModal } from "../components/MarkLostModal";
+import { isStatusLocked } from "../components/ReservaStatusBadge";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
@@ -243,40 +247,54 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid }) {
   return <span className="text-xs text-slate-400">Sin comprobante</span>;
 }
 
-// Lista de Status considerados "confirmados" — espejo de SupplierService:205 y
-// ReservaCapacityRules.ConfirmedServiceStatuses. Si cambia uno, hay que sincronizar.
-const CONFIRMED_SERVICE_STATUSES = new Set(["Confirmado", "Emitido", "HK", "TK", "KK", "KL"]);
-
+/**
+ * Aviso de servicios aún no resueltos en una reserva Confirmada.
+ *
+ * ADR-020: la reserva pasa a Confirmada AUTOMÁTICAMENTE cuando todos los servicios
+ * quedan resueltos. Si por algún motivo hay servicios sin resolver cuando la reserva
+ * ya está Confirmada (caso posible por datos previos a ADR-020), este banner los muestra.
+ *
+ * Sin jerga ni códigos internos — el texto está pensado para el vendedor, no para el técnico.
+ * La info de qué falta se lee del workflowStatus visible en la tabla de servicios.
+ */
 function UnconfirmedServicesBanner({ reserva }) {
-  // Solo relevante en Confirmed: cuando ya esta En viaje no se puede cambiar
-  // servicios, y en Presupuesto no aplica todavia.
+  // Solo mostramos en Confirmed: en InManagement el resumen de ResumenServiciosResueltos
+  // ya cubre esta información de forma más específica.
   if (reserva.status !== "Confirmed") return null;
 
-  const all = [
-    ...(reserva.hotelBookings || []).map(b => ({ label: `Hotel ${b.hotelName || ""}`, status: b.status })),
-    ...(reserva.transferBookings || []).map(b => ({ label: `Transfer ${b.vehicleType || ""}`, status: b.status })),
-    ...(reserva.packageBookings || []).map(b => ({ label: `Paquete ${b.packageName || ""}`, status: b.status })),
-    ...(reserva.flightSegments || []).map(b => ({ label: `Vuelo ${b.airlineCode || ""}${b.flightNumber || ""}`, status: b.status })),
-    ...(reserva.servicios || []).map(b => ({ label: `${b.description || "Servicio"}`, status: b.status })),
+  // Reunimos todos los servicios para detectar cuáles no están resueltos todavía.
+  // "resuelto" = el operador confirmó o el ticket fue emitido (equivalente a esServicioResuelto de ServiceList).
+  const estadosResueltos = new Set(["Confirmado", "Emitido", "HK", "TK", "KK", "KL", "NoConfirmation"]);
+
+  const todosLosServicios = [
+    ...(reserva.hotelBookings || []).map(b => ({ nombre: b.name || b.hotelName || "Hotel", workflowStatus: b.workflowStatus || b.status })),
+    ...(reserva.transferBookings || []).map(b => ({ nombre: b.name || "Traslado", workflowStatus: b.workflowStatus || b.status })),
+    ...(reserva.packageBookings || []).map(b => ({ nombre: b.name || b.packageName || "Paquete", workflowStatus: b.workflowStatus || b.status })),
+    ...(reserva.flightSegments || []).map(b => ({ nombre: b.name || "Aéreo", workflowStatus: b.workflowStatus || b.status })),
+    ...(reserva.assistanceBookings || []).map(b => ({ nombre: b.name || "Asistencia", workflowStatus: b.workflowStatus || b.status })),
+    ...(reserva.servicios || []).map(b => ({ nombre: b.description || "Servicio adicional", workflowStatus: b.workflowStatus || b.status })),
   ];
-  const unconfirmed = all.filter(s => s.status && !CONFIRMED_SERVICE_STATUSES.has(s.status));
-  if (unconfirmed.length === 0) return null;
+
+  // Excluimos los cancelados — no cuentan para la confirmación.
+  const serviciosSinResolver = todosLosServicios.filter(
+    s => s.workflowStatus !== "Cancelado" && !estadosResueltos.has(s.workflowStatus)
+  );
+
+  if (serviciosSinResolver.length === 0) return null;
 
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
       <div className="font-bold mb-1">
-        {unconfirmed.length} servicio(s) sin confirmar con el proveedor
+        {serviciosSinResolver.length} {serviciosSinResolver.length === 1 ? 'servicio sin confirmar' : 'servicios sin confirmar'}
       </div>
       <div className="text-xs text-amber-800 dark:text-amber-300 mb-2">
-        Confirma todos los servicios antes de marcar la reserva en viaje. Los servicios sin confirmar no entran al balance del proveedor y dejarian la cuenta corriente con datos sucios.
+        Estos servicios todavía no tienen respuesta del proveedor. Resolvelós en la pestaña de Servicios antes de que empiece el viaje.
       </div>
       <ul className="text-xs space-y-0.5">
-        {unconfirmed.slice(0, 8).map((s, i) => (
-          <li key={i}>
-            • <strong>{s.label.trim()}</strong> — estado: <span className="font-mono">{s.status}</span>
-          </li>
+        {serviciosSinResolver.slice(0, 8).map((s, i) => (
+          <li key={i}>• <strong>{s.nombre.trim()}</strong></li>
         ))}
-        {unconfirmed.length > 8 && <li className="italic">y {unconfirmed.length - 8} mas...</li>}
+        {serviciosSinResolver.length > 8 && <li className="italic">y {serviciosSinResolver.length - 8} más...</li>}
       </ul>
     </div>
   );
@@ -354,14 +372,9 @@ export default function ReservaDetailPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("services");
 
-  // Lee si el ciclo extendido de reservas esta habilitado.
-  // Con flag OFF (default en produccion): la pagina es identica a antes (Budget→Confirmed directo).
-  // Con flag ON: Budget→Sold (con modal de pasajeros) → Confirmed.
-  // loadingFlags: mientras es true, isSoldToSettleEnabled es false (default).
-  // Lo pasamos a ReservaHeader para que no muestre la botonera hasta tener
-  // el valor definitivo del flag — evita el salto del boton "Confirmar Reserva" a "Vender".
-  const { flags, loadingFlags } = useOperationalFlags();
-  const isSoldToSettleEnabled = flags.enableSoldToSettleStates;
+  // ADR-020: enableSoldToSettleStates eliminado del ciclo. El ciclo es unico y directo.
+  // Solo leemos los flags que siguen vigentes.
+  const { flags } = useOperationalFlags();
   // ADR-017: cuando está ON, la carga de servicios usa la ficha en línea (ServiceInlineCard)
   // en lugar del modal (ServiceFormModal). Con OFF el comportamiento es idéntico al de hoy.
   const isCatalogFindOrCreateEnabled = flags.enableCatalogFindOrCreate;
@@ -391,9 +404,13 @@ export default function ReservaDetailPage() {
   const [editingPassenger, setEditingPassenger] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
-  // targetStatus: "Confirmed" (ciclo base) o "Sold" (ciclo extendido con flag ON).
-  const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null, targetStatus: "Confirmed" });
+  // ADR-020: targetStatus es "InManagement" (Budget→InManagement, con modal de pasajeros).
+  const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null, targetStatus: "InManagement" });
   const [showRevertModal, setShowRevertModal] = useState(false);
+  // ADR-020 F4: modal de solicitar autorizacion para editar una reserva bloqueada.
+  const [showEditAuthModal, setShowEditAuthModal] = useState(false);
+  // ADR-020: modal para marcar una cotizacion/presupuesto como Perdida.
+  const [showMarkLostModal, setShowMarkLostModal] = useState(false);
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
@@ -426,6 +443,7 @@ export default function ReservaDetailPage() {
     handleDeleteReserva,
     handleStatusChange,
     handleDeleteService,
+    handleCancelService,
     handleDeletePassenger,
     handleServiceUpdated,
     allServices,
@@ -504,16 +522,13 @@ export default function ReservaDetailPage() {
   };
 
   /**
-   * Flujo de "vender" o "confirmar" que abre el modal de pasajeros (readiness).
+   * Flujo de "el cliente acepto" que abre el modal de pasajeros (readiness).
    *
-   * Con ciclo base (flag OFF): se llama cuando el usuario hace click en
-   *   "Confirmar Reserva" (Budget → Confirmed).
-   * Con ciclo extendido (flag ON): se llama cuando el usuario hace click en
-   *   "Vender" (Budget → Sold). La transicion target cambia pero el modal es el mismo.
-   *
-   * El parametro `targetStatus` permite que la misma logica sirva para los dos casos.
+   * ADR-020: Budget → InManagement. El usuario hace click en "El cliente acepto"
+   * y se consulta readiness para saber si hay pasajeros pendientes de cargar.
+   * Si no hay nada pendiente, la transicion es inmediata (sin modal).
    */
-  const handleConfirmReservation = async (targetStatus = "Confirmed") => {
+  const handleConfirmReservation = async (targetStatus = "InManagement") => {
     try {
       // Consultamos readiness para saber si hay pasajeros faltantes o reglas no-pax.
       const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=${targetStatus}`);
@@ -526,20 +541,25 @@ export default function ReservaDetailPage() {
         return;
       }
       // Modal forzado: hay pasajeros faltantes o reglas no-pax que mostrar.
-      // Pasamos targetStatus para que el modal dispare la transicion correcta.
       setConfirmReservaModal({ isOpen: true, readiness, targetStatus });
     } catch (error) {
       showError(getApiErrorMessage(error, "No se pudo verificar el estado de la reserva."));
     }
   };
 
-  const isBudget = reserva?.status === "Budget";
+  // ADR-020: en Cotizacion y Presupuesto se ocultan las tabs avanzadas (pasajeros,
+  // cuenta, vouchers, documentos) porque la reserva todavia no es operativa.
+  // "isEarlyStage" reemplaza al antiguo "isBudget" que solo chequeaba Budget.
+  const isEarlyStage = reserva?.status === "Quotation" || reserva?.status === "Budget";
 
+  // Si el usuario esta en una tab que no se muestra en estado early-stage (por ej:
+  // la reserva regresa de InManagement a Budget), redirigir a "services" para evitar
+  // una pantalla en blanco.
   useEffect(() => {
-    if (isBudget && (activeTab === "voucher" || activeTab === "attachments" || activeTab === "account" || activeTab === "passengers")) {
+    if (isEarlyStage && (activeTab === "voucher" || activeTab === "attachments" || activeTab === "account" || activeTab === "passengers")) {
       setActiveTab("services");
     }
-  }, [isBudget, activeTab]);
+  }, [isEarlyStage, activeTab]);
 
   if (loading) {
     return <div className="animate-pulse p-8 text-center text-slate-500">Cargando reserva...</div>;
@@ -563,18 +583,12 @@ export default function ReservaDetailPage() {
     <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       <ReservaHeader
         reserva={reserva}
-        isSoldToSettleEnabled={isSoldToSettleEnabled}
-        loadingFlags={loadingFlags}
         onBack={() => navigate("/reservas")}
         onStatusChange={(newStatus) => {
-          // Con ciclo base (flag OFF): Budget → Confirmed abre el modal de pasajeros.
-          // Con ciclo extendido (flag ON): Budget → Sold abre el modal de pasajeros.
+          // ADR-020: Budget → InManagement abre el modal de pasajeros.
           // Cualquier otra transicion va directo al PUT /status sin modal.
-          if (newStatus === "Confirmed" && reserva.status === "Budget" && !isSoldToSettleEnabled) {
-            handleConfirmReservation("Confirmed");
-          } else if (newStatus === "Sold" && reserva.status === "Budget" && isSoldToSettleEnabled) {
-            // Reapuntamos el flujo de pasajeros a la nueva transicion "Vender".
-            handleConfirmReservation("Sold");
+          if (newStatus === "InManagement" && reserva.status === "Budget") {
+            handleConfirmReservation("InManagement");
           } else {
             handleStatusChange(newStatus);
           }
@@ -599,35 +613,53 @@ export default function ReservaDetailPage() {
         }
         canCancelReserva={canCancelReserva}
         onCancelReserva={() => setShowCancelModal(true)}
+        onRequestEdit={() => setShowEditAuthModal(true)}
+        onMarkLost={() => setShowMarkLostModal(true)}
       />
 
       <ReservaSummaryStrip reserva={reserva} />
 
-      {isBudget ? (
+      {/* Banner ADR-020:
+          - Modo regresion (naranja): cuando la reserva volvio sola a En gestion por cambio del operador.
+            Se activa desde lastRegressionReason del DTO (B2 del reviewer).
+          - Modo destrabada (verde): cuando hasLiveEditAuthorization=true — hay autorizacion vigente (N3).
+          - Modo candado (ambar): reserva bloqueada sin autorizacion activa (decision #1).
+          Prioridad: regresion > destrabada > candado. */}
+      <ReservaLockBanner
+        isLocked={isStatusLocked(reserva.status)}
+        onRequestEdit={() => setShowEditAuthModal(true)}
+        hasRegressionWarning={
+          // B2: franja naranja cuando la reserva esta en InManagement Y tiene motivo de regresion del backend.
+          // Solo se muestra en InManagement porque es el estado al que regresa automaticamente.
+          reserva.status === 'InManagement' && Boolean(reserva.lastRegressionReason)
+        }
+        regressionReason={reserva.lastRegressionReason ?? null}
+        hasLiveEditAuthorization={reserva.hasLiveEditAuthorization ?? false}
+        editAuthorizationExpiresAt={reserva.editAuthorizationExpiresAt ?? null}
+      />
+
+      {/* Banner early-stage: Cotizacion y Presupuesto — la reserva no es operativa todavia.
+          El texto orienta al vendedor sobre el siguiente paso. */}
+      {reserva.status === "Quotation" ? (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-300">
+          <strong className="font-bold">Cotizacion.</strong>{" "}
+          Carga los servicios y pasa a Presupuesto cuando tengas el armado listo para mostrarle al cliente.
+        </div>
+      ) : null}
+
+      {reserva.status === "Budget" ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-          <strong className="font-bold">Reserva en modo Presupuesto.</strong>{" "}
-          {isSoldToSettleEnabled
-            ? "Vendé la reserva para cargar los pasajeros nominales y registrar pagos."
-            : "Confirma la reserva para cargar pasajeros nominales y registrar pagos."
-          }
+          <strong className="font-bold">Presupuesto.</strong>{" "}
+          Cuando el cliente confirme, usa "El cliente acepto" para pasar a En gestion y cargar los pasajeros nominales.
         </div>
       ) : null}
 
-      {/* Banner informativo cuando la reserva esta Vendida (esperando confirmacion del operador).
-          Solo aparece con el ciclo extendido activo (flag ON). */}
-      {isSoldToSettleEnabled && reserva.status === "Sold" ? (
-        <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-200">
-          <strong className="font-bold">Reserva Vendida.</strong>{" "}
-          Esperando confirmacion del operador. Una vez confirmada, la reserva pasara a estado Confirmada.
-        </div>
-      ) : null}
-
-      {/* Banner informativo cuando la reserva esta A liquidar (viaje terminado, falta liquidar).
-          Solo aparece con el ciclo extendido activo (flag ON). */}
-      {isSoldToSettleEnabled && reserva.status === "ToSettle" ? (
+      {/* Banner "A liquidar": aparece cuando la reserva fue apartada manualmente para liquidar con el operador.
+          No requiere flag — es un estado del ciclo ADR-020. */}
+      {reserva.status === "ToSettle" ? (
         <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-200">
-          <strong className="font-bold">Reserva A liquidar.</strong>{" "}
-          Apartada para cerrar cuentas con el operador. Cuando termines, usá "Finalizar" para cerrarla.
+          <strong className="font-bold">A liquidar.</strong>{" "}
+          Apartada para cerrar cuentas con el operador. Cuando termines, usa "Finalizar" para cerrarla.
         </div>
       ) : null}
 
@@ -671,16 +703,16 @@ export default function ReservaDetailPage() {
           <nav className="scrollbar-hide flex gap-8 overflow-x-auto">
             {[
               { id: "services", label: "Servicios", icon: FileText },
-              // En Presupuesto no mostramos tab de Pasajeros/Cantidades — la cantidad se
-              // deriva de los servicios (Hotel.Adults+Children, Package.Adults+Children, etc.)
-              // y se confirma/ajusta en el modal de "Confirmar reserva".
-              isBudget
+              // En Cotizacion y Presupuesto (isEarlyStage) no mostramos tabs operativas:
+              // los pasajeros nominales, pagos, vouchers y documentos solo tienen sentido
+              // cuando la reserva paso a En gestion (el cliente confirmo).
+              isEarlyStage
                 ? null
                 : { id: "passengers", label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
               { id: "history", label: "Historial", icon: Clock },
-              isBudget ? null : { id: "account", label: "Estado de Cuenta", icon: CreditCard },
-              isBudget ? null : { id: "voucher", label: "Vouchers", icon: FileText },
-              isBudget ? null : { id: "attachments", label: "Documentos", icon: Paperclip },
+              isEarlyStage ? null : { id: "account", label: "Estado de Cuenta", icon: CreditCard },
+              isEarlyStage ? null : { id: "voucher", label: "Vouchers", icon: FileText },
+              isEarlyStage ? null : { id: "attachments", label: "Documentos", icon: Paperclip },
             ].filter(Boolean).map((tab) => (
               <button
                 key={tab.id}
@@ -706,6 +738,7 @@ export default function ReservaDetailPage() {
                 services={allServices}
                 serviceCollectionErrors={serviceCollectionErrors}
                 reservaId={publicId}
+                reservaStatus={reserva?.status}
                 isCatalogFindOrCreateEnabled={isCatalogFindOrCreateEnabled}
                 isServiceDeadlineAlertsEnabled={isServiceDeadlineAlertsEnabled}
                 windowDays={windowDays}
@@ -718,6 +751,11 @@ export default function ReservaDetailPage() {
                     // Fallback defensivo: si no viene recordKind, recargamos silencioso
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }
+                }}
+                onServiceResolved={() => {
+                  // Cuando un servicio se resuelve (marca emitido / no requiere confirmacion),
+                  // recargamos la reserva para actualizar el estado y el resumen de resolucion.
+                  fetchReserva({ showLoading: false, preserveOnError: true });
                 }}
                 onAddService={() => {
                   if (isCatalogFindOrCreateEnabled) {
@@ -743,14 +781,8 @@ export default function ReservaDetailPage() {
                     setShowServiceModal(true);
                   }
                 }}
-                onDeleteService={(service) =>
-                  askConfirmation({
-                    title: "Eliminar servicio?",
-                    message: `Estas seguro de eliminar el servicio ${service.description || ""}?`,
-                    type: "danger",
-                    onConfirm: () => handleDeleteService(service),
-                  })
-                }
+                onDeleteService={(service) => handleDeleteService(service)}
+                onCancelService={(service, motivo) => handleCancelService(service, motivo)}
               />
 
               {/* Ficha de carga en línea (ADR-017): solo aparece con EnableCatalogFindOrCreate ON.
@@ -772,11 +804,11 @@ export default function ReservaDetailPage() {
                   }}
                 />
               )}
-              <PassengerAssignmentsPanel reserva={reserva} isBudget={isBudget} />
+              <PassengerAssignmentsPanel reserva={reserva} isBudget={isEarlyStage} />
             </div>
           ) : null}
 
-          {activeTab === "passengers" && !isBudget ? (
+          {activeTab === "passengers" && !isEarlyStage ? (
             <PassengerList
               passengers={reserva.passengers}
               onAddPassenger={() => {
@@ -1044,11 +1076,11 @@ export default function ReservaDetailPage() {
         <ConfirmReservaModal
           reserva={reserva}
           readiness={confirmReservaModal.readiness}
-          // Con ciclo extendido (flag ON) el target es "Sold"; con ciclo base es "Confirmed".
-          targetStatus={confirmReservaModal.targetStatus || "Confirmed"}
-          onClose={() => setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "Confirmed" })}
+          // ADR-020: Budget → InManagement (el cliente acepto).
+          targetStatus={confirmReservaModal.targetStatus || "InManagement"}
+          onClose={() => setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "InManagement" })}
           onConfirmed={() => {
-            setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "Confirmed" });
+            setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "InManagement" });
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
         />
@@ -1084,6 +1116,31 @@ export default function ReservaDetailPage() {
           onCancelled={() => {
             setShowCancelModal(false);
             // Recargamos la reserva para reflejar el nuevo estado (Cancelled).
+            fetchReserva({ showLoading: false, preserveOnError: true });
+          }}
+        />
+      )}
+
+      {/* ADR-020 F4: modal para solicitar autorizacion de edicion en reservas bloqueadas. */}
+      {showEditAuthModal && (
+        <EditAuthorizationModal
+          reservaPublicId={publicId}
+          onClose={() => setShowEditAuthModal(false)}
+          onAuthorized={() => {
+            setShowEditAuthModal(false);
+            // Recargamos para que el backend actualice el estado de bloqueo si corresponde.
+            fetchReserva({ showLoading: false, preserveOnError: true });
+          }}
+        />
+      )}
+
+      {/* ADR-020: modal para marcar la reserva como Perdida (solo desde Cotizacion o Presupuesto). */}
+      {showMarkLostModal && (
+        <MarkLostModal
+          reservaPublicId={publicId}
+          onClose={() => setShowMarkLostModal(false)}
+          onMarked={() => {
+            setShowMarkLostModal(false);
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
         />

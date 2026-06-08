@@ -100,7 +100,7 @@ public class FaseDStateSetTests
     public async Task PaymentService_CollectionsSummary_IncludesSoldAndToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
-        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Sold));
+        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
         await context.SaveChangesAsync();
 
@@ -121,7 +121,7 @@ public class FaseDStateSetTests
     public async Task AlertService_UrgentTrips_IncludesSold_NotToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
-        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Sold));
+        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
         // ToSettle es post-viaje: NO debe figurar como "viaje proximo" aunque tenga saldo.
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
         await context.SaveChangesAsync();
@@ -133,7 +133,7 @@ public class FaseDStateSetTests
         dynamic result = await service.GetAlertsAsync(new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);
 
         var urgentStatuses = EnumerateStatuses(result.UrgentTrips);
-        Assert.Contains(EstadoReserva.Sold, urgentStatuses);
+        Assert.Contains(EstadoReserva.InManagement, urgentStatuses);
         Assert.DoesNotContain(EstadoReserva.ToSettle, urgentStatuses);
     }
 
@@ -142,7 +142,7 @@ public class FaseDStateSetTests
     {
         using var context = new AppDbContext(NewDbOptions());
         const int supplierId = 7;
-        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Sold));
+        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
         context.HotelBookings.Add(HotelFor(10, 1, supplierId));
         context.HotelBookings.Add(HotelFor(11, 2, supplierId));
@@ -163,7 +163,7 @@ public class FaseDStateSetTests
     public async Task TreasuryService_AccountsReceivable_IncludesSoldAndToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
-        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Sold, balance: 300m));
+        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement, balance: 300m));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle, balance: 200m));
         await context.SaveChangesAsync();
 
@@ -181,7 +181,7 @@ public class FaseDStateSetTests
         using var context = new AppDbContext(NewDbOptions());
         // Las dos estan economicamente saldadas (Balance 0) y con venta sin facturar (TotalSale 1000),
         // asi que cualquiera de las dos que sea "facturable" caeria en la bandeja como "lista para emitir".
-        context.Reservas.Add(ReservaReadyToInvoice(1, EstadoReserva.Sold));
+        context.Reservas.Add(ReservaReadyToInvoice(1, EstadoReserva.InManagement));
         context.Reservas.Add(ReservaReadyToInvoice(2, EstadoReserva.ToSettle));
         await context.SaveChangesAsync();
 
@@ -232,7 +232,7 @@ public class FaseDStateSetTests
         using var context = new AppDbContext(NewDbOptions());
         // 4 reservas con TotalSale 1000 c/u. Closed y Cancelled NO cuentan como venta activa;
         // Sold y ToSettle SI (patron != Closed && != Cancelled && != Archived).
-        context.Reservas.Add(new Reserva { Id = 1, Name = "S", NumeroReserva = "R-1", Status = EstadoReserva.Sold, TotalSale = 1000m });
+        context.Reservas.Add(new Reserva { Id = 1, Name = "S", NumeroReserva = "R-1", Status = EstadoReserva.InManagement, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 2, Name = "T", NumeroReserva = "R-2", Status = EstadoReserva.ToSettle, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 3, Name = "C", NumeroReserva = "R-3", Status = EstadoReserva.Closed, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 4, Name = "X", NumeroReserva = "R-4", Status = EstadoReserva.Cancelled, TotalSale = 1000m });
@@ -255,7 +255,7 @@ public class FaseDStateSetTests
         using var context = new AppDbContext(NewDbOptions());
         // Las 4 tienen saldo pendiente y viaje proximo. El predicado NEGATIVO del monitor
         // (Status != Cancelled && != Closed) debe TOMAR Sold y ToSettle, y DESCARTAR Cancelled/Closed.
-        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Sold));
+        context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
         context.Reservas.Add(ReservaWithBalance(3, EstadoReserva.Cancelled));
         context.Reservas.Add(ReservaWithBalance(4, EstadoReserva.Closed));

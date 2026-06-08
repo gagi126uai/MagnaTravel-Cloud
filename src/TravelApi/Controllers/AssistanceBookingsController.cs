@@ -68,7 +68,8 @@ public class AssistanceBookingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // ADR-020: candado de reserva confirmada -> 409 para que el front abra autorizacion.
+            return Conflict(new { message = ex.Message });
         }
         catch
         {
@@ -126,15 +127,13 @@ public class AssistanceBookingsController : ControllerBase
     /// PATCH absoluto (sin reservaId) para cambiar SOLO el Status de la asistencia desde la
     /// cuenta corriente del proveedor (aseguradora). Aplica los mismos guards que Update completo.
     /// </summary>
-    // Autorizacion: se exige reservas.edit como minimo (igual que HotelBookingsController).
-    // TODO (follow-up ownership): la ruta identifica el AssistanceBooking por su id, no por
-    // reservaId, asi que RequireOwnership(OwnedEntity.Reserva, "reservaId") no aplica. Falta
-    // un OwnedEntity.AssistanceBooking + branch en OwnershipResolver para cerrar ownership fino
-    // — misma deuda abierta que Hotel/Transfer/Package/Flight en este endpoint.
+    // Autorizacion: se exige reservas.edit + ownership (igual que HotelBookingsController).
     [HttpPatch]
     [Route("/api/assistance-bookings/{publicIdOrLegacyId}/status")]
     [Authorize]
     [RequirePermission(Permissions.ReservasEdit)]
+    // ADR-020: ownership fino por el id de la asistencia (la ruta no trae reservaId). Antes faltaba.
+    [RequireOwnership(OwnedEntity.AssistanceBooking, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try

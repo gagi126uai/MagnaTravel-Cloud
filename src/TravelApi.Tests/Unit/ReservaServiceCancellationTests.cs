@@ -64,8 +64,10 @@ public class ReservaServiceCancellationTests
     private ReservaService BuildService(AppDbContext context)
         => new(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
+    // ADR-020 (B5): desde Cotizacion/Presupuesto NO existe cancelacion (la salida es Perdido o el
+    // borrado). Cancelled solo es alcanzable desde {InManagement, Confirmed, Traveling, ToSettle}.
     [Fact]
-    public async Task UpdateStatusAsync_CancelFromBudget_IsAllowed()
+    public async Task UpdateStatusAsync_CancelFromBudget_IsRejected()
     {
         await using var context = new AppDbContext(_dbOptions);
         context.Reservas.Add(new Reserva
@@ -79,11 +81,11 @@ public class ReservaServiceCancellationTests
 
         var service = BuildService(context);
 
-        var result = await service.UpdateStatusAsync(1, EstadoReserva.Cancelled);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateStatusAsync(1, EstadoReserva.Cancelled));
 
-        Assert.Equal(EstadoReserva.Cancelled, result.Status);
         var dbReserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
-        Assert.Equal(EstadoReserva.Cancelled, dbReserva.Status);
+        Assert.Equal(EstadoReserva.Budget, dbReserva.Status);
     }
 
     [Fact]
@@ -107,14 +109,11 @@ public class ReservaServiceCancellationTests
     }
 
     /// <summary>
-    /// Pin del comportamiento actual: la cancelacion NO se registra en
-    /// ReservaStatusChangeLogs (eso solo ocurre en RevertStatusAsync). Si el
-    /// equipo decide migrar tambien la cancelacion al log de auditoria, este
-    /// test debe actualizarse. Mientras tanto, deja registrado que NO hay
-    /// rastro auditable de la cancelacion a nivel de tabla de logs.
+    /// ADR-020 (INV-020-06): toda transicion manual via UpdateStatusAsync — incluida la cancelacion
+    /// manual (B5) — escribe ReservaStatusChangeLog. (Antes la cancelacion no dejaba rastro.)
     /// </summary>
     [Fact]
-    public async Task UpdateStatusAsync_Cancel_DoesNotWriteReservaStatusChangeLog_Today()
+    public async Task UpdateStatusAsync_Cancel_WritesReservaStatusChangeLog()
     {
         await using var context = new AppDbContext(_dbOptions);
         context.Reservas.Add(new Reserva
@@ -130,8 +129,9 @@ public class ReservaServiceCancellationTests
 
         await service.UpdateStatusAsync(1, EstadoReserva.Cancelled);
 
-        var logCount = await context.ReservaStatusChangeLogs.CountAsync(l => l.ReservaId == 1);
-        Assert.Equal(0, logCount);
+        var log = await context.ReservaStatusChangeLogs.AsNoTracking().SingleAsync(l => l.ReservaId == 1);
+        Assert.Equal(EstadoReserva.Confirmed, log.FromStatus);
+        Assert.Equal(EstadoReserva.Cancelled, log.ToStatus);
     }
 
     /// <summary>

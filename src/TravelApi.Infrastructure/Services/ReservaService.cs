@@ -29,6 +29,9 @@ public class ReservaService : IReservaService
     private readonly ILogger<ReservaService> _logger;
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    // ADR-020 F3: motor de estados automatico. Opcional (default null) para no romper los tests
+    // unitarios que construyen ReservaService a mano; en runtime lo inyecta DI.
+    private readonly ReservaAutoStateService? _autoStateService;
 
     /// <summary>
     /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Se usa para
@@ -47,7 +50,8 @@ public class ReservaService : IReservaService
         UserManager<ApplicationUser> userManager,
         ILogger<ReservaService> logger,
         IUserPermissionResolver? permissionResolver = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        ReservaAutoStateService? autoStateService = null)
     {
         _context = context;
         _mapper = mapper;
@@ -58,6 +62,7 @@ public class ReservaService : IReservaService
         // que instancian ReservaService directamente con el ctor de 5 args.
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
+        _autoStateService = autoStateService;
     }
 
     /// <summary>
@@ -108,6 +113,10 @@ public class ReservaService : IReservaService
     public async Task<ReservationServiceMutationResult> AddServiceAsync(string reservaPublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        // ADR-020 F4: agregar un servicio a una reserva confirmada requiere autorizacion (y ademas
+        // dispara regresion a En gestion: la autorizacion es el paso previo consciente).
+        await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded,
+            entityType: "ServicioReserva", entityId: null, summary: request.ServiceType, ct: ct);
         var (reservation, warning) = await AddServiceAsync(reservaId, request, ct);
 
         var servicioDto = _mapper.Map<ServicioReservaDto>(reservation);
@@ -128,6 +137,7 @@ public class ReservaService : IReservaService
     public async Task<ServicioReservaDto> UpdateServiceAsync(string servicePublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default)
     {
         var serviceId = await ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, ct);
+        await EnsureServiceEditableAsync(serviceId, ReservaEditAuthorizationOperations.ServiceEdited, request.ServiceType, ct);
         var service = await UpdateServiceAsync(serviceId, request, ct);
 
         var servicioDto = _mapper.Map<ServicioReservaDto>(service);
@@ -142,7 +152,38 @@ public class ReservaService : IReservaService
     public async Task RemoveServiceAsync(string servicePublicIdOrLegacyId, CancellationToken ct = default)
     {
         var serviceId = await ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, ct);
+        await EnsureServiceEditableAsync(serviceId, ReservaEditAuthorizationOperations.ServiceDeleted, null, ct);
         await RemoveServiceAsync(serviceId, ct);
+    }
+
+    /// <summary>
+    /// ADR-020 F4: aplica el candado a una operacion sobre un servicio generico, resolviendo
+    /// primero la reserva duena. Si el servicio no esta vinculado a una reserva (caso raro),
+    /// no hay candado que aplicar.
+    /// </summary>
+    private async Task EnsureServiceEditableAsync(int serviceId, string operation, string? summary, CancellationToken ct)
+    {
+        var reservaId = await _context.Servicios
+            .Where(s => s.Id == serviceId)
+            .Select(s => s.ReservaId)
+            .FirstOrDefaultAsync(ct);
+        if (reservaId is null) return;
+        await EnsureReservaEditableAsync(reservaId.Value, operation,
+            entityType: "ServicioReserva", entityId: serviceId, summary: summary, ct: ct);
+    }
+
+    /// <summary>
+    /// ADR-020 F4: aplica el candado a una operacion sobre un pasajero, resolviendo la reserva duena.
+    /// </summary>
+    private async Task EnsurePassengerEditableAsync(int passengerId, string operation, CancellationToken ct)
+    {
+        var reservaId = await _context.Passengers
+            .Where(p => p.Id == passengerId)
+            .Select(p => (int?)p.ReservaId)
+            .FirstOrDefaultAsync(ct);
+        if (reservaId is null) return;
+        await EnsureReservaEditableAsync(reservaId.Value, operation,
+            entityType: "Passenger", entityId: passengerId, summary: null, ct: ct);
     }
 
     public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
@@ -154,18 +195,22 @@ public class ReservaService : IReservaService
     public async Task<PassengerDto> AddPassengerAsync(string reservaPublicIdOrLegacyId, PassengerUpsertRequest passenger, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.PassengerAdded,
+            entityType: "Passenger", entityId: null, summary: null, ct: ct);
         return await AddPassengerAsync(reservaId, MapPassenger(passenger));
     }
 
     public async Task<PassengerDto> UpdatePassengerAsync(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated, CancellationToken ct = default)
     {
         var passengerId = await ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, ct);
+        await EnsurePassengerEditableAsync(passengerId, ReservaEditAuthorizationOperations.PassengerEdited, ct);
         return await UpdatePassengerAsync(passengerId, MapPassenger(updated));
     }
 
     public async Task RemovePassengerAsync(string passengerPublicIdOrLegacyId, CancellationToken ct = default)
     {
         var passengerId = await ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, ct);
+        await EnsurePassengerEditableAsync(passengerId, ReservaEditAuthorizationOperations.PassengerDeleted, ct);
         await RemovePassengerAsync(passengerId);
     }
 
@@ -175,8 +220,10 @@ public class ReservaService : IReservaService
         var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
-        if (reserva.Status != EstadoReserva.Budget)
-            throw new InvalidOperationException("Las cantidades de pasajeros solo se pueden editar en estado Presupuesto. Si ya pasó a Reservado, cargá los pasajeros nominales.");
+        // ADR-020: las cantidades agregadas (AdultCount/...) solo se editan en las etapas comerciales
+        // tempranas (Cotizacion / Presupuesto). Desde En gestion se cargan pasajeros nominales.
+        if (reserva.Status != EstadoReserva.Quotation && reserva.Status != EstadoReserva.Budget)
+            throw new InvalidOperationException("Las cantidades de pasajeros solo se pueden editar en Cotizacion o Presupuesto. Si ya pasó a En gestion, cargá los pasajeros nominales.");
 
         if (counts.AdultCount < 0 || counts.ChildCount < 0 || counts.InfantCount < 0)
             throw new ArgumentException("Las cantidades no pueden ser negativas.");
@@ -194,6 +241,10 @@ public class ReservaService : IReservaService
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // ADR-020 F4: cambiar fechas de una reserva confirmada requiere autorizacion (candado).
+        await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.ReservaDataEdited,
+            entityType: "Reserva", entityId: reservaId, summary: "Fechas de la reserva", ct: ct);
 
         // B1.15 Fase 0' (CODE-03): cambiar fechas con factura AFIP viva o voucher
         // emitido rompe la coherencia con el periodo declarado en el comprobante.
@@ -547,17 +598,9 @@ public class ReservaService : IReservaService
         // sigue viva por el resto, asi que igual bloquea (decision del dueño).
         if (status == EstadoReserva.Cancelled)
         {
-            var hasLiveCae = await _context.Invoices.AnyAsync(
-                i => i.ReservaId == id
-                    && !CreditNoteComprobanteTypes.Contains(i.TipoComprobante) // excluye NC
-                    && !string.IsNullOrEmpty(i.CAE)
-                    && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
-                ct);
-            if (hasLiveCae)
-            {
-                throw new InvalidOperationException(
-                    "La reserva tiene facturas con CAE vigentes. Debe anularlas (se emitira Nota de Credito) antes de cancelar la reserva.");
-            }
+            // NOTA: el gate fiscal "sin factura CAE viva" se movio al camino compartido
+            // (ApplyTransitionAsync) para que el overload int no lo saltee. Aca quedan solo los
+            // chequeos de PERMISO (B1.15), que dependen del actor y del HttpContext.
 
             // Solo aplicamos validacion B1.15 si tenemos un actor concreto.
             // En tests unitarios sin HttpContext el actorUserId puede llegar null
@@ -712,86 +755,74 @@ public class ReservaService : IReservaService
     // ============= Phase 2.4 — Reversion de Status con autorizacion =============
 
     // ============================================================
-    // Matrices de transicion del ciclo de vida de la Reserva.
+    // ADR-020 (2026-06-07): matriz UNICA del ciclo de vida de la Reserva (murio el ciclo dual
+    // y el flag EnableSoldToSettleStates). Ciclo:
+    //   Quotation -> Budget -> InManagement -> [Confirmed (AUTOMATICO)] -> Traveling -> Closed
+    // con ToSettle como desvio manual opcional colgando de Traveling, y Lost/Cancelled laterales.
     //
-    // Hay DOS juegos de matrices, elegidas en runtime por el flag
-    // EnableSoldToSettleStates (rediseño Fase A+B, 2026-05-30):
-    //  - CLASICO (flag OFF, default historico): Budget -> Confirmed -> Traveling -> Closed.
-    //  - NUEVO (flag ON): Budget -> Sold -> Confirmed -> Traveling -> ToSettle -> Closed.
-    //
-    // Las cuatro matrices (forward/revert x clasico/nuevo) viven como diccionarios
-    // estaticos para que la matriz sea facil de leer y de testear sin tocar la logica.
+    // Reglas que NO viven en estas matrices (a proposito):
+    //  - InManagement <-> Confirmed: lo maneja SOLO el motor automatico (ReservaAutoStateService),
+    //    NUNCA UpdateStatusAsync ni RevertStatusAsync (INV-020-02). Por eso Confirmed no aparece
+    //    como destino forward manual ni InManagement como revert manual de Confirmed.
+    //  - Cancelacion ADR-002 / PendingOperatorRefund / Archived: flujos dedicados que escriben
+    //    Status por fuera de estas matrices.
     // ============================================================
 
     /// <summary>
-    /// Forward CLASICO (flag OFF): las transiciones hacia adelante validas de siempre.
-    /// Cancelled, PendingOperatorRefund y Archived NO se modelan aca porque se manejan
-    /// por flujos dedicados (cancelacion, refund, archivado), no por UpdateStatusAsync.
+    /// Matriz FORWARD unica (transiciones manuales via UpdateStatusAsync). Confirmed como destino
+    /// esta AUSENTE adrede: solo el motor automatico lleva InManagement -> Confirmed.
+    ///
+    /// <para>Cancelled aparece desde {InManagement, Confirmed, Traveling, ToSettle} (B5: cancelacion
+    /// manual sin factura viva). Desde Quotation/Budget la salida es Lost, no Cancelled.</para>
     /// </summary>
-    private static readonly Dictionary<string, string[]> AllowedForwardTransitionsClassic = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string[]> AllowedForwardTransitions = new(StringComparer.OrdinalIgnoreCase)
     {
-        [EstadoReserva.Budget] = new[] { EstadoReserva.Confirmed },
-        [EstadoReserva.Confirmed] = new[] { EstadoReserva.Traveling },
-        [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed },
+        [EstadoReserva.Quotation] = new[] { EstadoReserva.Budget, EstadoReserva.Lost },
+        [EstadoReserva.Budget] = new[] { EstadoReserva.InManagement, EstadoReserva.Lost },
+        [EstadoReserva.InManagement] = new[] { EstadoReserva.Cancelled },
+        [EstadoReserva.Confirmed] = new[] { EstadoReserva.Traveling, EstadoReserva.Cancelled },
+        // Traveling: Closed = cierre por default, ToSettle = desvio opcional (apartar para liquidar).
+        [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed, EstadoReserva.ToSettle, EstadoReserva.Cancelled },
+        [EstadoReserva.ToSettle] = new[] { EstadoReserva.Closed, EstadoReserva.Cancelled },
     };
 
     /// <summary>
-    /// Forward NUEVO (flag ON): inserta Sold despues de Budget. ToSettle ("A liquidar") ya NO
-    /// es un paso obligatorio sino un DESVIO MANUAL OPCIONAL: con cada operador la plata se
-    /// arregla distinto (algunos antes del viaje, otros despues), asi que liquidar post-viaje
-    /// no es universal.
+    /// Matriz REVERT unica (transiciones hacia atras manuales, con la autorizacion de supervisor
+    /// existente). Confirmed -> InManagement NO esta: la regresion es automatica (motor).
     ///
-    /// Por eso Traveling tiene DOS destinos forward:
-    ///  - Traveling -&gt; Closed: el cierre por DEFAULT (igual que el ciclo clasico, gate Balance == 0).
-    ///  - Traveling -&gt; ToSettle: el desvio OPCIONAL (apartar para liquidar con el operador, sin gate).
-    /// Y ToSettle -&gt; Closed sigue siendo el cierre manual desde la bandeja "A liquidar".
-    ///
-    /// Sigue PROHIBIDO el salto directo Budget-&gt;Confirmed (INV-SM-01): readiness vive en Budget-&gt;Sold.
+    /// <para><c>Lost</c> revierte a {Quotation, Budget}, pero el target REAL es deterministico: el
+    /// <c>FromStatus</c> de la ultima transicion a Lost (ver <see cref="ResolveLostRevertTargetAsync"/>).
+    /// Ambos se listan aca solo para que el guard de matriz acepte el target correcto.</para>
     /// </summary>
-    private static readonly Dictionary<string, string[]> AllowedForwardTransitionsSoldToSettle = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string[]> AllowedRevertTransitions = new(StringComparer.OrdinalIgnoreCase)
     {
-        [EstadoReserva.Budget] = new[] { EstadoReserva.Sold },
-        [EstadoReserva.Sold] = new[] { EstadoReserva.Confirmed },
-        [EstadoReserva.Confirmed] = new[] { EstadoReserva.Traveling },
-        // Traveling: Closed = default (Finalizar), ToSettle = desvio opcional (Marcar a liquidar).
-        [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed, EstadoReserva.ToSettle },
-        [EstadoReserva.ToSettle] = new[] { EstadoReserva.Closed },
-    };
-
-    /// <summary>Revert CLASICO (flag OFF): transiciones hacia atras de siempre.</summary>
-    private static readonly Dictionary<string, string[]> AllowedRevertTransitionsClassic = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
-        [EstadoReserva.Confirmed] = new[] { EstadoReserva.Budget },
-        [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
-    };
-
-    /// <summary>
-    /// Revert NUEVO (flag ON): reverts de a UN solo paso a lo largo de la cadena nueva.
-    /// El gate "volver a Budget sin pagos/facturas/servicios" se mueve a Sold-&gt;Budget
-    /// (antes vivia en Confirmed-&gt;Budget).
-    ///
-    /// Closed -&gt; Traveling (NO -&gt; ToSettle): como ToSettle es opcional, una reserva pudo cerrar
-    /// directo Traveling-&gt;Closed sin pasar nunca por ToSettle. Revertir Closed-&gt;ToSettle la
-    /// mandaria a un estado por el que nunca estuvo. Por eso el revert de Closed vuelve siempre
-    /// a Traveling (el estado anterior real garantizado). ToSettle-&gt;Traveling se mantiene para
-    /// las reservas que SI eligieron el desvio manual de liquidacion.
-    /// </summary>
-    private static readonly Dictionary<string, string[]> AllowedRevertTransitionsSoldToSettle = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [EstadoReserva.Sold] = new[] { EstadoReserva.Budget },
-        [EstadoReserva.Confirmed] = new[] { EstadoReserva.Sold },
+        [EstadoReserva.Budget] = new[] { EstadoReserva.Quotation },
+        [EstadoReserva.InManagement] = new[] { EstadoReserva.Budget },
+        [EstadoReserva.Lost] = new[] { EstadoReserva.Quotation, EstadoReserva.Budget },
         [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
         [EstadoReserva.ToSettle] = new[] { EstadoReserva.Traveling },
         [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
     };
 
     /// <summary>
-    /// Elige la matriz de reverts segun el flag EnableSoldToSettleStates.
-    /// Centralizado aca para que GetRevertOptionsAsync y RevertStatusAsync usen la misma.
+    /// ADR-020 (B1): el revert de <c>Lost</c> vuelve al estado desde el que se perdio. Lo deduce del
+    /// <c>FromStatus</c> de la ultima transicion hacia Lost en <see cref="ReservaStatusChangeLog"/>.
+    /// Fallback defensivo <c>Budget</c> si no hay fila (no deberia pasar: toda transicion loguea).
     /// </summary>
-    private static Dictionary<string, string[]> GetRevertTransitions(bool soldToSettleEnabled)
-        => soldToSettleEnabled ? AllowedRevertTransitionsSoldToSettle : AllowedRevertTransitionsClassic;
+    private async Task<string> ResolveLostRevertTargetAsync(int reservaId, CancellationToken ct)
+    {
+        var lastToLost = await _context.ReservaStatusChangeLogs
+            .AsNoTracking()
+            .Where(l => l.ReservaId == reservaId && l.ToStatus == EstadoReserva.Lost)
+            .OrderByDescending(l => l.OccurredAt)
+            .Select(l => l.FromStatus)
+            .FirstOrDefaultAsync(ct);
+
+        // Solo Quotation o Budget son origenes legales de Lost; cualquier otra cosa -> Budget.
+        if (string.Equals(lastToLost, EstadoReserva.Quotation, StringComparison.OrdinalIgnoreCase))
+            return EstadoReserva.Quotation;
+        return EstadoReserva.Budget;
+    }
 
     public async Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default)
     {
@@ -809,14 +840,18 @@ public class ReservaService : IReservaService
             RequiresAuthorization = !actorIsAdmin
         };
 
-        // Rediseño Fase A+B: el juego de reverts depende del flag EnableSoldToSettleStates.
-        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        var revertTransitions = GetRevertTransitions(settings.EnableSoldToSettleStates);
-
-        // Targets posibles segun current
-        if (revertTransitions.TryGetValue(reserva.Status, out var targets))
+        // ADR-020: matriz de reverts UNICA (murio el ciclo dual).
+        if (AllowedRevertTransitions.TryGetValue(reserva.Status, out var targets))
         {
-            dto.AllowedTargets.AddRange(targets);
+            if (string.Equals(reserva.Status, EstadoReserva.Lost, StringComparison.OrdinalIgnoreCase))
+            {
+                // El revert de Lost tiene UN target deterministico (el estado de origen registrado).
+                dto.AllowedTargets.Add(await ResolveLostRevertTargetAsync(id, ct));
+            }
+            else
+            {
+                dto.AllowedTargets.AddRange(targets);
+            }
         }
 
         // Hard blockers (no se saltean ni siendo admin):
@@ -875,16 +910,21 @@ public class ReservaService : IReservaService
         var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
-        // Rediseño Fase A+B: el juego de reverts depende del flag EnableSoldToSettleStates.
-        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        var revertTransitions = GetRevertTransitions(settings.EnableSoldToSettleStates);
-
-        // Validar transicion permitida
-        if (!revertTransitions.TryGetValue(reserva.Status, out var allowedTargets) || !allowedTargets.Contains(request.TargetStatus, StringComparer.OrdinalIgnoreCase))
+        // ADR-020: matriz de reverts UNICA (murio el ciclo dual).
+        if (!AllowedRevertTransitions.TryGetValue(reserva.Status, out var allowedTargets) || !allowedTargets.Contains(request.TargetStatus, StringComparer.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
                 $"No se puede revertir desde {reserva.Status} a {request.TargetStatus}. " +
                 $"Transiciones permitidas desde {reserva.Status}: {(allowedTargets == null ? "(ninguna)" : string.Join(", ", allowedTargets))}.");
+        }
+
+        // ADR-020 (B1): el revert de Lost vuelve SOLO al estado de origen registrado (deterministico).
+        if (string.Equals(reserva.Status, EstadoReserva.Lost, StringComparison.OrdinalIgnoreCase))
+        {
+            var legalTarget = await ResolveLostRevertTargetAsync(id, ct);
+            if (!string.Equals(request.TargetStatus, legalTarget, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"Una reserva Perdida solo puede volver a '{legalTarget}' (el estado desde el que se perdio).");
         }
 
         // Hard blockers
@@ -892,14 +932,12 @@ public class ReservaService : IReservaService
         if (hasInvoiceWithCae)
             throw new InvalidOperationException("La reserva tiene facturas AFIP emitidas con CAE. No se puede revertir (rompe la historia fiscal).");
 
-        // Validaciones de coherencia segun el target
-        if (request.TargetStatus == EstadoReserva.Budget)
+        // ADR-020 (M5): el unico revert con gate es InManagement -> Budget (sin pagos vivos + sin
+        // facturas + sin servicios resueltos). El gate unificado vive en EnsureCanRevertToBudgetAsync.
+        if (string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(request.TargetStatus, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase))
         {
-            // No retroceder a Presupuesto si hay pagos o facturas (mismo criterio que UpdateStatusAsync).
-            var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted, ct);
-            if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. Eliminalos primero.");
-            var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id, ct);
-            if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Anulalas primero.");
+            await EnsureCanRevertToBudgetAsync(id, ct);
         }
 
         // Autorizacion
@@ -967,6 +1005,131 @@ public class ReservaService : IReservaService
     }
 
     // ============= /Phase 2.4 =============
+
+    // ============================================================
+    // ADR-020 F4: candado de reservas confirmadas
+    // ============================================================
+
+    /// <summary>Ventana de validez de una autorizacion de edicion bajo candado (A5: 30 minutos).</summary>
+    private static readonly TimeSpan EditAuthorizationWindow = TimeSpan.FromMinutes(30);
+
+    /// <summary>Nombre legible del usuario actual desde el HttpContext, o null en tests sin contexto.</summary>
+    private string? GetCurrentUserNameOrNull()
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        return user?.FindFirstValue("FullName")
+            ?? user?.FindFirstValue(ClaimTypes.Name)
+            ?? user?.Identity?.Name;
+    }
+
+    /// <summary>
+    /// ADR-020 F4: aplica el candado a un write-path de la reserva. Resuelve el actor del
+    /// HttpContext (null en tests) y delega en <see cref="ReservaLockGuard"/>: si la reserva
+    /// esta confirmada y no hay autorizacion viva, lanza; si la hay, registra el cambio.
+    /// </summary>
+    private Task<ReservaEditAuthorization?> EnsureReservaEditableAsync(
+        int reservaId, string operation, string? entityType, int? entityId, string? summary, CancellationToken ct)
+        => ReservaLockGuard.EnsureCanEditAsync(
+            _context, reservaId, operation,
+            GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull(),
+            entityType, entityId, summary, ct);
+
+    public async Task<ReservaEditAuthorizationDto> CreateEditAuthorizationAsync(
+        string publicIdOrLegacyId,
+        CreateEditAuthorizationRequest request,
+        string actorUserId,
+        string? actorUserName,
+        bool actorIsAdmin,
+        CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // El candado solo existe de Confirmada en adelante; antes la edicion ya es libre.
+        if (!ReservaLockGuard.IsLockedStatus(reserva.Status))
+            throw new InvalidOperationException(
+                "La reserva no esta bajo candado: todavia se puede editar libremente, no necesita autorizacion.");
+
+        var reason = (request.Reason ?? "").Trim();
+        if (reason.Length < 10)
+            throw new InvalidOperationException("Indica un motivo de la edicion (al menos 10 caracteres).");
+
+        // Quien autoriza: el propio actor si tiene el permiso (Admin lo tiene por bypass de rol),
+        // o un autorizante explicito que lo tenga. Mismo modelo de seleccion que RevertStatusAsync.
+        // El registro queda SIEMPRE (auto-autorizacion incluida, vale tambien para Admin: INV-020-05).
+        string authorizedById;
+        string? authorizedByName;
+
+        var actorCanAuthorize = actorIsAdmin
+            || await UserHasPermissionAsync(actorUserId, Permissions.ReservasAuthorizeLockedEdit, ct);
+        if (actorCanAuthorize)
+        {
+            authorizedById = actorUserId;
+            authorizedByName = actorUserName;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(request.AuthorizedByUserId))
+                throw new InvalidOperationException(
+                    "Necesitas que alguien con permiso autorice la edicion de una reserva confirmada. Selecciona un autorizante.");
+
+            var authorizer = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == request.AuthorizedByUserId && u.IsActive, ct)
+                ?? throw new InvalidOperationException("El autorizante seleccionado no existe o esta inactivo.");
+
+            var authorizerRoles = await _context.UserRoles.AsNoTracking()
+                .Where(ur => ur.UserId == authorizer.Id)
+                .Join(_context.Roles.AsNoTracking(), ur => ur.RoleId, r => r.Id, (_, r) => r.Name!)
+                .ToListAsync(ct);
+            var authorizerIsAdmin = authorizerRoles.Any(r => string.Equals(r, "Admin", StringComparison.OrdinalIgnoreCase));
+            var authorizerCanAuthorize = authorizerIsAdmin || await _context.RolePermissions.AsNoTracking()
+                .AnyAsync(p => authorizerRoles.Contains(p.RoleName) && p.Permission == Permissions.ReservasAuthorizeLockedEdit, ct);
+            if (!authorizerCanAuthorize)
+                throw new InvalidOperationException(
+                    "El autorizante seleccionado no tiene permiso para autorizar ediciones bajo candado.");
+
+            authorizedById = authorizer.Id;
+            authorizedByName = authorizer.FullName ?? authorizer.UserName ?? authorizer.Id;
+        }
+
+        // Regla de unicidad (INV-020-05): a lo sumo UNA autorizacion viva por reserva. Las vigentes
+        // se expiran en el acto y la nueva las reemplaza, asi el guard resuelve con un solo lookup.
+        var now = DateTime.UtcNow;
+        var stillLive = await _context.ReservaEditAuthorizations
+            .Where(a => a.ReservaId == id && a.ExpiresAt > now)
+            .ToListAsync(ct);
+        foreach (var previous in stillLive)
+            previous.ExpiresAt = now;
+
+        var authorization = new ReservaEditAuthorization
+        {
+            ReservaId = id,
+            RequestedByUserId = actorUserId,
+            RequestedByUserName = actorUserName,
+            AuthorizedByUserId = authorizedById,
+            AuthorizedByUserName = authorizedByName,
+            Reason = reason,
+            CreatedAt = now,
+            ExpiresAt = now.Add(EditAuthorizationWindow),
+            ReservaStatusSnapshot = reserva.Status,
+        };
+        _context.ReservaEditAuthorizations.Add(authorization);
+        await _context.SaveChangesAsync(ct);
+
+        return new ReservaEditAuthorizationDto
+        {
+            PublicId = authorization.PublicId,
+            ReservaStatusSnapshot = authorization.ReservaStatusSnapshot ?? reserva.Status,
+            RequestedByUserId = authorization.RequestedByUserId,
+            RequestedByUserName = authorization.RequestedByUserName,
+            AuthorizedByUserId = authorization.AuthorizedByUserId,
+            AuthorizedByUserName = authorization.AuthorizedByUserName,
+            Reason = authorization.Reason,
+            CreatedAt = authorization.CreatedAt,
+            ExpiresAt = authorization.ExpiresAt,
+        };
+    }
 
     public async Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default)
     {
@@ -1060,46 +1223,40 @@ public class ReservaService : IReservaService
             summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value < toUtc);
         }
 
-        // Rediseño Fase A+B: el flag decide el ciclo de vida y, con el, que cuenta como "activa"
-        // y que vistas (tabs) hay disponibles.
-        var soldToSettleEnabled = settings.EnableSoldToSettleStates;
-        var filteredQuery = ApplyReservaView(summaryBaseQuery, query.View, soldToSettleEnabled);
+        // ADR-020: ciclo unico. Los tabs y contadores reflejan las etapas nuevas.
+        var filteredQuery = ApplyReservaView(summaryBaseQuery, query.View);
 
         var summary = new ReservaListSummaryDto
         {
+            QuotationCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Quotation, cancellationToken),
             BudgetCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Budget, cancellationToken),
-            // ActiveCount = "en gestion, no cerrada ni cancelada". Con el flag ON suma los dos
-            // estados nuevos (Sold = vendida activa, ToSettle = a liquidar, todavia pre-cierre).
-            // Con el flag OFF nunca hay filas en esos estados, asi que el resultado es identico a hoy.
+            InManagementCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.InManagement, cancellationToken),
+            // ActiveCount = "en gestion, no cerrada ni perdida ni cancelada" (InManagement reemplaza al viejo Sold).
             ActiveCount = await summaryBaseQuery.CountAsync(r =>
-                r.Status == EstadoReserva.Sold ||
+                r.Status == EstadoReserva.InManagement ||
                 r.Status == EstadoReserva.Confirmed ||
                 r.Status == EstadoReserva.Traveling ||
                 r.Status == EstadoReserva.ToSettle,
                 cancellationToken),
             ReservedCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Confirmed, cancellationToken),
             OperativeCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Traveling, cancellationToken),
-            // SoldCount / ToSettleCount: 0 con el flag OFF (no hay filas). Aditivos para la fase UI.
-            SoldCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Sold, cancellationToken),
             ToSettleCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.ToSettle, cancellationToken),
             ClosedCount = await summaryBaseQuery.CountAsync(r =>
                 r.Status == EstadoReserva.Closed ||
                 r.Status == EstadoReserva.Cancelled ||
                 r.Status == "Archived",
                 cancellationToken),
-            // Totales "activos" via patron NEGATIVO (todo lo que NO esta cerrado/cancelado/archivado).
-            // Fase D (rediseño Sold/ToSettle): este patron YA incluye Sold y ToSettle a proposito.
-            // Una reserva Sold cuenta como venta igual que la vieja Confirmed, y una ToSettle es
-            // pre-cierre (todavia activa). NO se reescribe a un conjunto positivo (evita regresiones).
-            // Con el flag OFF no hay filas en esos estados -> resultado identico al historico.
+            LostCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Lost, cancellationToken),
+            // Totales "activos" via patron NEGATIVO (todo lo que NO esta cerrado/cancelado/archivado/perdido).
+            // ADR-020: ahora excluimos Lost igual que Cancelled (una reserva Perdida nunca tuvo venta exigible).
             TotalSaleActive = await summaryBaseQuery
-                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != "Archived")
+                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived")
                 .SumAsync(r => (decimal?)r.TotalSale, cancellationToken) ?? 0m,
             TotalCostActive = await summaryBaseQuery
-                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != "Archived")
+                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived")
                 .SumAsync(r => (decimal?)r.TotalCost, cancellationToken) ?? 0m,
             TotalPendingBalance = await summaryBaseQuery
-                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != "Archived" && r.Balance > 0)
+                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived" && r.Balance > 0)
                 .SumAsync(r => (decimal?)r.Balance, cancellationToken) ?? 0m
         };
         summary.GrossProfit = summary.TotalSaleActive - summary.TotalCostActive;
@@ -1255,6 +1412,20 @@ public class ReservaService : IReservaService
         // B1.15 Fase 2a (Decision 4): mascara de costos para roles sin
         // cobranzas.see_cost. Admin bypass.
         await ApplyCostMaskingAsync(dto, CancellationToken.None);
+
+        // ADR-020 F4 (candado): indicador de "candado destrabado". El frontend muestra
+        // "destrabada por unos minutos" (en vez de "pedi autorizacion") cuando hay una autorizacion
+        // de edicion VIVA. "Viva" = ExpiresAt > ahora, mismo criterio que el guard del candado
+        // (ReservaEditAuthorizations, INV-020-05). Calculado, sin columna nueva.
+        var nowForAuth = DateTime.UtcNow;
+        var liveAuthExpiry = await _context.ReservaEditAuthorizations
+            .AsNoTracking()
+            .Where(a => a.ReservaId == file.Id && a.ExpiresAt > nowForAuth)
+            .OrderByDescending(a => a.ExpiresAt)
+            .Select(a => (DateTime?)a.ExpiresAt)
+            .FirstOrDefaultAsync();
+        dto.HasLiveEditAuthorization = liveAuthExpiry.HasValue;
+        dto.EditAuthorizationExpiresAt = liveAuthExpiry;
 
         return dto;
     }
@@ -1416,9 +1587,9 @@ public class ReservaService : IReservaService
                     ResponsibleUserName = responsibleUserName,
                     StartDate = request.StartDate,
                     Description = request.Description,
-                    Status = string.IsNullOrWhiteSpace(request.Status)
-                        ? EstadoReserva.Budget
-                        : request.Status
+                    // ADR-020 (D9 / INV-020-01): toda reserva nace en Cotizacion. El estado inicial
+                    // ya NO se puede elegir desde el request (el campo Status se elimino del DTO).
+                    Status = EstadoReserva.Quotation
                 };
                 
                 _context.Reservas.Add(file);
@@ -1607,7 +1778,10 @@ public class ReservaService : IReservaService
         var service = await _context.Servicios.FindAsync(new object[] { serviceId }, ct);
         if (service != null)
         {
-            await EnsureCanRemoveServiceAsync(service.ReservaId ?? 0, ct);
+            var confirmed = service.ConfirmedAt != null
+                || ServiceResolutionRules.IsOperatorConfirmed(service)
+                || ServiceResolutionRules.IsResolved(service);
+            await EnsureCanRemoveServiceAsync(service.ReservaId ?? 0, confirmed, service.Id, ct);
             _context.Servicios.Remove(service);
             var resId = service.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1619,7 +1793,10 @@ public class ReservaService : IReservaService
         var flight = await _context.FlightSegments.FindAsync(new object[] { serviceId }, ct);
         if (flight != null)
         {
-            await EnsureCanRemoveServiceAsync(flight.ReservaId, ct);
+            var confirmed = flight.ConfirmedAt != null
+                || ServiceResolutionRules.IsOperatorConfirmed(flight)
+                || ServiceResolutionRules.IsResolved(flight);
+            await EnsureCanRemoveServiceAsync(flight.ReservaId, confirmed, null, ct);
             _context.FlightSegments.Remove(flight);
             var resId = flight.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1631,7 +1808,10 @@ public class ReservaService : IReservaService
         var hotel = await _context.HotelBookings.FindAsync(new object[] { serviceId }, ct);
         if (hotel != null)
         {
-            await EnsureCanRemoveServiceAsync(hotel.ReservaId, ct);
+            var confirmed = hotel.ConfirmedAt != null
+                || ServiceResolutionRules.IsOperatorConfirmed(hotel)
+                || ServiceResolutionRules.IsResolved(hotel);
+            await EnsureCanRemoveServiceAsync(hotel.ReservaId, confirmed, null, ct);
             _context.HotelBookings.Remove(hotel);
             var resId = hotel.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1643,7 +1823,10 @@ public class ReservaService : IReservaService
         var transfer = await _context.TransferBookings.FindAsync(new object[] { serviceId }, ct);
         if (transfer != null)
         {
-            await EnsureCanRemoveServiceAsync(transfer.ReservaId, ct);
+            var confirmed = transfer.ConfirmedAt != null
+                || ServiceResolutionRules.IsOperatorConfirmed(transfer)
+                || ServiceResolutionRules.IsResolved(transfer);
+            await EnsureCanRemoveServiceAsync(transfer.ReservaId, confirmed, null, ct);
             _context.TransferBookings.Remove(transfer);
             var resId = transfer.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1655,7 +1838,10 @@ public class ReservaService : IReservaService
         var package = await _context.PackageBookings.FindAsync(new object[] { serviceId }, ct);
         if (package != null)
         {
-            await EnsureCanRemoveServiceAsync(package.ReservaId, ct);
+            var confirmed = package.ConfirmedAt != null
+                || ServiceResolutionRules.IsOperatorConfirmed(package)
+                || ServiceResolutionRules.IsResolved(package);
+            await EnsureCanRemoveServiceAsync(package.ReservaId, confirmed, null, ct);
             _context.PackageBookings.Remove(package);
             var resId = package.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1668,7 +1854,10 @@ public class ReservaService : IReservaService
         var assistance = await _context.AssistanceBookings.FindAsync(new object[] { serviceId }, ct);
         if (assistance != null)
         {
-            await EnsureCanRemoveServiceAsync(assistance.ReservaId, ct);
+            var confirmed = assistance.ConfirmedAt != null
+                || ServiceResolutionRules.IsOperatorConfirmed(assistance)
+                || ServiceResolutionRules.IsResolved(assistance);
+            await EnsureCanRemoveServiceAsync(assistance.ReservaId, confirmed, null, ct);
             _context.AssistanceBookings.Remove(assistance);
             var resId = assistance.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -1691,15 +1880,17 @@ public class ReservaService : IReservaService
     // La logica de capacidad pasajeros vs servicios vive en ReservaCapacityRules
     // (clase estatica compartida con ReservaLifecycleAutomationService).
 
-    private async Task EnsureCanRemoveServiceAsync(int reservaId, CancellationToken ct)
+    /// <summary>
+    /// ADR-020 (F5): valida que un servicio se pueda BORRAR. Manda el servicio: si fue confirmado por
+    /// el operador (<paramref name="serviceIsOperatorConfirmed"/>) no se borra, se cancela. El guard
+    /// vive en DeleteGuards (compartido con BookingService).
+    /// </summary>
+    private async Task EnsureCanRemoveServiceAsync(int reservaId, bool serviceIsOperatorConfirmed, int? genericServiceId, CancellationToken ct)
     {
-        // Reglas de borrado de servicios viven en DeleteGuards (compartidas con BookingService).
-        // GetServiceDeleteBlockReasonAsync incluye el state guard C26 (solo Budget) ademas
-        // de los guards historicos (pagos vivos, vouchers emitidos).
-        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(_context, reservaId, ct, _logger);
+        var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(
+            _context, reservaId, serviceIsOperatorConfirmed, genericServiceId, ct, _logger);
         if (blockReason != null)
         {
-            // Information: rechazo por estado/contenido. No hay riesgo fiscal en este nivel.
             _logger.LogInformation(
                 "RemoveServiceAsync rejected. ReservaId={ReservaId}. Reason={Reason}",
                 reservaId, blockReason);
@@ -1935,64 +2126,41 @@ public class ReservaService : IReservaService
         var file = await _context.Reservas.FindAsync(id);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-        await UpdateBalanceAsync(id);
+        // Refrescamos el saldo (sin disparar el motor de estados: estamos en una transicion MANUAL).
+        await RecalculateMoneyAsync(id);
         file = await _context.Reservas.FindAsync(id);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
-        // Capturamos el estado origen ANTES de la transicion para el rastro auditable (FIX 5).
+        // Estado origen ANTES de la transicion (para el rastro auditable).
         var fromStatus = file.Status;
 
-        // Rediseño Fase A+B (2026-05-30): el flag elige el ciclo de vida. Lo leemos ANTES del
-        // whitelist porque el set de estados aceptables depende del flag.
-        var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
-
-        // B1 del review (byte-identico con flag OFF): la whitelist de estados aceptables se gatea
-        // por el flag. Con OFF, Sold/ToSettle NO existen para el resto del sistema, asi que un POST
-        // directo con status="Sold"/"ToSettle" debe rebotar con el ArgumentException de siempre
-        // (igual que cualquier string desconocido). Con ON, se aceptan como string (que la transicion
-        // concreta sea legal lo decide despues la matriz forward nueva).
-        var validStatuses = settings.EnableSoldToSettleStates
-            ? new[]
-              {
-                  EstadoReserva.Budget, EstadoReserva.Sold, EstadoReserva.Confirmed,
-                  EstadoReserva.Traveling, EstadoReserva.ToSettle, EstadoReserva.Closed,
-                  EstadoReserva.Cancelled
-              }
-            : new[]
-              {
-                  EstadoReserva.Budget, EstadoReserva.Confirmed,
-                  EstadoReserva.Traveling, EstadoReserva.Closed,
-                  EstadoReserva.Cancelled
-              };
+        // ADR-020: whitelist de estados-destino aceptables via transicion MANUAL. Confirmed NO esta
+        // (solo el motor automatico lleva InManagement -> Confirmed; INV-020-02). Cualquier string
+        // fuera de esta lista (incluido el difunto "Sold") rebota con ArgumentException.
+        var validStatuses = new[]
+        {
+            EstadoReserva.Quotation, EstadoReserva.Budget, EstadoReserva.InManagement,
+            EstadoReserva.Traveling, EstadoReserva.ToSettle, EstadoReserva.Closed,
+            EstadoReserva.Lost, EstadoReserva.Cancelled
+        };
         if (!validStatuses.Contains(status)) throw new ArgumentException("Estado no válido");
 
-        if (settings.EnableSoldToSettleStates)
-        {
-            await ApplySoldToSettleTransitionAsync(file, id, status, settings);
+        await ApplyTransitionAsync(file, id, status);
 
-            // FIX 5 (A1): rastro auditable de las transiciones forward de la cadena nueva.
-            // Solo logueamos cuando hubo un cambio real de estado y NO es una cancelacion
-            // (la cancelacion tiene su propio flujo/auditoria). El camino clasico (flag OFF)
-            // NO se loguea: es deuda preexistente fuera de scope.
-            var isRealForwardChange =
-                !string.Equals(fromStatus, status, StringComparison.OrdinalIgnoreCase)
-                && status != EstadoReserva.Cancelled;
-            if (isRealForwardChange)
-            {
-                _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-                {
-                    ReservaId = id,
-                    FromStatus = fromStatus,
-                    ToStatus = status,
-                    Direction = "Forward",
-                    ByUserId = actorUserId,
-                    OccurredAt = DateTime.UtcNow
-                });
-            }
-        }
-        else
+        // ADR-020 (INV-020-06): toda transicion manual REAL escribe ReservaStatusChangeLog. El set
+        // idempotente (mismo estado, no-op en ApplyTransitionAsync) no genera log.
+        var isRealChange = !string.Equals(fromStatus, status, StringComparison.OrdinalIgnoreCase);
+        if (isRealChange)
         {
-            await ApplyClassicTransitionAsync(file, id, status, settings);
+            _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+            {
+                ReservaId = id,
+                FromStatus = fromStatus,
+                ToStatus = status,
+                Direction = "Forward",
+                ByUserId = actorUserId,
+                OccurredAt = DateTime.UtcNow
+            });
         }
 
         file.Status = status;
@@ -2002,122 +2170,98 @@ public class ReservaService : IReservaService
     }
 
     // ============================================================
-    // Rediseño Fase A+B: las transiciones del ciclo de vida estan partidas en dos metodos
-    // privados (clasico vs nuevo) + helpers de gate reutilizables. Cada metodo valida que
-    // la transicion sea legal contra su matriz forward y aplica los gates en el paso correcto.
-    // Ninguno hace SaveChanges; el caller (UpdateStatusAsync) persiste una sola vez.
+    // ADR-020: una sola funcion de transicion manual (murio la bifurcacion clasico/nuevo). Valida
+    // contra la matriz forward unica y aplica los gates en el paso correcto. NO hace SaveChanges:
+    // el caller (UpdateStatusAsync) persiste una sola vez.
     // ============================================================
 
     /// <summary>
-    /// Camino CLASICO (flag EnableSoldToSettleStates = OFF). Comportamiento byte-identico al
-    /// historico: Budget-&gt;Confirmed valida readiness, Cancelled es libre (lo maneja el flujo
-    /// de cancelacion), -&gt;Traveling valida capacidad + servicios + economico, -&gt;Closed exige
-    /// Balance == 0.
+    /// Aplica una transicion manual del ciclo unico (ADR-020): Quotation -> Budget -> InManagement
+    /// -> [Confirmed automatico] -> Traveling -> Closed, con ToSettle (desvio opcional) y Lost/
+    /// Cancelled laterales. Gates:
+    ///  - Quotation -&gt; Budget: ≥1 servicio cargado.
+    ///  - Quotation/Budget -&gt; Lost: sin pagos vivos (M4).
+    ///  - Budget -&gt; InManagement: readiness (≥1 servicio + normalizar a Solicitado + pasajeros nominales).
+    ///  - Confirmed -&gt; Traveling: capacidad + economico (los servicios ya estan resueltos: lo
+    ///    garantizo el motor para llegar a Confirmed).
+    ///  - {Traveling, ToSettle} -&gt; Closed: bloquea saldo pendiente + estampa ClosedAt.
+    ///  - {InManagement, Confirmed, Traveling, ToSettle} -&gt; Cancelled (B5): el gate "sin factura viva"
+    ///    + permisos corre en el wrapper publico; la matriz garantiza los estados de origen validos.
+    ///
+    /// Confirmed como destino NO esta en la matriz: solo el motor automatico lleva a Confirmed (INV-020-02).
     /// </summary>
-    private async Task ApplyClassicTransitionAsync(Reserva file, int id, string status, OperationalFinanceSettings settings)
+    private async Task ApplyTransitionAsync(Reserva file, int id, string status)
     {
-        // Defensa B1 (byte-identico con flag OFF): el camino clasico NO conoce Sold/ToSettle.
-        // El whitelist de UpdateStatusAsync ya los rechaza con el flag OFF, pero dejamos este
-        // rechazo explicito como ultima linea: si alguien llega aca con esos targets, abortamos
-        // en vez de escribir un estado que el resto del sistema (flag OFF) no entiende.
-        if (status == EstadoReserva.Sold || status == EstadoReserva.ToSettle)
-            throw new ArgumentException("Estado no válido");
+        // Set idempotente (mismo estado): no-op.
+        if (string.Equals(file.Status, status, StringComparison.OrdinalIgnoreCase))
+            return;
 
-        if (file.Status == EstadoReserva.Budget && status == EstadoReserva.Confirmed)
+        if (!AllowedForwardTransitions.TryGetValue(file.Status, out var allowedTargets)
+            || !allowedTargets.Contains(status, StringComparer.OrdinalIgnoreCase))
         {
-            // En el ciclo clasico, "confirmar" es vender: aca van los gates de readiness.
+            throw new InvalidOperationException(
+                $"No se puede pasar de {file.Status} a {status}. " +
+                $"Transiciones permitidas desde {file.Status}: " +
+                $"{(allowedTargets == null || allowedTargets.Length == 0 ? "(ninguna hacia adelante)" : string.Join(", ", allowedTargets))}.");
+        }
+
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
+
+        // Quotation -> Budget: exige al menos un servicio cargado.
+        if (file.Status == EstadoReserva.Quotation && status == EstadoReserva.Budget)
+        {
+            var hasServices = await HasServicesAsync(id);
+            if (!hasServices)
+                throw new InvalidOperationException(
+                    "No se puede pasar a Presupuesto sin al menos un servicio cargado. Agrega un servicio primero.");
+        }
+
+        // Quotation/Budget -> Lost: solo si NO hay pagos vivos (M4). El path legacy AddPaymentAsync
+        // no tiene gate de estado, asi que una cotizacion podria tener pagos cargados.
+        if (status == EstadoReserva.Lost)
+        {
+            var hasLivePayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted);
+            if (hasLivePayments)
+                throw new InvalidOperationException(
+                    "No se puede marcar como Perdida una reserva con pagos registrados. Elimina los pagos primero.");
+        }
+
+        // Budget -> InManagement: readiness (≥1 servicio + normalizar a Solicitado + pasajeros nominales).
+        if (file.Status == EstadoReserva.Budget && status == EstadoReserva.InManagement)
+        {
             await EnsureReadinessForSaleAsync(id);
         }
 
-        if (file.Status == EstadoReserva.Confirmed && status == EstadoReserva.Budget)
+        // Confirmed -> Traveling: capacidad + economico (servicios ya resueltos por el motor).
+        if (file.Status == EstadoReserva.Confirmed && status == EstadoReserva.Traveling)
         {
-            await EnsureCanRevertToBudgetAsync(id);
+            await EnsureCanStartTravelingAsync(file, id, settings, checkUnconfirmedServices: false);
         }
 
-        if (status == EstadoReserva.Traveling)
-        {
-            // En el ciclo clasico, pasar a Operativo valida TODO junto: capacidad, servicios
-            // sin confirmar Y economico.
-            await EnsureCanStartTravelingAsync(file, id, settings, checkUnconfirmedServices: true);
-        }
-
+        // {Traveling, ToSettle} -> Closed: bloquea saldo pendiente + estampa ClosedAt.
         if (status == EstadoReserva.Closed)
         {
             EnsureCanCloseAndStampClosedAt(file);
         }
-    }
 
-    /// <summary>
-    /// Camino NUEVO (flag EnableSoldToSettleStates = ON). Cadena
-    /// Budget -&gt; Sold -&gt; Confirmed -&gt; Traveling -&gt; Closed con gates relocalizados, y ToSettle
-    /// como DESVIO OPCIONAL colgando de Traveling:
-    ///  - Budget-&gt;Sold: readiness (≥1 servicio + normalizar a Solicitado + pasajeros nominales).
-    ///  - Sold-&gt;Confirmed: el operador confirmo los servicios (gate de servicios sin confirmar).
-    ///  - Confirmed-&gt;Traveling: capacidad + economico (sin re-chequear servicios sin confirmar:
-    ///    ya se garantizo en Sold-&gt;Confirmed).
-    ///  - Traveling-&gt;Closed: cierre por DEFAULT, Balance == 0 + ClosedAt (igual que el clasico).
-    ///  - Traveling-&gt;ToSettle: desvio OPCIONAL, sin gate de balance (es apartar para liquidar,
-    ///    no el cierre).
-    ///  - ToSettle-&gt;Closed: cierre manual desde la bandeja "A liquidar", Balance == 0 + ClosedAt.
-    ///
-    /// El salto directo Budget-&gt;Confirmed sigue PROHIBIDO (INV-SM-01): la matriz forward nueva
-    /// no lo lista. Traveling-&gt;Closed AHORA SI se permite (es el cierre por default).
-    /// </summary>
-    private async Task ApplySoldToSettleTransitionAsync(Reserva file, int id, string status, OperationalFinanceSettings settings)
-    {
-        // Set idempotente (mismo estado): no-op, lo dejamos pasar sin validar la matriz.
-        // Reproduce el comportamiento del ciclo clasico, donde poner el mismo estado no rompia.
-        if (string.Equals(file.Status, status, StringComparison.OrdinalIgnoreCase))
-            return;
-
-        // Cancelled se permite desde cualquier estado (mismo criterio que el ciclo clasico:
-        // la cancelacion real la maneja su propio flujo; aca solo no bloqueamos el set).
+        // Cancelled manual (B5): GATE FISCAL en el camino COMPARTIDO. Antes vivia solo en el wrapper
+        // publico UpdateStatusAsync(string,...), asi que el overload int (usado por tests y posibles
+        // callers internos) lo salteaba: una reserva con factura CAE viva podia cancelarse sin anular,
+        // dejando un comprobante fiscal valido para una reserva inexistente. Ahora corre aca, sobre el
+        // unico camino de transicion. Los PERMISOS (reservas.cancel / cancel_with_payment) siguen en el
+        // wrapper publico porque dependen del actor y del HttpContext (son authz, no integridad fiscal).
         if (status == EstadoReserva.Cancelled)
-            return;
-
-        // Validacion de matriz: la transicion (from -> to) tiene que estar en la matriz nueva.
-        // Si no esta, es ilegal (ej. Budget->Confirmed directo, Traveling->Closed directo).
-        if (!AllowedForwardTransitionsSoldToSettle.TryGetValue(file.Status, out var allowedTargets)
-            || !allowedTargets.Contains(status, StringComparer.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException(
-                $"No se puede pasar de {file.Status} a {status} con el ciclo de estados nuevo. " +
-                $"Transiciones permitidas desde {file.Status}: " +
-                $"{(allowedTargets == null || allowedTargets.Length == 0 ? "(ninguna hacia adelante)" : string.Join(", ", allowedTargets))}. " +
-                "Recorda que el ciclo nuevo es Presupuesto -> Vendida -> Confirmada -> En viaje -> A liquidar -> Finalizada (de a un paso).");
-        }
-
-        if (file.Status == EstadoReserva.Budget && status == EstadoReserva.Sold)
-        {
-            // Readiness se mueve aca: vender exige servicios + pasajeros nominales.
-            await EnsureReadinessForSaleAsync(id);
-        }
-
-        if (file.Status == EstadoReserva.Sold && status == EstadoReserva.Confirmed)
-        {
-            // El operador confirma: el unico gate aca es "no queden servicios sin confirmar".
-            var unconfirmedReason = await ReservaCapacityRules.GetUnconfirmedServicesBlockReasonAsync(_context, id, CancellationToken.None);
-            if (!string.IsNullOrWhiteSpace(unconfirmedReason))
-                throw new InvalidOperationException($"No se puede confirmar con el operador: {unconfirmedReason}");
-        }
-
-        if (file.Status == EstadoReserva.Confirmed && status == EstadoReserva.Traveling)
-        {
-            // Pasar a En viaje valida capacidad + economico, PERO ya NO re-chequea servicios
-            // sin confirmar (eso quedo garantizado en Sold->Confirmed).
-            await EnsureCanStartTravelingAsync(file, id, settings, checkUnconfirmedServices: false);
-        }
-
-        // Traveling -> ToSettle: sin gate. Es el desvio OPCIONAL (apartar para liquidar con el
-        // operador), no el cierre. La reserva queda en la bandeja "A liquidar" hasta cierre manual.
-
-        // El cierre real (Balance == 0 + ClosedAt) corre tanto en el cierre por DEFAULT
-        // (Traveling->Closed) como en el cierre desde la bandeja de liquidacion (ToSettle->Closed).
-        // Ambos comparten el mismo gate: no se puede cerrar con saldo pendiente.
-        if (status == EstadoReserva.Closed
-            && (file.Status == EstadoReserva.Traveling || file.Status == EstadoReserva.ToSettle))
-        {
-            EnsureCanCloseAndStampClosedAt(file);
+            var hasLiveCae = await _context.Invoices.AnyAsync(
+                i => i.ReservaId == id
+                    && !CreditNoteComprobanteTypes.Contains(i.TipoComprobante) // excluye NC (nace para anular)
+                    && !string.IsNullOrEmpty(i.CAE)
+                    && i.AnnulmentStatus != AnnulmentStatus.Succeeded);
+            if (hasLiveCae)
+            {
+                throw new InvalidOperationException(
+                    "La reserva tiene facturas con CAE vigentes. Debe anularlas (se emitira Nota de Credito) antes de cancelar la reserva.");
+            }
         }
     }
 
@@ -2164,20 +2308,51 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
-    /// Gate "volver a Presupuesto": no se puede si hay pagos, facturas o servicios cargados.
-    /// En el ciclo clasico corre en Confirmed-&gt;Budget (via UpdateStatusAsync); el revert por
-    /// el endpoint dedicado (RevertStatusAsync) tiene su propia copia del mismo criterio.
+    /// ADR-020 (M5): gate UNIFICADO "volver a Presupuesto" (InManagement -&gt; Budget). UNA sola copia
+    /// llamada tanto desde RevertStatusAsync como desde ApplyTransitionAsync. No se puede volver a
+    /// Presupuesto si hay pagos vivos, facturas, o algun servicio RESUELTO (si algo ya se confirmo/
+    /// resolvio con un operador, el camino es cancelar ese servicio, no retroceder el file).
+    ///
+    /// <para>El viejo check "tiene servicios cargados" MURIO: en el ciclo nuevo
+    /// Budget -&gt; InManagement exige ≥1 servicio, asi que ese check impediria volver para siempre.</para>
     /// </summary>
-    private async Task EnsureCanRevertToBudgetAsync(int id)
+    private async Task EnsureCanRevertToBudgetAsync(int id, CancellationToken ct = default)
     {
-        var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted);
-        if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. ElimÃ­nalos primero.");
+        var hasPayments = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted, ct);
+        if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. Eliminalos primero.");
 
-        var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id);
-        if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de CrÃ©dito).");
+        var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id, ct);
+        if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Credito).");
 
-        var hasServices = await HasServicesAsync(id);
-        if (hasServices) throw new InvalidOperationException("No se puede volver a Presupuesto porque tiene servicios cargados. ElimÃ­nalos primero.");
+        var hasResolved = await HasResolvedServicesAsync(id, ct);
+        if (hasResolved) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay servicios ya resueltos/confirmados con el operador. Cancela esos servicios primero.");
+    }
+
+    /// <summary>
+    /// ADR-020: indica si la reserva tiene al menos un servicio RESUELTO
+    /// (<see cref="ServiceResolutionRules"/>.IsResolved). Carga las 6 colecciones (chicas) y evalua
+    /// en memoria porque la regla de resolucion (sobre todo el aereo: TicketIssuedAt, y los genericos:
+    /// mapeo de texto) no es traducible a SQL de forma uniforme.
+    /// </summary>
+    private async Task<bool> HasResolvedServicesAsync(int id, CancellationToken ct)
+    {
+        var reserva = await _context.Reservas
+            .AsNoTracking()
+            .Include(r => r.FlightSegments)
+            .Include(r => r.HotelBookings)
+            .Include(r => r.TransferBookings)
+            .Include(r => r.PackageBookings)
+            .Include(r => r.AssistanceBookings)
+            .Include(r => r.Servicios)
+            .FirstOrDefaultAsync(r => r.Id == id, ct);
+        if (reserva == null) return false;
+
+        return reserva.FlightSegments.Any(ServiceResolutionRules.IsResolved)
+            || reserva.HotelBookings.Any(ServiceResolutionRules.IsResolved)
+            || reserva.TransferBookings.Any(ServiceResolutionRules.IsResolved)
+            || reserva.PackageBookings.Any(ServiceResolutionRules.IsResolved)
+            || reserva.AssistanceBookings.Any(ServiceResolutionRules.IsResolved)
+            || reserva.Servicios.Any(ServiceResolutionRules.IsResolved);
     }
 
     /// <summary>
@@ -2243,7 +2418,19 @@ public class ReservaService : IReservaService
         if (!string.IsNullOrWhiteSpace(archiveBlock))
             throw new InvalidOperationException(archiveBlock);
 
+        // ADR-020 F6 (M7): rastro auditable ADITIVO del archivado (este path escribe Status por fuera
+        // de UpdateStatusAsync/RevertStatusAsync). Solo se agrega el log; el flujo no se reestructura.
+        var fromStatus = file.Status;
         file.Status = "Archived";
+        _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+        {
+            ReservaId = file.Id,
+            FromStatus = fromStatus,
+            ToStatus = "Archived",
+            Direction = "Forward",
+            Reason = "Archivado (soft-delete)",
+            OccurredAt = DateTime.UtcNow
+        });
         await _context.SaveChangesAsync();
         return file;
     }
@@ -2307,6 +2494,23 @@ public class ReservaService : IReservaService
 
     public async Task UpdateBalanceAsync(int reservaId)
     {
+        await RecalculateMoneyAsync(reservaId);
+
+        // ADR-020 F3 (contrato M2): el motor de estados corre como un SaveChanges SEPARADO
+        // inmediatamente despues del recalculo de saldo (post-commit). Como TODOS los chokepoints de
+        // mutacion de servicio (BookingService para los 5 tipos + Add/Update/Remove del generico) ya
+        // llaman a UpdateBalanceAsync, enchufar el motor aca lo cubre todo sin tocar cada call-site.
+        if (_autoStateService != null)
+            await _autoStateService.EvaluateAndApplyAsync(reservaId);
+    }
+
+    /// <summary>
+    /// Recalculo de saldo SOLO (sin motor de estados). Lo usa UpdateStatusAsync para refrescar el
+    /// saldo antes de evaluar el gate de cierre, sin disparar transiciones automaticas en medio de
+    /// una transicion manual.
+    /// </summary>
+    private async Task RecalculateMoneyAsync(int reservaId)
+    {
         var file = await _context.Reservas
             .Include(f => f.Payments)
             .Include(f => f.Servicios)
@@ -2319,13 +2523,12 @@ public class ReservaService : IReservaService
 
         if (file == null) return;
 
-        // P1 refactor (behavior-preserving): la matematica del saldo (venta/costo/pagado/saldo)
-        // vive ahora en el calculador de dominio ReservaMoneyCalculator, unica fuente de la cuenta.
-        // Aca solo cargamos los Includes (arriba), calculamos y persistimos. Los numeros son
-        // identicos a la version inline anterior.
+        // La matematica del saldo vive en el calculador de dominio ReservaMoneyCalculator, unica
+        // fuente de la cuenta. Aca cargamos los Includes (arriba), calculamos y persistimos.
         var money = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(file);
 
         file.TotalSale = money.TotalSale;
+        file.ConfirmedSale = money.ConfirmedSale; // ADR-020: venta confirmada (alimenta el saldo)
         file.TotalCost = money.TotalCost;
         file.TotalPaid = money.TotalPaid;
         file.Balance = money.Balance;
@@ -2393,34 +2596,30 @@ public class ReservaService : IReservaService
             (r.Payer != null && r.Payer.FullName.ToLower().Contains(normalized)));
     }
 
-    private static IQueryable<Reserva> ApplyReservaView(IQueryable<Reserva> query, string? view, bool soldToSettleEnabled)
+    // ADR-020: claves de tab del ciclo unico en kebab-case. La clave "reserved" historica se renombro
+    // a "confirmed" (el frontend que mandaba tab=reserved se actualiza en F3).
+    private static IQueryable<Reserva> ApplyReservaView(IQueryable<Reserva> query, string? view)
     {
         return (view ?? "active").Trim().ToLowerInvariant() switch
         {
+            "quotation" => query.Where(r => r.Status == EstadoReserva.Quotation),
             "budget" => query.Where(r => r.Status == EstadoReserva.Budget),
-            // Rediseño Fase A+B: vistas dedicadas para los estados nuevos. Con el flag OFF
-            // estas vistas devuelven 0 filas (nadie esta en esos estados) y no se ofrecen en
-            // la UI; con el flag ON filtran correctamente.
-            "sold" => query.Where(r => r.Status == EstadoReserva.Sold),
+            "in-management" => query.Where(r => r.Status == EstadoReserva.InManagement),
+            "confirmed" => query.Where(r => r.Status == EstadoReserva.Confirmed),
+            "traveling" => query.Where(r => r.Status == EstadoReserva.Traveling),
             "to-settle" => query.Where(r => r.Status == EstadoReserva.ToSettle),
-            "reserved" => query.Where(r => r.Status == EstadoReserva.Confirmed),
-            "operative" => query.Where(r => r.Status == EstadoReserva.Traveling),
             "closed" => query.Where(r =>
                 r.Status == EstadoReserva.Closed ||
                 r.Status == EstadoReserva.Cancelled),
+            "lost" => query.Where(r => r.Status == EstadoReserva.Lost),
             "archived" => query.Where(r => r.Status == "Archived"),
-            // "active" = todo lo que esta en gestion (ni Presupuesto, que tiene su propio tab,
-            // ni cerrada/cancelada/archivada). Con el flag ON suma Sold y ToSettle; con el flag
-            // OFF nunca hay filas en esos estados, asi que el resultado es identico a hoy
-            // (Confirmed + Traveling).
-            _ when soldToSettleEnabled => query.Where(r =>
-                r.Status == EstadoReserva.Sold ||
+            // "active" (default) = todo lo que esta en gestion activa (ni Cotizacion/Presupuesto/Perdido,
+            // ni cerrada/cancelada/archivada): En gestion + Confirmada + En viaje + A liquidar.
+            _ => query.Where(r =>
+                r.Status == EstadoReserva.InManagement ||
                 r.Status == EstadoReserva.Confirmed ||
                 r.Status == EstadoReserva.Traveling ||
-                r.Status == EstadoReserva.ToSettle),
-            _ => query.Where(r =>
-                r.Status == EstadoReserva.Confirmed ||
-                r.Status == EstadoReserva.Traveling)
+                r.Status == EstadoReserva.ToSettle)
         };
     }
 

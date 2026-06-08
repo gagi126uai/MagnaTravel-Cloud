@@ -15,17 +15,16 @@ const emptyPage = {
   hasPreviousPage: false,
   hasNextPage: false,
   summary: {
+    // ADR-020: ciclo unico. Cada campo corresponde a un estado del backend.
+    quotationCount: 0,
     budgetCount: 0,
+    inManagementCount: 0,
     activeCount: 0,
     reservedCount: 0,
     operativeCount: 0,
-    closedCount: 0,
-    // Conteos de los estados nuevos (ciclo extendido, flag EnableSoldToSettleStates).
-    // El backend los manda en 0 cuando el flag esta OFF; el frontend los usa
-    // para mostrar las pestanas nuevas. Si el backend es viejo (no manda estos campos),
-    // el fallback a 0 garantiza que no se rompa nada.
-    soldCount: 0,
     toSettleCount: 0,
+    closedCount: 0,
+    lostCount: 0,
     totalSaleActive: 0,
     totalCostActive: 0,
     totalPendingBalance: 0,
@@ -168,14 +167,16 @@ export function useReservas() {
     handleArchive,
     databaseUnavailable,
     tabCounts: {
+      // ADR-020: todos los estados del ciclo unico, sin flags.
+      quotation: summary.quotationCount || 0,
       budget: summary.budgetCount || 0,
+      inManagement: summary.inManagementCount || 0,
       active: summary.activeCount || 0,
       reserved: summary.reservedCount || 0,
       operative: summary.operativeCount || 0,
-      closed: summary.closedCount || 0,
-      // Tabs del ciclo extendido. Solo se usan si el flag esta ON.
-      sold: summary.soldCount || 0,
       toSettle: summary.toSettleCount || 0,
+      closed: summary.closedCount || 0,
+      lost: summary.lostCount || 0,
     },
     stats: {
       budgetCount: summary.budgetCount || 0,

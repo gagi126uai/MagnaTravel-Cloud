@@ -15,6 +15,15 @@ public static class Permissions
     public const string ReservasCancelWithPayment = "reservas.cancel_with_payment";
     public const string ReservasDiscountAboveThreshold = "reservas.discount_above_threshold";
 
+    /// <summary>
+    /// ADR-020 F4 (2026-06-07): autorizar la edicion de una reserva que esta bajo candado
+    /// (Confirmada en adelante). Sin este permiso, un usuario que intenta editar una reserva
+    /// confirmada recibe 409 y debe pedir autorizacion a alguien que lo tenga. Quien lo tiene
+    /// se auto-autoriza (registrado igual). Default <b>solo Admin</b> — riesgo: levanta el
+    /// candado que protege una reserva ya confirmada/operativa.
+    /// </summary>
+    public const string ReservasAuthorizeLockedEdit = "reservas.authorize_locked_edit";
+
     // Vouchers
     public const string VouchersGenerate = "vouchers.generate";
     public const string VouchersIssue = "vouchers.issue";
@@ -131,6 +140,8 @@ public static class Permissions
         {
             ReservasView, ReservasEdit, ReservasDelete,
             ReservasViewAll, ReservasCancel, ReservasCancelWithPayment, ReservasDiscountAboveThreshold,
+            // ADR-020 F4: autorizar edicion bajo candado (Confirmada en adelante).
+            ReservasAuthorizeLockedEdit,
             // FC1.2.1 (BR-V2-01): permission del modulo cancelacion/refund expuesto en UI Reservas.
             CancellationsForceArcaConfirmation,
             // ADR-013: clasificar penalidad como ingreso propio (dispara ND fiscal).

@@ -11,24 +11,32 @@ namespace TravelApi.Domain.Reservations;
 /// </summary>
 public sealed class ReservaMoneySummary
 {
-    /// <summary>Suma de SalePrice de los servicios cuyo estado cuenta para el saldo.</summary>
+    /// <summary>Suma de SalePrice de los servicios NO cancelados (valor comercial del presupuesto).</summary>
     public decimal TotalSale { get; }
 
-    /// <summary>Suma de NetCost de los servicios cuyo estado cuenta para el saldo.</summary>
+    /// <summary>
+    /// ADR-020: suma de SalePrice de los servicios RESUELTOS (ServiceResolutionRules.IsResolved).
+    /// Es la deuda EXIGIBLE al cliente; alimenta el saldo.
+    /// </summary>
+    public decimal ConfirmedSale { get; }
+
+    /// <summary>Suma de NetCost de los servicios NO cancelados.</summary>
     public decimal TotalCost { get; }
 
     /// <summary>Suma de los pagos vivos (Status != "Cancelled" y no borrados).</summary>
     public decimal TotalPaid { get; }
 
     /// <summary>
-    /// Saldo del cliente. Regla historica: es TotalSale - TotalPaid (NO usa TotalCost;
-    /// el costo es lo que la agencia le paga al proveedor, no afecta lo que debe el cliente).
+    /// Saldo del cliente. ADR-020: <c>ConfirmedSale - TotalPaid</c> (antes era TotalSale - TotalPaid).
+    /// Un servicio no resuelto no genera deuda; puede quedar negativo (saldo a favor) si el cliente
+    /// pago una sena antes de que se confirme/resuelva el servicio.
     /// </summary>
     public decimal Balance { get; }
 
-    public ReservaMoneySummary(decimal totalSale, decimal totalCost, decimal totalPaid, decimal balance)
+    public ReservaMoneySummary(decimal totalSale, decimal confirmedSale, decimal totalCost, decimal totalPaid, decimal balance)
     {
         TotalSale = totalSale;
+        ConfirmedSale = confirmedSale;
         TotalCost = totalCost;
         TotalPaid = totalPaid;
         Balance = balance;

@@ -391,6 +391,11 @@ public class BookingCancellationServicePartialCreditNoteTests
                 It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>(),
                 It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<int?>()),
             Times.Once);
+
+        // ADR-020 F6 (M7): este path escribe Reserva.Status por fuera de UpdateStatusAsync;
+        // ahora deja rastro auditable en ReservaStatusChangeLog (sitio :821 de la cancelacion).
+        Assert.Contains(ctx.ReservaStatusChangeLogs,
+            l => l.ToStatus == EstadoReserva.PendingOperatorRefund);
     }
 
     // ============================================================
@@ -801,6 +806,11 @@ public class BookingCancellationServicePartialCreditNoteTests
 
         // El approval se consume.
         approvalMock.Verify(a => a.MarkConsumedAsync(approvalId, It.IsAny<CancellationToken>()), Times.Once);
+
+        // ADR-020 F6 (M7): este path (FC1.3 Fase 1 fallback) tambien escribe Reserva.Status por fuera
+        // de la maquina; ahora queda en ReservaStatusChangeLog (sitio :2921 de la cancelacion).
+        Assert.Contains(ctx.ReservaStatusChangeLogs,
+            l => l.ToStatus == EstadoReserva.PendingOperatorRefund);
     }
 
     // ============================================================

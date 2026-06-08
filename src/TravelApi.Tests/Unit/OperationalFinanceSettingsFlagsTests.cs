@@ -76,26 +76,6 @@ public class OperationalFinanceSettingsFlagsTests
     // ============================================================
 
     [Fact]
-    public async Task UpdateAsync_OmittedSoldToSettleFlag_DoesNotOverwriteCurrentValue()
-    {
-        await using var db = BuildDbContext();
-        // Estado actual: el admin ya prendio el ciclo extendido.
-        await SeedSettingsAsync(db, s => s.EnableSoldToSettleStates = true);
-        var service = new OperationalFinanceSettingsService(db);
-
-        // El PUT NO incluye EnableSoldToSettleStates (queda null).
-        var request = BaseRequest();
-        Assert.Null(request.EnableSoldToSettleStates);
-
-        var result = await service.UpdateAsync(request, CancellationToken.None);
-
-        // El valor previo (true) sigue intacto: omitir != apagar.
-        Assert.True(result.EnableSoldToSettleStates);
-        var persisted = await db.OperationalFinanceSettings.SingleAsync();
-        Assert.True(persisted.EnableSoldToSettleStates);
-    }
-
-    [Fact]
     public async Task UpdateAsync_OmittedDebitNoteFlag_DoesNotOverwriteCurrentValue()
     {
         await using var db = BuildDbContext();
@@ -215,38 +195,33 @@ public class OperationalFinanceSettingsFlagsTests
         var service = new OperationalFinanceSettingsService(db);
 
         var request = BaseRequest();
-        request.EnableSoldToSettleStates = true;
         request.EnableCancellationDebitNote = true;
 
         var result = await service.UpdateAsync(request, CancellationToken.None);
 
-        Assert.True(result.EnableSoldToSettleStates);
         Assert.True(result.EnableCancellationDebitNote);
 
         var persisted = await db.OperationalFinanceSettings.SingleAsync();
-        Assert.True(persisted.EnableSoldToSettleStates);
         Assert.True(persisted.EnableCancellationDebitNote);
     }
 
     /// <summary>
-    /// El GET tambien expone los dos flags nuevos (no solo el PUT). Asegura que
-    /// la pantalla de Configuracion los pueda mostrar como toggles.
+    /// El GET expone el flag de ND (no solo el PUT). Asegura que la pantalla de
+    /// Configuracion lo pueda mostrar como toggle.
     /// </summary>
     [Fact]
-    public async Task GetAsync_ExposesBothNewFlags()
+    public async Task GetAsync_ExposesDebitNoteFlag()
     {
         await using var db = BuildDbContext();
         await SeedSettingsAsync(db, s =>
         {
             s.EnableNewCancellationFlow = true;
-            s.EnableSoldToSettleStates = true;
             s.EnableCancellationDebitNote = true;
         });
         var service = new OperationalFinanceSettingsService(db);
 
         var dto = await service.GetAsync(CancellationToken.None);
 
-        Assert.True(dto.EnableSoldToSettleStates);
         Assert.True(dto.EnableCancellationDebitNote);
     }
 }

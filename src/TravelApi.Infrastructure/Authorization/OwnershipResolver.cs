@@ -58,6 +58,12 @@ public sealed class OwnershipResolver : IOwnershipResolver
             OwnedEntity.BookingCancellation => await ResolveBookingCancellationResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.ClientCreditEntry => await ResolveClientCreditEntryResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.Attachment => await ResolveAttachmentResponsibleAsync(publicId, legacyId, cancellationToken),
+            // ADR-020 (2026-06-08): servicios tipados -> Reserva.ResponsibleUserId.
+            OwnedEntity.FlightSegment => await ResolveFlightResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.HotelBooking => await ResolveHotelResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.TransferBooking => await ResolveTransferResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.PackageBooking => await ResolvePackageResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.AssistanceBooking => await ResolveAssistanceResponsibleAsync(publicId, legacyId, cancellationToken),
             _ => null,
         };
 
@@ -273,6 +279,70 @@ public sealed class OwnershipResolver : IOwnershipResolver
         }
         // ReservaAttachment.Reserva es la reserva padre (FK ReservaId NOT NULL en el modelo);
         // el null-check defiende contra una query incompleta, igual que Voucher.
+        return query
+            .Where(a => a.Reserva != null)
+            .Select(a => a.Reserva!.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    // ADR-020 (2026-06-08): resolvers de los 5 servicios tipados. Todos siguen el mismo patron
+    // que ResolveServicioResponsibleAsync (servicio generico): servicio -> Reserva.ResponsibleUserId.
+    // El PATCH /status de cada servicio se identifica por el id del servicio, no por reservaId.
+
+    private Task<string?> ResolveFlightResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.FlightSegments.AsNoTracking().AsQueryable();
+        query = publicId.HasValue
+            ? query.Where(f => f.PublicId == publicId.Value)
+            : query.Where(f => f.Id == legacyId!.Value);
+        return query
+            .Where(f => f.Reserva != null)
+            .Select(f => f.Reserva!.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private Task<string?> ResolveHotelResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.HotelBookings.AsNoTracking().AsQueryable();
+        query = publicId.HasValue
+            ? query.Where(h => h.PublicId == publicId.Value)
+            : query.Where(h => h.Id == legacyId!.Value);
+        return query
+            .Where(h => h.Reserva != null)
+            .Select(h => h.Reserva!.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private Task<string?> ResolveTransferResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.TransferBookings.AsNoTracking().AsQueryable();
+        query = publicId.HasValue
+            ? query.Where(t => t.PublicId == publicId.Value)
+            : query.Where(t => t.Id == legacyId!.Value);
+        return query
+            .Where(t => t.Reserva != null)
+            .Select(t => t.Reserva!.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private Task<string?> ResolvePackageResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.PackageBookings.AsNoTracking().AsQueryable();
+        query = publicId.HasValue
+            ? query.Where(p => p.PublicId == publicId.Value)
+            : query.Where(p => p.Id == legacyId!.Value);
+        return query
+            .Where(p => p.Reserva != null)
+            .Select(p => p.Reserva!.ResponsibleUserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private Task<string?> ResolveAssistanceResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.AssistanceBookings.AsNoTracking().AsQueryable();
+        query = publicId.HasValue
+            ? query.Where(a => a.PublicId == publicId.Value)
+            : query.Where(a => a.Id == legacyId!.Value);
         return query
             .Where(a => a.Reserva != null)
             .Select(a => a.Reserva!.ResponsibleUserId)

@@ -16,13 +16,11 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// C26 — Solo se pueden borrar servicios (Hotel/Transfer/Package/Flight/generico)
-/// si la Reserva padre esta en Budget. En cualquier otro estado hay que cancelar
-/// con el proveedor primero (cambiar Status del servicio a Cancelado).
-///
-/// Cubre las dos rutas que terminan ejecutando el guard:
-///  - BookingService.DeleteHotel/Transfer/Package/Flight (cuatro tipos especificos).
-///  - ReservaService.RemoveServiceAsync (servicio generico — quinto tipo).
+/// ADR-020 F5 — Borrar vs cancelar manda EL SERVICIO (el viejo guard reserva-level C26 murio).
+/// Un servicio NUNCA confirmado por el operador se BORRA (en cualquier etapa de la reserva); uno
+/// confirmado solo se CANCELA. Se conserva el bloqueo por voucher emitido y por pago soft-deleted
+/// vinculado al servicio generico. El bloqueo generico "la reserva tiene pagos" YA NO aplica al
+/// borrado de un servicio nunca-confirmado.
 /// </summary>
 public class BookingServiceDeleteTests
 {
@@ -102,12 +100,14 @@ public class BookingServiceDeleteTests
         Assert.Equal(0, await context.HotelBookings.CountAsync());
     }
 
+    // ADR-020 F5: un servicio CONFIRMADO por el operador no se borra (manda el servicio, no la
+    // reserva). El estado de la reserva es irrelevante para esta regla.
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
     [InlineData(EstadoReserva.Traveling)]
     [InlineData(EstadoReserva.Closed)]
     [InlineData(EstadoReserva.Cancelled)]
-    public async Task DeleteHotelAsync_NotBudget_Throws(string status)
+    public async Task DeleteHotelAsync_ServiceConfirmed_Throws(string status)
     {
         await using var context = CreateContext();
         await SeedReservaAsync(context, status);
@@ -123,7 +123,7 @@ public class BookingServiceDeleteTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.DeleteHotelAsync(1, 11, CancellationToken.None));
-        Assert.Contains("reserva esta en estado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("confirmado con el operador", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await context.HotelBookings.CountAsync());
     }
 
@@ -164,7 +164,7 @@ public class BookingServiceDeleteTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.DeleteTransferAsync(1, 21, CancellationToken.None));
-        Assert.Contains("Cancelá", ex.Message);
+        Assert.Contains("Cancelalo", ex.Message);
         Assert.Equal(1, await context.TransferBookings.CountAsync());
     }
 
@@ -229,29 +229,36 @@ public class BookingServiceDeleteTests
         Assert.Equal(0, await context.FlightSegments.CountAsync());
     }
 
+    // ADR-020 B4: un aereo con PNR confirmado (HK) NO se borra aunque NO tenga ticket emitido — el
+    // compromiso con el consolidador ya existe. Solo se cancela.
     [Fact]
-    public async Task DeleteFlightAsync_OnConfirmed_Throws()
+    public async Task DeleteFlightAsync_PnrConfirmedWithoutTicket_Throws()
     {
         await using var context = CreateContext();
         await SeedReservaAsync(context, EstadoReserva.Confirmed);
         context.FlightSegments.Add(new FlightSegment
         {
-            Id = 41, ReservaId = 1, AirlineCode = "AR", FlightNumber = "1234", Status = "Emitido",
+            Id = 41, ReservaId = 1, AirlineCode = "AR", FlightNumber = "1234", Status = "HK",
+            TicketIssuedAt = null, // PNR confirmado pero SIN ticket emitido
             DepartureTime = DateTime.UtcNow.AddDays(15), ArrivalTime = DateTime.UtcNow.AddDays(15).AddHours(2)
         });
         await context.SaveChangesAsync();
 
         var service = CreateService(context, CreateMapper());
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.DeleteFlightAsync(1, 41, CancellationToken.None));
+        Assert.Contains("confirmado con el operador", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await context.FlightSegments.CountAsync());
     }
 
     // ===== Regression: pre-existing guards (payments / issued voucher) =====
 
+    // ADR-020 F5 (relajacion): el bloqueo generico "la reserva tiene pagos vivos" YA NO aplica al
+    // borrado de un servicio NUNCA confirmado. Los pagos son de la reserva, no del servicio; el
+    // recalculo de saldo absorbe el cambio. (Sigue aplicando al borrado de la RESERVA completa.)
     [Fact]
-    public async Task DeleteHotelAsync_OnBudgetWithLivePayment_Throws()
+    public async Task DeleteHotelAsync_NeverConfirmedWithReservaPayment_Allowed()
     {
         await using var context = CreateContext();
         await SeedReservaAsync(context, EstadoReserva.Budget);
@@ -265,10 +272,9 @@ public class BookingServiceDeleteTests
 
         var service = CreateService(context, CreateMapper());
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.DeleteHotelAsync(1, 12, CancellationToken.None));
-        Assert.Contains("pagos", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, await context.HotelBookings.CountAsync());
+        await service.DeleteHotelAsync(1, 12, CancellationToken.None);
+
+        Assert.Equal(0, await context.HotelBookings.CountAsync());
     }
 
     [Fact]
@@ -299,13 +305,14 @@ public class BookingServiceDeleteTests
 
     // ===== Cascade Servicio→Payments con soft-deleted (review hallazgo Security ALTO) =====
 
+    // ADR-020 F5: el guard de "pago soft-deleted vinculado" es ahora POR SERVICIO. Un pago vinculado
+    // a un servicio GENERICO (id 50) NO bloquea el borrado de un HOTEL distinto (que no tiene ese link):
+    // borrar el hotel no cascadea sobre ese pago. El hotel nunca-confirmado se borra; el servicio
+    // generico y su pago soft-deleted quedan intactos. (El guard sigue bloqueando el borrado del
+    // PROPIO servicio generico vinculado — cubierto en ReservaLifecycleTests.)
     [Fact]
-    public async Task DeleteServiceAsync_OnBudgetWithSoftDeletedPaymentLinkedToService_Throws()
+    public async Task DeleteHotelAsync_WithSoftDeletedPaymentLinkedToOtherGenericService_Allowed()
     {
-        // AppDbContext: ServicioReserva→Payments tiene DeleteBehavior.Cascade, asi que un
-        // Payment soft-deleted con ServicioReservaId apuntando a un servicio de la reserva
-        // se hard-borraria por DB cascade, saltandose el query filter !IsDeleted. Riesgo
-        // fiscal/contable — el guard debe bloquear hasta restaurar/reasignar el pago.
         await using var context = CreateContext();
         await SeedReservaAsync(context, EstadoReserva.Budget);
         context.Servicios.Add(new ServicioReserva
@@ -321,7 +328,6 @@ public class BookingServiceDeleteTests
             Status = "Paid", Method = "Transfer", PaidAt = DateTime.UtcNow.AddDays(-2),
             EntryType = PaymentEntryTypes.Payment
         });
-        // HotelBooking que dispara EnsureCanRemoveServiceAsync (guard a nivel reserva).
         context.HotelBookings.Add(new HotelBooking
         {
             Id = 14, ReservaId = 1, HotelName = "Hotel", Status = "Solicitado",
@@ -331,13 +337,10 @@ public class BookingServiceDeleteTests
 
         var service = CreateService(context, CreateMapper());
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.DeleteHotelAsync(1, 14, CancellationToken.None));
-        Assert.Contains("pagos vinculados", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("incluso eliminados", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, await context.HotelBookings.CountAsync());
+        await service.DeleteHotelAsync(1, 14, CancellationToken.None);
 
-        // El servicio generico tampoco se borro.
+        Assert.Equal(0, await context.HotelBookings.CountAsync());
+        // El servicio generico y su pago soft-deleted siguen intactos.
         Assert.Equal(1, await context.Servicios.CountAsync());
     }
 }

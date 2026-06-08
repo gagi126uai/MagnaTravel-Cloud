@@ -30,6 +30,32 @@ public class ReservaDto
     public decimal TotalPaid { get; set; }
     public decimal Balance { get; set; }
 
+    /// <summary>
+    /// ADR-020 (decision #6): venta CONFIRMADA (solo servicios resueltos). Es la base del saldo
+    /// (Balance = ConfirmedSale - TotalPaid). Se diferencia de TotalSale (valor comercial cotizado).
+    /// </summary>
+    public decimal ConfirmedSale { get; set; }
+
+    /// <summary>
+    /// ADR-020 (decision #6): si la reserva volvio SOLA de Confirmada a En gestion, este es el motivo
+    /// (null si nunca regreso o si ya se re-confirmo). El frontend muestra una franja naranja con este
+    /// texto. Se limpia automaticamente cuando la reserva se vuelve a confirmar.
+    /// </summary>
+    public string? LastRegressionReason { get; set; }
+
+    /// <summary>Cuando ocurrio la ultima regresion automatica (par de <see cref="LastRegressionReason"/>).</summary>
+    public DateTime? LastRegressionAt { get; set; }
+
+    /// <summary>
+    /// ADR-020 F4 (candado): true si la reserva esta bajo candado y tiene una autorizacion de edicion
+    /// VIVA (ExpiresAt &gt; ahora). El frontend muestra "destrabada por unos minutos" en vez de "pedi
+    /// autorizacion". Calculado (no es columna): derivado de ReservaEditAuthorizations.
+    /// </summary>
+    public bool HasLiveEditAuthorization { get; set; }
+
+    /// <summary>Cuando vence la autorizacion de edicion viva (null si no hay ninguna viva).</summary>
+    public DateTime? EditAuthorizationExpiresAt { get; set; }
+
     // P3 (cuadre de facturacion): cuanto se le facturo NETO al cliente por esta reserva
     // (facturas + ND - NC, solo comprobantes con CAE vivo) y cuanto QUEDA por facturar
     // respecto de lo vendido (TotalSale). La UI los usa para avisar si se factura de mas.

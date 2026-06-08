@@ -53,6 +53,17 @@ public interface IReservaService
     Task<TransitionReadinessDto> GetTransitionReadinessAsync(string publicIdOrLegacyId, string targetStatus, CancellationToken ct = default);
     Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default);
     Task<ReservaDto> RevertStatusAsync(string publicIdOrLegacyId, RevertStatusRequest request, string actorUserId, string? actorUserName, bool actorIsAdmin, CancellationToken ct = default);
+
+    /// <summary>
+    /// ADR-020 F4 (candado): crea una autorizacion VIVA para editar una reserva confirmada
+    /// (Confirmed en adelante). Si el actor tiene <c>reservas.authorize_locked_edit</c> se
+    /// auto-autoriza; si no, debe indicar un autorizante que lo tenga. La nueva autorizacion
+    /// expira cualquier otra viva de la misma reserva (una sola viva a la vez). Lanza
+    /// <see cref="InvalidOperationException"/> (-> 409) si la reserva no esta bajo candado o
+    /// si nadie con permiso autoriza.
+    /// </summary>
+    Task<ReservaEditAuthorizationDto> CreateEditAuthorizationAsync(string publicIdOrLegacyId, CreateEditAuthorizationRequest request, string actorUserId, string? actorUserName, bool actorIsAdmin, CancellationToken ct = default);
+
     Task UpdateBalanceAsync(int reservaId);
     Task<ReservaDto> ArchiveReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);
     Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);

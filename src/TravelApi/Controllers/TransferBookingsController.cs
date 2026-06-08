@@ -66,7 +66,8 @@ public class TransferBookingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // ADR-020: candado de reserva confirmada -> 409 para que el front abra autorizacion.
+            return Conflict(new { message = ex.Message });
         }
         catch
         {
@@ -120,19 +121,34 @@ public class TransferBookingsController : ControllerBase
     }
 
     // Autorizacion: antes solo [Authorize] (cualquier logueado tocaba el status de
-    // un traslado ajeno y veia NetCost). Se exige reservas.edit como minimo.
-    // TODO (follow-up ownership): la ruta identifica el TransferBooking por su id, no
-    // por reservaId. Falta OwnedEntity.TransferBooking + branch en OwnershipResolver
-    // (TransferBooking -> Reserva.ResponsibleUserId) para cerrar ownership fino.
+    // un traslado ajeno y veia NetCost). Se exige reservas.edit + ownership.
     [HttpPatch]
     [Route("/api/transfer-bookings/{publicIdOrLegacyId}/status")]
     [Authorize]
     [RequirePermission(Permissions.ReservasEdit)]
+    // ADR-020: ownership fino por el id del traslado (la ruta no trae reservaId). Antes faltaba.
+    [RequireOwnership(OwnedEntity.TransferBooking, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try
         {
             return Ok(await _bookingService.UpdateTransferStatusAsync(publicIdOrLegacyId, req.Status, req.ConfirmationNumber, ct));
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    // ADR-020 F2: marca "no requiere confirmacion" (cualquier vendedor). El traslado pasa a contar
+    // como RESUELTO aunque el operador no lo haya confirmado; puede gatillar la confirmacion del file.
+    [HttpPost("{id}/no-confirmation")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> MarkNoConfirmation(string reservaId, string id, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _bookingService.MarkTransferNoConfirmationRequiredAsync(reservaId, id, ct));
         }
         catch (KeyNotFoundException) { return NotFound(); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }

@@ -2,18 +2,18 @@ namespace TravelApi.Application.DTOs;
 
 public class ReservaListSummaryDto
 {
+    // ADR-020 (2026-06-07): contadores por etapa del ciclo unico. QuotationCount/InManagementCount/
+    // LostCount nacen aca; SoldCount (Vendida) murio junto con el estado. ReservedCount sigue siendo
+    // el conteo de Confirmadas (la clave de tab cambio de "reserved" a "confirmed" en F3 frontend).
+    public int QuotationCount { get; set; }
     public int BudgetCount { get; set; }
+    public int InManagementCount { get; set; }
     public int ActiveCount { get; set; }
     public int ReservedCount { get; set; }
     public int OperativeCount { get; set; }
-    public int ClosedCount { get; set; }
-
-    // Rediseño Fase A+B (2026-05-30): conteos de los dos estados nuevos. Solo se
-    // poblan con el flag EnableSoldToSettleStates prendido; con el flag apagado quedan
-    // en 0 (no existen filas en esos estados). Campos ADITIVOS: el frontend viejo los
-    // ignora sin romperse hasta que la fase de UI los muestre.
-    public int SoldCount { get; set; }
     public int ToSettleCount { get; set; }
+    public int ClosedCount { get; set; }
+    public int LostCount { get; set; }
     public decimal TotalSaleActive { get; set; }
     public decimal TotalCostActive { get; set; }
     public decimal TotalPendingBalance { get; set; }

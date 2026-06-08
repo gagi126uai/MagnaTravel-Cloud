@@ -33,14 +33,12 @@ public class PaymentService : IPaymentService
     private readonly IAuditService? _auditService;
 
     // Estados de Reserva considerados "cobrables" (tienen saldo que se le puede pedir al cliente).
-    // Fase D (rediseño Sold/ToSettle): sumamos Sold y ToSettle. En Sold ya se cobra la seña / parte
-    // del precio (la reserva esta vendida aunque el operador no confirmo todavia), y una reserva
-    // ToSettle (post-viaje) con saldo pendiente sigue siendo cobrable. Con el flag
-    // EnableSoldToSettleStates OFF nunca hay filas en esos estados, asi que el conjunto efectivo
-    // es identico al historico (Confirmed, Traveling).
+    // ADR-020 (2026-06-07): InManagement (En gestion) reemplaza al viejo Sold — la sena se cobra
+    // durante la gestion ("la plata viene despues, el si alcanza"). ToSettle (post-viaje) con saldo
+    // pendiente sigue siendo cobrable. Quotation/Budget/Lost NO entran (todavia no hay venta cerrada).
     private static readonly string[] ActiveCollectionStatuses =
     {
-        EstadoReserva.Sold,
+        EstadoReserva.InManagement,
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
         EstadoReserva.ToSettle
@@ -813,6 +811,7 @@ public class PaymentService : IPaymentService
 
         var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
         reserva.TotalSale = summary.TotalSale;
+        reserva.ConfirmedSale = summary.ConfirmedSale; // ADR-020: venta confirmada (alimenta el saldo)
         reserva.TotalCost = summary.TotalCost;
         reserva.TotalPaid = summary.TotalPaid;
         reserva.Balance = summary.Balance;

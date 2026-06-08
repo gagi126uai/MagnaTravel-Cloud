@@ -45,7 +45,6 @@ public class OperationalFlagsController : ControllerBase
 
         return Ok(new OperationalFlagsResponse
         {
-            EnableSoldToSettleStates = settings.EnableSoldToSettleStates,
             EnableMultiCurrencyInvoicing = settings.EnableMultiCurrencyInvoicing,
             EnableCancellationDebitNote = settings.EnableCancellationDebitNote,
             EnableCatalogFindOrCreate = settings.EnableCatalogFindOrCreate,

@@ -34,8 +34,15 @@ public static class WorkflowStatusHelper
         return WorkflowStatuses.Solicitado;
     }
 
-    // Indicates if this status counts for the Reserva Balance (Cost/Sale)
-    public static bool CountsForReservaBalance(string workflowStatus)
+    // ADR-020 (2026-06-07): indica si un servicio cuenta para el TOTAL COTIZADO de la reserva
+    // (TotalSale = valor comercial del presupuesto). Cuentan los NO cancelados (Solicitado +
+    // Confirmado); los cancelados quedan afuera. OJO: esto NO es el saldo del cliente — el saldo
+    // (Balance) se calcula sobre la VENTA CONFIRMADA (ConfirmedSale), que filtra por resolucion
+    // del servicio (ver ServiceResolutionRules), no por "no cancelado".
+    //
+    // Antes se llamaba CountsForReservaBalance (nombre heredado de cuando Balance = TotalSale -
+    // TotalPaid). Se renombro al separar TotalSale de ConfirmedSale.
+    public static bool CountsForQuotedTotal(string workflowStatus)
     {
         return workflowStatus == WorkflowStatuses.Confirmado || workflowStatus == WorkflowStatuses.Solicitado;
     }

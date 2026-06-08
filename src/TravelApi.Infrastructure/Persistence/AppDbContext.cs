@@ -292,6 +292,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<VoucherAuditEntry> VoucherAuditEntries => Set<VoucherAuditEntry>();
     public DbSet<PassengerServiceAssignment> PassengerServiceAssignments => Set<PassengerServiceAssignment>();
     public DbSet<ReservaStatusChangeLog> ReservaStatusChangeLogs => Set<ReservaStatusChangeLog>();
+    // ADR-020 F4 (candado): autorizaciones de edicion bajo candado + sus cambios registrados.
+    public DbSet<ReservaEditAuthorization> ReservaEditAuthorizations => Set<ReservaEditAuthorization>();
+    public DbSet<ReservaEditAuthorizationChange> ReservaEditAuthorizationChanges => Set<ReservaEditAuthorizationChange>();
 
     // Pilar 1: Cotizador + CRM
     public DbSet<Quote> Quotes => Set<Quote>();
@@ -373,6 +376,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<PaymentReceipt>(modelBuilder);
         ConfigurePublicEntity<PassengerServiceAssignment>(modelBuilder);
         ConfigurePublicEntity<ReservaStatusChangeLog>(modelBuilder);
+        ConfigurePublicEntity<ReservaEditAuthorization>(modelBuilder);
 
         // Supplier
         modelBuilder.Entity<Supplier>(entity =>
@@ -413,14 +417,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(f => f.Name).HasMaxLength(200).IsRequired();
             entity.Property(f => f.Status).HasMaxLength(50).IsRequired();
 
-            // Rediseño maquina de estados (Fase A+B, 2026-05-30): NO usamos concurrency token (xmin)
-            // en Reserva. Se evaluo en el review y se descarto: el token se activa SIEMPRE (no depende
-            // del flag EnableSoldToSettleStates), asi que expondria caminos viejos read-modify-write
-            // (cancelacion con llamadas largas a ARCA, recalculo de balance, etc.) a
-            // DbUpdateConcurrencyException que hoy NO ocurre. Eso seria una regresion que viaja con el
-            // flag apagado. La concurrencia job-vs-cajero es un problema preexistente de baja frecuencia
-            // y se maneja en el job con un re-chequeo defensivo del estado origen (ver
-            // ReservaLifecycleAutomationService). Mejora futura: locking optimista mas fino, fuera de scope.
+            // ADR-020: NO usamos concurrency token (xmin) en Reserva. Expondria caminos read-modify-write
+            // (cancelacion con llamadas largas a ARCA, recalculo de balance, motor de estados) a
+            // DbUpdateConcurrencyException que hoy no ocurre. La concurrencia job-vs-cajero y motor-vs-motor
+            // se maneja con re-chequeo defensivo del estado origen (ver ReservaLifecycleAutomationService y
+            // ReservaAutoStateService) + reconciliacion nocturna. Mejora futura: locking optimista fino.
             entity.Property(f => f.WhatsAppPhoneOverride).HasMaxLength(50);
             entity.HasIndex(f => f.NumeroReserva).IsUnique();
             entity.HasIndex(f => new { f.Status, f.StartDate, f.CreatedAt });
@@ -1010,6 +1011,39 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(l => l.Reserva)
                   .WithMany()
                   .HasForeignKey(l => l.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ADR-020 F4 (candado): autorizacion de edicion bajo candado + sus cambios.
+        modelBuilder.Entity<ReservaEditAuthorization>(entity =>
+        {
+            entity.ToTable("ReservaEditAuthorizations");
+            entity.Property(a => a.Reason).HasMaxLength(1000).IsRequired();
+            entity.Property(a => a.RequestedByUserId).HasMaxLength(200);
+            entity.Property(a => a.RequestedByUserName).HasMaxLength(200);
+            entity.Property(a => a.AuthorizedByUserId).HasMaxLength(200);
+            entity.Property(a => a.AuthorizedByUserName).HasMaxLength(200);
+            entity.Property(a => a.ReservaStatusSnapshot).HasMaxLength(50);
+            // El guard pregunta "hay autorizacion viva para esta reserva?" -> indice por (ReservaId, ExpiresAt).
+            entity.HasIndex(a => new { a.ReservaId, a.ExpiresAt });
+            entity.HasOne(a => a.Reserva)
+                  .WithMany(r => r.EditAuthorizations)
+                  .HasForeignKey(a => a.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ReservaEditAuthorizationChange>(entity =>
+        {
+            entity.ToTable("ReservaEditAuthorizationChanges");
+            entity.Property(c => c.Operation).HasMaxLength(50).IsRequired();
+            entity.Property(c => c.EntityType).HasMaxLength(50);
+            entity.Property(c => c.Summary).HasMaxLength(1000);
+            entity.Property(c => c.PerformedByUserId).HasMaxLength(200);
+            entity.Property(c => c.PerformedByUserName).HasMaxLength(200);
+            entity.HasIndex(c => c.AuthorizationId);
+            entity.HasOne(c => c.Authorization)
+                  .WithMany(a => a.Changes)
+                  .HasForeignKey(c => c.AuthorizationId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 

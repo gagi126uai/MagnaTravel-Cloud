@@ -120,6 +120,39 @@ public class TransferBooking : IHasPublicId
     [MaxLength(30)]
     public string? CostToConfirmReason { get; set; }
 
+    // === ADR-020 (2026-06-07): trazabilidad de confirmacion del operador y de cancelacion del servicio ===
+
+    /// <summary>
+    /// ADR-020: fecha en que el operador CONFIRMO este servicio (la estampa el motor de estados).
+    /// Null = nunca confirmado. NO se borra al des-confirmar. Gobierna borrar-vs-cancelar y penalidades.
+    /// </summary>
+    public DateTime? ConfirmedAt { get; set; }
+
+    /// <summary>ADR-020: cuando se cancelo el servicio (Status -> Cancelado). Null = no cancelado.</summary>
+    public DateTime? CancelledAt { get; set; }
+
+    [MaxLength(200)]
+    public string? CancelledByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? CancelledByUserName { get; set; }
+
+    // === ADR-020 (2026-06-07): marca "no requiere confirmacion" — exclusiva del traslado ===
+    // Hay traslados que no necesitan confirmacion del operador para considerarse RESUELTOS (ej.
+    // traslado propio o contratado en destino). Cualquier vendedor puede marcarlo; se registra
+    // quien/cuando. Con la marca puesta, el servicio cuenta como resuelto aunque su Status no sea
+    // "Confirmado" (ServiceResolutionRules.IsResolved). NO afecta la confirmacion del operador.
+
+    public bool NoConfirmationRequired { get; set; } = false;
+
+    public DateTime? NoConfirmationMarkedAt { get; set; }
+
+    [MaxLength(200)]
+    public string? NoConfirmationMarkedByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? NoConfirmationMarkedByUserName { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public int GetExpectedPaxCount() => Passengers;

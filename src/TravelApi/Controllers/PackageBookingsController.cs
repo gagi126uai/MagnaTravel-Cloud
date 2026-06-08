@@ -66,7 +66,8 @@ public class PackageBookingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // ADR-020: candado de reserva confirmada -> 409 para que el front abra autorizacion.
+            return Conflict(new { message = ex.Message });
         }
         catch
         {
@@ -122,14 +123,13 @@ public class PackageBookingsController : ControllerBase
     }
 
     // Autorizacion: antes solo [Authorize] (cualquier logueado tocaba el status de
-    // un paquete ajeno y veia NetCost). Se exige reservas.edit como minimo.
-    // TODO (follow-up ownership): la ruta identifica el PackageBooking por su id, no
-    // por reservaId. Falta OwnedEntity.PackageBooking + branch en OwnershipResolver
-    // (PackageBooking -> Reserva.ResponsibleUserId) para cerrar ownership fino.
+    // un paquete ajeno y veia NetCost). Se exige reservas.edit + ownership.
     [HttpPatch]
     [Route("/api/package-bookings/{publicIdOrLegacyId}/status")]
     [Authorize]
     [RequirePermission(Permissions.ReservasEdit)]
+    // ADR-020: ownership fino por el id del paquete (la ruta no trae reservaId). Antes faltaba.
+    [RequireOwnership(OwnedEntity.PackageBooking, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try

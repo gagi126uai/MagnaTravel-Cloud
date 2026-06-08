@@ -76,7 +76,8 @@ public class ReservaServiceTests
 
         Assert.NotNull(result);
         Assert.Equal("Test Trip", result.Name);
-        Assert.Equal(EstadoReserva.Budget, result.Status);
+        // ADR-020: toda reserva nace en Cotizacion (antes nacia en Presupuesto).
+        Assert.Equal(EstadoReserva.Quotation, result.Status);
         Assert.StartsWith($"F-{DateTime.Now.Year}-", result.NumeroReserva);
         Assert.Equal(1, await context.Reservas.CountAsync());
     }
@@ -105,12 +106,14 @@ public class ReservaServiceTests
 
         var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
-        var result = await service.UpdateStatusAsync(1, EstadoReserva.Confirmed);
+        // ADR-020: Budget -> InManagement es la transicion manual valida (Confirmed solo lo alcanza
+        // el motor automatico). El servicio generico no declara composicion de pax -> readiness OK.
+        var result = await service.UpdateStatusAsync(1, EstadoReserva.InManagement);
 
-        Assert.Equal(EstadoReserva.Confirmed, result.Status);
+        Assert.Equal(EstadoReserva.InManagement, result.Status);
         var dbReserva = await context.Reservas.FindAsync(1);
         Assert.NotNull(dbReserva);
-        Assert.Equal(EstadoReserva.Confirmed, dbReserva.Status);
+        Assert.Equal(EstadoReserva.InManagement, dbReserva.Status);
     }
 
     [Fact]

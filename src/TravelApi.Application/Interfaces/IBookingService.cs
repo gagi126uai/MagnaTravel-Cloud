@@ -56,4 +56,11 @@ public interface IBookingService
     Task<TransferBookingDto> ConfirmTransferCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
     Task<PackageBookingDto> ConfirmPackageCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
     Task<AssistanceBookingDto> ConfirmAssistanceCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
+
+    // ADR-020 F2: acciones de RESOLUCION del servicio.
+    // - MarkFlightTicketIssued: estampa TicketIssuedAt (resuelve el aereo); ticketNumber opcional (A3).
+    // - MarkTransferNoConfirmationRequired: marca el traslado como resuelto sin confirmacion del operador.
+    // Ambas recalculan el saldo (ConfirmedSale) y disparan el motor de estados (pueden confirmar el file).
+    Task<FlightSegmentDto> MarkFlightTicketIssuedAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, string? ticketNumber, CancellationToken ct);
+    Task<TransferBookingDto> MarkTransferNoConfirmationRequiredAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct);
 }

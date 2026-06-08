@@ -225,14 +225,16 @@ public class AlertServiceUpcomingStartsTests
 
     [Theory]
     // Presupuesto NO avisa: decision del dueño (Q2) — CAMBIO deliberado vs el mecanismo viejo, que incluia Budget.
+    [InlineData(EstadoReserva.Quotation, false)]
     [InlineData(EstadoReserva.Budget, false)]
-    [InlineData(EstadoReserva.Sold, true)]
+    [InlineData(EstadoReserva.InManagement, true)]
     [InlineData(EstadoReserva.Confirmed, true)]
     [InlineData(EstadoReserva.Cancelled, false)]
     [InlineData(EstadoReserva.ToSettle, false)]
     [InlineData(EstadoReserva.Closed, false)]
+    [InlineData(EstadoReserva.Lost, false)]
     [InlineData(EstadoReserva.PendingOperatorRefund, false)]
-    public async Task Eligibility_OnlySoldConfirmedTraveling(string status, bool expectsAlert)
+    public async Task Eligibility_OnlyInManagementConfirmedTraveling(string status, bool expectsAlert)
     {
         await using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(BuildReserva(1, status));

@@ -22,13 +22,6 @@ public class AfipSettingsResponse
     // al frontend a pegarle a un segundo endpoint. No se setea desde POST /afip/settings.
     public bool EnableMultiCurrencyInvoicing { get; set; }
 
-    // Flag operativo SOLO LECTURA. La UI de Reservas lo usa para mostrar/ocultar
-    // las pestanas "Vendidas" y "A liquidar" y cambiar la botonera de acciones.
-    // Vive en OperationalFinanceSettings; se proyecta aca igual que EnableMultiCurrencyInvoicing
-    // para no obligar al frontend a pegarle a un segundo endpoint.
-    // Con OFF (default) la UI de reservas es identica a hoy.
-    public bool EnableSoldToSettleStates { get; set; }
-
     // Flag operativo SOLO LECTURA. El flujo de cancelacion lo usa para mostrar/ocultar
     // toda la rama de la Nota de Debito por penalidad (ADR-013/014): la opcion de
     // "cargo propio de la agencia" en el modal de cancelacion, la bandeja de ND

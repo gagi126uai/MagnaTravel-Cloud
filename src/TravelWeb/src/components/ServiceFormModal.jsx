@@ -1983,10 +1983,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
     const isGenericEdit = serviceToEdit?.recordKind === SERVICE_RECORD_KIND.GENERIC;
     const isLocked = reservaStatus === "Traveling" || reservaStatus === "Closed";
-    // En Presupuesto el agente NO elige el estado del servicio — siempre queda en
-    // "Solicitado" hasta que la reserva sea Confirmed (regla de negocio: en
-    // Presupuesto los servicios todavia no se confirman con el proveedor).
-    const isBudget = reservaStatus === "Budget";
+    // En Cotizacion y Presupuesto el agente NO elige el estado del servicio — siempre queda en
+    // "Solicitado" hasta que la reserva pase a InManagement (regla de negocio ADR-020: en
+    // early-stage los servicios todavia no se confirman con el proveedor).
+    const isBudget = reservaStatus === "Budget" || reservaStatus === "Quotation";
     const showPricingForm = true;
 
     const serviceTabClassMap = {

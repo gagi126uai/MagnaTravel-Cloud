@@ -38,6 +38,29 @@ public enum OwnedEntity
     /// Cierra el IDOR del AttachmentsController (2026-06-03).
     /// </summary>
     Attachment,
+
+    // ADR-020 (2026-06-08): los servicios TIPADOS necesitan ownership propio porque sus
+    // endpoints PATCH /status se identifican por el id del servicio (publicIdOrLegacyId),
+    // NO por reservaId — ahi RequireOwnership(OwnedEntity.Reserva, "reservaId") no tiene de
+    // donde sacar el reservaId. Cada uno hereda el responsable de su Reserva padre, igual
+    // que el Servicio generico. Antes el UpdateStatus de cada uno solo exigia reservas.edit,
+    // asi que un vendedor podia mover el status (y con ADR-020 mover plata / disparar
+    // auto-confirm) sobre reservas ajenas.
+
+    /// <summary>Vuelo. Hereda el responsable de su <see cref="FlightSegment.Reserva"/>.</summary>
+    FlightSegment,
+
+    /// <summary>Hotel. Hereda el responsable de su <see cref="HotelBooking.Reserva"/>.</summary>
+    HotelBooking,
+
+    /// <summary>Traslado. Hereda el responsable de su <see cref="TransferBooking.Reserva"/>.</summary>
+    TransferBooking,
+
+    /// <summary>Paquete. Hereda el responsable de su <see cref="PackageBooking.Reserva"/>.</summary>
+    PackageBooking,
+
+    /// <summary>Asistencia. Hereda el responsable de su <see cref="AssistanceBooking.Reserva"/>.</summary>
+    AssistanceBooking,
 }
 
 /// <summary>

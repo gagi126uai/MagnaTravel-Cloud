@@ -100,7 +100,7 @@ public class HostStartupSmokeTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
-    public async Task PostReserva_CreatesBudgetReservation_AndPersistsToDb()
+    public async Task PostReserva_CreatesQuotationReservation_AndPersistsToDb()
     {
         var client = _factory.CreateClient();
 
@@ -141,7 +141,9 @@ public class HostStartupSmokeTests : IClassFixture<CustomWebApplicationFactory>
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var reserva = await db.Reservas.FirstOrDefaultAsync(r => r.Name == reservaName);
             Assert.NotNull(reserva);
-            Assert.Equal(EstadoReserva.Budget, reserva!.Status);
+            // ADR-020 (INV-020-01): toda reserva nace en Cotizacion (Quotation), nunca Budget ni
+            // Confirmed; CreateReservaAsync ignora cualquier Status del request.
+            Assert.Equal(EstadoReserva.Quotation, reserva!.Status);
             Assert.StartsWith($"F-{DateTime.Now.Year}-", reserva.NumeroReserva);
         }
     }

@@ -38,10 +38,15 @@ public static class DeleteGuards
             .FirstOrDefaultAsync(ct);
         if (reserva == null) return null; // caller decide si devolver 404; aca no es nuestro problema
 
-        if (!string.Equals(reserva.Status, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase))
+        // ADR-020 (C25 extendido): una reserva se borra fisicamente en las etapas comerciales
+        // tempranas (Cotizacion o Presupuesto). Mas alla de ahi se cancela/archiva, no se borra.
+        var isEarlyStage =
+            string.Equals(reserva.Status, EstadoReserva.Quotation, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(reserva.Status, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase);
+        if (!isEarlyStage)
         {
-            return $"Solo se pueden eliminar reservas en estado Presupuesto. " +
-                   $"Esta reserva esta en estado '{reserva.Status}'. Para reservas en otro estado, archivala (Cancelado).";
+            return $"Solo se pueden eliminar reservas en Cotizacion o Presupuesto. " +
+                   $"Esta reserva esta en estado '{reserva.Status}'. Para reservas en otro estado, cancelala o archivala.";
         }
 
         var hasLivePayments = await db.Payments.AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
@@ -56,63 +61,100 @@ public static class DeleteGuards
         if (hasInvoiceWithCae)
             return "No se puede eliminar una Reserva con facturas AFIP emitidas (CAE asignado). Marcá la Reserva como Cancelada.";
 
+        // INV-020-04: aunque la reserva este en Cotizacion/Presupuesto, NO se borra fisicamente si
+        // algun servicio ya fue confirmado por el operador (ConfirmedAt sellado = compromiso/deuda
+        // con el proveedor). El borrado fisico cascadea y tiraria ese servicio sin pasar por la
+        // cancelacion que liquida la penalidad/deuda. Hay que CANCELAR esos servicios primero.
+        // Usamos ConfirmedAt != null como marca (mismo criterio que el guard de borrado de servicio,
+        // GetServiceDeleteBlockReasonAsync): una vez sellada, queda como historia aunque el servicio
+        // se re-solicite, lo que mantiene el bloqueo del lado seguro.
+        if (await ReservaHasOperatorConfirmedServiceAsync(db, reservaId, ct))
+        {
+            return "No se puede eliminar la Reserva porque tiene servicios confirmados con el operador " +
+                   "(hay compromiso o deuda con el proveedor). Cancelá esos servicios primero.";
+        }
+
         return null;
     }
 
     /// <summary>
-    /// Devuelve el motivo de bloqueo para borrar un servicio (hotel/transfer/package/
-    /// flight/generico) o null si esta permitido.
+    /// ADR-020 (INV-020-04): indica si la reserva tiene AL MENOS un servicio confirmado por el
+    /// operador (ConfirmedAt sellado) en cualquiera de las 6 colecciones de servicios. Se cortocircuita
+    /// en la primera coincidencia para no recorrer todas las tablas si ya encontro una.
+    /// </summary>
+    private static async Task<bool> ReservaHasOperatorConfirmedServiceAsync(
+        AppDbContext db,
+        int reservaId,
+        CancellationToken ct)
+    {
+        if (await db.HotelBookings.AnyAsync(h => h.ReservaId == reservaId && h.ConfirmedAt != null, ct)) return true;
+        if (await db.FlightSegments.AnyAsync(f => f.ReservaId == reservaId && f.ConfirmedAt != null, ct)) return true;
+        if (await db.TransferBookings.AnyAsync(t => t.ReservaId == reservaId && t.ConfirmedAt != null, ct)) return true;
+        if (await db.PackageBookings.AnyAsync(p => p.ReservaId == reservaId && p.ConfirmedAt != null, ct)) return true;
+        if (await db.AssistanceBookings.AnyAsync(a => a.ReservaId == reservaId && a.ConfirmedAt != null, ct)) return true;
+        if (await db.Servicios.AnyAsync(s => s.ReservaId == reservaId && s.ConfirmedAt != null, ct)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// ADR-020 (F5): devuelve el motivo de bloqueo para BORRAR un servicio, o null si esta permitido.
+    /// Manda EL SERVICIO, no el estado de la reserva (el viejo guard C26 reserva-level MURIO — era el
+    /// que tiraba "la reserva esta en estado 'Sold'" y disparo este rediseño).
     ///
-    /// Reglas:
-    ///  - C26: el estado de la Reserva padre debe ser Budget. En cualquier otro estado
-    ///    (Confirmed/Traveling/Closed/Cancelled) hay que cancelar primero con el
-    ///    proveedor — borrar silenciosamente perderia trazabilidad.
-    ///  - Pre-existentes (consolidados de los <c>EnsureNoPaymentsAsync</c> duplicados
-    ///    de ReservaService y BookingService): no debe haber pagos vivos del cliente
-    ///    ni vouchers emitidos.
+    /// <para>Reglas:</para>
+    /// <list type="number">
+    /// <item>Si el servicio fue confirmado por el operador (<paramref name="serviceIsOperatorConfirmed"/>
+    ///   = ConfirmedAt != null O IsOperatorConfirmed O IsResolved) -> NO se borra: hay que CANCELARLO
+    ///   (queda tachado y su monto se resta del saldo). Un aereo HK sin ticket entra aca: el PNR ya es
+    ///   compromiso con el consolidador, aunque no resuelva el file.</item>
+    /// <item>Voucher emitido de la reserva -> anular primero.</item>
+    /// <item>Pago soft-deleted vinculado a ESTE servicio generico via ServicioReservaId -> riesgo de
+    ///   hard-delete en cascada (se preserva).</item>
+    /// </list>
+    ///
+    /// <para>El bloqueo generico "la reserva tiene pagos vivos" YA NO aplica al borrado de un servicio
+    /// nunca-confirmado (los pagos son de la reserva, no del servicio; el recalculo de saldo lo absorbe).
+    /// Si la reserva esta bajo candado (Confirmada en adelante), el candado (F4) exige autorizacion ANTES
+    /// de llegar a este guard — es ortogonal a esta regla.</para>
     /// </summary>
     public static async Task<string?> GetServiceDeleteBlockReasonAsync(
         AppDbContext db,
         int reservaId,
+        bool serviceIsOperatorConfirmed,
+        int? genericServiceId = null,
         CancellationToken ct = default,
         ILogger? logger = null)
     {
         if (reservaId == 0) return null; // servicios sin reserva (legacy) no aplican
 
-        var reserva = await db.Reservas.AsNoTracking()
-            .Where(r => r.Id == reservaId)
-            .Select(r => new { r.Status })
-            .FirstOrDefaultAsync(ct);
-        if (reserva == null) return null;
-
-        if (!string.Equals(reserva.Status, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase))
+        // (1) Confirmado con el operador -> solo se cancela, no se borra.
+        if (serviceIsOperatorConfirmed)
         {
-            return $"No se puede eliminar el servicio: la reserva esta en estado '{reserva.Status}'. " +
-                   "Cancelá ese servicio con el proveedor primero (cambiá el status del servicio a 'Cancelado') " +
-                   "y, si corresponde, cancelá la reserva.";
+            return "No se puede borrar un servicio ya confirmado con el operador. Cancelalo " +
+                   "(queda tachado, con quien y cuando, y su monto se resta del saldo del cliente).";
         }
 
-        var paymentsReason = await GetServicePaymentsAndVoucherBlockReasonAsync(db, reservaId, ct);
-        if (paymentsReason != null) return paymentsReason;
+        // (2) Voucher emitido de la reserva.
+        var hasIssuedVoucher = await db.Vouchers.AnyAsync(v => v.ReservaId == reservaId && v.Status == "Issued", ct);
+        if (hasIssuedVoucher)
+            return "No se pueden eliminar servicios de una reserva con vouchers ya emitidos. Anulá los vouchers primero.";
 
-        // Cascade Servicio→Payments en AppDbContext (DeleteBehavior.Cascade): si quedo
-        // algun Payment soft-deleted con ServicioReservaId apuntando a un servicio de
-        // esta reserva, borrar el servicio lo hard-borraria por DB cascade saltandose
-        // el query filter !IsDeleted. Riesgo fiscal/contable — preservamos auditoria.
-        var hasSoftDeletedPaymentLinkedToService = await db.Payments
-            .IgnoreQueryFilters()
-            .AnyAsync(p => p.IsDeleted
-                          && p.ServicioReservaId != null
-                          && db.Servicios.Any(s => s.Id == p.ServicioReservaId && s.ReservaId == reservaId),
-                      ct);
-        if (hasSoftDeletedPaymentLinkedToService)
+        // (3) Pago soft-deleted vinculado a ESTE servicio generico (cascade hard-delete = riesgo fiscal).
+        // Solo el ServicioReserva generico tiene el link Payment.ServicioReservaId; los tipados no.
+        if (genericServiceId.HasValue)
         {
-            logger?.LogWarning(
-                "Service delete blocked: soft-deleted payment(s) linked to service via ServicioReservaId. " +
-                "ReservaId={ReservaId}. Cascade hard-delete riesgo fiscal — restaurar o reasignar antes de continuar.",
-                reservaId);
-            return "No se puede eliminar el servicio porque tiene pagos vinculados (incluso eliminados). " +
-                   "Restaurá o reasigná los pagos primero.";
+            var hasSoftDeletedPaymentLinked = await db.Payments
+                .IgnoreQueryFilters()
+                .AnyAsync(p => p.IsDeleted && p.ServicioReservaId == genericServiceId.Value, ct);
+            if (hasSoftDeletedPaymentLinked)
+            {
+                logger?.LogWarning(
+                    "Service delete blocked: soft-deleted payment(s) linked to generic service via ServicioReservaId. " +
+                    "ReservaId={ReservaId} ServiceId={ServiceId}. Cascade hard-delete riesgo fiscal.",
+                    reservaId, genericServiceId.Value);
+                return "No se puede eliminar el servicio porque tiene pagos vinculados (incluso eliminados). " +
+                       "Restaurá o reasigná los pagos primero.";
+            }
         }
 
         return null;

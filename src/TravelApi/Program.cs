@@ -535,6 +535,8 @@ builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IOperationalFinanceSettingsService, OperationalFinanceSettingsService>();
 builder.Services.AddScoped<ITreasuryService, TreasuryService>();
 builder.Services.AddScoped<OperationalFinanceMonitorService>();
+// ADR-020 F3: motor de estados automatico (confirmacion/regresion automatica + estampado ConfirmedAt).
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.Reservations.ReservaAutoStateService>();
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.ReservaLifecycleAutomationService>();
 // FC1.3.6 (ADR-009 §2.10, 2026-05-21): job que alerta a Admins cuando un BC
 // queda mucho tiempo en ManualReviewPending (riesgo plazo RG 4540 fiscal).

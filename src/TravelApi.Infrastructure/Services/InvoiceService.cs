@@ -53,20 +53,26 @@ public class InvoiceService : IInvoiceService
     // ya existente y no hay recursion. Ver GetBcBridge() mas abajo.
     private readonly IServiceProvider _serviceProvider;
     // Estados de Reserva que se consideran "facturables" en la bandeja/summary de facturacion.
-    // Fase D (rediseño Sold/ToSettle):
-    //  - ToSettle (A liquidar): SE INCLUYE. Es post-viaje y el operador YA confirmo, asi que
-    //    puede quedar algo pendiente de facturar y debe seguir visible. Facturar post-viaje no
-    //    tiene problema fiscal (consistente con Payment/Treasury/Supplier, que ya la tratan como file vivo).
-    //  - Sold (Vendida): SE EXCLUYE a proposito. Es pre-confirmacion del operador; facturar ahi seria
-    //    emitir CAE por un servicio que el operador podria rechazar (riesgo fiscal). Ademas ya hay
-    //    un guard server-side en CreateAsync que lo bloquea aunque alguien la metiera en este conjunto.
-    // Con el flag EnableSoldToSettleStates OFF no existen filas en Sold/ToSettle, asi que agregar
-    // ToSettle es inerte y el comportamiento queda byte-identico al historico (Confirmed + Traveling).
+    // ADR-020 (2026-06-07, decision Q1 conservadora): SOLO se factura desde Confirmada en adelante.
+    //  - Confirmed/Traveling/ToSettle: facturables (el operador ya confirmo / el viaje ocurrio).
+    //  - Quotation/Budget/InManagement/Lost: NO facturables. En particular En gestion (InManagement)
+    //    todavia tiene servicios sin resolver; facturar ahi seria emitir CAE por algo que el operador
+    //    podria rechazar (riesgo fiscal). El guard server-side en CreateAsync lo refuerza.
     private static readonly string[] ActiveInvoicingStatuses =
     {
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
         EstadoReserva.ToSettle
+    };
+
+    // ADR-020: estados desde los que NO se puede emitir factura (anti-facturar antes de Confirmada).
+    // Reemplaza al viejo guard "== Sold" gateado por flag.
+    private static readonly string[] NonInvoiceableStatuses =
+    {
+        EstadoReserva.Quotation,
+        EstadoReserva.Budget,
+        EstadoReserva.InManagement,
+        EstadoReserva.Lost
     };
 
     public InvoiceService(
@@ -307,18 +313,16 @@ public class InvoiceService : IInvoiceService
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
-        // Rediseño Fase A+B (2026-05-30, guard fiscal C1): con el flag de estados nuevos ON, una
-        // reserva en "Sold" (Vendida) todavia NO fue confirmada por el operador. Aunque este
-        // economicamente saldada, facturarla seria emitir un comprobante con CAE antes de tener el
-        // servicio confirmado -> riesgo fiscal (factura por algo que el operador podria rechazar).
-        // Esta es la ultima linea de defensa server-side ante un POST directo; el frontend ademas
-        // no deberia ofrecer "Emitir" en Sold. Con el flag OFF, el estado Sold no existe y este
-        // guard nunca dispara (comportamiento byte-identico a hoy).
-        var soldToSettleSettings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        if (soldToSettleSettings.EnableSoldToSettleStates && reserva.Status == EstadoReserva.Sold)
+        // ADR-020 (2026-06-07, guard fiscal C1): solo se factura desde Confirmada en adelante. Una
+        // reserva en Cotizacion / Presupuesto / En gestion (o Perdida) todavia no tiene los servicios
+        // resueltos; emitir un CAE ahi seria facturar algo que el operador podria rechazar -> riesgo
+        // fiscal. Ultima linea de defensa server-side ante un POST directo; el frontend tampoco debe
+        // ofrecer "Emitir" en esos estados.
+        if (NonInvoiceableStatuses.Contains(reserva.Status))
         {
             throw new InvalidOperationException(
-                "No se puede facturar una reserva Vendida hasta que el operador la confirme.");
+                "No se puede facturar una reserva que todavia no esta Confirmada (esta en " +
+                $"'{reserva.Status}'). Confirma los servicios con el operador antes de facturar.");
         }
 
         // B1.15 (2026-05-11, fiscal critico): guard anti-doble-emision concurrente.

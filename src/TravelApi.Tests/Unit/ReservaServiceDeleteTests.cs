@@ -236,7 +236,8 @@ public class ReservaServiceDeleteTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.RemoveServiceAsync(12, CancellationToken.None));
-        Assert.Contains("reserva esta en estado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // ADR-020 F5: manda el servicio (Confirmado) -> no se borra, se cancela.
+        Assert.Contains("confirmado con el operador", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await context.Servicios.CountAsync());
     }
 

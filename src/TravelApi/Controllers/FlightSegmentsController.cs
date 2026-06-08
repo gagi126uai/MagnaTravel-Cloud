@@ -67,7 +67,9 @@ public class FlightSegmentsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            // ADR-020: el candado de la reserva confirmada lanza InvalidOperationException; el
+            // frontend abre el flujo de autorizacion con 409 (igual que Update).
+            return Conflict(new { message = ex.Message });
         }
         catch
         {
@@ -129,6 +131,8 @@ public class FlightSegmentsController : ControllerBase
     [Route("/api/flight-segments/{publicIdOrLegacyId}/status")]
     [Authorize]
     [RequirePermission(Permissions.ReservasEdit)]
+    // ADR-020: ownership fino por el id del vuelo (la ruta no trae reservaId). Antes faltaba.
+    [RequireOwnership(OwnedEntity.FlightSegment, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try
@@ -138,6 +142,27 @@ public class FlightSegmentsController : ControllerBase
         catch (KeyNotFoundException) { return NotFound(); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    // ADR-020 F2: "Marcar emitido" — estampa la emision del ticket (lo que RESUELVE el aereo para
+    // que el file pueda pasar a Confirmada). El TicketNumber es opcional (puede llegar despues).
+    [HttpPost("{id}/mark-issued")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> MarkIssued(string reservaId, string id, [FromBody] MarkTicketIssuedRequest? req, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _bookingService.MarkFlightTicketIssuedAsync(reservaId, id, req?.TicketNumber, ct));
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    public class MarkTicketIssuedRequest
+    {
+        public string? TicketNumber { get; set; }
     }
 
     [HttpDelete("{id}")]

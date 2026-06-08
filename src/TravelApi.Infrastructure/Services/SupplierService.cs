@@ -11,14 +11,12 @@ namespace TravelApi.Infrastructure.Services;
 public class SupplierService : ISupplierService
 {
     // Estados de Reserva en los que un servicio "cuenta" para la cuenta corriente del proveedor.
-    // Fase D (rediseño Sold/ToSettle): sumamos Sold y ToSettle. Ambos son reservas reales ligadas
-    // al proveedor: Sold ya esta vendida (el operador tiene la solicitud), y ToSettle es justamente
-    // la etapa de "liquidar con el operador". Con el flag EnableSoldToSettleStates OFF nunca hay
-    // filas en esos estados, asi que el conjunto efectivo es identico al historico
-    // (Confirmed, Traveling, Closed).
+    // ADR-020 (2026-06-07): InManagement (En gestion) reemplaza al viejo Sold. La deuda real con el
+    // proveedor ya filtra por servicio confirmado (CountsForSupplierDebtByType); este conjunto solo
+    // define que reservas son "vivas" para el proveedor. ToSettle es la etapa de liquidar con el operador.
     private static readonly string[] ValidReservationStatuses =
     {
-        EstadoReserva.Sold,
+        EstadoReserva.InManagement,
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
         EstadoReserva.ToSettle,
@@ -276,16 +274,16 @@ public class SupplierService : ISupplierService
             .Concat(flightReservaIds)
             .Concat(assistanceReservaIds);
 
-        // OJO: este conjunto NO es el mismo que ValidReservationStatuses (incluye Budget y NO
-        // incluye Closed). Es el conteo de reservas "vivas" asociadas al proveedor. Fase D
-        // (rediseño Sold/ToSettle): sumamos Sold y ToSettle in-place (no unificamos con el otro
-        // conjunto porque la membresia historica difiere). Con el flag OFF nunca hay filas en
-        // esos estados, asi que el resultado es identico al historico (Budget, Confirmed, Traveling).
+        // OJO: este conjunto NO es el mismo que ValidReservationStatuses (incluye las etapas
+        // comerciales tempranas y NO incluye Closed). Es el conteo de reservas "vivas" asociadas al
+        // proveedor. ADR-020 (2026-06-07): Quotation/Budget/InManagement reemplazan al viejo par
+        // Budget/Sold; ToSettle se mantiene. Closed/Cancelled/Lost no cuentan.
         return await _dbContext.Reservas
             .AsNoTracking()
             .Where(reserva =>
-                (reserva.Status == EstadoReserva.Budget
-                    || reserva.Status == EstadoReserva.Sold
+                (reserva.Status == EstadoReserva.Quotation
+                    || reserva.Status == EstadoReserva.Budget
+                    || reserva.Status == EstadoReserva.InManagement
                     || reserva.Status == EstadoReserva.Confirmed
                     || reserva.Status == EstadoReserva.Traveling
                     || reserva.Status == EstadoReserva.ToSettle)

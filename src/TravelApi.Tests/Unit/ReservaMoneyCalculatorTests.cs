@@ -119,6 +119,33 @@ public class ReservaMoneyCalculatorTests
         Assert.Equal(0m, money.TotalCost);
     }
 
+    // --- BLOQUEANTE 1: vuelo emitido y luego cancelado NO suma a ConfirmedSale ---
+
+    [Theory]
+    [InlineData("UN")]
+    [InlineData("HX")]
+    public void Calculate_FlightIssuedThenCancelled_NotInConfirmedSale(string cancelCode)
+    {
+        // El vuelo tiene TicketIssuedAt (estuvo emitido) pero el operador lo cancelo despues.
+        // No debe sumar ni a TotalSale (cancelado) ni a ConfirmedSale (no resuelto) -> Balance no
+        // arrastra deuda fantasma del precio de venta del vuelo cancelado.
+        var reserva = new Reserva();
+        reserva.FlightSegments.Add(new FlightSegment
+        {
+            Status = cancelCode,
+            TicketIssuedAt = System.DateTime.UtcNow,
+            SalePrice = 900m,
+            NetCost = 600m
+        });
+        reserva.Payments.Add(new Payment { Status = "Paid", IsDeleted = false, Amount = 0m });
+
+        var money = ReservaMoneyCalculator.Calculate(reserva);
+
+        Assert.Equal(0m, money.TotalSale);
+        Assert.Equal(0m, money.ConfirmedSale);
+        Assert.Equal(0m, money.Balance);
+    }
+
     // --- Mapeo de vuelo: HK/TK/KK/KL cuentan; UN/HX no cuentan; codigo raro = Solicitado (cuenta) ---
 
     [Theory]
@@ -251,14 +278,21 @@ public class ReservaMoneyCalculatorTests
 
         var money = ReservaMoneyCalculator.Calculate(reserva);
 
-        // Suman (estado que cuenta):
+        // TotalSale/TotalCost suman los NO cancelados (valor comercial del presupuesto):
         //   vuelo HK 500/300, hotel Confirmado 1000/700, transfer Solicitado 50/30,
         //   paquete Emitido 2000/1500, asistencia Confirmado 250/180, generico Confirmado 300/200.
         // NO suman: vuelo UN, hotel Cancelado, generico Cancelado.
         Assert.Equal(500m + 1000m + 50m + 2000m + 250m + 300m, money.TotalSale); // 4100
         Assert.Equal(300m + 700m + 30m + 1500m + 180m + 200m, money.TotalCost); // 2910
         Assert.Equal(1500m, money.TotalPaid); // 1000 + 500 vivos; 999 cancelled excluido
-        Assert.Equal(4100m - 1500m, money.Balance); // 2600
+
+        // ADR-020: ConfirmedSale solo suma los RESUELTOS. El vuelo HK NO esta resuelto (sin
+        // TicketIssuedAt) y el transfer Solicitado tampoco -> quedan afuera. Resueltos: hotel
+        // Confirmado (1000) + paquete Emitido (2000) + asistencia Confirmado (250) + generico
+        // Confirmado (300) = 3550.
+        Assert.Equal(1000m + 2000m + 250m + 300m, money.ConfirmedSale); // 3550
+        // Balance = ConfirmedSale - TotalPaid = 3550 - 1500 = 2050.
+        Assert.Equal(3550m - 1500m, money.Balance); // 2050
     }
 
     // --- Reserva vacia = todo 0 ---
@@ -319,30 +353,38 @@ public class ReservaMoneyCalculatorTests
     }
 
     /// <summary>
-    /// Replica EXACTA de la cuenta inline que vivia en ReservaService.UpdateBalanceAsync antes
-    /// del refactor P1. Sirve solo para el test de equivalencia: si el calculador cambiara algun
-    /// criterio, este test fallaria.
+    /// Reimplementacion de referencia de la cuenta de ReservaMoneyCalculator (ADR-020). Sirve para
+    /// el test de equivalencia: TotalSale/TotalCost = no cancelados (CountsForQuotedTotal);
+    /// ConfirmedSale = resueltos (ServiceResolutionRules.IsResolved); Balance = ConfirmedSale - TotalPaid.
     /// </summary>
     private static ReservaMoneySummary LegacyInlineMath(Reserva file)
     {
         var totalSale =
-            (file.FlightSegments?.Where(f => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.SalePrice) ?? 0) +
-            (file.HotelBookings?.Where(h => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.SalePrice) ?? 0) +
-            (file.TransferBookings?.Where(t => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.SalePrice) ?? 0) +
-            (file.PackageBookings?.Where(p => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.SalePrice) ?? 0) +
-            (file.AssistanceBookings?.Where(a => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(a.Status))).Sum(a => a.SalePrice) ?? 0) +
-            (file.Servicios?.Where(r => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.SalePrice) ?? 0);
+            (file.FlightSegments?.Where(f => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.SalePrice) ?? 0) +
+            (file.HotelBookings?.Where(h => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.SalePrice) ?? 0) +
+            (file.TransferBookings?.Where(t => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.SalePrice) ?? 0) +
+            (file.PackageBookings?.Where(p => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.SalePrice) ?? 0) +
+            (file.AssistanceBookings?.Where(a => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(a.Status))).Sum(a => a.SalePrice) ?? 0) +
+            (file.Servicios?.Where(r => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.SalePrice) ?? 0);
 
         var totalCost =
-            (file.FlightSegments?.Where(f => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.NetCost) ?? 0) +
-            (file.HotelBookings?.Where(h => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.NetCost) ?? 0) +
-            (file.TransferBookings?.Where(t => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.NetCost) ?? 0) +
-            (file.PackageBookings?.Where(p => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.NetCost) ?? 0) +
-            (file.AssistanceBookings?.Where(a => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(a.Status))).Sum(a => a.NetCost) ?? 0) +
-            (file.Servicios?.Where(r => WorkflowStatusHelper.CountsForReservaBalance(WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.NetCost) ?? 0);
+            (file.FlightSegments?.Where(f => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapFlightStatus(f.Status))).Sum(f => f.NetCost) ?? 0) +
+            (file.HotelBookings?.Where(h => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(h.Status))).Sum(h => h.NetCost) ?? 0) +
+            (file.TransferBookings?.Where(t => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(t.Status))).Sum(t => t.NetCost) ?? 0) +
+            (file.PackageBookings?.Where(p => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(p.Status))).Sum(p => p.NetCost) ?? 0) +
+            (file.AssistanceBookings?.Where(a => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(a.Status))).Sum(a => a.NetCost) ?? 0) +
+            (file.Servicios?.Where(r => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(r.Status))).Sum(r => r.NetCost) ?? 0);
+
+        var confirmedSale =
+            (file.FlightSegments?.Where(TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved).Sum(f => f.SalePrice) ?? 0) +
+            (file.HotelBookings?.Where(TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved).Sum(h => h.SalePrice) ?? 0) +
+            (file.TransferBookings?.Where(TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved).Sum(t => t.SalePrice) ?? 0) +
+            (file.PackageBookings?.Where(TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved).Sum(p => p.SalePrice) ?? 0) +
+            (file.AssistanceBookings?.Where(TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved).Sum(a => a.SalePrice) ?? 0) +
+            (file.Servicios?.Where(TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved).Sum(r => r.SalePrice) ?? 0);
 
         var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => p.Amount) ?? 0;
 
-        return new ReservaMoneySummary(totalSale, totalCost, totalPaid, totalSale - totalPaid);
+        return new ReservaMoneySummary(totalSale, confirmedSale, totalCost, totalPaid, confirmedSale - totalPaid);
     }
 }
