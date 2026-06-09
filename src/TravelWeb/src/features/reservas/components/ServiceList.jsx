@@ -598,7 +598,8 @@ export function ServiceList({
                                                 )}
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap">
-                                                <div className="flex flex-col gap-1.5">
+                                                {/* items-start: el badge hugea su texto y no se estira al ancho de la celda */}
+                                                <div className="flex flex-col items-start gap-1.5">
                                                     {/* px-1.5 (en vez de px-2) para que el área de color no se extienda
                                                         de más en textos cortos como "En espera" o "Emitido". */}
                                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
