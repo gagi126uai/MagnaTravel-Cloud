@@ -96,6 +96,19 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
 }
 
 /**
+ * Color del badge segun la ETIQUETA visible (no solo el workflowStatus).
+ * "En espera" (cotizacion/presupuesto, nada pedido aun) va gris neutro, distinto
+ * del ambar de "Solicitado" (ya pedido al operador, esperando confirmacion).
+ */
+function claseColorEstadoServicio(workflowStatus, reservaStatus) {
+    const etiqueta = etiquetaEstadoServicio(workflowStatus, reservaStatus);
+    if (etiqueta === 'Confirmado') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+    if (etiqueta === 'Cancelado') return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400';
+    if (etiqueta === 'En espera') return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+    return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
+}
+
+/**
  * Formatea una fecha para mostrar en la tabla. Devuelve '-' si el valor
  * no existe o no es una fecha válida (evita que aparezca "Invalid Date").
  *
@@ -602,11 +615,7 @@ export function ServiceList({
                                                 <div className="flex flex-col items-start gap-1.5">
                                                     {/* px-1.5 (en vez de px-2) para que el área de color no se extienda
                                                         de más en textos cortos como "En espera" o "Emitido". */}
-                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                                                        svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-                                                        svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
-                                                        'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                                                    }`}>
+                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${claseColorEstadoServicio(svc.workflowStatus, reservaStatus)}`}>
                                                         {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                                     </span>
                                                     {/* Pelotita ADR-020 (decision 4): solo en estado InManagement.
@@ -752,11 +761,7 @@ export function ServiceList({
                                         </div>
                                         {/* px-1.5 en vez de px-2: mismo ajuste que desktop para que el área
                                             de color no se extienda de más en textos cortos. */}
-                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
-                                            svc.workflowStatus === 'Confirmado' ? 'bg-green-100 text-green-700 dark:bg-green-900/30' :
-                                            svc.workflowStatus === 'Cancelado' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30' :
-                                            'bg-amber-100 text-amber-700 dark:bg-amber-900/30'
-                                        }`}>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${claseColorEstadoServicio(svc.workflowStatus, reservaStatus)}`}>
                                             {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                         </span>
                                     </div>
