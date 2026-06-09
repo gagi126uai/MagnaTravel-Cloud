@@ -83,18 +83,14 @@ export function esServicioConfirmadoPorOperador(svc) {
  * @param {string} reservaStatus - Estado de la reserva (ej. "Quotation", "Budget", "InManagement")
  */
 function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
-    // "Confirmado" y "Cancelado" son estados concretos del backend: mostrar tal cual.
-    if (workflowStatus === 'Confirmado' || workflowStatus === 'Cancelado') {
+    // "Confirmado", "Cancelado" y otros estados concretos del operador
+    // (ej. "Emitido", "HK") se muestran tal cual.
+    if (workflowStatus && workflowStatus !== 'Solicitado') {
         return workflowStatus;
     }
 
-    // Si hay otro valor en workflowStatus (ej. "Emitido", "HK"), mostrarlo directo.
-    if (workflowStatus) {
-        return workflowStatus;
-    }
-
-    // workflowStatus vacio o nulo: el texto depende del estado de la reserva.
-    // En Cotizacion y Presupuesto, todavia no se pidio nada al operador.
+    // "Solicitado" o vacio: en Cotizacion/Presupuesto todavia no se pidio
+    // nada al operador, asi que el texto correcto es "En espera".
     const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
     return estaEnEtapaPrevia ? 'En espera' : 'Solicitado';
 }

@@ -417,10 +417,7 @@ test("handleServiceUpdated: delta cero cuando costo no cambió (confirm sin modi
 // "Confirmado" y "Cancelado" siempre pasan directo (son estados del backend).
 
 function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
-    if (workflowStatus === 'Confirmado' || workflowStatus === 'Cancelado') {
-        return workflowStatus;
-    }
-    if (workflowStatus) {
+    if (workflowStatus && workflowStatus !== 'Solicitado') {
         return workflowStatus;
     }
     const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
@@ -460,6 +457,18 @@ test("etiquetaEstadoServicio: workflowStatus 'Cancelado' → siempre 'Cancelado'
 test("etiquetaEstadoServicio: workflowStatus 'Emitido' → pasa directo (estado del backend)", () => {
     // Otros valores del backend como 'Emitido', 'HK', etc. se muestran tal cual
     assert.equal(etiquetaEstadoServicio('Emitido', 'InManagement'), 'Emitido');
+});
+
+test("etiquetaEstadoServicio: 'Solicitado' + Cotizacion/Presupuesto → 'En espera' (el caso real que estaba roto)", () => {
+    // Los servicios traen workflowStatus 'Solicitado' como valor real (no vacio),
+    // asi que la conversion a 'En espera' debe contemplar tambien ese valor.
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'Quotation'), 'En espera');
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'Budget'), 'En espera');
+});
+
+test("etiquetaEstadoServicio: 'Solicitado' + En gestion en adelante → 'Solicitado'", () => {
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'InManagement'), 'Solicitado');
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'Confirmed'), 'Solicitado');
 });
 
 // ─── Tests: regla de 0 pasajeros (FIX 4a) ────────────────────────────────────
