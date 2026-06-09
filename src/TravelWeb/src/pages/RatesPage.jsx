@@ -543,8 +543,11 @@ export default function RatesPage() {
     const filteredRates = [];
     const otherRates = [];
 
-    // Renderizar descripción resumida según tipo
-    const getTypeDescription = (rate) => {
+    // Renderizar descripción resumida según tipo.
+    // Declarada como `function` (hoisted) a propósito: se usa más arriba, dentro
+    // del map de `hotelGroups`, vía getGroupSubtitle. Si fuera `const` daría
+    // "Cannot access before initialization" al renderizar tarifas que no son hotel.
+    function getTypeDescription(rate) {
         switch (rate.serviceType) {
             case "Aereo":
                 return `${rate.airline || ""} ${rate.origin ? `${rate.origin} → ${rate.destination}` : ""} ${rate.cabinClass || ""}`.trim() || rate.description;
