@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
@@ -22,6 +23,51 @@ public class SupplierPayment : IHasPublicId
 
     [Column(TypeName = "decimal(18,2)")]
     public decimal Amount { get; set; }
+
+    // ====================================================================================
+    // ADR-021 (multimoneda + pago saliente cruzado, 2026-06-08, §15.3). Espejo EXACTO del
+    // bloque de Payment (eje cliente): la deuda con el operador tambien se separa por moneda.
+    // En Capa 1 son SOLO modelo+columna; el default deja todo en ARS no cruzado = identico a hoy.
+    // ====================================================================================
+
+    /// <summary>
+    /// ADR-021: moneda REAL del egreso, lo que efectivamente salio de caja. Sagrada (no se
+    /// convierte). NOT NULL, default ARS a nivel BD. Valores: <c>Monedas.Soportadas</c>.
+    /// </summary>
+    [MaxLength(3)]
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>
+    /// ADR-021: moneda de la DEUDA al operador a la que se imputa el pago. <c>null</c> = se imputa
+    /// a su propia moneda (pago NO cruzado). Si difiere de <see cref="Currency"/>, es cruzado y
+    /// el bloque de TC pasa a obligatorio (validacion Capa 2, §15.7).
+    /// </summary>
+    [MaxLength(3)]
+    public string? ImputedCurrency { get; set; }
+
+    /// <summary>
+    /// ADR-021: tipo de cambio aplicado. Convencion FIJA (§2.2bis): ARS por 1 USD. Precision
+    /// (18,6) alineada con <c>Invoice.MonCotiz</c> y con <c>Payment.ExchangeRate</c>. <c>null</c> si no cruza.
+    /// </summary>
+    [Column(TypeName = "decimal(18,6)")]
+    public decimal? ExchangeRate { get; set; }
+
+    /// <summary>
+    /// ADR-021: origen del TC (reusa el enum de ADR-012/ADR-002), persistido como <c>int</c>.
+    /// <c>null</c> si no cruza; en un pago cruzado nunca <c>null</c> ni <c>Unset</c> (validacion Capa 2).
+    /// </summary>
+    public ExchangeRateSource? ExchangeRateSource { get; set; }
+
+    /// <summary>ADR-021: fecha del TC aplicado. <c>null</c> si no cruza.</summary>
+    public DateTime? ExchangeRateAt { get; set; }
+
+    /// <summary>
+    /// ADR-021: monto EQUIVALENTE que baja de la deuda en <see cref="ImputedCurrency"/> tras
+    /// aplicar el TC. <c>null</c> si no cruza (se imputa <see cref="Amount"/> sobre <see cref="Currency"/>).
+    /// Precision (18,2).
+    /// </summary>
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? ImputedAmount { get; set; }
 
     public DateTime PaidAt { get; set; } = DateTime.UtcNow;
 

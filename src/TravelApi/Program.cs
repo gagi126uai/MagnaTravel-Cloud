@@ -26,6 +26,8 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Application.Contracts.Auth;
 using TravelApi.Application.Ai;
 using TravelApi.Infrastructure.Ai;
+using TravelApi.Infrastructure.Reservations;
+using Microsoft.Extensions.Logging;
 
 using TravelApi.Authorization;
 using TravelApi.Infrastructure.Authorization;
@@ -726,6 +728,40 @@ if (migrateOnly || applyMigrationsOnStartup)
                 app.Logger.LogInformation("Applying EF Core Migrations (Attempts remaining: {Retries})...", retries);
                 await db.Database.MigrateAsync();
                 app.Logger.LogInformation("EF Core Migrations applied successfully.");
+
+                // ADR-021 Capa 2 (multimoneda): backfill IDEMPOTENTE de las tablas hijas por moneda
+                // (ReservaMoneyByCurrency / SupplierBalanceByCurrency). La migracion M1 las crea vacias;
+                // hasta poblarlas, los consumidores que las leen verian saldo 0 (dato silencioso falso).
+                // Se ejecuta SOLO si queda algo pendiente (chequeo barato) y reusa los persisters
+                // consolidados, asi que es seguro correrlo en cada arranque. Si falla, no aborta el
+                // arranque: la hija se auto-completa en el proximo recalculo o re-deploy (es derivada).
+                try
+                {
+                    var supplierService = scope.ServiceProvider.GetRequiredService<ISupplierService>();
+                    var backfill = new MultiCurrencyBackfillService(
+                        db,
+                        supplierService,
+                        scope.ServiceProvider.GetService<ILogger<MultiCurrencyBackfillService>>());
+
+                    if (await backfill.NeedsBackfillAsync())
+                    {
+                        app.Logger.LogInformation("ADR-021: running multicurrency child-table backfill...");
+                        var (reservasDone, suppliersDone) = await backfill.RunAsync();
+                        app.Logger.LogInformation(
+                            "ADR-021 backfill finished. Reservas={Reservas}, Proveedores={Suppliers}.",
+                            reservasDone, suppliersDone);
+                    }
+                    else
+                    {
+                        app.Logger.LogInformation("ADR-021: multicurrency child tables already populated, skipping backfill.");
+                    }
+                }
+                catch (Exception backfillEx)
+                {
+                    app.Logger.LogError(backfillEx,
+                        "ADR-021 multicurrency backfill failed. Startup continues; child tables will be completed on next recalculation or re-deploy.");
+                }
+
                 break;
             }
             catch (Exception ex)

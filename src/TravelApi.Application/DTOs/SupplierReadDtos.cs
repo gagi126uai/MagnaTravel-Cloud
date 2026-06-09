@@ -52,6 +52,15 @@ public class SupplierAccountServiceListItemDto
     public string? Confirmation { get; set; }
     public decimal NetCost { get; set; }
     public decimal SalePrice { get; set; }
+
+    /// <summary>
+    /// ADR-021 (multimoneda, eje proveedor, §15.4): moneda en que va este servicio (la deuda con el
+    /// operador por este servicio esta en ESTA moneda). <c>null</c> = legacy = ARS (se normaliza con
+    /// <c>Monedas.Normalizar</c> al agrupar la deuda por moneda). Proyectada desde <c>x.Currency</c>
+    /// de cada tipo de servicio.
+    /// </summary>
+    public string? Currency { get; set; }
+
     public DateTime Date { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? NumeroReserva { get; set; }

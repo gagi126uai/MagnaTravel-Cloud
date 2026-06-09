@@ -385,6 +385,18 @@ public class ReservaMoneyCalculatorTests
 
         var totalPaid = file.Payments?.Where(p => p.Status != "Cancelled" && !p.IsDeleted).Sum(p => p.Amount) ?? 0;
 
-        return new ReservaMoneySummary(totalSale, confirmedSale, totalCost, totalPaid, confirmedSale - totalPaid);
+        // ADR-021: el summary se arma desde el detalle por moneda. BuildMixedReserva no setea moneda,
+        // asi que todo cae en una unica linea ARS (caso legacy). Construimos esa linea para que la
+        // comparacion contra Calculate siga ejercitando la equivalencia escalar.
+        var porMoneda = new System.Collections.Generic.Dictionary<string, TravelApi.Domain.Reservations.ReservaMoneyLine>
+        {
+            ["ARS"] = new TravelApi.Domain.Reservations.ReservaMoneyLine(
+                currency: "ARS",
+                totalSale: totalSale,
+                confirmedSale: confirmedSale,
+                totalCost: totalCost,
+                totalPaid: totalPaid)
+        };
+        return new ReservaMoneySummary(porMoneda);
     }
 }

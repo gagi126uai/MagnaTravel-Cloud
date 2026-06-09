@@ -1685,27 +1685,11 @@ public class AfipService : IAfipService
     // Unificado -> el saldo es consistente y correcto sin importar que disparo el recalculo.
     private async Task RecalculateReservaBalanceAsync(int reservaId)
     {
-        var reserva = await _context.Reservas
-            .Include(f => f.Payments)
-            .Include(f => f.Servicios)
-            .Include(f => f.FlightSegments)
-            .Include(f => f.HotelBookings)
-            .Include(f => f.TransferBookings)
-            .Include(f => f.PackageBookings)
-            .Include(f => f.AssistanceBookings)
-            .FirstOrDefaultAsync(f => f.Id == reservaId);
-
-        if (reserva == null)
-            return;
-
-        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
-        reserva.TotalSale = summary.TotalSale;
-        reserva.ConfirmedSale = summary.ConfirmedSale; // ADR-020: venta confirmada (alimenta el saldo)
-        reserva.TotalCost = summary.TotalCost;
-        reserva.TotalPaid = summary.TotalPaid;
-        reserva.Balance = summary.Balance;
-
-        await _context.SaveChangesAsync();
+        // ADR-021 §4.1/§B5 (este era el TERCER punto de escritura del escalar, disparado por la
+        // reversa de NC). Antes actualizaba el escalar pero NO la tabla hija -> tras facturar/anular
+        // NC la hija quedaba desactualizada (desincronizacion silenciosa). Ahora delega en el persister
+        // consolidado, que escribe escalar surrogate + ReservaMoneyByCurrency en la misma SaveChanges.
+        await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_context, reservaId);
     }
 
     private async Task<int> GetNextVoucherNumber(AfipSettings settings, int cbteTipo)

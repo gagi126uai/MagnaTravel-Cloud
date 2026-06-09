@@ -2554,29 +2554,11 @@ public class ReservaService : IReservaService
     /// </summary>
     private async Task RecalculateMoneyAsync(int reservaId)
     {
-        var file = await _context.Reservas
-            .Include(f => f.Payments)
-            .Include(f => f.Servicios)
-            .Include(f => f.FlightSegments)
-            .Include(f => f.HotelBookings)
-            .Include(f => f.TransferBookings)
-            .Include(f => f.PackageBookings)
-            .Include(f => f.AssistanceBookings)
-            .FirstOrDefaultAsync(f => f.Id == reservaId);
-
-        if (file == null) return;
-
-        // La matematica del saldo vive en el calculador de dominio ReservaMoneyCalculator, unica
-        // fuente de la cuenta. Aca cargamos los Includes (arriba), calculamos y persistimos.
-        var money = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(file);
-
-        file.TotalSale = money.TotalSale;
-        file.ConfirmedSale = money.ConfirmedSale; // ADR-020: venta confirmada (alimenta el saldo)
-        file.TotalCost = money.TotalCost;
-        file.TotalPaid = money.TotalPaid;
-        file.Balance = money.Balance;
-
-        await _context.SaveChangesAsync();
+        // ADR-021 §4.1/§B5: el recalculo + persistencia (escalar surrogate + tabla hija por moneda)
+        // viven en el persister consolidado, unico punto de escritura de la plata de la reserva. Asi
+        // este camino (recalculo por mutacion de servicio/estado) escribe la hija igual que el de
+        // pagos y el de AFIP, y nunca pueden divergir. La matematica sigue en ReservaMoneyCalculator.
+        await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_context, reservaId);
     }
 
     private static void ApplyEconomicFlags(ReservaDto dto, OperationalFinanceSettings settings)

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
@@ -15,6 +16,54 @@ public class Payment : IHasPublicId
 
     [Column(TypeName = "decimal(18,2)")]
     public decimal Amount { get; set; }
+
+    // ====================================================================================
+    // ADR-021 (multimoneda + cobro cruzado, 2026-06-08). En Capa 1 son SOLO modelo+columna:
+    // nadie los setea todavia (el default deja todo en ARS no cruzado = identico a hoy).
+    // El registro de pago que los completa y el calculo que los usa son capas siguientes.
+    // ====================================================================================
+
+    /// <summary>
+    /// ADR-021: moneda REAL del pago, lo que efectivamente entro a caja. Es sagrada: la caja
+    /// NO se convierte. NOT NULL, default ARS (la migracion pone el default a nivel BD para
+    /// que los pagos legacy queden en pesos automaticamente). Valores: <c>Monedas.Soportadas</c>.
+    /// </summary>
+    [MaxLength(3)]
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>
+    /// ADR-021: moneda del SALDO al que se imputa el pago. <c>null</c> = se imputa a su propia
+    /// moneda (<see cref="Currency"/>), pago NO cruzado. Si difiere de <see cref="Currency"/>,
+    /// el pago es cruzado y el bloque de TC de abajo pasa a ser obligatorio (validacion Capa 2).
+    /// </summary>
+    [MaxLength(3)]
+    public string? ImputedCurrency { get; set; }
+
+    /// <summary>
+    /// ADR-021: tipo de cambio aplicado en un pago cruzado. Convencion FIJA (§2.2bis): unidades
+    /// de ARS por 1 USD (ej. 1 USD = 1000 ARS -> 1000.000000), misma orientacion que
+    /// <c>Invoice.MonCotiz</c>. Precision (18,6) alineada con MonCotiz. <c>null</c> si no hubo conversion.
+    /// </summary>
+    [Column(TypeName = "decimal(18,6)")]
+    public decimal? ExchangeRate { get; set; }
+
+    /// <summary>
+    /// ADR-021: origen del tipo de cambio. Reusa el enum de ADR-012/ADR-002 (BCRA/BNA/AFIP/Manual...).
+    /// Se persiste como <c>int</c>. <c>null</c> si no hubo conversion. En un pago cruzado nunca puede
+    /// quedar <c>null</c> ni <c>Unset</c> (validacion Capa 2, espejo del CHECK fiscal de FC1).
+    /// </summary>
+    public ExchangeRateSource? ExchangeRateSource { get; set; }
+
+    /// <summary>ADR-021: fecha del tipo de cambio aplicado. <c>null</c> si no hubo conversion.</summary>
+    public DateTime? ExchangeRateAt { get; set; }
+
+    /// <summary>
+    /// ADR-021: monto EQUIVALENTE que baja del saldo de <see cref="ImputedCurrency"/> tras
+    /// aplicar el TC (§2.2bis). <c>null</c> si no hubo conversion (entonces se imputa
+    /// <see cref="Amount"/> sobre <see cref="Currency"/>). Precision (18,2) = escala canonica de plata.
+    /// </summary>
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? ImputedAmount { get; set; }
 
     public DateTime PaidAt { get; set; } = DateTime.UtcNow;
 

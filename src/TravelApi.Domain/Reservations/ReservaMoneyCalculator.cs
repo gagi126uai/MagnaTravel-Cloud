@@ -7,19 +7,19 @@ namespace TravelApi.Domain.Reservations;
 /// "cuanto vale la reserva (venta/costo), cuanto vale lo CONFIRMADO, cuanto se pago y cuanto
 /// debe el cliente (saldo)".
 ///
-/// <para>ADR-020 (2026-06-07): la plata se parte en DOS numeros de venta:</para>
-/// <list type="bullet">
-/// <item><b>TotalSale</b>: valor comercial del presupuesto = SalePrice de los servicios NO
-///   cancelados (Solicitado + Confirmado). Es lo que el cliente ve cotizado. Conserva su semantica
-///   historica.</item>
-/// <item><b>ConfirmedSale</b>: SalePrice de los servicios RESUELTOS
-///   (<see cref="ServiceResolutionRules"/>.IsResolved). Es la deuda EXIGIBLE: un servicio recien
-///   "Solicitado" todavia no genera deuda del cliente. NUEVO en ADR-020.</item>
-/// </list>
+/// <para>ADR-020 (2026-06-07): la venta se parte en TotalSale (presupuesto, servicios no
+/// cancelados) y ConfirmedSale (deuda exigible, servicios RESUELTOS). El saldo es
+/// <c>ConfirmedSale - TotalPaid</c>.</para>
 ///
-/// <para>El saldo es <c>Balance = ConfirmedSale - TotalPaid</c> (antes era
-/// <c>TotalSale - TotalPaid</c>). Si el cliente pago mas de lo confirmado (sena antes de confirmar),
-/// el saldo queda negativo = saldo a favor, que es correcto: la sena existe antes que la deuda.</para>
+/// <para>ADR-021 (2026-06-08, multimoneda): el calculo agrupa cada servicio por SU moneda
+/// (<c>servicio.Currency</c>, null = ARS) y cada pago por la moneda a la que se IMPUTA, produciendo
+/// un detalle separado por moneda (<see cref="ReservaMoneySummary.PorMoneda"/>) que NUNCA mezcla
+/// USD con ARS. Los escalares heredados se derivan de ese detalle para compat (ver
+/// <see cref="ReservaMoneySummary"/>).</para>
+///
+/// <para><b>Regla de oro (regresion)</b>: una reserva 100% en una sola moneda (caso legacy ARS)
+/// da exactamente los mismos numeros que antes de ADR-021 — el detalle queda con una sola linea y
+/// los escalares coinciden con la cuenta vieja.</para>
 ///
 /// <para>Funcion pura: sin EF ni base de datos, para testear sin Postgres y tener un solo lugar
 /// donde vive la regla.</para>
@@ -27,8 +27,8 @@ namespace TravelApi.Domain.Reservations;
 public static class ReservaMoneyCalculator
 {
     /// <summary>
-    /// Calcula los totales de la reserva a partir de sus colecciones ya cargadas
-    /// (los 5 tipos de servicio tipados + servicios genericos + pagos). Funcion pura:
+    /// Calcula los totales de la reserva (separados por moneda) a partir de sus colecciones ya
+    /// cargadas (los 5 tipos de servicio tipados + servicios genericos + pagos). Funcion pura:
     /// no muta la reserva, no toca base de datos, no es async.
     ///
     /// <para>El llamador es responsable de cargar las colecciones (Includes en EF). Si una
@@ -38,44 +38,155 @@ public static class ReservaMoneyCalculator
     {
         ArgumentNullException.ThrowIfNull(reserva);
 
-        // VENTA COMERCIAL (TotalSale) y COSTO: servicios NO cancelados (Solicitado + Confirmado).
-        decimal totalSale =
-            SumFlights(reserva, IsQuotedFlight, f => f.SalePrice) +
-            SumHotels(reserva, IsQuotedHotel, h => h.SalePrice) +
-            SumTransfers(reserva, IsQuotedTransfer, t => t.SalePrice) +
-            SumPackages(reserva, IsQuotedPackage, p => p.SalePrice) +
-            SumAssistances(reserva, IsQuotedAssistance, a => a.SalePrice) +
-            SumGenerics(reserva, IsQuotedGeneric, s => s.SalePrice);
+        // Acumulador mutable por moneda. Se vuelca a ReservaMoneyLine (inmutable) al final.
+        // Clave = moneda canonica (Monedas.Normalizar). Una entrada por cada moneda que aparezca
+        // en algun servicio o pago.
+        var porMoneda = new Dictionary<string, CurrencyAccumulator>();
 
-        decimal totalCost =
-            SumFlights(reserva, IsQuotedFlight, f => f.NetCost) +
-            SumHotels(reserva, IsQuotedHotel, h => h.NetCost) +
-            SumTransfers(reserva, IsQuotedTransfer, t => t.NetCost) +
-            SumPackages(reserva, IsQuotedPackage, p => p.NetCost) +
-            SumAssistances(reserva, IsQuotedAssistance, a => a.NetCost) +
-            SumGenerics(reserva, IsQuotedGeneric, s => s.NetCost);
+        AccumulateServices(reserva, porMoneda);
+        AccumulatePayments(reserva, porMoneda);
 
-        // VENTA CONFIRMADA (ConfirmedSale): SOLO servicios RESUELTOS. Es la deuda exigible.
-        decimal confirmedSale =
-            SumFlights(reserva, ServiceResolutionRules.IsResolved, f => f.SalePrice) +
-            SumHotels(reserva, ServiceResolutionRules.IsResolved, h => h.SalePrice) +
-            SumTransfers(reserva, ServiceResolutionRules.IsResolved, t => t.SalePrice) +
-            SumPackages(reserva, ServiceResolutionRules.IsResolved, p => p.SalePrice) +
-            SumAssistances(reserva, ServiceResolutionRules.IsResolved, a => a.SalePrice) +
-            SumGenerics(reserva, ServiceResolutionRules.IsResolved, s => s.SalePrice);
+        // Volcado a lineas inmutables. El Balance de cada linea lo calcula la propia ReservaMoneyLine
+        // (ConfirmedSale - TotalPaid de esa moneda).
+        var lines = new Dictionary<string, ReservaMoneyLine>(StringComparer.Ordinal);
+        foreach (var (currency, acc) in porMoneda)
+        {
+            lines[currency] = new ReservaMoneyLine(
+                currency: currency,
+                totalSale: acc.TotalSale,
+                confirmedSale: acc.ConfirmedSale,
+                totalCost: acc.TotalCost,
+                totalPaid: acc.TotalPaid);
+        }
 
-        decimal totalPaid = SumLivePayments(reserva);
+        return new ReservaMoneySummary(lines);
+    }
 
-        // ADR-020: el saldo es la VENTA CONFIRMADA menos lo pagado. Un servicio no resuelto no
-        // genera deuda; un servicio cancelado sale solo de ConfirmedSale -> el saldo baja solo.
-        decimal balance = confirmedSale - totalPaid;
+    // ============================================================================================
+    // Servicios: cada servicio aporta su SalePrice/NetCost a la moneda que el servicio declara.
+    // El filtro de "cuenta o no" (cotizado / resuelto) es EXACTAMENTE el mismo de antes; lo unico
+    // nuevo es que ahora el monto cae en la linea de su moneda en vez de un escalar global.
+    // ============================================================================================
 
-        return new ReservaMoneySummary(
-            totalSale: totalSale,
-            confirmedSale: confirmedSale,
-            totalCost: totalCost,
-            totalPaid: totalPaid,
-            balance: balance);
+    private static void AccumulateServices(Reserva reserva, Dictionary<string, CurrencyAccumulator> porMoneda)
+    {
+        if (reserva.FlightSegments != null)
+            foreach (var flight in reserva.FlightSegments)
+                AddService(porMoneda, flight.Currency,
+                    quoted: IsQuotedFlight(flight),
+                    resolved: ServiceResolutionRules.IsResolved(flight),
+                    salePrice: flight.SalePrice, netCost: flight.NetCost);
+
+        if (reserva.HotelBookings != null)
+            foreach (var hotel in reserva.HotelBookings)
+                AddService(porMoneda, hotel.Currency,
+                    quoted: IsQuotedHotel(hotel),
+                    resolved: ServiceResolutionRules.IsResolved(hotel),
+                    salePrice: hotel.SalePrice, netCost: hotel.NetCost);
+
+        if (reserva.TransferBookings != null)
+            foreach (var transfer in reserva.TransferBookings)
+                AddService(porMoneda, transfer.Currency,
+                    quoted: IsQuotedTransfer(transfer),
+                    resolved: ServiceResolutionRules.IsResolved(transfer),
+                    salePrice: transfer.SalePrice, netCost: transfer.NetCost);
+
+        if (reserva.PackageBookings != null)
+            foreach (var package in reserva.PackageBookings)
+                AddService(porMoneda, package.Currency,
+                    quoted: IsQuotedPackage(package),
+                    resolved: ServiceResolutionRules.IsResolved(package),
+                    salePrice: package.SalePrice, netCost: package.NetCost);
+
+        if (reserva.AssistanceBookings != null)
+            foreach (var assistance in reserva.AssistanceBookings)
+                AddService(porMoneda, assistance.Currency,
+                    quoted: IsQuotedAssistance(assistance),
+                    resolved: ServiceResolutionRules.IsResolved(assistance),
+                    salePrice: assistance.SalePrice, netCost: assistance.NetCost);
+
+        if (reserva.Servicios != null)
+            foreach (var service in reserva.Servicios)
+                AddService(porMoneda, service.Currency,
+                    quoted: IsQuotedGeneric(service),
+                    resolved: ServiceResolutionRules.IsResolved(service),
+                    salePrice: service.SalePrice, netCost: service.NetCost);
+    }
+
+    /// <summary>
+    /// Aporta un servicio a la linea de su moneda. TotalSale/TotalCost suman si el servicio esta
+    /// "cotizado" (no cancelado); ConfirmedSale suma solo si esta "resuelto". Mismo criterio que
+    /// el calculo escalar previo: aca solo cambia el destino (linea por moneda).
+    /// </summary>
+    private static void AddService(
+        Dictionary<string, CurrencyAccumulator> porMoneda,
+        string? rawCurrency, bool quoted, bool resolved, decimal salePrice, decimal netCost)
+    {
+        // Un servicio sin nada que aportar (ni cotizado ni resuelto = cancelado) no crea su moneda.
+        if (!quoted && !resolved) return;
+
+        var acc = GetOrCreate(porMoneda, rawCurrency);
+        if (quoted)
+        {
+            acc.TotalSale += salePrice;
+            acc.TotalCost += netCost;
+        }
+        if (resolved)
+        {
+            acc.ConfirmedSale += salePrice;
+        }
+    }
+
+    // ============================================================================================
+    // Pagos: cada pago vivo aporta a la moneda a la que se IMPUTA.
+    //   - Pago NO cruzado (ImputedCurrency null o == Currency): imputa su Amount a su propia moneda.
+    //   - Pago cruzado (ImputedCurrency != Currency): imputa su ImputedAmount (equivalente convertido)
+    //     a la moneda del saldo (ImputedCurrency). La caja real (Amount+Currency) la lee tesoreria
+    //     aparte; aca solo nos interesa cuanto bajo la DEUDA de cada moneda (ADR-021 §2.3/§2.8).
+    // ============================================================================================
+
+    private static void AccumulatePayments(Reserva reserva, Dictionary<string, CurrencyAccumulator> porMoneda)
+    {
+        if (reserva.Payments == null) return;
+
+        foreach (var payment in reserva.Payments)
+        {
+            // Mismo filtro de "pago vivo" de siempre: ni cancelado ni borrado (soft delete).
+            bool isLive = payment.Status != "Cancelled" && !payment.IsDeleted;
+            if (!isLive) continue;
+
+            // Moneda a la que se imputa y monto imputado. Para el caso legacy (sin moneda ni
+            // imputacion) esto es ARS + Amount = identico a hoy.
+            string imputedCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+            decimal imputedAmount = payment.ImputedAmount ?? payment.Amount;
+
+            var acc = GetOrCreate(porMoneda, imputedCurrency);
+            acc.TotalPaid += imputedAmount;
+        }
+    }
+
+    /// <summary>
+    /// Devuelve (creando si hace falta) el acumulador de la moneda canonica de <paramref name="rawCurrency"/>.
+    /// Normaliza null/vacio a ARS, de modo que el dato legacy sin moneda cae siempre en la linea ARS.
+    /// </summary>
+    private static CurrencyAccumulator GetOrCreate(Dictionary<string, CurrencyAccumulator> porMoneda, string? rawCurrency)
+    {
+        string currency = Monedas.Normalizar(rawCurrency);
+        if (!porMoneda.TryGetValue(currency, out var acc))
+        {
+            acc = new CurrencyAccumulator();
+            porMoneda[currency] = acc;
+        }
+        return acc;
+    }
+
+    /// <summary>Acumulador mutable interno por moneda; se vuelca a <see cref="ReservaMoneyLine"/> al final.</summary>
+    private sealed class CurrencyAccumulator
+    {
+        public decimal TotalSale;
+        public decimal ConfirmedSale;
+        public decimal TotalCost;
+        public decimal TotalPaid;
     }
 
     // --- Predicados "cotizado" (no cancelado) por tipo, espejo de WorkflowStatusHelper.CountsForQuotedTotal ---
@@ -98,74 +209,4 @@ public static class ReservaMoneyCalculator
 
     private static bool IsQuotedGeneric(ServicioReserva s)
         => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(s.Status));
-
-    // --- Sumadores por coleccion: filtran con el predicado recibido y suman el selector ---
-    // Cada tipo es una clase distinta, asi que no se pueden recorrer con un solo selector.
-
-    private static decimal SumFlights(Reserva reserva, Func<FlightSegment, bool> filter, Func<FlightSegment, decimal> selector)
-    {
-        if (reserva.FlightSegments == null) return 0m;
-        decimal total = 0m;
-        foreach (var flight in reserva.FlightSegments)
-            if (filter(flight)) total += selector(flight);
-        return total;
-    }
-
-    private static decimal SumHotels(Reserva reserva, Func<HotelBooking, bool> filter, Func<HotelBooking, decimal> selector)
-    {
-        if (reserva.HotelBookings == null) return 0m;
-        decimal total = 0m;
-        foreach (var hotel in reserva.HotelBookings)
-            if (filter(hotel)) total += selector(hotel);
-        return total;
-    }
-
-    private static decimal SumTransfers(Reserva reserva, Func<TransferBooking, bool> filter, Func<TransferBooking, decimal> selector)
-    {
-        if (reserva.TransferBookings == null) return 0m;
-        decimal total = 0m;
-        foreach (var transfer in reserva.TransferBookings)
-            if (filter(transfer)) total += selector(transfer);
-        return total;
-    }
-
-    private static decimal SumPackages(Reserva reserva, Func<PackageBooking, bool> filter, Func<PackageBooking, decimal> selector)
-    {
-        if (reserva.PackageBookings == null) return 0m;
-        decimal total = 0m;
-        foreach (var package in reserva.PackageBookings)
-            if (filter(package)) total += selector(package);
-        return total;
-    }
-
-    private static decimal SumAssistances(Reserva reserva, Func<AssistanceBooking, bool> filter, Func<AssistanceBooking, decimal> selector)
-    {
-        if (reserva.AssistanceBookings == null) return 0m;
-        decimal total = 0m;
-        foreach (var assistance in reserva.AssistanceBookings)
-            if (filter(assistance)) total += selector(assistance);
-        return total;
-    }
-
-    private static decimal SumGenerics(Reserva reserva, Func<ServicioReserva, bool> filter, Func<ServicioReserva, decimal> selector)
-    {
-        if (reserva.Servicios == null) return 0m;
-        decimal total = 0m;
-        foreach (var service in reserva.Servicios)
-            if (filter(service)) total += selector(service);
-        return total;
-    }
-
-    private static decimal SumLivePayments(Reserva reserva)
-    {
-        if (reserva.Payments == null) return 0m;
-        decimal total = 0m;
-        foreach (var payment in reserva.Payments)
-        {
-            // Cuenta el pago solo si no esta cancelado ni borrado (soft delete).
-            bool isLive = payment.Status != "Cancelled" && !payment.IsDeleted;
-            if (isLive) total += payment.Amount;
-        }
-        return total;
-    }
 }

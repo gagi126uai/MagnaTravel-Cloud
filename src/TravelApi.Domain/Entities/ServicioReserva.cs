@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
@@ -63,6 +64,20 @@ public class ServicioReserva : IHasPublicId
 
     [Column(TypeName = "decimal(18,2)")]
     public decimal Tax { get; set; } = 0;
+
+    /// <summary>
+    /// ADR-021 (multimoneda, 2026-06-08): moneda en que va ESTE servicio generico (costo y
+    /// venta SIEMPRE en la misma moneda, decision del dueno). Espejo de los 5 servicios tipados
+    /// que ya tienen <c>Currency</c> desde AddBookingCurrencyTraceability.
+    ///
+    /// <para><c>null</c> = legacy / no informado = se lee como ARS (<c>Monedas.Normalizar</c>).
+    /// Se mantiene nullable a proposito: evita una migracion NOT NULL sobre una columna con
+    /// datos. Valores soportados: <c>Monedas.Soportadas</c> (ARS/USD).</para>
+    ///
+    /// <para>El calculo de saldo agrupa por esta moneda (Capa 2). null = legacy = ARS.</para>
+    /// </summary>
+    [MaxLength(3)]
+    public string? Currency { get; set; }
 
     public string? SupplierName { get; set; }
 

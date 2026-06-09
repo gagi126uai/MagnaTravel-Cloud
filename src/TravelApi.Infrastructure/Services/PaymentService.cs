@@ -796,27 +796,10 @@ public class PaymentService : IPaymentService
     // Unificado -> el saldo es consistente y correcto sin importar que disparo el recalculo.
     private async Task RecalculateReservaBalanceAsync(int reservaId, CancellationToken cancellationToken)
     {
-        var reserva = await _dbContext.Reservas
-            .Include(f => f.Payments)
-            .Include(f => f.Servicios)
-            .Include(f => f.FlightSegments)
-            .Include(f => f.HotelBookings)
-            .Include(f => f.TransferBookings)
-            .Include(f => f.PackageBookings)
-            .Include(f => f.AssistanceBookings)
-            .FirstOrDefaultAsync(f => f.Id == reservaId, cancellationToken);
-
-        if (reserva == null)
-            return;
-
-        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
-        reserva.TotalSale = summary.TotalSale;
-        reserva.ConfirmedSale = summary.ConfirmedSale; // ADR-020: venta confirmada (alimenta el saldo)
-        reserva.TotalCost = summary.TotalCost;
-        reserva.TotalPaid = summary.TotalPaid;
-        reserva.Balance = summary.Balance;
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        // ADR-021 §4.1/§B5: delega en el persister consolidado (unico punto de escritura de la plata
+        // de la reserva). Persiste escalar surrogate + tabla hija ReservaMoneyByCurrency en la misma
+        // SaveChangesAsync. La fuente de la cuenta sigue siendo ReservaMoneyCalculator.
+        await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_dbContext, reservaId, cancellationToken);
     }
 
     private static IQueryable<Payment> ApplyPaymentSearch(IQueryable<Payment> query, string? search)

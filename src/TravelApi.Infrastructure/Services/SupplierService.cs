@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services.Reservations;
 
@@ -357,9 +358,11 @@ public class SupplierService : ISupplierService
     {
         var suppliers = await _dbContext.Suppliers.ToListAsync(cancellationToken);
 
+        // ADR-021 §15.3: cada proveedor sincroniza escalar surrogate + tabla hija por moneda. Un solo
+        // SaveChanges al final (todos los proveedores en la misma transaccion, como antes).
         foreach (var supplier in suppliers)
         {
-            supplier.CurrentBalance = await CalculateSupplierDebt(supplier.Id, cancellationToken);
+            await PersistSupplierBalanceAsync(supplier, cancellationToken);
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -369,8 +372,9 @@ public class SupplierService : ISupplierService
     {
         var supplier = await _dbContext.Suppliers.FindAsync(new object[] { id }, cancellationToken);
         if (supplier == null) return;
-        
-        supplier.CurrentBalance = await CalculateSupplierDebt(id, cancellationToken);
+
+        // ADR-021 §15.3: escalar surrogate + tabla hija SupplierBalanceByCurrency en la misma SaveChanges.
+        await PersistSupplierBalanceAsync(supplier, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -561,7 +565,14 @@ public class SupplierService : ISupplierService
         };
 
         _dbContext.SupplierPayments.Add(payment);
-        supplier.CurrentBalance = currentDebt - request.Amount;
+
+        // ADR-021 §15.3: primero persistimos el pago, despues recalculamos la deuda por moneda y
+        // sincronizamos escalar surrogate + tabla hija. El recalculo lee los pagos de la BD (su query
+        // filter !IsDeleted excluye los borrados), por eso el pago debe estar guardado antes de
+        // recalcular. Para un pago ARS no cruzado el escalar resultante es identico a la cuenta vieja
+        // (currentDebt - Amount). Escalar y tabla hija quedan en la misma (segunda) SaveChanges.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await PersistSupplierBalanceAsync(supplier, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return payment.PublicId;
@@ -611,7 +622,12 @@ public class SupplierService : ISupplierService
         payment.Notes = request.Notes;
         payment.ReservaId = reservaId;
 
-        supplier.CurrentBalance = debtPrePayment - request.Amount;
+        // ADR-021 §15.3: persistimos la edicion del pago y recalculamos la deuda por moneda
+        // (escalar surrogate + tabla hija). Para un pago ARS no cruzado el escalar resultante es
+        // identico a la cuenta vieja (debtPrePayment - Amount). El recalculo lee de la BD, por eso
+        // la edicion va antes.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await PersistSupplierBalanceAsync(supplier, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -636,14 +652,20 @@ public class SupplierService : ISupplierService
         // B1.15 Fase 0' (CODE-10 / INV-2): soft-delete + AuditLog para preservar
         // trazabilidad. Antes era hard-delete: el pago desaparecia y el ajuste de
         // CurrentBalance quedaba sin registro de quien/cuando.
-        var currentDebt = await CalculateSupplierDebt(id, cancellationToken);
-        supplier.CurrentBalance = currentDebt + payment.Amount;
-
         var (userId, userName) = ResolveCurrentActor();
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;
         payment.DeletedByUserId = userId;
 
+        // ADR-021 §15.6bis (BUG LATENTE CORREGIDO): antes hacia `currentDebt + payment.Amount`, que
+        // suma el AMOUNT DE CAJA al recalculo — esto da el numero correcto SOLO si el pago fue en la
+        // misma moneda que la deuda. Con un pago cruzado, lo que hay que devolver a la deuda es el
+        // EQUIVALENTE IMPUTADO (ImputedAmount), no el Amount de caja. La forma robusta es no hacer
+        // matematica de reversa a mano: soft-deleteamos, guardamos, y RECALCULAMOS. El query filter
+        // !IsDeleted excluye el pago borrado, asi la deuda de su moneda imputada vuelve a subir por el
+        // monto correcto (self-healing). El persister sincroniza escalar surrogate + tabla hija.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await PersistSupplierBalanceAsync(supplier, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         if (_auditService is not null)
@@ -727,6 +749,7 @@ public class SupplierService : ISupplierService
                 Confirmation = segment.PNR ?? segment.TicketNumber,
                 NetCost = segment.NetCost,
                 SalePrice = segment.SalePrice,
+                Currency = segment.Currency, // ADR-021: deuda del proveedor por moneda del servicio
                 Date = segment.CreatedAt,
                 Status = segment.Status,
                 NumeroReserva = segment.Reserva!.NumeroReserva,
@@ -745,6 +768,7 @@ public class SupplierService : ISupplierService
                 Confirmation = booking.ConfirmationNumber,
                 NetCost = booking.NetCost,
                 SalePrice = booking.SalePrice,
+                Currency = booking.Currency, // ADR-021: deuda del proveedor por moneda del servicio
                 Date = booking.CreatedAt,
                 Status = booking.Status,
                 NumeroReserva = booking.Reserva!.NumeroReserva,
@@ -763,6 +787,7 @@ public class SupplierService : ISupplierService
                 Confirmation = transfer.ConfirmationNumber,
                 NetCost = transfer.NetCost,
                 SalePrice = transfer.SalePrice,
+                Currency = transfer.Currency, // ADR-021: deuda del proveedor por moneda del servicio
                 Date = transfer.CreatedAt,
                 Status = transfer.Status,
                 NumeroReserva = transfer.Reserva!.NumeroReserva,
@@ -781,6 +806,7 @@ public class SupplierService : ISupplierService
                 Confirmation = package.ConfirmationNumber,
                 NetCost = package.NetCost,
                 SalePrice = package.SalePrice,
+                Currency = package.Currency, // ADR-021: deuda del proveedor por moneda del servicio
                 Date = package.CreatedAt,
                 Status = package.Status,
                 NumeroReserva = package.Reserva!.NumeroReserva,
@@ -799,6 +825,7 @@ public class SupplierService : ISupplierService
                 Confirmation = assistance.ConfirmationNumber ?? assistance.PolicyNumber,
                 NetCost = assistance.NetCost,
                 SalePrice = assistance.SalePrice,
+                Currency = assistance.Currency, // ADR-021: deuda del proveedor por moneda del servicio
                 Date = assistance.CreatedAt,
                 Status = assistance.Status,
                 NumeroReserva = assistance.Reserva!.NumeroReserva,
@@ -817,6 +844,7 @@ public class SupplierService : ISupplierService
                 Confirmation = service.ConfirmationNumber,
                 NetCost = service.NetCost,
                 SalePrice = service.SalePrice,
+                Currency = service.Currency, // ADR-021: el generico ahora aporta su moneda (§15.4)
                 Date = service.CreatedAt,
                 Status = service.Status,
                 NumeroReserva = service.Reserva!.NumeroReserva,
@@ -924,15 +952,90 @@ public class SupplierService : ISupplierService
             .Sum(r => r.NetCost);
     }
 
+    // ADR-021 §15.4: la deuda con el proveedor SEPARADA por moneda. Mismo filtro oficial de servicios
+    // que generan deuda, pero ahora cada NetCost cae en la linea de la moneda del servicio, y cada
+    // pago vivo en la moneda a la que se imputa. Lo usa el persister de la tabla hija y el escalar.
+    private async Task<IReadOnlyDictionary<string, SupplierDebtLine>> CalculateSupplierDebtPorMonedaAsync(
+        int supplierId, CancellationToken cancellationToken)
+    {
+        var rows = await BuildSupplierServicesQuery(supplierId).ToListAsync(cancellationToken);
+
+        var confirmedPurchases = rows
+            .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))
+            .Select(r => new SupplierDebtCalculator.ConfirmedPurchase(r.Currency, r.NetCost));
+
+        // El query filter !IsDeleted ya excluye los pagos soft-deleted (AppDbContext), por eso una
+        // anulacion es self-healing: el pago borrado deja de sumar y la deuda de su moneda vuelve a subir.
+        var paymentRows = await _dbContext.SupplierPayments
+            .Where(payment => payment.SupplierId == supplierId)
+            .Select(payment => new
+            {
+                payment.Amount,
+                payment.Currency,
+                payment.ImputedCurrency,
+                payment.ImputedAmount
+            })
+            .ToListAsync(cancellationToken);
+
+        var payments = paymentRows.Select(p => new SupplierDebtCalculator.SupplierPaymentInput(
+            p.Amount, p.Currency, p.ImputedCurrency, p.ImputedAmount));
+
+        return SupplierDebtCalculator.Calculate(confirmedPurchases, payments);
+    }
+
+    // Escalar surrogate de la deuda (semaforo §15.3): mono-moneda = identico a la cuenta legacy
+    // (compras - pagos); multimoneda = sum(max(0, deuda por moneda)). Lo derivamos del detalle por
+    // moneda para que haya UNA sola fuente de la cuenta.
     private async Task<decimal> CalculateSupplierDebt(int supplierId, CancellationToken cancellationToken)
     {
-        // P2: la deuda usa la REGLA OFICIAL UNICA (ver CalculateSupplierConfirmedPurchasesAsync).
-        var totalPurchases = await CalculateSupplierConfirmedPurchasesAsync(supplierId, cancellationToken);
+        var porMoneda = await CalculateSupplierDebtPorMonedaAsync(supplierId, cancellationToken);
+        return SupplierDebtCalculator.ToSurrogateBalance(porMoneda);
+    }
 
-        var totalPaid = await _dbContext.SupplierPayments
-            .Where(payment => payment.SupplierId == supplierId)
-            .SumAsync(payment => (decimal?)payment.Amount, cancellationToken) ?? 0m;
+    /// <summary>
+    /// ADR-021 §15.3/§B5: UNICO punto de escritura de la deuda de un proveedor. Recalcula por moneda,
+    /// persiste el escalar surrogate <c>Supplier.CurrentBalance</c> Y sincroniza la tabla hija
+    /// <c>SupplierBalanceByCurrency</c> (upsert por moneda, borrar las ausentes). NO llama a
+    /// SaveChanges: lo hace el caller (asi escalar + hija quedan en la misma transaccion).
+    /// </summary>
+    private async Task PersistSupplierBalanceAsync(Supplier supplier, CancellationToken cancellationToken)
+    {
+        var porMoneda = await CalculateSupplierDebtPorMonedaAsync(supplier.Id, cancellationToken);
 
-        return totalPurchases - totalPaid;
+        // 1) Escalar surrogate (semaforo).
+        supplier.CurrentBalance = SupplierDebtCalculator.ToSurrogateBalance(porMoneda);
+
+        // 2) Tabla hija: upsert por moneda + borrar las monedas que ya no aplican.
+        var existingRows = await _dbContext.SupplierBalanceByCurrency
+            .Where(row => row.SupplierId == supplier.Id)
+            .ToListAsync(cancellationToken);
+        var existingByCurrency = existingRows.ToDictionary(row => row.Currency, StringComparer.Ordinal);
+
+        foreach (var (currency, line) in porMoneda)
+        {
+            if (existingByCurrency.TryGetValue(currency, out var row))
+            {
+                row.ConfirmedPurchases = line.ConfirmedPurchases;
+                row.TotalPaid = line.TotalPaid;
+                row.Balance = line.Balance;
+            }
+            else
+            {
+                _dbContext.SupplierBalanceByCurrency.Add(new SupplierBalanceByCurrency
+                {
+                    SupplierId = supplier.Id,
+                    Currency = currency,
+                    ConfirmedPurchases = line.ConfirmedPurchases,
+                    TotalPaid = line.TotalPaid,
+                    Balance = line.Balance
+                });
+            }
+        }
+
+        foreach (var row in existingRows)
+        {
+            if (!porMoneda.ContainsKey(row.Currency))
+                _dbContext.SupplierBalanceByCurrency.Remove(row);
+        }
     }
 }

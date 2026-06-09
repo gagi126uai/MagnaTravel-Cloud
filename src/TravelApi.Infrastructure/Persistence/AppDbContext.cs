@@ -257,6 +257,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ServicioReserva> Servicios => Set<ServicioReserva>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<FlightSegment> FlightSegments => Set<FlightSegment>();
+
+    // ADR-021 (multimoneda, 2026-06-08): tablas hijas materializadas con el detalle de plata
+    // por moneda (queryable en SQL para cuenta corriente / reportes / tesoreria / top-N).
+    public DbSet<ReservaMoneyByCurrency> ReservaMoneyByCurrency => Set<ReservaMoneyByCurrency>();
+    public DbSet<SupplierBalanceByCurrency> SupplierBalanceByCurrency => Set<SupplierBalanceByCurrency>();
     
     // Sprint 4: Egresos y Configuración
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
@@ -529,6 +534,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Status).HasMaxLength(50).IsRequired();
             entity.Property(p => p.EntryType).HasMaxLength(50).IsRequired();
             entity.HasIndex(p => p.PaidAt);
+
+            // ADR-021 (multimoneda + cobro cruzado, 2026-06-08): moneda real del pago + bloque de TC.
+            // Currency NOT NULL default 'ARS' a nivel BD: las filas legacy quedan en pesos sin tocarlas.
+            // HasDefaultValue mantiene snapshot<->migracion coherentes (mismo patron que Invoice.MonId
+            // y FiscalLiquidation.Currency); sin el, EF detecta drift con el defaultValue de la migracion.
+            entity.Property(p => p.Currency).HasMaxLength(3).HasDefaultValue("ARS");
+            entity.Property(p => p.ImputedCurrency).HasMaxLength(3);
+            entity.Property(p => p.ExchangeRate).HasPrecision(18, 6);   // convencion ARS por 1 USD (ADR-021 §2.2bis)
+            entity.Property(p => p.ImputedAmount).HasPrecision(18, 2);
+            // ExchangeRateSource (enum) se persiste como int, mismo patron que FiscalSnapshot.Source.
+            entity.Property(p => p.ExchangeRateSource).HasConversion<int?>();
 
             // Filtro global: excluir pagos borrados de todas las consultas
             entity.HasQueryFilter(p => !p.IsDeleted);
@@ -1146,6 +1162,64 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // que ahora deben filtrar `IsDeleted = false` antes de sumar.
             entity.HasQueryFilter(p => !p.IsDeleted);
             entity.HasIndex(p => p.IsDeleted);
+
+            // ADR-021 (multimoneda + pago saliente cruzado, 2026-06-08, §15.3): espejo exacto del
+            // bloque de Payment. Currency NOT NULL default 'ARS' a nivel BD (legacy en pesos).
+            // Nota de hecho (B4): SupplierPayment.Amount ya es decimal(18,2) por su atributo (sin
+            // Fluent override), a diferencia de Payment.Amount que el Fluent pisa a (12,2).
+            entity.Property(p => p.Currency).HasMaxLength(3).HasDefaultValue("ARS");
+            entity.Property(p => p.ImputedCurrency).HasMaxLength(3);
+            entity.Property(p => p.ExchangeRate).HasPrecision(18, 6);   // convencion ARS por 1 USD (ADR-021 §2.2bis)
+            entity.Property(p => p.ImputedAmount).HasPrecision(18, 2);
+            entity.Property(p => p.ExchangeRateSource).HasConversion<int?>();
+        });
+
+        // ====================================================================================
+        // ADR-021 (multimoneda, 2026-06-08): tablas hijas materializadas con el detalle de plata
+        // por moneda. Son proyecciones del calculo (calculator / CalculateSupplierDebt), reescritas
+        // en cada recalculo en la misma transaccion que el escalar. En Capa 1 se crean vacias.
+        //
+        // Indices: unico (padre, Currency) -> a lo sumo una fila por moneda por entidad;
+        //          (Currency, Balance) -> deja los top-N y los Where(Balance > 0) por moneda
+        //          correr indexados en SQL (decision B2 del review).
+        // FK OnDelete(Cascade): al borrar la reserva/proveedor, sus filas por moneda se borran.
+        // Las columnas NO usan HasColumnName -> nombre de columna = nombre de propiedad (evita el
+        // trap M2 que rompio produccion al usar nombre de propiedad en SQL crudo).
+        // ====================================================================================
+        modelBuilder.Entity<ReservaMoneyByCurrency>(entity =>
+        {
+            entity.ToTable("ReservaMoneyByCurrency");
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired().HasDefaultValue("ARS");
+            entity.Property(x => x.TotalSale).HasPrecision(18, 2);
+            entity.Property(x => x.ConfirmedSale).HasPrecision(18, 2);
+            entity.Property(x => x.TotalCost).HasPrecision(18, 2);
+            entity.Property(x => x.TotalPaid).HasPrecision(18, 2);
+            entity.Property(x => x.Balance).HasPrecision(18, 2);
+
+            entity.HasOne(x => x.Reserva)
+                  .WithMany()
+                  .HasForeignKey(x => x.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => new { x.ReservaId, x.Currency }).IsUnique();
+            entity.HasIndex(x => new { x.Currency, x.Balance });
+        });
+
+        modelBuilder.Entity<SupplierBalanceByCurrency>(entity =>
+        {
+            entity.ToTable("SupplierBalanceByCurrency");
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired().HasDefaultValue("ARS");
+            entity.Property(x => x.ConfirmedPurchases).HasPrecision(18, 2);
+            entity.Property(x => x.TotalPaid).HasPrecision(18, 2);
+            entity.Property(x => x.Balance).HasPrecision(18, 2);
+
+            entity.HasOne(x => x.Supplier)
+                  .WithMany()
+                  .HasForeignKey(x => x.SupplierId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => new { x.SupplierId, x.Currency }).IsUnique();
+            entity.HasIndex(x => new { x.Currency, x.Balance });
         });
 
         modelBuilder.Entity<OperationalFinanceSettings>(entity =>
