@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Multimoneda — pantalla por pantalla, una sola por vez</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #1f2937; padding: 36px 16px 90px; }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 27px; margin-bottom: 8px; }
+  .sub { color: #475569; margin-bottom: 14px; font-size: 15px; line-height: 1.6; }
+  .reglas { background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:14px 18px; font-size:13.5px; color:#065f46; line-height:1.7; margin-bottom:40px; }
+  .reglas b { color:#064e3b; }
+
+  /* índice */
+  .indice { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px 22px; margin-bottom:46px; }
+  .indice h3 { font-size:13px; text-transform:uppercase; letter-spacing:1px; color:#64748b; margin-bottom:12px; }
+  .indice ol { list-style:none; counter-reset:p; display:grid; grid-template-columns:repeat(2,1fr); gap:10px 26px; }
+  .indice li { counter-increment:p; font-size:14px; color:#334155; display:flex; align-items:center; gap:10px; }
+  .indice li::before { content:counter(p); background:#1d4ed8; color:#fff; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0; }
+
+  /* cada pantalla */
+  .pantalla { margin-bottom: 64px; }
+  .pnum { display:inline-block; background:#0f172a; color:#fff; font-size:12px; font-weight:800; letter-spacing:.5px; border-radius:999px; padding:5px 14px; margin-bottom:10px; }
+  .pantalla h2 { font-size:22px; color:#0f172a; margin-bottom:6px; }
+  .que { background:#fffbeb; border-left:4px solid #f59e0b; border-radius:0 8px 8px 0; padding:11px 16px; font-size:13.5px; color:#78350f; line-height:1.6; margin-bottom:18px; }
+  .que b { color:#451a03; }
+
+  /* ventana tipo navegador, para que se lea como "una pantalla real" */
+  .win { border:1px solid #cbd5e1; border-radius:14px; overflow:hidden; box-shadow:0 10px 34px rgba(15,23,42,.14); background:#fff; }
+  .winbar { display:flex; align-items:center; gap:12px; background:#e2e8f0; padding:11px 16px; border-bottom:1px solid #cbd5e1; }
+  .winbar .dots { display:flex; gap:7px; }
+  .winbar .dots i { width:12px; height:12px; border-radius:50%; display:block; }
+  .winbar .addr { background:#fff; border-radius:7px; padding:6px 16px; font-size:12.5px; color:#475569; flex:1; font-weight:600; }
+  .winbody { padding:24px; background:#f8fafc; }
+
+  .pill { display:inline-block; border-radius:999px; font-size:11px; font-weight:600; padding:3px 10px; vertical-align:middle; }
+  .pill.green { background:#d1fae5; color:#047857; }
+  .pill.amber { background:#fef3c7; color:#b45309; }
+
+  /* moneda pegada al monto */
+  .mon { font-size:11px; font-weight:700; color:#fff; border-radius:5px; padding:1px 5px; margin-right:4px; }
+  .mon.ars { background:#0f766e; }
+  .mon.usd { background:#4338ca; }
+  .nuevo { background:#ede9fe; color:#6d28d9; font-size:10px; font-weight:800; border-radius:5px; padding:1px 6px; letter-spacing:.3px; vertical-align:middle; }
+
+  /* header reserva */
+  .resvhead { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
+  .resvhead .ttl { font-size:18px; font-weight:800; color:#0f172a; }
+  .resvhead .ttl small { display:block; font-weight:500; color:#64748b; font-size:12.5px; margin-top:3px; }
+  .resvhead .acts span { display:inline-block; border:1px solid #cbd5e1; border-radius:8px; padding:6px 12px; font-size:12.5px; color:#374151; margin-left:8px; }
+
+  /* tira de plata */
+  .strip { display:grid; gap:20px; padding:16px 4px; }
+  .strip.c3 { grid-template-columns:repeat(3,1fr); }
+  .strip.c4 { grid-template-columns:repeat(4,1fr); }
+  .cell .lbl { font-size:10px; font-weight:800; color:#94a3b8; letter-spacing:1px; text-transform:uppercase; }
+  .cell .big { font-size:28px; font-weight:800; line-height:1; margin-top:7px; }
+  .cell .big.s { font-size:20px; line-height:1.25; }
+  .cell .big.rose { color:#e11d48; }
+  .cell .big.green { color:#059669; }
+  .cell .big.gray { color:#94a3b8; }
+  .cell .small { font-size:11.5px; color:#94a3b8; margin-top:5px; }
+  .cell.usd { background:#f5f3ff; border-radius:10px; padding:10px 14px; margin:-10px -6px; }
+
+  /* antes / despues */
+  .ad { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:4px; }
+  .ad .box { border-radius:12px; padding:16px 18px; border:1px solid #e2e8f0; background:#fff; }
+  .ad .box .tag { font-size:11px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; margin-bottom:10px; display:inline-block; padding:3px 10px; border-radius:999px; }
+  .ad .box.hoy .tag { background:#f1f5f9; color:#64748b; }
+  .ad .box.nuevo .tag { background:#ede9fe; color:#6d28d9; }
+  .ad .box.nuevo { border-color:#c7d2fe; }
+  .miniStrip { display:flex; gap:18px; }
+  .miniStrip .mc .l { font-size:9.5px; font-weight:800; color:#94a3b8; letter-spacing:.5px; text-transform:uppercase; }
+  .miniStrip .mc .n { font-size:18px; font-weight:800; margin-top:3px; }
+  .miniStrip .mc .n.rose { color:#e11d48; }
+  .miniStrip .mc .n.green { color:#059669; }
+
+  .tabs { display:flex; gap:4px; border-bottom:1px solid #e2e8f0; margin:18px 0; flex-wrap:wrap; }
+  .tabs span { padding:9px 15px; font-size:12.5px; font-weight:600; color:#64748b; border-bottom:2px solid transparent; }
+  .tabs span.on { color:#1d4ed8; border-bottom-color:#1d4ed8; }
+
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; font-size:13px; }
+  th { text-align:left; background:#f1f5f9; color:#475569; padding:10px 14px; font-size:12px; }
+  td { padding:11px 14px; border-top:1px solid #e5e7eb; color:#334155; vertical-align:middle; }
+  .acciones span { color:#1d4ed8; font-size:12.5px; font-weight:600; margin-right:12px; white-space:nowrap; }
+  .acciones span.danger { color:#b91c1c; }
+  .totalfila td { background:#f1f5f9; font-weight:800; color:#0f172a; font-size:13px; }
+
+  .btn { border:none; border-radius:9px; padding:10px 20px; font-size:13.5px; font-weight:700; cursor:default; }
+  .btn.green { background:#059669; color:#fff; }
+  .btn.line { background:#fff; border:1px solid #cbd5e1; color:#374151; }
+  .field label { display:block; font-size:11.5px; font-weight:700; color:#374151; margin-bottom:4px; }
+  .input { background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:9px 12px; font-size:13px; color:#111827; }
+  .input.focus { border:2px solid #1d4ed8; }
+  .row { display:flex; gap:12px; margin-bottom:13px; }
+  .row .field { flex:1; }
+  .field .input { width:100%; }
+  .inlinecard { border:2px solid #059669; border-radius:12px; background:#fff; padding:20px; }
+  .barra { display:flex; justify-content:space-between; align-items:center; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:13px 18px; margin-bottom:16px; }
+  .barra .it { font-size:12px; font-style:italic; color:#64748b; }
+  .tcbox { border:1px dashed #4338ca; background:#f5f3ff; border-radius:10px; padding:14px 16px; margin:6px 0 14px; }
+  .tcbox .tctitle { font-size:12.5px; font-weight:700; color:#4338ca; margin-bottom:10px; }
+  .tcres { font-size:13px; color:#4338ca; font-weight:700; margin-top:6px; }
+
+  /* paneles saldo dos monedas */
+  .saldopanel { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin:8px 0; }
+  .sp { border-radius:12px; padding:18px 20px; }
+  .sp.ars { background:#fff1f2; border:1px solid #fecdd3; }
+  .sp.usd { background:#f5f3ff; border:1px solid #c7d2fe; }
+  .sp .l { font-size:11px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:#64748b; }
+  .sp .v { font-size:28px; font-weight:800; margin-top:5px; }
+  .sp.ars .v { color:#e11d48; }
+  .sp.usd .v { color:#4338ca; }
+  .sp .h { font-size:11.5px; color:#64748b; margin-top:7px; }
+
+  /* caja */
+  .caja { display:flex; gap:16px; flex-wrap:wrap; }
+  .cajabox { flex:1; min-width:260px; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; background:#fff; }
+  .cajabox .h { padding:12px 16px; font-weight:800; font-size:14px; color:#fff; }
+  .cajabox.ars .h { background:#0f766e; }
+  .cajabox.usd .h { background:#4338ca; }
+  .cajabox .r { display:flex; justify-content:space-between; padding:10px 16px; font-size:13px; border-top:1px solid #f1f5f9; }
+  .cajabox .r.tot { font-weight:800; background:#f8fafc; }
+
+  /* reportes */
+  .tablero { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+  .cardr { flex:1; min-width:260px; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px; }
+  .cardr h3 { font-size:13.5px; color:#334155; margin-bottom:12px; }
+  .twocol { display:flex; gap:12px; }
+  .twocol .col { flex:1; border-radius:10px; padding:12px; }
+  .twocol .col.ars { background:#ecfdf5; border:1px solid #a7f3d0; }
+  .twocol .col.usd { background:#f5f3ff; border:1px solid #c7d2fe; }
+  .twocol .col .t { font-size:10.5px; font-weight:800; color:#64748b; letter-spacing:.5px; }
+  .twocol .col .cv { font-size:19px; font-weight:800; margin-top:3px; }
+  .twocol .col.ars .cv { color:#047857; }
+  .twocol .col.usd .cv { color:#4338ca; }
+
+  /* tarjetas secundarias (no son pantallas) */
+  .secund { background:#fff; border:1px dashed #cbd5e1; border-radius:14px; padding:22px 24px; margin-bottom:30px; }
+  .secund .et { display:inline-block; background:#475569; color:#fff; font-size:11px; font-weight:800; letter-spacing:.5px; border-radius:6px; padding:3px 10px; margin-bottom:10px; }
+  .secund h2 { font-size:18px; color:#0f172a; margin-bottom:8px; }
+  .secund p { font-size:13.5px; color:#475569; line-height:1.6; }
+  .tapado { background:#e5e7eb; color:#94a3b8; border-radius:5px; padding:2px 10px; font-weight:700; letter-spacing:2px; }
+
+  /* preguntas al final */
+  .sep { height:1px; background:#cbd5e1; margin:50px 0 36px; }
+  .pregs h2 { font-size:23px; color:#831843; margin-bottom:8px; }
+  .pregs .int { font-size:14px; color:#475569; margin-bottom:20px; line-height:1.6; }
+  .preg { background:#fdf2f8; border:1px solid #f9a8d4; border-radius:12px; padding:16px 20px; margin-bottom:14px; }
+  .preg .pq { font-size:12px; font-weight:800; color:#be185d; letter-spacing:.5px; margin-bottom:6px; }
+  .preg .pt { font-size:14px; color:#831843; line-height:1.6; }
+  .preg .pt b { color:#500724; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Dos monedas (pesos y dólares) — pantalla por pantalla</h1>
+  <p class="sub">Te muestro <b>una pantalla por vez</b>, cada una sola y completa, como una captura real. Abajo de cada dibujo hay un renglón amarillo que dice <b>qué cambia respecto de lo que ves hoy</b>. Las preguntas las junté todas al final, así no te interrumpen mientras mirás.</p>
+
+  <div class="reglas">
+    <b>Las 3 reglas que se respetan en todo:</b><br>
+    ① Pesos y dólares <b>siempre en columnas separadas</b> — nunca se suma "todo convertido a una moneda".<br>
+    ② <b>Nunca</b> aparece "diferencia de cambio".<br>
+    ③ Si una reserva (o cliente, o caja) tiene <b>una sola moneda</b>, se ve <b>igual que hoy</b>. El desdoble solo aparece cuando de verdad hay dos.
+  </div>
+
+  <div class="indice">
+    <h3>Las pantallas donde aparece la plata</h3>
+    <ol>
+      <li>La reserva (la franja de arriba + servicios)</li>
+      <li>Cobrar (solapa Estado de Cuenta)</li>
+      <li>Cuenta corriente del cliente</li>
+      <li>Cuenta corriente del proveedor</li>
+      <li>Caja / arqueo</li>
+      <li>Reportes / tablero</li>
+    </ol>
+  </div>
+
+  <!-- ================= PANTALLA 1 ================= -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 1 DE 6</div>
+    <h2>La reserva</h2>
+    <p class="que"><b>Dónde la ves:</b> al abrir cualquier reserva. &nbsp;<b>Qué cambia:</b> la franja de plata de arriba, que hoy tiene 3 cajas, cuando la reserva tiene dos monedas parte "Saldo a cobrar" en dos (pesos y dólares). Y en la lista de servicios, cada monto lleva su cartelito $ o US$.</p>
+
+    <!-- antes / despues de la franja -->
+    <div class="ad">
+      <div class="box hoy">
+        <span class="tag">Como se ve hoy</span>
+        <div class="miniStrip">
+          <div class="mc"><div class="l">Saldo a cobrar</div><div class="n rose">$ 120.000</div></div>
+          <div class="mc"><div class="l">Recaudado</div><div class="n green">$ 85.000</div></div>
+          <div class="mc"><div class="l">Inversión</div><div class="n" style="color:#94a3b8;">$ 336.000</div></div>
+        </div>
+      </div>
+      <div class="box nuevo">
+        <span class="tag">Con dos monedas</span>
+        <div class="miniStrip" style="flex-wrap:wrap;gap:14px;">
+          <div class="mc"><div class="l">Saldo $ </div><div class="n rose">$ 120.000</div></div>
+          <div class="mc"><div class="l">Saldo US$</div><div class="n rose">US$ 350</div></div>
+          <div class="mc"><div class="l">Recaudado</div><div class="n green" style="font-size:14px;">$ 85.000<br>US$ 100</div></div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size:12px;color:#64748b;margin:6px 0 18px;">↑ La diferencia, de un vistazo. Abajo, la pantalla completa.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Reserva #1042 — Familia Gómez</span></div>
+      <div class="winbody">
+        <div class="resvhead">
+          <div class="ttl">Reserva #1042 — Familia Gómez <span class="pill green">Confirmada</span>
+            <small>Iguazú · 12/08 → 19/08/2026 · 4 pasajeros</small></div>
+          <div class="acts"><span>✎ Editar</span><span>⤓ Documentos</span><span>⋯</span></div>
+        </div>
+
+        <div class="strip c4">
+          <div class="cell">
+            <div class="lbl">Saldo a cobrar ($) <span class="nuevo">NUEVO</span></div>
+            <div class="big rose">$ 120.000</div>
+            <div class="small">de $ 205.000 presupuestado</div>
+          </div>
+          <div class="cell usd">
+            <div class="lbl">Saldo a cobrar (US$) <span class="nuevo">NUEVO</span></div>
+            <div class="big rose">US$ 350</div>
+            <div class="small">de US$ 450 presupuestado</div>
+          </div>
+          <div class="cell">
+            <div class="lbl">Recaudado</div>
+            <div class="big green s">$ 85.000<br>US$ 100</div>
+            <div class="small">lo cobrado, en cada moneda</div>
+          </div>
+          <div class="cell">
+            <div class="lbl">Inversión · solo admin</div>
+            <div class="big gray s">$ 336.000<br>US$ 380</div>
+            <div class="small">lo que cuesta a la agencia</div>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <span class="on">Servicios</span><span>Pasajeros</span><span>Historial</span>
+          <span>Estado de Cuenta</span><span>Vouchers</span><span>Documentos</span>
+        </div>
+
+        <table>
+          <tr><th>Servicio</th><th>Fechas</th><th>Operador</th><th>Venta</th><th>Estado</th><th>Acciones</th></tr>
+          <tr>
+            <td>🏨 Hotel Maitei Posadas · 7 noches · 4 pax</td>
+            <td>12/08 → 19/08</td><td>Ola Mayorista</td>
+            <td><span class="mon ars">$</span> 205.000</td>
+            <td><span class="pill green">Confirmado</span></td>
+            <td class="acciones"><span>✎ Editar</span><span class="danger">✕ Cancelar</span></td>
+          </tr>
+          <tr>
+            <td>✈ Aéreo AEP–MIA · 4 pax</td>
+            <td>12/08 → 19/08</td><td>TTS Viajes</td>
+            <td><span class="mon usd">US$</span> 450</td>
+            <td><span class="pill amber">⏰ Emitir 15/07</span></td>
+            <td class="acciones"><span>✎ Editar</span><span class="danger">✕ Cancelar</span></td>
+          </tr>
+          <tr class="totalfila">
+            <td colspan="3">TOTAL <span class="nuevo">por moneda</span></td>
+            <td colspan="3"><span class="mon ars">$</span> 205.000 &nbsp;·&nbsp; <span class="mon usd">US$</span> 450</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PANTALLA 2 ================= -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 2 DE 6</div>
+    <h2>Cobrar — solapa "Estado de Cuenta"</h2>
+    <p class="que"><b>Dónde la ves:</b> dentro de la misma reserva, en la solapa <b>Estado de Cuenta</b> (la solapa donde hoy ya cobrás). &nbsp;<b>Qué cambia:</b> el historial de cobranzas gana una columna <b>Moneda</b>; y cuando el cliente <b>paga en pesos una deuda en dólares</b>, aparece un recuadro chico para poner el tipo de cambio. Esa es toda la magia de las dos monedas, y vive acá.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Reserva #1042 · Estado de Cuenta</span></div>
+      <div class="winbody">
+        <div class="tabs"><span>Servicios</span><span>Pasajeros</span><span>Historial</span><span class="on">Estado de Cuenta</span><span>Vouchers</span><span>Documentos</span></div>
+
+        <div class="barra">
+          <button class="btn green">💳 Registrar cobranza</button>
+          <div class="it">* Los pagos recibidos afectan directamente al saldo de la reserva.</div>
+        </div>
+
+        <table style="margin-bottom:6px;">
+          <tr><th>Fecha</th><th>Método</th><th>Notas</th><th>Moneda <span class="nuevo">NUEVO</span></th><th style="text-align:right;">Importe</th></tr>
+          <tr>
+            <td>20/06</td><td>Efectivo</td><td>Seña en mano</td>
+            <td><span class="mon ars">$</span> Pesos</td>
+            <td style="text-align:right;font-weight:800;color:#059669;">$ 85.000</td>
+          </tr>
+          <tr>
+            <td>22/06</td><td>Transferencia</td><td>—</td>
+            <td><span class="mon usd">US$</span> Dólares</td>
+            <td style="text-align:right;font-weight:800;color:#059669;">US$ 100</td>
+          </tr>
+          <tr class="totalfila">
+            <td colspan="3">Subtotales por moneda</td>
+            <td colspan="2" style="text-align:right;"><span class="mon ars">$</span> 85.000 &nbsp;·&nbsp; <span class="mon usd">US$</span> 100</td>
+          </tr>
+        </table>
+
+        <p style="font-size:12.5px;color:#64748b;margin:18px 0 8px;font-weight:600;">Al tocar "Registrar cobranza", se abre la ficha acá mismo (ya no como ventana encima). Dos casos:</p>
+
+        <!-- caso normal -->
+        <p style="font-size:12.5px;color:#475569;margin-bottom:6px;"><b>a) Pago normal</b> — te pagan en la misma moneda que deben. Sin recuadro de tipo de cambio.</p>
+        <div class="inlinecard" style="margin-bottom:18px;">
+          <div style="font-size:14px;font-weight:800;color:#059669;margin-bottom:14px;">💳 Registrar cobranza</div>
+          <div class="row">
+            <div class="field"><label>Monto</label><div class="input focus">35.000|</div></div>
+            <div class="field"><label>Moneda del pago <span class="nuevo">NUEVO</span></label><div class="input">$ Pesos ▾</div></div>
+            <div class="field"><label>Imputar a <span class="nuevo">NUEVO</span></label><div class="input">Saldo en $ ▾</div></div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Método</label><div class="input">Efectivo ▾</div></div>
+            <div class="field" style="flex:2;"><label>Nota (opcional)</label><div class="input">Seña en mano</div></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;"><button class="btn line">Cancelar</button><button class="btn green">Confirmar cobro</button></div>
+        </div>
+
+        <!-- caso cruzado -->
+        <p style="font-size:12.5px;color:#475569;margin-bottom:6px;"><b>b) Pago cruzado</b> — te pagan en pesos pero querés bajar deuda en dólares. Recién ahí aparece el recuadro.</p>
+        <div class="inlinecard">
+          <div style="font-size:14px;font-weight:800;color:#059669;margin-bottom:14px;">💳 Registrar cobranza</div>
+          <div class="row">
+            <div class="field"><label>Monto</label><div class="input focus">120.000|</div></div>
+            <div class="field"><label>Moneda del pago</label><div class="input">$ Pesos ▾</div></div>
+            <div class="field"><label>Imputar a</label><div class="input" style="border:2px solid #4338ca;">Saldo en US$ ▾</div></div>
+          </div>
+          <div class="tcbox">
+            <div class="tctitle">↕ Pagás en pesos para bajar deuda en dólares: decinos el tipo de cambio <span class="nuevo">NUEVO</span></div>
+            <div class="row" style="margin-bottom:0;">
+              <div class="field"><label>1 US$ = $</label><div class="input focus">1.200|</div></div>
+              <div class="field"><label>Fuente</label><div class="input">Manual ▾</div></div>
+              <div class="field"><label>Fecha</label><div class="input">23/06/2026</div></div>
+            </div>
+            <div class="tcres">→ Se cancelan US$ 100 de la deuda en dólares</div>
+          </div>
+          <div class="row">
+            <div class="field"><label>Método</label><div class="input">Efectivo ▾</div></div>
+            <div class="field" style="flex:2;"><label>Nota (opcional)</label><div class="input">Cliente abona dólares en pesos</div></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;"><button class="btn line">Cancelar</button><button class="btn green">Confirmar cobro</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PANTALLA 3 ================= -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 3 DE 6</div>
+    <h2>Cuenta corriente del cliente</h2>
+    <p class="que"><b>Dónde la ves:</b> la pantalla "Cuenta Corriente" de un cliente. &nbsp;<b>Qué cambia:</b> el panel grande de saldo se parte en <b>"Debe en $"</b> y <b>"Debe en US$"</b>; las tarjetas de arriba (Ventas / Cobrado) muestran las dos monedas. La lista de reservas es una sola, con la moneda pegada a cada monto.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Cuenta Corriente · Familia Gómez</span></div>
+      <div class="winbody">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="font-size:19px;font-weight:800;color:#0f172a;">Cuenta Corriente — Familia Gómez</div>
+          <div><span style="border:1px solid #cbd5e1;border-radius:8px;padding:7px 13px;font-size:12.5px;color:#374151;">＋ Nueva cotización</span></div>
+        </div>
+
+        <div class="saldopanel">
+          <div class="sp ars"><div class="l">Debe en $ <span class="nuevo">NUEVO</span></div><div class="v">$ 120.000</div><div class="h">Ventas $ 1.240.000 · Cobrado $ 1.120.000</div></div>
+          <div class="sp usd"><div class="l">Debe en US$ <span class="nuevo">NUEVO</span></div><div class="v">US$ 350</div><div class="h">Ventas US$ 3.150 · Cobrado US$ 2.800</div></div>
+        </div>
+
+        <div class="tabs" style="margin-top:18px;"><span class="on">Reservas</span><span>Pagos</span><span>Facturación AFIP</span></div>
+        <table>
+          <tr><th>Fecha</th><th>Reserva</th><th>Estado</th><th>Venta</th><th>Cobrado</th><th>Saldo</th></tr>
+          <tr><td>15/06</td><td>#1042</td><td><span class="pill green">Confirmada</span></td>
+            <td><span class="mon ars">$</span> 205.000 · <span class="mon usd">US$</span> 450</td>
+            <td><span class="mon ars">$</span> 85.000 · <span class="mon usd">US$</span> 100</td>
+            <td><span class="mon ars">$</span> 120.000 · <span class="mon usd">US$</span> 350</td></tr>
+          <tr><td>02/05</td><td>#1019</td><td><span class="pill green">Finalizada</span></td>
+            <td><span class="mon ars">$</span> 340.000</td>
+            <td><span class="mon ars">$</span> 340.000</td>
+            <td><span class="mon ars">$</span> 0</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PANTALLA 4 ================= -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 4 DE 6</div>
+    <h2>Cuenta corriente del proveedor</h2>
+    <p class="que"><b>Dónde la ves:</b> la cuenta corriente de un operador (solo quien ve costos). &nbsp;<b>Qué cambia:</b> mismo molde que la del cliente, pero del lado de lo que <b>vos le debés</b>: el panel se parte en "Le debo en $" y "Le debo en US$".</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Cuenta Corriente · Ola Mayorista</span></div>
+      <div class="winbody">
+        <div style="font-size:19px;font-weight:800;color:#0f172a;margin-bottom:14px;">Cuenta Corriente — Ola Mayorista</div>
+        <div class="saldopanel">
+          <div class="sp ars"><div class="l">Le debo en $ <span class="nuevo">NUEVO</span></div><div class="v">$ 336.000</div></div>
+          <div class="sp usd"><div class="l">Le debo en US$ <span class="nuevo">NUEVO</span></div><div class="v">US$ 380</div></div>
+        </div>
+        <table style="margin-top:16px;">
+          <tr><th>Fecha</th><th>Concepto</th><th>Debe</th><th>Haber</th><th>Moneda</th></tr>
+          <tr><td>15/06</td><td>Costo — Hotel Maitei (reserva #1042)</td><td>—</td><td><span class="mon ars">$</span> 336.000</td><td>Pesos</td></tr>
+          <tr><td>15/06</td><td>Costo — Aéreo AEP–MIA (reserva #1042)</td><td>—</td><td><span class="mon usd">US$</span> 380</td><td>Dólares</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PANTALLA 5 ================= -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 5 DE 6</div>
+    <h2>Caja / arqueo</h2>
+    <p class="que"><b>Dónde la ves:</b> la pantalla de caja. &nbsp;<b>Qué cambia:</b> en vez de una sola caja, <b>dos cajas lado a lado</b> — una de pesos y una de dólares. Los dólares no se "pasan a pesos", se cuentan aparte, como en el cajón real.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Caja / Arqueo</span></div>
+      <div class="winbody">
+        <div class="caja">
+          <div class="cajabox ars">
+            <div class="h">Caja en pesos</div>
+            <div class="r"><span>Entró</span><span>$ 85.000</span></div>
+            <div class="r"><span>Salió</span><span>$ 20.000</span></div>
+            <div class="r tot"><span>Total en caja</span><span>$ 65.000</span></div>
+          </div>
+          <div class="cajabox usd">
+            <div class="h">Caja en dólares</div>
+            <div class="r"><span>Entró</span><span>US$ 100</span></div>
+            <div class="r"><span>Salió</span><span>US$ 0</span></div>
+            <div class="r tot"><span>Total en caja</span><span>US$ 100</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PANTALLA 6 ================= -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 6 DE 6</div>
+    <h2>Reportes / tablero</h2>
+    <p class="que"><b>Dónde la ves:</b> el tablero con los números de toda la agencia. &nbsp;<b>Qué cambia:</b> cada tarjeta muestra la cifra en <b>dos columnas</b> (pesos a un lado, dólares al otro). El ranking de "quién te debe más" son <b>dos listas separadas</b>: una en pesos, otra en dólares. Nunca una lista mezclada.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Reportes / Tablero</span></div>
+      <div class="winbody">
+        <div class="tablero">
+          <div class="cardr"><h3>Por cobrar (total agencia)</h3>
+            <div class="twocol">
+              <div class="col ars"><div class="t">EN PESOS</div><div class="cv">$ 1.240.000</div></div>
+              <div class="col usd"><div class="t">EN DÓLARES</div><div class="cv">US$ 3.150</div></div>
+            </div></div>
+          <div class="cardr"><h3>Cobrado este mes</h3>
+            <div class="twocol">
+              <div class="col ars"><div class="t">EN PESOS</div><div class="cv">$ 880.000</div></div>
+              <div class="col usd"><div class="t">EN DÓLARES</div><div class="cv">US$ 1.900</div></div>
+            </div></div>
+        </div>
+        <div class="tablero">
+          <div class="cardr"><h3>Quiénes deben más — en pesos</h3>
+            <table>
+              <tr><th>Cliente</th><th style="text-align:right;">Debe</th></tr>
+              <tr><td>Familia Gómez</td><td style="text-align:right;"><span class="mon ars">$</span> 420.000</td></tr>
+              <tr><td>Pérez, Juan</td><td style="text-align:right;"><span class="mon ars">$</span> 310.000</td></tr>
+            </table></div>
+          <div class="cardr"><h3>Quiénes deben más — en dólares</h3>
+            <table>
+              <tr><th>Cliente</th><th style="text-align:right;">Debe</th></tr>
+              <tr><td>Empresa ACME</td><td style="text-align:right;"><span class="mon usd">US$</span> 1.200</td></tr>
+              <tr><td>Rodríguez, Ana</td><td style="text-align:right;"><span class="mon usd">US$</span> 800</td></tr>
+            </table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== dos aclaraciones que NO son pantallas ====== -->
+  <div class="secund">
+    <span class="et">ACLARACIÓN · no es una pantalla nueva</span>
+    <h2>Si la reserva tiene una sola moneda, no cambia nada</h2>
+    <p>Todo lo de arriba aparece <b>solo cuando de verdad hay dos monedas</b>. Una reserva toda en pesos (lo más común) se ve <b>exactamente igual que hoy</b>: un solo "Saldo a cobrar", sin columna de dólares. Cero ruido para el día a día. Lo mismo vale para la cuenta corriente, la caja y los reportes.</p>
+  </div>
+
+  <div class="secund">
+    <span class="et">ACLARACIÓN · permisos</span>
+    <h2>El vendedor sin permiso de costos sigue sin ver lo que cuesta</h2>
+    <p>Un vendedor sin permiso de ver costos ve el saldo a cobrar y lo cobrado (lo necesita), pero <b>no</b> ve la columna Inversión, ni costos/ganancia, ni la cuenta corriente del proveedor (Pantalla 4). Esto vale igual en pesos y en dólares — el costo sale tapado: <span class="tapado">••••••</span></p>
+  </div>
+
+  <!-- ================= PREGUNTAS ================= -->
+  <div class="sep"></div>
+  <div class="pregs">
+    <h2>5 cosas que necesito que decidas</h2>
+    <p class="int">Ya aprobaste el criterio general (las 3 reglas y dónde va cada cosa). Estas son las decisiones finas que faltan para poder construir. Respondé con el número.</p>
+
+    <div class="preg">
+      <div class="pq">PREGUNTA 1 — la franja de arriba (Pantalla 1)</div>
+      <div class="pt">Con dos monedas la franja pasa de 3 a 4 cajitas (Saldo $, Saldo US$, Recaudado, Inversión). ¿Te gusta así, las cuatro en fila? ¿O preferís que "Recaudado" muestre las dos monedas pegaditas para ganar lugar? <b>Lo dibujo como quieras.</b></div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTA 2 — el pago cruzado en el historial (Pantalla 2)</div>
+      <div class="pt">Cuando el cliente paga $120.000 para bajar US$100 de deuda, ¿lo querés ver como <b>una sola fila</b> ($120.000, con un renglón que aclara que imputó a US$100)? ¿O como <b>dos filas</b> separadas (una "$120.000 entró", otra "US$100 imputado")? Las dos se pueden; decime cuál leés más fácil.</div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTA 3 — la factura (toca lo fiscal)</div>
+      <div class="pt">Cuando facturás el aéreo en dólares, ¿la factura sale <b>en dólares (US$ 450)</b> o querés ver siempre el <b>equivalente en pesos</b> para la AFIP? Esto lo confirmamos con el contador antes de construir, pero quiero saber qué esperás ver vos.</div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTA 4 — los textos de los botones (cosmético)</div>
+      <div class="pt">Hoy conviven "Registrar Cobranza" y "Confirmar Pago". ¿Los dejamos así o unificamos todo a una sola palabra ("cobro" o "cobranza")? Es solo texto, lo dejo como digas.</div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTA 5 — la fila de la cuenta corriente (Pantalla 3)</div>
+      <div class="pt">En una reserva con dos monedas, Venta/Cobrado/Saldo muestran las dos pegadas ("$205.000 · US$450"). En pantalla chica puede quedar largo. ¿Te sirve así, o preferís dos renglones (uno por moneda) dentro de la misma fila?</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

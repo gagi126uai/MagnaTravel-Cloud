@@ -248,3 +248,22 @@ Ronda 2:
 - **(2026-06-09) Cuenta corriente del proveedor: mismo formato que la del cliente (P8).** Dos saldos arriba ("LE DEBO EN $" y "LE DEBO EN US$") + una sola lista de movimientos con la moneda en cada fila. Si el proveedor es de una sola moneda, se ve como hoy. Recordar la regla previa (2026-06-05): sin permiso de ver costos, los montos de deuda al proveedor van tapados.
 
 - **(2026-06-09) Enmascarado de costos sigue valiendo en todo lo multimoneda.** Quien no tiene el permiso `cobranzas.see_cost` no ve costos ni deuda al operador en ninguna de estas pantallas, en ninguna de las dos monedas (regla general 2026-06-05). Lo que el cliente debe y lo que el cliente pagó SÍ se ve sin ese permiso.
+
+## Multimoneda — corrección de mockups y decisiones finas (2026-06-10)
+
+> Gastón revisó los dibujos del 2026-06-09 y avisó que "mezclaban las pantallas" y que varias no se parecían a su sistema real. **Las TRES reglas duras de arriba quedan intactas.** Lo que se corrige acá es CÓMO se dibujó cada pantalla: los mockups del 2026-06-09 (y el primer rehecho `v2`) habían inventado layouts que NO son los de la app. Se rehicieron calcando las pantallas reales del código. Mockups finales: `docs/ux/mockups/2026-06-10-multimoneda-v3-pantallas-reales.html` (pantallas 1/4/5/6) + `2026-06-10-multimoneda-v2.html` (pantallas 2/3, aprobadas).
+
+- **(2026-06-10) Pantallas APROBADAS por Gastón:** la de **cobro** (solapa Estado de Cuenta: historial con columna Moneda + ficha de cobro en línea, caso normal y caso cruzado) y la **cuenta corriente del cliente** (dos saldos arriba "Debe en $/US$" + lista única con la moneda en cada fila). Quedan como en el mockup v2.
+
+- **(2026-06-10) Las layouts P6/P7/P8 del 2026-06-09 quedan CORREGIDAS — eran de dibujos que no eran la app real.** Lo correcto, calcado de las pantallas reales, es:
+  - **Caja (antes "dos cajas separadas"):** la pantalla real son **3 números arriba** (Ingresos del mes · Egresos del mes · Resultado de caja del mes) + una **lista de movimientos** (cobranzas entran, pagos a proveedor salen). Multimoneda = cada uno de los 3 números muestra pesos y dólares por separado (nunca sumados) + cada movimiento de la lista lleva su moneda + un filtro nuevo "Moneda" en la barra. NO son dos cajas.
+  - **Cuenta corriente del proveedor (antes "dos saldos arriba como el cliente"):** la pantalla real son **5 tarjetitas** (Servicios, Pagos, Total Compras, Total Pagado, Saldo Pendiente con fondo rojo) + dos tablas (Servicios Comprados, Historial de Pagos). Multimoneda = las 3 tarjetas de plata (Compras, Pagado, Saldo) muestran las dos monedas; las tablas llevan el cartelito $/US$ por monto + columna Moneda en pagos. (El enmascarado de costos sin permiso sigue valiendo.)
+  - **Reportes (antes "dos columnas por tarjeta"):** la pantalla real (solapa **Finanzas y Deudas**) son 4 tarjetas (Cobros, Pagos, Flujo Neto, Deuda Clientes) + dos listas, **Cuentas por Cobrar** y **Cuentas por Pagar**. Multimoneda = cada tarjeta muestra las dos monedas (una sobre otra) y en cada lista el monto lleva su $/US$. Las listas Cobrar/Pagar ya existen separadas; la moneda es una dimensión más dentro de cada una.
+  - **Franja de la reserva:** la pantalla real son **3 números limpios** (Saldo a Cobrar · Recaudado · Inversión-solo-admin). Multimoneda = dentro de cada número aparecen las dos cifras, una arriba de la otra. Sin recuadros de comparación ni "antes/después" (eso fue invento del mockup, descartado).
+  - **PENDIENTE:** estas 4 (reserva, proveedor, caja, reportes) esperan el OK final de Gastón sobre el mockup v3 antes de construir.
+
+- **(2026-06-10) Decisiones finas confirmadas por Gastón:**
+  - **Palabra "cobro" en todos lados** (unificar; hoy conviven "cobranza" y "pago"). Botón "Registrar cobro" abre la ficha; botón "Confirmar" guarda.
+  - **Cobro cruzado en el historial: UNA sola fila** (el importe real que entró, con el detalle de a qué saldo imputó dentro de la misma fila). No dos filas.
+  - **Fila de cuenta corriente con dos monedas: un renglón por moneda dentro de la misma fila** (no las dos pegadas en línea).
+  - **Factura del aéreo en dólares: se emite y se muestra en dólares (US$)**, no el equivalente en pesos. **OJO: toca lo fiscal — confirmar con el contador antes de construir.**

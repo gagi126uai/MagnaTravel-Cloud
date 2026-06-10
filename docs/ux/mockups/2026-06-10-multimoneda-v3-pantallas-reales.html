@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Multimoneda v3 — calcado sobre tus pantallas reales</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #1f2937; padding: 36px 16px 90px; }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { font-size: 27px; margin-bottom: 8px; }
+  .sub { color: #475569; margin-bottom: 18px; font-size: 15px; line-height: 1.6; }
+  .reglas { background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:14px 18px; font-size:13.5px; color:#065f46; line-height:1.7; margin-bottom:44px; }
+  .reglas b { color:#064e3b; }
+
+  .pantalla { margin-bottom: 64px; }
+  .pnum { display:inline-block; background:#0f172a; color:#fff; font-size:12px; font-weight:800; letter-spacing:.5px; border-radius:999px; padding:5px 14px; margin-bottom:10px; }
+  .pantalla h2 { font-size:22px; color:#0f172a; margin-bottom:6px; }
+  .que { background:#fffbeb; border-left:4px solid #f59e0b; border-radius:0 8px 8px 0; padding:11px 16px; font-size:13.5px; color:#78350f; line-height:1.6; margin-bottom:18px; }
+  .que b { color:#451a03; }
+
+  .win { border:1px solid #cbd5e1; border-radius:14px; overflow:hidden; box-shadow:0 10px 34px rgba(15,23,42,.14); background:#fff; }
+  .winbar { display:flex; align-items:center; gap:12px; background:#e2e8f0; padding:11px 16px; border-bottom:1px solid #cbd5e1; }
+  .winbar .dots { display:flex; gap:7px; }
+  .winbar .dots i { width:12px; height:12px; border-radius:50%; display:block; }
+  .winbar .addr { background:#fff; border-radius:7px; padding:6px 16px; font-size:12.5px; color:#475569; flex:1; font-weight:600; }
+  .winbody { padding:24px; background:#f8fafc; }
+
+  .mon { font-size:10.5px; font-weight:700; color:#fff; border-radius:5px; padding:1px 5px; margin-right:4px; }
+  .mon.ars { background:#0f766e; }
+  .mon.usd { background:#4338ca; }
+  .nuevo { background:#ede9fe; color:#6d28d9; font-size:10px; font-weight:800; border-radius:5px; padding:1px 6px; letter-spacing:.3px; vertical-align:middle; }
+  .pill { display:inline-block; border-radius:999px; font-size:11px; font-weight:600; padding:3px 10px; vertical-align:middle; }
+  .pill.green { background:#d1fae5; color:#047857; }
+  .pill.amber { background:#fef3c7; color:#b45309; }
+
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; font-size:13px; }
+  th { text-align:left; background:#f1f5f9; color:#475569; padding:9px 13px; font-size:11.5px; font-weight:700; }
+  td { padding:10px 13px; border-top:1px solid #e5e7eb; color:#334155; vertical-align:middle; }
+  .r { text-align:right; }
+
+  /* ---- pantalla 1: franja reserva (real: limpia, 3 numeros) ---- */
+  .resvhead { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:22px; }
+  .resvhead .ttl { font-size:18px; font-weight:800; color:#0f172a; }
+  .resvhead .ttl small { display:block; font-weight:500; color:#64748b; font-size:12.5px; margin-top:3px; }
+  .resvhead .acts span { display:inline-block; border:1px solid #cbd5e1; border-radius:8px; padding:6px 12px; font-size:12.5px; color:#374151; margin-left:8px; }
+  .strip { display:grid; gap:28px; padding-bottom:26px; margin-bottom:22px; border-bottom:1px solid #e9eef3; }
+  .strip.c2 { grid-template-columns:repeat(2,1fr); }
+  .strip.c3 { grid-template-columns:repeat(3,1fr); }
+  .scell .lbl { font-size:10px; font-weight:800; color:#94a3b8; letter-spacing:1.4px; text-transform:uppercase; }
+  .scell .big { font-size:30px; font-weight:800; line-height:1.05; margin-top:8px; }
+  .scell .big.rose { color:#e11d48; }
+  .scell .big.green { color:#059669; }
+  .scell .big.gray { color:#94a3b8; }
+  .scell .two { display:flex; flex-direction:column; gap:4px; margin-top:8px; }
+  .scell .two .l { font-size:21px; font-weight:800; line-height:1.1; }
+  .scell .two .l.rose { color:#e11d48; }
+  .scell .two .l.green { color:#059669; }
+  .scell .two .l.gray { color:#94a3b8; }
+  .scell .sub { font-size:11.5px; color:#94a3b8; margin-top:5px; }
+  .tabs { display:flex; gap:18px; border-bottom:1px solid #e2e8f0; margin-bottom:16px; flex-wrap:wrap; }
+  .tabs span { padding-bottom:9px; font-size:13px; font-weight:600; color:#64748b; border-bottom:2px solid transparent; }
+  .tabs span.on { color:#4f46e5; border-bottom-color:#4f46e5; }
+
+  /* ---- KPI cards (proveedor / reportes) ---- */
+  .kpis { display:grid; gap:14px; margin-bottom:22px; }
+  .kpis.c5 { grid-template-columns:repeat(5,1fr); }
+  .kpis.c4 { grid-template-columns:repeat(4,1fr); }
+  .kpi { border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .kpi .h { display:flex; align-items:center; gap:7px; color:#64748b; font-size:12px; margin-bottom:7px; }
+  .kpi .n { font-size:21px; font-weight:800; color:#0f172a; }
+  .kpi .n.green { color:#16a34a; }
+  .kpi .nn { display:flex; flex-direction:column; gap:2px; }
+  .kpi .nn .l { font-size:15px; font-weight:800; color:#0f172a; }
+  .kpi.red { background:linear-gradient(135deg,rgba(239,68,68,.1),rgba(249,115,22,.1)); border-color:rgba(239,68,68,.3); }
+  .kpi.red .h { color:#dc2626; }
+  .kpi.red .nn .l { color:#dc2626; }
+  .ico { width:15px; height:15px; display:inline-block; }
+
+  /* ---- caja: metric cards estilo real ---- */
+  .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
+  .toolbar .box { background:#fff; border:1px solid #e2e8f0; border-radius:11px; padding:8px 14px; font-size:12.5px; color:#475569; }
+  .toolbar .box.search { flex:1; min-width:220px; color:#94a3b8; }
+  .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px; }
+  .metric { border:1px solid #e2e8f0; border-radius:16px; background:#fff; padding:16px 18px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .metric .l { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; color:#94a3b8; margin-bottom:8px; }
+  .metric .two { display:flex; flex-direction:column; gap:3px; }
+  .metric .two .v { font-size:22px; font-weight:300; color:#0f172a; }
+  .movrow td { padding:11px 13px; }
+  .movico { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:8px; font-weight:800; font-size:14px; }
+  .movico.in { background:#ecfdf5; color:#059669; }
+  .movico.out { background:#fff1f2; color:#e11d48; }
+  .plus { color:#059669; font-weight:800; }
+  .minus { color:#e11d48; font-weight:800; }
+
+  /* ---- listas reportes (cobrar/pagar) ---- */
+  .twolists { display:grid; grid-template-columns:repeat(2,1fr); gap:18px; }
+  .listcard { border:1px solid #e2e8f0; border-radius:12px; background:#fff; overflow:hidden; }
+  .listcard .lh { padding:13px 16px; font-weight:800; font-size:13.5px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #f1f5f9; }
+  .listcard.cobrar { border-left:4px solid #a855f7; }
+  .listcard.cobrar .lh { color:#7e22ce; }
+  .listcard.pagar { border-left:4px solid #f43f5e; }
+  .listcard.pagar .lh { color:#e11d48; }
+  .lrow { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-top:1px solid #f6f7f9; font-size:13px; }
+  .lrow .nm { color:#334155; font-weight:500; }
+  .lrow .am { font-weight:800; font-family:monospace; }
+  .listcard.cobrar .am { color:#9333ea; }
+  .listcard.pagar .am { color:#e11d48; }
+  .lrow.tot { background:#f8fafc; font-weight:800; }
+
+  .secund { background:#fff; border:1px dashed #cbd5e1; border-radius:14px; padding:18px 22px; margin-bottom:30px; }
+  .secund .et { display:inline-block; background:#16a34a; color:#fff; font-size:11px; font-weight:800; letter-spacing:.5px; border-radius:6px; padding:3px 10px; margin-bottom:10px; }
+  .secund h2 { font-size:17px; color:#0f172a; margin-bottom:6px; }
+  .secund p { font-size:13.5px; color:#475569; line-height:1.6; }
+  .preg { background:#fdf2f8; border:1px solid #f9a8d4; border-radius:12px; padding:14px 18px; margin-top:14px; }
+  .preg .pq { font-size:12px; font-weight:800; color:#be185d; letter-spacing:.5px; margin-bottom:5px; }
+  .preg .pt { font-size:13.5px; color:#831843; line-height:1.55; }
+  .preg .pt b { color:#500724; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Dos monedas — esta vez calcado sobre tus pantallas de verdad</h1>
+  <p class="sub">Estas 4 pantallas (la reserva, el proveedor, la caja y los reportes) las dibujé <b>copiando exactamente cómo son hoy en tu sistema</b> — los mismos números, las mismas tarjetas, las mismas tablas — y recién encima puse los pesos y los dólares. Las pantallas 2 (cobrar) y 3 (cuenta del cliente), que ya te gustaron, quedan como estaban.</p>
+
+  <div class="reglas">
+    <b>Las 3 reglas de siempre, intactas:</b>
+    ① Pesos y dólares <b>siempre separados</b>, nunca un total convertido. &nbsp;② <b>Nunca</b> "diferencia de cambio". &nbsp;③ Si hay <b>una sola moneda</b>, se ve <b>igual que hoy</b>.
+  </div>
+
+  <!-- ============ PANTALLA 1 — LA RESERVA (franja real) ============ -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 1 · LA RESERVA</div>
+    <h2>La franja de números de arriba</h2>
+    <p class="que"><b>Tu pantalla real</b> tiene 3 números limpios: <b>Saldo a Cobrar · Recaudado · Inversión</b> (este último solo lo ve admin). <b>Lo único que cambia:</b> cuando la reserva tiene dos monedas, dentro de cada número aparecen las dos cifras, una arriba de la otra. Nada más. Saqué los recuadros de comparación que te había metido de más.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Reserva #1042 — Familia Gómez</span></div>
+      <div class="winbody">
+        <div class="resvhead">
+          <div class="ttl">Reserva #1042 — Familia Gómez <span class="pill green">Confirmada</span>
+            <small>Iguazú · 12/08 → 19/08/2026 · 4 pasajeros</small></div>
+          <div class="acts"><span>✎ Editar</span><span>⤓ Documentos</span><span>⋯</span></div>
+        </div>
+
+        <div class="strip c3">
+          <div class="scell">
+            <div class="lbl">Saldo a Cobrar</div>
+            <div class="two">
+              <div class="l rose"><span class="mon ars">$</span>120.000</div>
+              <div class="l rose"><span class="mon usd">US$</span>350</div>
+            </div>
+            <div class="sub">de $ 205.000 / US$ 450 presupuestado</div>
+          </div>
+          <div class="scell">
+            <div class="lbl">Recaudado</div>
+            <div class="two">
+              <div class="l green"><span class="mon ars">$</span>85.000</div>
+              <div class="l green"><span class="mon usd">US$</span>100</div>
+            </div>
+          </div>
+          <div class="scell">
+            <div class="lbl">Inversión (Costo)</div>
+            <div class="two">
+              <div class="l gray"><span class="mon ars">$</span>336.000</div>
+              <div class="l gray"><span class="mon usd">US$</span>380</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabs"><span class="on">Servicios</span><span>Pasajeros</span><span>Historial</span><span>Estado de Cuenta</span><span>Vouchers</span></div>
+        <table>
+          <tr><th>Tipo</th><th>Servicio</th><th>Operador</th><th>Estado</th><th class="r">Venta</th></tr>
+          <tr><td><span class="pill" style="background:#eef2ff;color:#4f46e5;">Hotel</span></td><td>Hotel Maitei Posadas · 7 noches</td><td>Ola Mayorista</td><td><span class="pill green">Confirmado</span></td><td class="r"><span class="mon ars">$</span>205.000</td></tr>
+          <tr><td><span class="pill" style="background:#eef2ff;color:#4f46e5;">Aéreo</span></td><td>AEP–MIA · 4 pax</td><td>TTS Viajes</td><td><span class="pill amber">Emitir 15/07</span></td><td class="r"><span class="mon usd">US$</span>450</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PANTALLA 4 — CUENTA DEL PROVEEDOR (real) ============ -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 4 · CUENTA DEL PROVEEDOR</div>
+    <h2>Cuenta corriente del proveedor</h2>
+    <p class="que"><b>Tu pantalla real</b> tiene 5 tarjetitas arriba (Servicios, Pagos, Total Compras, Total Pagado, Saldo Pendiente) y dos tablas debajo. <b>Lo único que cambia:</b> las 3 tarjetas de plata (Compras, Pagado, Saldo) muestran las dos monedas; las tablas llevan el cartelito $ o US$ pegado a cada monto. Las dos primeras (cuántos servicios, cuántos pagos) no se tocan.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Cuenta Corriente · Ola Mayorista</span></div>
+      <div class="winbody">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+          <div><div style="font-size:19px;font-weight:800;color:#0f172a;">Cuenta Corriente: Ola Mayorista</div>
+            <div style="font-size:12.5px;color:#64748b;margin-top:3px;">Mariana López · CUIT: 30-71044556-7</div></div>
+          <span style="background:#059669;color:#fff;border-radius:9px;padding:8px 16px;font-size:13px;font-weight:700;">＋ Registrar Pago</span>
+        </div>
+
+        <div class="kpis c5">
+          <div class="kpi"><div class="h">📄 Servicios</div><div class="n">12</div></div>
+          <div class="kpi"><div class="h">💳 Pagos</div><div class="n">8</div></div>
+          <div class="kpi"><div class="h">Total Compras <span class="nuevo">2 monedas</span></div><div class="nn"><div class="l"><span class="mon ars">$</span>1.200.000</div><div class="l"><span class="mon usd">US$</span>2.400</div></div></div>
+          <div class="kpi"><div class="h">Total Pagado <span class="nuevo">2 monedas</span></div><div class="nn"><div class="l" style="color:#16a34a;"><span class="mon ars">$</span>864.000</div><div class="l" style="color:#16a34a;"><span class="mon usd">US$</span>2.020</div></div></div>
+          <div class="kpi red"><div class="h">📈 Saldo Pendiente <span class="nuevo">2 monedas</span></div><div class="nn"><div class="l"><span class="mon ars">$</span>336.000</div><div class="l"><span class="mon usd">US$</span>380</div></div></div>
+        </div>
+
+        <div style="font-weight:800;font-size:13.5px;color:#0f172a;margin:6px 0 10px;">🏢 Servicios Comprados</div>
+        <table style="margin-bottom:20px;">
+          <tr><th>Tipo</th><th>Descripción</th><th>Reserva</th><th>Estado</th><th class="r">Costo</th><th class="r">Venta</th></tr>
+          <tr><td><span class="pill" style="background:#eef2ff;color:#4f46e5;">Hotel</span></td><td>Hotel Maitei Posadas</td><td style="color:#4f46e5;">#1042</td><td><span class="pill green">Confirmado</span></td><td class="r"><span class="mon ars">$</span>336.000</td><td class="r"><span class="mon ars">$</span>205.000</td></tr>
+          <tr><td><span class="pill" style="background:#eef2ff;color:#4f46e5;">Aéreo</span></td><td>AEP–MIA</td><td style="color:#4f46e5;">#1042</td><td><span class="pill amber">Pendiente</span></td><td class="r"><span class="mon usd">US$</span>380</td><td class="r"><span class="mon usd">US$</span>450</td></tr>
+        </table>
+
+        <div style="font-weight:800;font-size:13.5px;color:#0f172a;margin:6px 0 10px;">💳 Historial de Pagos</div>
+        <table>
+          <tr><th>Fecha</th><th>Método</th><th>Reserva</th><th>Moneda <span class="nuevo">NUEVO</span></th><th class="r">Monto</th></tr>
+          <tr><td>18/06</td><td>Transferencia</td><td style="color:#4f46e5;">#1042</td><td><span class="mon ars">$</span> Pesos</td><td class="r" style="color:#16a34a;font-weight:700;">$ 200.000</td></tr>
+          <tr><td>20/06</td><td>Transferencia</td><td style="color:#4f46e5;">#1042</td><td><span class="mon usd">US$</span> Dólares</td><td class="r" style="color:#16a34a;font-weight:700;">US$ 380</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PANTALLA 5 — CAJA (real) ============ -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 5 · CAJA</div>
+    <h2>Caja / libro de movimientos</h2>
+    <p class="que"><b>Tu pantalla real</b> tiene 3 números arriba (Ingresos del mes, Egresos del mes, Resultado de caja) y debajo la lista de movimientos (cobranzas que entran, pagos a proveedor que salen). <b>Lo único que cambia:</b> los 3 números muestran pesos y dólares por separado, y cada movimiento de la lista lleva su moneda. Se agrega un filtro para ver solo pesos o solo dólares.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Caja</span></div>
+      <div class="winbody">
+        <div class="toolbar">
+          <div class="box search">🔍 Buscar referencia, proveedor o reserva...</div>
+          <div class="box">Ingresos y egresos ▾</div>
+          <div class="box">Todos los orígenes ▾</div>
+          <div class="box" style="border-color:#c7d2fe;background:#f5f3ff;color:#4338ca;">Todas las monedas ▾ <span class="nuevo">NUEVO</span></div>
+        </div>
+
+        <div class="metrics">
+          <div class="metric"><div class="l">Ingresos del mes</div><div class="two"><div class="v"><span class="mon ars">$</span>880.000</div><div class="v"><span class="mon usd">US$</span>1.900</div></div></div>
+          <div class="metric"><div class="l">Egresos del mes</div><div class="two"><div class="v"><span class="mon ars">$</span>540.000</div><div class="v"><span class="mon usd">US$</span>1.200</div></div></div>
+          <div class="metric"><div class="l">Resultado de caja</div><div class="two"><div class="v"><span class="mon ars">$</span>340.000</div><div class="v"><span class="mon usd">US$</span>700</div></div></div>
+        </div>
+
+        <table>
+          <tr><th>Fecha</th><th>Origen</th><th>Detalle</th><th>Moneda <span class="nuevo">NUEVO</span></th><th class="r">Monto</th></tr>
+          <tr class="movrow"><td>20/06</td><td><span style="display:inline-flex;align-items:center;gap:8px;"><span class="movico in">↙</span><span><b style="color:#0f172a;">Cobranza</b><br><span style="font-size:11px;color:#94a3b8;">Reserva #1042</span></span></span></td><td>Seña en mano</td><td><span class="mon ars">$</span> Pesos</td><td class="r plus">+ $ 85.000</td></tr>
+          <tr class="movrow"><td>20/06</td><td><span style="display:inline-flex;align-items:center;gap:8px;"><span class="movico in">↙</span><span><b style="color:#0f172a;">Cobranza</b><br><span style="font-size:11px;color:#94a3b8;">Reserva #1042</span></span></span></td><td>Transferencia USD</td><td><span class="mon usd">US$</span> Dólares</td><td class="r plus">+ US$ 100</td></tr>
+          <tr class="movrow"><td>21/06</td><td><span style="display:inline-flex;align-items:center;gap:8px;"><span class="movico out">↗</span><span><b style="color:#0f172a;">Pago a proveedor</b><br><span style="font-size:11px;color:#94a3b8;">Ola Mayorista</span></span></span></td><td>Pago hotel</td><td><span class="mon ars">$</span> Pesos</td><td class="r minus">− $ 200.000</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PANTALLA 6 — REPORTES (real, solapa Finanzas) ============ -->
+  <section class="pantalla">
+    <div class="pnum">PANTALLA 6 · REPORTES</div>
+    <h2>Reportes — solapa "Finanzas y Deudas"</h2>
+    <p class="que"><b>Tu pantalla real</b> tiene 4 tarjetas de números (Cobros, Pagos, Flujo Neto, Deuda Clientes) y debajo dos listas: <b>Cuentas por Cobrar</b> (clientes que te deben) y <b>Cuentas por Pagar</b> (lo que vos debés). <b>Lo único que cambia:</b> las tarjetas muestran las dos monedas, y en cada lista el monto lleva su $ o US$. Nunca una lista que mezcle las dos.</p>
+
+    <div class="win">
+      <div class="winbar"><span class="dots"><i style="background:#f87171;"></i><i style="background:#fbbf24;"></i><i style="background:#34d399;"></i></span><span class="addr">Reportes · Finanzas y Deudas</span></div>
+      <div class="winbody">
+        <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+          <span style="background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:7px 14px;font-size:12.5px;color:#64748b;">Ventas y Margen</span>
+          <span style="background:#4f46e5;color:#fff;border-radius:9px;padding:7px 14px;font-size:12.5px;font-weight:700;">Finanzas y Deudas</span>
+          <span style="background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:7px 14px;font-size:12.5px;color:#64748b;">Inteligencia Analítica</span>
+        </div>
+
+        <div class="kpis c4">
+          <div class="kpi"><div class="h">💰 Cobros (Entradas)</div><div class="nn"><div class="l" style="color:#16a34a;"><span class="mon ars">$</span>880.000</div><div class="l" style="color:#16a34a;"><span class="mon usd">US$</span>1.900</div></div></div>
+          <div class="kpi"><div class="h">💳 Pagos (Salidas)</div><div class="nn"><div class="l" style="color:#e11d48;"><span class="mon ars">$</span>540.000</div><div class="l" style="color:#e11d48;"><span class="mon usd">US$</span>1.200</div></div></div>
+          <div class="kpi"><div class="h">↕ Flujo Neto</div><div class="nn"><div class="l"><span class="mon ars">$</span>340.000</div><div class="l"><span class="mon usd">US$</span>700</div></div></div>
+          <div class="kpi"><div class="h">⚠ Deuda Clientes</div><div class="nn"><div class="l" style="color:#9333ea;"><span class="mon ars">$</span>1.240.000</div><div class="l" style="color:#9333ea;"><span class="mon usd">US$</span>3.150</div></div></div>
+        </div>
+
+        <div class="twolists">
+          <div class="listcard cobrar">
+            <div class="lh">👥 Cuentas por Cobrar</div>
+            <div class="lrow"><span class="nm">Familia Gómez</span><span class="am"><span class="mon ars">$</span>420.000</span></div>
+            <div class="lrow"><span class="nm">Empresa ACME</span><span class="am"><span class="mon usd">US$</span>1.200</span></div>
+            <div class="lrow"><span class="nm">Pérez, Juan</span><span class="am"><span class="mon ars">$</span>310.000</span></div>
+            <div class="lrow tot"><span class="nm">Total a Cobrar</span><span class="am"><span class="mon ars">$</span>1.240.000 · <span class="mon usd">US$</span>3.150</span></div>
+          </div>
+          <div class="listcard pagar">
+            <div class="lh">🏢 Cuentas por Pagar</div>
+            <div class="lrow"><span class="nm">Ola Mayorista</span><span class="am"><span class="mon ars">$</span>336.000</span></div>
+            <div class="lrow"><span class="nm">TTS Viajes</span><span class="am"><span class="mon usd">US$</span>380</span></div>
+            <div class="lrow tot"><span class="nm">Total a Pagar</span><span class="am"><span class="mon ars">$</span>336.000 · <span class="mon usd">US$</span>380</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- recordatorio -->
+  <div class="secund">
+    <span class="et">RECORDÁ</span>
+    <h2>Si hay una sola moneda, todas estas pantallas se ven igual que hoy</h2>
+    <p>El desdoble en dos cifras aparece <b>solo</b> cuando la reserva, el proveedor o la caja tienen de verdad pesos y dólares. Con una sola moneda (lo de todos los días), cada número queda como ahora: una sola cifra, sin la segunda línea.</p>
+  </div>
+
+  <div class="preg">
+    <div class="pq">LO ÚNICO QUE TE PREGUNTO ACÁ</div>
+    <div class="pt">Ahora que las ves <b>como son de verdad en tu sistema</b>: ¿así te cierran las 4? Si alguna todavía no, decime cuál y qué le cambiarías. Si están bien, cierro la definición y se construye.</div>
+  </div>
+
+</div>
+</body>
+</html>
