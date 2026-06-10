@@ -19,7 +19,7 @@
 
 ## Listados y tablas
 
-_(pendiente)_
+- **(2026-06-09) Total al pie de una lista con varias monedas: una línea de TOTAL por moneda.** Cuando una lista (ej. los servicios de una reserva) mezcla pesos y dólares, al pie va UNA sola línea de total con cada moneda separada por un punto medio: `TOTAL: $ 205.000 · US$ 450`. Nunca se suman pesos y dólares en un único número. Si la lista es de una sola moneda, el total se ve como hasta ahora (un solo número). Decisión de multimoneda, ver la sección "Multimoneda" más abajo (P2).
 
 ## Botones y acciones
 
@@ -219,3 +219,32 @@ Ronda 2:
 ## Pasajeros de una reserva — reglas de negocio (2026-06-08)
 
 - **(2026-06-08) Una reserva NUNCA puede tener 0 pasajeros:** no se puede avanzar de etapa (ej. de Presupuesto a En gestión) si la composición declarada es 0 adultos + 0 menores + 0 infantes. El sistema bloquea el botón y muestra aviso claro ("Tiene que haber al menos 1 pasajero"). El usuario debe ajustar la composición antes de continuar.
+
+# Multimoneda — pesos y dólares (decisiones de Gastón, 2026-06-09)
+
+> Sesión de 8 preguntas con dibujos. El sistema empieza a mostrar dos monedas (pesos ARS y dólares USD)
+> en todas las pantallas de plata. Gastón eligió todas las opciones recomendadas.
+> Diseño técnico que lo sostiene: `docs/architecture/adr/ADR-021-multimoneda-por-reserva.md`.
+>
+> **Tres reglas duras que NO se rompen en ninguna pantalla (vienen del negocio/contador, no son de UX):**
+> 1. **Las monedas van SIEMPRE separadas. NUNCA se suman ni se convierten a una sola "moneda base"** en las pantallas que usa el vendedor (pesos por un lado, dólares por el otro).
+> 2. **El sistema NUNCA muestra "diferencia de cambio"** en ninguna pantalla. Esa palabra no aparece.
+> 3. **Si una reserva (o un cliente, o un proveedor) maneja UNA sola moneda, se ve EXACTAMENTE como hoy.** La segunda moneda solo aparece cuando de verdad hay dos. No se mete ruido de doble moneda donde hay una.
+
+- **(2026-06-09) Saldo de una reserva con dos monedas: dos saldos lado a lado (P1).** Cuando la reserva tiene plata en pesos y en dólares, la cabecera muestra DOS saldos uno al lado del otro: pesos a la izquierda, dólares a la derecha. Cada uno con su "de $X presupuestado" chiquito debajo (igual que la regla #5 del ciclo de vida, pero duplicada por moneda). Si la reserva es de una sola moneda, se ve un solo saldo como hasta hoy.
+
+- **(2026-06-09) Subtotal de la lista de servicios: total por moneda al pie (P2).** Al pie de la lista de servicios de la reserva va una línea de TOTAL con cada moneda separada: `TOTAL: $ 205.000 · US$ 450`. Si todos los servicios son de la misma moneda, un solo número como hoy. (También quedó como regla general en "Listados y tablas".)
+
+- **(2026-06-09) La ficha de cobro se abre DENTRO de la página, no en ventana encima (P3).** El cobro se carga en línea, debajo, igual que la carga de servicios (propuesta C aprobada). **Esto reemplaza la ventana de pago actual.** Coherente con "el modal me parece horrible": nada de ventana que se abre encima para cobrar.
+
+- **(2026-06-09) Cobro cruzado (pagar en una moneda contra una deuda en otra): el recuadro de tipo de cambio aparece SOLO cuando cruza (P4).** Si el vendedor cobra en la MISMA moneda que el saldo al que imputa, no aparece nada raro (se cobra como siempre). Si la moneda del pago es DISTINTA de la moneda del saldo al que imputa, recién ahí aparece un recuadro con: tipo de cambio (1 US$ = $___), de dónde sale ese tipo de cambio (la fuente), la fecha, y la línea "Se cancelan US$ 100 de la deuda" (texto ajustable si Gastón después pide otro). **Los tres datos —tipo de cambio, fuente y fecha— son obligatorios cuando el pago cruza de moneda.** Cada pago es de una sola moneda contra un solo saldo; si el cliente paga mitad y mitad, son dos cobros.
+
+- **(2026-06-09) Cuenta corriente del cliente: dos saldos arriba + una sola lista con la moneda en cada fila (P5).** Arriba, dos saldos: "DEBE EN $" y "DEBE EN US$". Abajo, una sola lista de movimientos (no dos listas), y cada fila dice en qué moneda fue. Si el cliente solo tuvo una moneda, se ve un solo saldo arriba y la lista de siempre.
+
+- **(2026-06-09) Caja / arqueo: dos cajas separadas (P6).** Una "CAJA EN PESOS" y una "CAJA EN DÓLARES", cada una con su Entró / Salió y su total propio. Nunca un total mezclado. La caja registra lo que REALMENTE entró en cada moneda (en un cobro cruzado, entra lo que el cliente pagó de verdad; el saldo de la otra moneda baja por el equivalente, pero la caja no inventa pesos que no entraron).
+
+- **(2026-06-09) Tablero financiero / reportes: dos columnas lado a lado (P7).** En cada tarjeta del tablero, una columna de pesos y una de dólares, una al lado de la otra. Los rankings de "quién debe más" son DOS listas separadas, una por moneda (no una lista mezclada).
+
+- **(2026-06-09) Cuenta corriente del proveedor: mismo formato que la del cliente (P8).** Dos saldos arriba ("LE DEBO EN $" y "LE DEBO EN US$") + una sola lista de movimientos con la moneda en cada fila. Si el proveedor es de una sola moneda, se ve como hoy. Recordar la regla previa (2026-06-05): sin permiso de ver costos, los montos de deuda al proveedor van tapados.
+
+- **(2026-06-09) Enmascarado de costos sigue valiendo en todo lo multimoneda.** Quien no tiene el permiso `cobranzas.see_cost` no ve costos ni deuda al operador en ninguna de estas pantallas, en ninguna de las dos monedas (regla general 2026-06-05). Lo que el cliente debe y lo que el cliente pagó SÍ se ve sin ese permiso.
