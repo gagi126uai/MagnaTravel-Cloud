@@ -31,6 +31,25 @@ public class CashSummaryDto
     public decimal CashInThisMonth { get; set; }
     public decimal CashOutThisMonth { get; set; }
     public decimal NetCashThisMonth { get; set; }
+
+    /// <summary>
+    /// ADR-021 Capa 7: caja del mes SEPARADA por moneda REAL del movimiento (un cobro cruzado entra a
+    /// caja en su moneda real, no en la imputada). Aditivo: los escalares de arriba quedan para compat
+    /// y, con todo en ARS, coinciden con la unica fila ARS de esta lista. NUNCA mezcla ARS+USD en un total.
+    /// </summary>
+    public List<CashByCurrencyDto> CashByCurrency { get; set; } = new();
+}
+
+/// <summary>
+/// ADR-021 Capa 7: una fila de caja por moneda (entradas, salidas y neto de ESA moneda en el mes).
+/// El front la usa en la pantalla de caja (Estado de Cuenta) para mostrar un renglon por moneda.
+/// </summary>
+public class CashByCurrencyDto
+{
+    public string Currency { get; set; } = "ARS";
+    public decimal CashInThisMonth { get; set; }
+    public decimal CashOutThisMonth { get; set; }
+    public decimal NetCashThisMonth { get; set; }
 }
 
 public class InvoicingSummaryDto

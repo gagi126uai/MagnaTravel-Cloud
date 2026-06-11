@@ -39,6 +39,47 @@ public class CreatePaymentRequest
     public string Method { get; set; } = string.Empty;
     public string? Reference { get; set; }
     public string? Notes { get; set; }
+
+    // ====================================================================================
+    // ADR-021 Capa 4 (multimoneda + cobro cruzado, 2026-06-10). Todos OPCIONALES: un request
+    // que no los manda queda en ARS no cruzado = byte-identico al comportamiento previo. El
+    // front viejo (que no manda nada) sigue funcionando igual. La validacion server-side §8
+    // vive en PaymentService.CreatePaymentAsync (no se confia en el front).
+    // ====================================================================================
+
+    /// <summary>ADR-021 §2.2: moneda REAL del cobro (lo que entro a caja). null/vacio = ARS.</summary>
+    public string? Currency { get; set; }
+
+    /// <summary>
+    /// ADR-021 §2.7: moneda del SALDO al que se imputa. null = se imputa a su propia <see cref="Currency"/>
+    /// (pago no cruzado). Si difiere de <see cref="Currency"/>, el pago es CRUZADO y el bloque de TC
+    /// de abajo pasa a ser obligatorio (validacion §8.5).
+    /// </summary>
+    public string? ImputedCurrency { get; set; }
+
+    /// <summary>ADR-021 §2.2bis: tipo de cambio. Convencion FIJA: unidades de ARS por 1 USD. Obligatorio si el pago cruza.</summary>
+    public decimal? ExchangeRate { get; set; }
+
+    /// <summary>ADR-021: origen del tipo de cambio (enum <c>ExchangeRateSource</c> como int). Obligatorio si el pago cruza.</summary>
+    public int? ExchangeRateSource { get; set; }
+
+    /// <summary>ADR-021: fecha del tipo de cambio. Obligatorio si el pago cruza.</summary>
+    public DateTime? ExchangeRateAt { get; set; }
+
+    /// <summary>
+    /// ADR-021 §2.2bis: monto equivalente que baja del saldo de <see cref="ImputedCurrency"/>. Si el pago
+    /// cruza y no se manda, el backend lo CALCULA con la formula de §2.2bis (no se confia en el front).
+    /// </summary>
+    public decimal? ImputedAmount { get; set; }
+
+    /// <summary>
+    /// ADR-021 Capa 7: fecha en que el usuario dice que se cobro el pago. OPCIONAL. null = ahora (UTC),
+    /// que es el comportamiento previo. El backend la lleva a UTC antes de persistir (la columna en
+    /// Postgres es timestamptz y EF exige Kind=Utc). Permitir fechar en el pasado es deliberado: un
+    /// cobro se registra a veces dias despues de recibirlo; eso reubica el movimiento en el mes real
+    /// de caja, que es el comportamiento contable correcto.
+    /// </summary>
+    public DateTime? PaidAt { get; set; }
 }
 public class UpdatePaymentRequest
 {

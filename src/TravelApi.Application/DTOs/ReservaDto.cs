@@ -1,5 +1,22 @@
 namespace TravelApi.Application.DTOs;
 
+/// <summary>
+/// ADR-021 Capa 5 (multimoneda, 2026-06-10): una linea de plata de la reserva separada por moneda.
+/// Espejo del value object de dominio <c>ReservaMoneyLine</c>. El front la usa para mostrar columnas
+/// ARS/USD sin mezclar. <see cref="TotalCost"/> es COSTO/inversion -> se enmascara igual que el escalar
+/// <c>TotalCost</c> para usuarios sin <c>cobranzas.see_cost</c> (ver ReservaService).
+/// </summary>
+public class ReservaMoneyLineDto
+{
+    public string Currency { get; set; } = "ARS";
+    public decimal TotalSale { get; set; }
+    public decimal ConfirmedSale { get; set; }
+    /// <summary>Costo/inversion de esta moneda. Dato sensible: se enmascara a 0 sin ver-costos.</summary>
+    public decimal TotalCost { get; set; }
+    public decimal TotalPaid { get; set; }
+    public decimal Balance { get; set; }
+}
+
 public class ReservaDto
 {
     public Guid PublicId { get; set; }
@@ -90,5 +107,15 @@ public class ReservaDto
     public List<AssistanceBookingDto> AssistanceBookings { get; set; } = new();
     public List<ServicioReservaDto> Servicios { get; set; } = new();
     public List<PaymentDto> Payments { get; set; } = new();
-    public List<InvoiceDto> Invoices { get; set; } = new();    
+    public List<InvoiceDto> Invoices { get; set; } = new();
+
+    /// <summary>
+    /// ADR-021 Capa 5: detalle de plata SEPARADO por moneda (una linea por moneda presente). Los
+    /// escalares de arriba (TotalSale/Balance/...) se conservan para compat; este es el detalle real
+    /// que el front usa para mostrar columnas ARS/USD. Vacio/una sola linea = reserva mono-moneda.
+    /// </summary>
+    public List<ReservaMoneyLineDto> PorMoneda { get; set; } = new();
+
+    /// <summary>ADR-021: true si la reserva mueve mas de una moneda.</summary>
+    public bool EsMultimoneda { get; set; }
 }

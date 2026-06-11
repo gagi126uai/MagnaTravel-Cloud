@@ -446,14 +446,40 @@ public class PaymentService : IPaymentService
         if (request.Amount <= 0)
             throw new ArgumentException("El monto debe ser mayor a 0.");
 
+        var amount = EconomicRulesHelper.RoundCurrency(request.Amount);
+
+        // ADR-021 Capa 7: el usuario puede elegir la fecha del cobro (paidAt). Si no la manda, es ahora.
+        // Se lleva a UTC siempre: la columna es timestamptz y EF Core exige Kind=Utc (un DateTime con Kind
+        // Local/Unspecified explotaria al guardar en Postgres). Un valor en el pasado es legitimo (cobro
+        // registrado tarde): no se bloquea, solo se normaliza la zona.
+        var paidAt = NormalizeToUtc(request.PaidAt) ?? DateTime.UtcNow;
+
+        // ADR-021 Capa 4 (§8): el bloque de moneda/TC se valida y resuelve server-side (no se confia en
+        // el front). Para un request sin datos de moneda (front viejo) queda ARS no cruzado = identico a hoy.
+        var moneyBlock = TravelApi.Domain.Reservations.PaymentCurrencyResolver.Resolve(
+            amount: amount,
+            rawCurrency: request.Currency,
+            rawImputedCurrency: request.ImputedCurrency,
+            exchangeRate: request.ExchangeRate,
+            exchangeRateSource: request.ExchangeRateSource,
+            exchangeRateAt: request.ExchangeRateAt,
+            imputedAmount: request.ImputedAmount,
+            round: EconomicRulesHelper.RoundCurrency);
+
         var payment = new Payment
         {
             ReservaId = reservaId,
-            Amount = EconomicRulesHelper.RoundCurrency(request.Amount),
+            Amount = amount,
+            Currency = moneyBlock.Currency,
+            ImputedCurrency = moneyBlock.ImputedCurrency,
+            ExchangeRate = moneyBlock.ExchangeRate,
+            ExchangeRateSource = moneyBlock.ExchangeRateSource,
+            ExchangeRateAt = moneyBlock.ExchangeRateAt,
+            ImputedAmount = moneyBlock.ImputedAmount,
             Method = string.IsNullOrWhiteSpace(request.Method) ? "Transfer" : request.Method.Trim(),
             Reference = request.Reference?.Trim(),
             Notes = request.Notes?.Trim(),
-            PaidAt = DateTime.UtcNow,
+            PaidAt = paidAt,
             Status = "Paid",
             EntryType = PaymentEntryTypes.Payment,
             AffectsCash = true
@@ -468,6 +494,23 @@ public class PaymentService : IPaymentService
             .FirstAsync(p => p.Id == payment.Id, cancellationToken);
 
         return _mapper.Map<PaymentDto>(created);
+    }
+
+    /// <summary>
+    /// ADR-021 Capa 7: lleva una fecha de entrada a UTC para poder persistirla en Postgres (timestamptz
+    /// exige Kind=Utc). Unspecified se asume UTC (es lo que manda el front, fecha sin zona); Local se
+    /// convierte. Devuelve null si la entrada es null (el caller cae a DateTime.UtcNow).
+    /// </summary>
+    private static DateTime? NormalizeToUtc(DateTime? value)
+    {
+        if (value is null) return null;
+        var dt = value.Value;
+        return dt.Kind switch
+        {
+            DateTimeKind.Utc => dt,
+            DateTimeKind.Local => dt.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(dt, DateTimeKind.Utc)
+        };
     }
 
     public async Task<PaymentReceiptDto> IssueReceiptAsync(int paymentId, CancellationToken cancellationToken)
@@ -855,6 +898,35 @@ public class PaymentService : IPaymentService
                 "UpdatePaymentAsync rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
                 paymentId, payment.ReservaId, blockReason);
             throw new InvalidOperationException(blockReason);
+        }
+
+        // ADR-021 §2.8 (B3): un pago CRUZADO (moneda real != moneda imputada) es INMUTABLE en su bloque
+        // economico. Editar el Amount sin recomputar el equivalente imputado dejaria la caja y el saldo
+        // descuadrados; la regla MVP es anular + recrear (igual que no se reescribe una factura). Editar
+        // Method/Reference/Notes (datos no economicos) si se permite -> se chequea si el Amount cambia.
+        bool isCrossCurrency =
+            payment.ImputedCurrency != null &&
+            !string.Equals(payment.ImputedCurrency, payment.Currency, StringComparison.OrdinalIgnoreCase);
+        if (isCrossCurrency)
+        {
+            var newAmount = EconomicRulesHelper.RoundCurrency(request.Amount);
+            if (newAmount != payment.Amount)
+            {
+                _logger.LogWarning(
+                    "UpdatePaymentAsync rejected (cross-currency amount edit). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                    paymentId, payment.ReservaId);
+                throw new InvalidOperationException(
+                    "No se puede editar el monto de un cobro en moneda distinta a la del saldo. Anulalo y registralo de nuevo.");
+            }
+
+            // Solo datos no economicos: el bloque de moneda/TC queda intacto.
+            payment.Method = request.Method;
+            payment.Reference = request.Reference;
+            payment.Notes = request.Notes;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            if (payment.ReservaId.HasValue)
+                await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
+            return;
         }
 
         payment.Amount = EconomicRulesHelper.RoundCurrency(request.Amount);

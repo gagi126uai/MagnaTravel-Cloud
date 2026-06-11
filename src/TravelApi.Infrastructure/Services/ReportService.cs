@@ -84,24 +84,52 @@ public class ReportService : IReportService
 
         // Filter mine para listas operativas: si no tiene reservas.view_all,
         // restringir por ResponsibleUserId == currentUser.
-        var pendingQuery = _dbContext.Reservas
-            .Where(f => f.Balance > 0 && f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled);
         var upcomingQuery = _dbContext.Reservas
             .Where(f => f.StartDate >= now && f.StartDate <= now.AddDays(7) && f.Status != EstadoReserva.Cancelled);
 
+        // ADR-021 Capa 6 (B2): el top-N de deudoras se calcula POR MONEDA contra la tabla hija
+        // ReservaMoneyByCurrency (ordenar por el escalar surrogate mezclaria USD+ARS y daria un ranking
+        // sin sentido). Se traen las top 5 de cada moneda; con todo en ARS la lista USD viene vacia y el
+        // resultado es identico al top-5 de antes. Join explicito contra Reservas (no nav implicita) para
+        // que corra igual en Postgres y en el provider InMemory de los tests; el filtro de owner se aplica
+        // sobre la reserva del join.
         if (!hasReservasViewAll)
         {
             // Sentinel imposible si no hay user resoluble (devuelve lista vacia).
             var ownerFilter = string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId;
-            pendingQuery = pendingQuery.Where(f => f.ResponsibleUserId == ownerFilter);
             upcomingQuery = upcomingQuery.Where(f => f.ResponsibleUserId == ownerFilter);
         }
 
-        var pendingReservas = await pendingQuery
-            .OrderByDescending(f => f.Balance)
-            .Take(5)
-            .Select(f => new PendingReservaDto(f.PublicId, f.NumeroReserva, f.Name, f.Balance, f.Status.ToString()))
-            .ToListAsync(cancellationToken);
+        var ownerFilterForPending = hasReservasViewAll
+            ? null
+            : (string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId);
+
+        var pendingByCurrencyQuery =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            where row.Balance > 0
+                && reservaPadre.Status != EstadoReserva.Closed
+                && reservaPadre.Status != EstadoReserva.Cancelled
+                && (ownerFilterForPending == null || reservaPadre.ResponsibleUserId == ownerFilterForPending)
+            select new { row.Currency, row.Balance, reservaPadre.PublicId, reservaPadre.NumeroReserva, reservaPadre.Name, reservaPadre.Status };
+
+        var pendingReservas = new List<PendingReservaDto>();
+        foreach (var currency in Monedas.Soportadas)
+        {
+            var topForCurrency = await pendingByCurrencyQuery
+                .Where(x => x.Currency == currency)
+                .OrderByDescending(x => x.Balance)
+                .Take(5)
+                .Select(x => new PendingReservaDto(
+                    x.PublicId,
+                    x.NumeroReserva,
+                    x.Name,
+                    x.Balance,
+                    x.Status.ToString(),
+                    currency))
+                .ToListAsync(cancellationToken);
+            pendingReservas.AddRange(topForCurrency);
+        }
 
         var upcomingTrips = await upcomingQuery
             .OrderBy(f => f.StartDate)
@@ -159,6 +187,12 @@ public class ReportService : IReportService
 
         var bnaUsdSellerRate = await _bnaExchangeRateService.GetUsdSellerRateAsync(cancellationToken);
 
+        // ADR-021 Capa 6: desgloses por moneda (aditivos). Cobros/pagos por moneda REAL del movimiento;
+        // ventas/costos por moneda del servicio (tabla hija filtrada por CreatedAt del mes); saldo
+        // pendiente y cuentas por pagar por moneda del saldo contra las tablas hijas. CostosDelMes y
+        // CuentasPorPagar se enmascaran (lista vacia) si el user no ve costos, igual que los escalares.
+        var porMoneda = await BuildDashboardByCurrencyAsync(startOfMonth, canSeeCost, cancellationToken);
+
         // B1.15 Fase 2a (FIX 4): si el user NO tiene cobranzas.see_cost, ocultar
         // CostosDelMes / MargenBruto / PagosProveedores. Patron consistente con
         // ApplyCostMaskingAsync de ReservaService (mascara con 0 — la decision de
@@ -178,8 +212,114 @@ public class ReportService : IReportService
             TendenciaHistorica: historicalTrend,
             DistribucionEstados: statusDistribution,
             BnaUsdSellerRate: bnaUsdSellerRate,
-            ActivePotentialCustomers: activePotentialCustomers
+            ActivePotentialCustomers: activePotentialCustomers,
+            PorMoneda: porMoneda
         );
+    }
+
+    /// <summary>
+    /// ADR-021 Capa 6: arma los desgloses por moneda del dashboard. Cada lista nunca mezcla monedas.
+    /// Cobros/pagos del mes van por la moneda REAL del movimiento; ventas/costos del mes y saldo
+    /// pendiente / cuentas por pagar van por la moneda del saldo contra las tablas hijas materializadas.
+    /// CostosDelMes y CuentasPorPagar quedan vacios si <paramref name="canSeeCost"/> es false (mismo
+    /// criterio de enmascarado que los escalares).
+    /// </summary>
+    private async Task<DashboardByCurrencyDto> BuildDashboardByCurrencyAsync(
+        DateTime startOfMonth, bool canSeeCost, CancellationToken cancellationToken)
+    {
+        // Cobros del mes por moneda REAL del cobro.
+        var cobros = await SumByCurrencyAsync(
+            _dbContext.Payments
+                .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted)
+                .GroupBy(p => p.Currency)
+                .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
+            cancellationToken);
+
+        // Pagos a proveedor del mes por moneda REAL del egreso.
+        var pagosProveedores = await SumByCurrencyAsync(
+            _dbContext.SupplierPayments
+                .Where(p => p.PaidAt >= startOfMonth)
+                .GroupBy(p => p.Currency)
+                .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
+            cancellationToken);
+
+        // Ventas/costos del mes por moneda del servicio (tabla hija), filtrando reservas creadas en el mes
+        // y excluyendo Budget/Cancelled (mismo filtro que el escalar VentasDelMes/CostosDelMes). Join
+        // explicito contra Reservas (no nav implicita) para correr igual en Postgres e InMemory.
+        var monthQuery =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            where reservaPadre.CreatedAt >= startOfMonth
+                && reservaPadre.Status != EstadoReserva.Budget
+                && reservaPadre.Status != EstadoReserva.Cancelled
+            select new { row.Currency, row.TotalSale, row.TotalCost };
+
+        var ventas = await SumByCurrencyAsync(
+            monthQuery.GroupBy(x => x.Currency).Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.TotalSale))),
+            cancellationToken);
+
+        var costos = canSeeCost
+            ? await SumByCurrencyAsync(
+                monthQuery.GroupBy(x => x.Currency).Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.TotalCost))),
+                cancellationToken)
+            : new List<CurrencyAmount>();
+
+        // Saldo pendiente por moneda (cuentas por cobrar), excluyendo Closed/Cancelled/Budget igual que el escalar.
+        var saldoPendienteQuery =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            where reservaPadre.Status != EstadoReserva.Closed
+                && reservaPadre.Status != EstadoReserva.Cancelled
+                && reservaPadre.Status != EstadoReserva.Budget
+                && row.Balance > 0
+            select new { row.Currency, row.Balance };
+
+        var saldoPendiente = await SumByCurrencyAsync(
+            saldoPendienteQuery.GroupBy(x => x.Currency).Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.Balance))),
+            cancellationToken);
+
+        // Cuentas por pagar por moneda contra SupplierBalanceByCurrency (solo lectura; la tabla ya esta
+        // materializada por las capas 1-3). Es dato de costo -> se enmascara si no ve costos.
+        var cuentasPorPagar = canSeeCost
+            ? await SumByCurrencyAsync(
+                _dbContext.SupplierBalanceByCurrency
+                    .Where(row => row.Balance > 0)
+                    .GroupBy(row => row.Currency)
+                    .Select(g => new CurrencyAmount(g.Key, g.Sum(row => row.Balance))),
+                cancellationToken)
+            : new List<CurrencyAmount>();
+
+        return new DashboardByCurrencyDto(
+            CobrosDelMes: cobros,
+            PagosProveedores: canSeeCost ? pagosProveedores : new List<CurrencyAmount>(),
+            VentasDelMes: ventas,
+            CostosDelMes: costos,
+            SaldoPendiente: saldoPendiente,
+            CuentasPorPagar: cuentasPorPagar);
+    }
+
+    /// <summary>
+    /// Ejecuta el GroupBy-por-Currency en SQL, normaliza la moneda (null/vacio -> ARS) y redondea.
+    /// Devuelve la lista ordenada por moneda para que el shape sea estable en los tests.
+    /// </summary>
+    private static async Task<List<CurrencyAmount>> SumByCurrencyAsync(
+        IQueryable<CurrencyAmount> grouped, CancellationToken cancellationToken)
+    {
+        var raw = await grouped.ToListAsync(cancellationToken);
+
+        // La normalizacion (null -> ARS) se hace en memoria: una columna Currency con default 'ARS' a
+        // nivel BD no deberia traer nulls, pero los servicios genericos legacy podrian; agruparlos en ARS.
+        var totals = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var item in raw)
+        {
+            var key = Monedas.Normalizar(item.Currency);
+            totals[key] = totals.TryGetValue(key, out var current) ? current + item.Amount : item.Amount;
+        }
+
+        return totals
+            .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+            .Select(kvp => new CurrencyAmount(kvp.Key, EconomicRulesHelper.RoundCurrency(kvp.Value)))
+            .ToList();
     }
 
     public async Task<ReportsSummaryResponse> GetSummaryAsync(CancellationToken cancellationToken)
@@ -231,11 +371,31 @@ public class ReportService : IReportService
             .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo)
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
 
-        var supplierDebts = await _dbContext.Suppliers
-            .Where(s => s.IsActive && s.CurrentBalance != 0)
-            .OrderByDescending(s => s.CurrentBalance)
-            .Select(s => new { s.PublicId, s.Name, s.CurrentBalance })
+        // ADR-021 Capa 7: cuentas por pagar POR MONEDA. Antes esta lista usaba el escalar
+        // Supplier.CurrentBalance, que mezcla ARS+USD en un solo numero. Ahora cada fila lleva su
+        // moneda: un proveedor que debe en dos monedas produce DOS filas (una por moneda), NUNCA una
+        // fila con monto mezclado. Se lee de la tabla hija SupplierBalanceByCurrency (ya materializada
+        // por las capas previas). Join explicito contra Suppliers para traer nombre y filtrar activos,
+        // y correr igual en Postgres e InMemory.
+        var supplierDebtsByCurrency =
+            from row in _dbContext.SupplierBalanceByCurrency
+            join supplier in _dbContext.Suppliers on row.SupplierId equals supplier.Id
+            where supplier.IsActive && row.Balance != 0
+            select new { supplier.PublicId, supplier.Name, row.Currency, row.Balance };
+
+        var supplierDebtsRaw = await supplierDebtsByCurrency
+            .OrderByDescending(x => x.Balance)
             .ToListAsync(cancellationToken);
+
+        var supplierDebts = supplierDebtsRaw
+            .Select(x => new
+            {
+                x.PublicId,
+                x.Name,
+                Currency = Monedas.Normalizar(x.Currency),
+                CurrentBalance = EconomicRulesHelper.RoundCurrency(x.Balance)
+            })
+            .ToList();
 
         var topCustomers = await _dbContext.Reservas
             .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo 
@@ -275,33 +435,146 @@ public class ReportService : IReportService
             ReservaCount = m.FileCount
         });
 
+        // ADR-021 Capa 7: desglose por moneda del summary del reporte (mismo periodo from/to). Reusa la
+        // misma agregacion por moneda que el dashboard (SumByCurrencyAsync + tablas hijas), sin duplicar
+        // formulas. Endpoint Admin-only -> canSeeCost = true aca (Admin ve costos): costos/pagos/CxP por
+        // moneda van completos. Si el endpoint dejara de ser Admin-only, pasar el flag real de see_cost.
+        var porMoneda = await BuildDetailedSummaryByCurrencyAsync(dateFrom, dateTo, canSeeCost: true, cancellationToken);
+
         return new {
             Period = new { From = dateFrom, To = dateTo },
-            Summary = new { TotalSales = totalSales, TotalCosts = totalCosts, GrossMargin = grossMargin, MarginPercent = marginPercent, CustomerPayments = customerPayments, SupplierPayments = supplierPayments, ReservasCount = filesInPeriod.Count },
+            Summary = new { TotalSales = totalSales, TotalCosts = totalCosts, GrossMargin = grossMargin, MarginPercent = marginPercent, CustomerPayments = customerPayments, SupplierPayments = supplierPayments, ReservasCount = filesInPeriod.Count, PorMoneda = porMoneda },
             SupplierDebts = supplierDebts,
             TopCustomers = topCustomers,
             MonthlyBreakdown = monthlyData
         };
     }
 
+    /// <summary>
+    /// ADR-021 Capa 7: desglose por moneda del summary de /reports/detailed para un periodo [from, to].
+    /// Cobros/pagos por moneda REAL del movimiento; ventas/costos por moneda del servicio (tabla hija,
+    /// reservas creadas en el periodo, excluye Budget/Cancelled); saldo pendiente y cuentas por pagar por
+    /// moneda del saldo contra las tablas hijas. Costos / pagos a proveedor / cuentas por pagar quedan
+    /// vacios si <paramref name="canSeeCost"/> es false (mismo enmascarado que el dashboard).
+    /// </summary>
+    private async Task<DashboardByCurrencyDto> BuildDetailedSummaryByCurrencyAsync(
+        DateTime dateFrom, DateTime dateTo, bool canSeeCost, CancellationToken cancellationToken)
+    {
+        var cobros = await SumByCurrencyAsync(
+            _dbContext.Payments
+                .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo && !p.IsDeleted)
+                .GroupBy(p => p.Currency)
+                .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
+            cancellationToken);
+
+        var pagosProveedores = canSeeCost
+            ? await SumByCurrencyAsync(
+                _dbContext.SupplierPayments
+                    .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo)
+                    .GroupBy(p => p.Currency)
+                    .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
+                cancellationToken)
+            : new List<CurrencyAmount>();
+
+        var periodQuery =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            where reservaPadre.CreatedAt >= dateFrom && reservaPadre.CreatedAt <= dateTo
+                && reservaPadre.Status != EstadoReserva.Budget
+                && reservaPadre.Status != EstadoReserva.Cancelled
+            select new { row.Currency, row.TotalSale, row.TotalCost };
+
+        var ventas = await SumByCurrencyAsync(
+            periodQuery.GroupBy(x => x.Currency).Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.TotalSale))),
+            cancellationToken);
+
+        var costos = canSeeCost
+            ? await SumByCurrencyAsync(
+                periodQuery.GroupBy(x => x.Currency).Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.TotalCost))),
+                cancellationToken)
+            : new List<CurrencyAmount>();
+
+        // Saldo pendiente (cuentas por cobrar) por moneda: no es un dato del periodo sino el saldo
+        // vigente, igual que el escalar de otros reportes. Excluye Closed/Cancelled/Budget.
+        var saldoPendienteQuery =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            where reservaPadre.Status != EstadoReserva.Closed
+                && reservaPadre.Status != EstadoReserva.Cancelled
+                && reservaPadre.Status != EstadoReserva.Budget
+                && row.Balance > 0
+            select new { row.Currency, row.Balance };
+
+        var saldoPendiente = await SumByCurrencyAsync(
+            saldoPendienteQuery.GroupBy(x => x.Currency).Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.Balance))),
+            cancellationToken);
+
+        var cuentasPorPagar = canSeeCost
+            ? await SumByCurrencyAsync(
+                _dbContext.SupplierBalanceByCurrency
+                    .Where(row => row.Balance > 0)
+                    .GroupBy(row => row.Currency)
+                    .Select(g => new CurrencyAmount(g.Key, g.Sum(row => row.Balance))),
+                cancellationToken)
+            : new List<CurrencyAmount>();
+
+        return new DashboardByCurrencyDto(
+            CobrosDelMes: cobros,
+            PagosProveedores: pagosProveedores,
+            VentasDelMes: ventas,
+            CostosDelMes: costos,
+            SaldoPendiente: saldoPendiente,
+            CuentasPorPagar: cuentasPorPagar);
+    }
+
     public async Task<IEnumerable<object>> GetDetailedReceivablesAsync(CancellationToken cancellationToken)
     {
-        return await _dbContext.Customers
-            .Where(c => c.CurrentBalance > 0 && c.IsActive)
-            .OrderByDescending(c => c.CurrentBalance)
-            .Select(c => new 
+        // ADR-021 Capa 7: cuentas por cobrar POR MONEDA del cliente. Antes esta lista usaba el escalar
+        // Customer.CurrentBalance, que mezcla ARS+USD en un solo numero. El saldo real por moneda no vive
+        // en el cliente sino en las reservas (tabla hija ReservaMoneyByCurrency). Se agrega el saldo
+        // positivo de las reservas vigentes (no Closed/Cancelled/Budget) por cliente + moneda: un cliente
+        // que debe en dos monedas produce DOS filas, NUNCA una fila con monto mezclado.
+        //
+        // Se excluyen Closed/Cancelled/Budget para que el saldo por moneda sea coherente con el resto de
+        // los reportes (la deuda exigible). Por eso el total por cliente puede no coincidir con el escalar
+        // legacy Customer.CurrentBalance, que sumaba todo sin filtrar estado.
+        var receivablesByCurrency =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            join customer in _dbContext.Customers on reservaPadre.PayerId equals customer.Id
+            where row.Balance > 0
+                && customer.IsActive
+                && reservaPadre.Status != EstadoReserva.Closed
+                && reservaPadre.Status != EstadoReserva.Cancelled
+                && reservaPadre.Status != EstadoReserva.Budget
+            group new { row.Balance, reservaPadre.CreatedAt }
+                by new { customer.PublicId, customer.FullName, customer.DocumentNumber, row.Currency }
+            into grouped
+            select new
             {
-                c.PublicId,
-                c.FullName,
-                c.DocumentNumber,
-                c.CurrentBalance,
-                LastMovementDate = _dbContext.Reservas
-                    .Where(f => f.PayerId == c.Id)
-                    .OrderByDescending(f => f.CreatedAt)
-                    .Select(f => f.CreatedAt)
-                    .FirstOrDefault()
-            })
+                grouped.Key.PublicId,
+                grouped.Key.FullName,
+                grouped.Key.DocumentNumber,
+                grouped.Key.Currency,
+                Balance = grouped.Sum(x => x.Balance),
+                LastMovementDate = grouped.Max(x => x.CreatedAt)
+            };
+
+        var raw = await receivablesByCurrency
+            .OrderByDescending(x => x.Balance)
             .ToListAsync(cancellationToken);
+
+        return raw
+            .Select(x => new
+            {
+                x.PublicId,
+                x.FullName,
+                x.DocumentNumber,
+                Currency = Monedas.Normalizar(x.Currency),
+                CurrentBalance = EconomicRulesHelper.RoundCurrency(x.Balance),
+                x.LastMovementDate
+            })
+            .ToList();
     }
 
     public async Task<byte[]> ExportReportAsync(DateTime? from, DateTime? to, bool includeSales, bool includeReceivables, bool includePayables, CancellationToken cancellationToken)

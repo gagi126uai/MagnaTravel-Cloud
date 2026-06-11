@@ -1,3 +1,11 @@
+/**
+ * Lista de movimientos de caja (cobranzas, pagos a proveedor, ajustes manuales).
+ *
+ * Multimoneda (2026-06-11): cada movimiento lleva una columna "Moneda" con cartelito
+ * $/US$ y el monto se formatea con la moneda real del movimiento (movement.currency).
+ * Regla ③: si todos los movimientos son de una moneda, la columna igual aparece
+ * (simplifica el diseño; el cartelito muestra "$" para todos los movimientos en ARS).
+ */
 import { useEffect, useState } from "react";
 import {
   ArrowDownLeft,
@@ -21,7 +29,10 @@ import {
 } from "../../../components/ui/DataGrid";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
+import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
+import { formatCurrency } from "../lib/financeUtils";
 
+// Formateador legacy mantenido solo para llamadas locales sin moneda explícita (compatibilidad interna)
 const currency = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
@@ -300,13 +311,15 @@ export function MovementsTab({
         </div>
       ) : null}
 
-      <DataGrid minWidth="980px">
+      <DataGrid minWidth="1050px">
         <DataGridHeader>
           <DataGridHeaderRow>
             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
             <DataGridHeaderCell>Origen</DataGridHeaderCell>
             <DataGridHeaderCell>Detalle</DataGridHeaderCell>
             <DataGridHeaderCell>Metodo</DataGridHeaderCell>
+            {/* Columna Moneda: siempre visible (decisión D, 2026-06-11) */}
+            <DataGridHeaderCell>Moneda</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
           </DataGridHeaderRow>
@@ -349,10 +362,14 @@ export function MovementsTab({
                     ) : null}
                   </DataGridCell>
                   <DataGridCell>{movement.method}</DataGridCell>
+                  {/* Columna Moneda: cartelito $/US$ según la moneda del movimiento */}
+                  <DataGridCell>
+                    <CurrencyBadge currency={movement.currency || "ARS"} size="sm" />
+                  </DataGridCell>
                   <DataGridCell align="right">
                     <span className={`text-sm font-bold ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                       {isIncome ? "+" : "-"}
-                      {currency.format(movement.amount)}
+                      {formatCurrency(movement.amount, movement.currency || "ARS")}
                     </span>
                   </DataGridCell>
                   <DataGridActionCell>
@@ -421,9 +438,10 @@ export function MovementsTab({
                   </>
                 }
                 footer={
-                  <div className={`text-sm font-black ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                  <div className={`text-sm font-black inline-flex items-center gap-1 ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                     {isIncome ? "+" : "-"}
-                    {currency.format(movement.amount)}
+                    <CurrencyBadge currency={movement.currency || "ARS"} />
+                    {formatCurrency(movement.amount, movement.currency || "ARS")}
                   </div>
                 }
                 footerActions={

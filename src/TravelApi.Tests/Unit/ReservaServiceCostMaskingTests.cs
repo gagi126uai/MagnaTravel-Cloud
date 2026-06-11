@@ -189,4 +189,150 @@ public class ReservaServiceCostMaskingTests
         Assert.Single(page.Items);
         Assert.Equal(500m, page.Items[0].TotalCost);
     }
+
+    // ============================================================================================
+    // ADR-021 Capa 5 (multimoneda) — REGRESION de fuga de costo POR MONEDA.
+    //
+    // El gap que marcaron los reviewers: el escalar TotalCost ya estaba enmascarado (tests de
+    // arriba), pero faltaba pinear que el TotalCost de CADA linea de PorMoneda tambien se enmascara.
+    // Sin esto, un vendedor sin cobranzas.see_cost podria ver el costo del proveedor por una de las
+    // monedas (p.ej. el costo USD) aunque el escalar mostrara 0 — fuga critica de margen.
+    // ============================================================================================
+
+    /// <summary>
+    /// Siembra una reserva multimoneda con DOS servicios genericos confirmados, uno en ARS y otro en
+    /// USD, ambos con costo de proveedor (NetCost) &gt; 0.
+    ///
+    /// <para>El DETALLE recalcula PorMoneda on-read desde las colecciones cargadas (ReservaMoneyCalculator),
+    /// asi que basta con los dos servicios para producir dos lineas con TotalCost &gt; 0.</para>
+    ///
+    /// <para>El LISTADO lee la tabla hija materializada ReservaMoneyByCurrency, asi que tambien la
+    /// sembramos a mano (en produccion la mantiene sincronizada el persister de las capas 1-3).</para>
+    /// </summary>
+    private static async Task SeedMultiCurrencyReservaWithCosts(AppDbContext ctx)
+    {
+        ctx.Reservas.Add(new Reserva
+        {
+            Id = 1,
+            NumeroReserva = "F-2026-0042",
+            Name = "Reserva multimoneda con costos",
+            Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedor-1",
+            // Escalares surrogate (ARS 600 + USD-equivalente irrelevante para este test).
+            TotalCost = 600m,
+            TotalSale = 1000m
+        });
+        // Servicio en ARS: venta 1000 / costo 600.
+        ctx.Servicios.Add(new ServicioReserva
+        {
+            Id = 10,
+            ReservaId = 1,
+            ServiceType = "Otro",
+            ProductType = "Otro",
+            Description = "Servicio ARS",
+            Status = "Confirmado",
+            Currency = Monedas.ARS,
+            DepartureDate = DateTime.UtcNow.AddDays(10),
+            SalePrice = 1000m,
+            NetCost = 600m,
+            CreatedAt = DateTime.UtcNow
+        });
+        // Servicio en USD: venta 200 / costo 150 (este es el costo que NO debe filtrarse).
+        ctx.Servicios.Add(new ServicioReserva
+        {
+            Id = 11,
+            ReservaId = 1,
+            ServiceType = "Otro",
+            ProductType = "Otro",
+            Description = "Servicio USD",
+            Status = "Confirmado",
+            Currency = Monedas.USD,
+            DepartureDate = DateTime.UtcNow.AddDays(10),
+            SalePrice = 200m,
+            NetCost = 150m,
+            CreatedAt = DateTime.UtcNow
+        });
+        // Tabla hija para el LISTADO (espeja lo que produce el calculator).
+        ctx.ReservaMoneyByCurrency.AddRange(
+            new ReservaMoneyByCurrency { ReservaId = 1, Currency = Monedas.ARS, TotalSale = 1000m, ConfirmedSale = 1000m, TotalCost = 600m, TotalPaid = 0m, Balance = 1000m },
+            new ReservaMoneyByCurrency { ReservaId = 1, Currency = Monedas.USD, TotalSale = 200m, ConfirmedSale = 200m, TotalCost = 150m, TotalPaid = 0m, Balance = 200m });
+        await ctx.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Detail_multicurrency_user_without_see_cost_masks_TotalCost_per_currency()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyReservaWithCosts(ctx);
+        var accessor = BuildContextAccessor("vendedor-1", "Vendedor");
+        var resolver = BuildResolver("vendedor-1"); // sin see_cost
+        var service = BuildService(ctx, accessor, resolver);
+
+        var dto = await service.GetReservaByIdAsync("1", CancellationToken.None);
+
+        // Dos lineas (ARS + USD): el costo de CADA moneda debe ir en 0, no solo el escalar.
+        Assert.Equal(2, dto.PorMoneda.Count);
+        Assert.All(dto.PorMoneda, line => Assert.Equal(0m, line.TotalCost));
+        // La venta de cada moneda NO se enmascara (no es costo).
+        var ars = dto.PorMoneda.Single(l => l.Currency == Monedas.ARS);
+        var usd = dto.PorMoneda.Single(l => l.Currency == Monedas.USD);
+        Assert.Equal(1000m, ars.TotalSale);
+        Assert.Equal(200m, usd.TotalSale);
+    }
+
+    [Fact]
+    public async Task Detail_multicurrency_user_with_see_cost_sees_TotalCost_per_currency()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyReservaWithCosts(ctx);
+        var accessor = BuildContextAccessor("colab-1", "Colaborador");
+        var resolver = BuildResolver("colab-1", Permissions.CobranzasSeeCost);
+        var service = BuildService(ctx, accessor, resolver);
+
+        var dto = await service.GetReservaByIdAsync("1", CancellationToken.None);
+
+        Assert.Equal(2, dto.PorMoneda.Count);
+        var ars = dto.PorMoneda.Single(l => l.Currency == Monedas.ARS);
+        var usd = dto.PorMoneda.Single(l => l.Currency == Monedas.USD);
+        Assert.Equal(600m, ars.TotalCost);
+        Assert.Equal(150m, usd.TotalCost);
+    }
+
+    [Fact]
+    public async Task List_multicurrency_user_without_see_cost_masks_TotalCost_per_currency()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyReservaWithCosts(ctx);
+        var accessor = BuildContextAccessor("vendedor-1", "Vendedor");
+        var resolver = BuildResolver("vendedor-1", Permissions.ReservasViewAll); // ve todas, pero NO cost
+        var service = BuildService(ctx, accessor, resolver);
+
+        var (page, _) = await service.GetReservasWithScopeAsync(new ReservaListQuery(), CancellationToken.None);
+
+        Assert.Single(page.Items);
+        var porMoneda = page.Items[0].PorMoneda;
+        Assert.Equal(2, porMoneda.Count);
+        Assert.All(porMoneda, line => Assert.Equal(0m, line.TotalCost));
+        // Venta por moneda NO enmascarada.
+        Assert.Equal(1000m, porMoneda.Single(l => l.Currency == Monedas.ARS).TotalSale);
+        Assert.Equal(200m, porMoneda.Single(l => l.Currency == Monedas.USD).TotalSale);
+    }
+
+    [Fact]
+    public async Task List_multicurrency_user_with_see_cost_sees_TotalCost_per_currency()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyReservaWithCosts(ctx);
+        var accessor = BuildContextAccessor("colab-1", "Colaborador");
+        var resolver = BuildResolver("colab-1", Permissions.ReservasViewAll, Permissions.CobranzasSeeCost);
+        var service = BuildService(ctx, accessor, resolver);
+
+        var (page, _) = await service.GetReservasWithScopeAsync(new ReservaListQuery(), CancellationToken.None);
+
+        Assert.Single(page.Items);
+        var porMoneda = page.Items[0].PorMoneda;
+        Assert.Equal(2, porMoneda.Count);
+        Assert.Equal(600m, porMoneda.Single(l => l.Currency == Monedas.ARS).TotalCost);
+        Assert.Equal(150m, porMoneda.Single(l => l.Currency == Monedas.USD).TotalCost);
+    }
 }

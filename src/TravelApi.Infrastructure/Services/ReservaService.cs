@@ -1338,8 +1338,73 @@ public class ReservaService : IReservaService
             summary.GrossProfit = 0m;
         }
 
+        // ADR-021 Capa 5: detalle por moneda del listado. A diferencia del detalle (que recalcula con el
+        // calculator desde las colecciones cargadas), el listado lee la tabla hija materializada
+        // ReservaMoneyByCurrency en UNA sola query batcheada por los PublicId de la pagina (evita N+1 y no
+        // trae todas las colecciones de cada reserva). El TotalCost por moneda se enmascara igual que el escalar.
+        await FillPorMonedaForListAsync(paged.Items, seeCost, cancellationToken);
+
         var page = ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
         return (page, ownerFilterUserId);
+    }
+
+    /// <summary>
+    /// ADR-021 Capa 5: llena <c>PorMoneda</c>/<c>EsMultimoneda</c> de cada fila del listado leyendo la
+    /// tabla hija materializada <c>ReservaMoneyByCurrency</c>. Una sola query por los PublicId de la pagina
+    /// (no recalcula ni trae colecciones por reserva). Si <paramref name="seeCost"/> es false, el costo de
+    /// cada moneda se enmascara a 0 (mismo criterio que el escalar TotalCost).
+    /// </summary>
+    private async Task FillPorMonedaForListAsync(
+        IReadOnlyList<ReservaListDto> items, bool seeCost, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return;
+
+        var publicIds = items.Select(i => i.PublicId).ToList();
+
+        // Una fila por (reserva, moneda). Join explicito contra Reservas (no nav implicita) para resolver
+        // el PublicId con el que matchear el DTO y correr igual en Postgres e InMemory.
+        var rows = await (
+            from row in _context.ReservaMoneyByCurrency.AsNoTracking()
+            join reservaPadre in _context.Reservas.AsNoTracking() on row.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+            select new
+            {
+                ReservaPublicId = reservaPadre.PublicId,
+                row.Currency,
+                row.TotalSale,
+                row.ConfirmedSale,
+                row.TotalCost,
+                row.TotalPaid,
+                row.Balance
+            }).ToListAsync(cancellationToken);
+
+        var byReserva = rows
+            .GroupBy(row => row.ReservaPublicId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var item in items)
+        {
+            if (!byReserva.TryGetValue(item.PublicId, out var reservaRows))
+            {
+                // Sin filas hijas (reserva saldada en 0 o legacy sin backfill): se deja PorMoneda vacio.
+                continue;
+            }
+
+            item.PorMoneda = reservaRows
+                .OrderBy(row => row.Currency, StringComparer.Ordinal)
+                .Select(row => new ReservaMoneyLineDto
+                {
+                    Currency = row.Currency,
+                    TotalSale = row.TotalSale,
+                    ConfirmedSale = row.ConfirmedSale,
+                    TotalCost = seeCost ? row.TotalCost : 0m,
+                    TotalPaid = row.TotalPaid,
+                    Balance = row.Balance
+                })
+                .ToList();
+
+            item.EsMultimoneda = item.PorMoneda.Count > 1;
+        }
     }
 
     private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
@@ -1410,6 +1475,25 @@ public class ReservaService : IReservaService
 
         var dto = _mapper.Map<ReservaDto>(file);
         ApplyEconomicFlags(dto, settings);
+
+        // ADR-021 Capa 5: detalle de plata por moneda. Se recalcula on-read con el calculator (fuente
+        // unica de la cuenta) desde las colecciones ya cargadas; no toca la tabla hija (eso es solo para
+        // agregados cross-reserva en SQL). El enmascarado de TotalCost por moneda se aplica mas abajo en
+        // ApplyCostMaskingAsync, junto con el escalar, para no dejar costos visibles por una moneda.
+        var moneySummary = ReservaMoneyCalculator.Calculate(file);
+        dto.EsMultimoneda = moneySummary.EsMultimoneda;
+        dto.PorMoneda = moneySummary.PorMoneda.Values
+            .OrderBy(line => line.Currency, StringComparer.Ordinal)
+            .Select(line => new ReservaMoneyLineDto
+            {
+                Currency = line.Currency,
+                TotalSale = line.TotalSale,
+                ConfirmedSale = line.ConfirmedSale,
+                TotalCost = line.TotalCost,
+                TotalPaid = line.TotalPaid,
+                Balance = line.Balance
+            })
+            .ToList();
 
         // P3 (cuadre de facturacion): cuanto se facturo NETO al cliente (facturas + ND - NC,
         // solo comprobantes con CAE vivo y no anulados) y cuanto queda disponible respecto de
@@ -1530,6 +1614,16 @@ public class ReservaService : IReservaService
 
         // Reserva-level totals.
         dto.TotalCost = 0m;
+
+        // ADR-021 Capa 5: el TotalCost de CADA linea por moneda es costo/inversion -> se enmascara
+        // igual que el escalar. Critico: NO dejar visible el costo de una moneda y ocultar el de otra.
+        if (dto.PorMoneda is not null)
+        {
+            foreach (var line in dto.PorMoneda)
+            {
+                line.TotalCost = 0m;
+            }
+        }
 
         // Servicios genericos.
         if (dto.Servicios is not null)

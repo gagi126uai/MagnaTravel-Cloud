@@ -35,9 +35,30 @@ public record DashboardResponse(
     List<MonthlyMetricDto> TendenciaHistorica,
     StatusDistributionDto DistribucionEstados,
     BnaUsdSellerRateDto? BnaUsdSellerRate,
-    int ActivePotentialCustomers);
+    int ActivePotentialCustomers,
+    // ADR-021 Capa 6 (aditivos): los escalares de arriba quedan para compat (hoy, todo ARS, coinciden con
+    // el unico item ARS de cada lista). Estos desgloses NUNCA mezclan monedas en un solo total.
+    DashboardByCurrencyDto? PorMoneda = null);
 
-public record PendingReservaDto(Guid PublicId, string NumeroReserva, string Name, decimal Balance, string Status);
+/// <summary>
+/// ADR-021 Capa 6: desgloses del dashboard SEPARADOS por moneda. Cada lista tiene a lo sumo una linea
+/// por moneda presente. Cobros/pagos van por la moneda REAL del movimiento; saldo/cuentas por cobrar y
+/// por pagar por la moneda del SALDO contra las tablas hijas materializadas.
+/// </summary>
+public record DashboardByCurrencyDto(
+    List<CurrencyAmount> CobrosDelMes,
+    List<CurrencyAmount> PagosProveedores,
+    List<CurrencyAmount> VentasDelMes,
+    List<CurrencyAmount> CostosDelMes,
+    List<CurrencyAmount> SaldoPendiente,
+    List<CurrencyAmount> CuentasPorPagar);
+
+public record CurrencyAmount(string Currency, decimal Amount);
+
+// ADR-021 Capa 6 (B2): el top-N de deudoras se calcula POR MONEDA contra la tabla hija. El DTO gana
+// Currency (contrato aditivo; default ARS para compat con el front viejo). Una instalacion 100% ARS
+// solo produce items ARS = identico a hoy.
+public record PendingReservaDto(Guid PublicId, string NumeroReserva, string Name, decimal Balance, string Status, string Currency = "ARS");
 public record UpcomingTripDto(Guid PublicId, string NumeroReserva, string Name, DateTime StartDate, string Status);
 public record MonthlyMetricDto(string Month, decimal Sales, decimal Costs, decimal Profit);
 public record StatusDistributionDto(int Budgets, int Reserved, int Operational, int Closed, int Cancelled);

@@ -267,3 +267,12 @@ Ronda 2:
   - **Cobro cruzado en el historial: UNA sola fila** (el importe real que entró, con el detalle de a qué saldo imputó dentro de la misma fila). No dos filas.
   - **Fila de cuenta corriente con dos monedas: un renglón por moneda dentro de la misma fila** (no las dos pegadas en línea).
   - **Factura del aéreo en dólares: se emite y se muestra en dólares (US$)**, no el equivalente en pesos. **OJO: toca lo fiscal — confirmar con el contador antes de construir.**
+
+## Multimoneda — OK de construcción y 4 decisiones finas de UI (2026-06-11)
+
+> Gastón dio el **OK final del mockup v3** para construir las pantallas **1 (reserva), 5 (caja) y 6 (reportes)**. La **pantalla 4 (cuenta corriente del proveedor) queda postergada** (ver `docs/architecture/adr/ADR-021-POSTERGADO-pantalla-proveedor.md`). Backend (capas 4/5/6) ya construido y verde. Spec de frontend: `docs/ux/specs/2026-06-11-spec-frontend-multimoneda-1-5-6.md`.
+
+- **(2026-06-11) Fila de "Total" al pie de la lista de servicios: SOLO si la reserva tiene 2 monedas.** Con una sola moneda no aparece (se ve igual que hoy).
+- **(2026-06-11) Selectores nuevos del cobro ("Moneda del cobro" e "Imputar a"): se ESCONDEN en reservas de una sola moneda.** Aparecen solo cuando hay dos monedas (donde puede haber cobro cruzado). Con una sola moneda, el cobro se ve igual que hoy.
+- **(2026-06-11) Editar un cobro cruzado ya cargado: solo NOTAS y MÉTODO de pago.** El monto, la moneda y el tipo de cambio quedan fijos (el backend ya los bloquea); si están mal, se anula y se rehace.
+- **(2026-06-11) Filtro "Moneda" en la caja: SIEMPRE visible** (decisión de Gastón, distinta del default sugerido). Está siempre, aunque no haya movimientos en dólares.

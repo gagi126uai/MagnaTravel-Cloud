@@ -21,6 +21,11 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NumeroReserva, opt => opt.MapFrom(src => src.Reserva != null ? src.Reserva.NumeroReserva : null))
             .ForMember(dest => dest.RelatedInvoicePublicId, opt => opt.MapFrom(src => src.RelatedInvoice != null ? src.RelatedInvoice.PublicId : (Guid?)null))
             .ForMember(dest => dest.OriginalPaymentPublicId, opt => opt.MapFrom(src => src.OriginalPayment != null ? src.OriginalPayment.PublicId : (Guid?)null))
+            // ADR-021 Capa 7: moneda/cruce. Currency se normaliza (vacio/legacy -> ARS). ExchangeRateSource
+            // es enum en la entidad y se expone como int? (el front lo manda/lee como int). El resto
+            // (ImputedCurrency/ExchangeRate/ExchangeRateAt/ImputedAmount) matchea por nombre.
+            .ForMember(dest => dest.Currency, opt => opt.MapFrom(src => TravelApi.Domain.Entities.Monedas.Normalizar(src.Currency)))
+            .ForMember(dest => dest.ExchangeRateSource, opt => opt.MapFrom(src => src.ExchangeRateSource != null ? (int?)src.ExchangeRateSource : null))
             .ForMember(dest => dest.Receipt, opt => opt.MapFrom(src => src.Receipt));
 
         CreateMap<PaymentReceipt, PaymentReceiptDto>()
@@ -221,6 +226,9 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.RatePublicId, opt => opt.MapFrom(src => src.Rate != null ? (Guid?)src.Rate.PublicId : null))
             .ForMember(dest => dest.ReservaPublicId, opt => opt.MapFrom(src => src.Reserva != null ? (Guid?)src.Reserva.PublicId : null))
             .ForMember(dest => dest.WorkflowStatus, opt => opt.MapFrom(src => TravelApi.Domain.Entities.WorkflowStatusHelper.MapGenericStatus(src.Status)))
+            // ADR-021 Capa 7: la moneda del servicio se normaliza (null/legacy -> ARS) para que el front
+            // siempre reciba un codigo valido y nunca un null en el badge.
+            .ForMember(dest => dest.Currency, opt => opt.MapFrom(src => TravelApi.Domain.Entities.Monedas.Normalizar(src.Currency)))
             .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : src.SupplierName));
 
         // Reserva

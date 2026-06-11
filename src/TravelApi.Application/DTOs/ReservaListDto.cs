@@ -27,4 +27,14 @@ public class ReservaListDto
     public bool IsFullyPaid { get; set; }
     /// <summary>True si el viaje termino y todavia hay deuda (EndDate &lt; hoy AND Balance &gt; 0). Chip rojo "Vencida con deuda".</summary>
     public bool HasOverdueDebt { get; set; }
+
+    /// <summary>
+    /// ADR-021 Capa 5: detalle de plata por moneda para la fila del listado. Se llena leyendo la tabla
+    /// hija materializada (no recalcula on-read fila por fila). Una sola linea = reserva mono-moneda.
+    /// El <c>TotalCost</c> de cada linea se enmascara igual que el escalar para usuarios sin ver-costos.
+    /// </summary>
+    public List<ReservaMoneyLineDto> PorMoneda { get; set; } = new();
+
+    /// <summary>ADR-021: true si la reserva mueve mas de una moneda.</summary>
+    public bool EsMultimoneda { get; set; }
 }

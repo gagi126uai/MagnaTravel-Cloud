@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2 } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2, Plus } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import PassengerFormModal from "../../../components/PassengerFormModal";
-import PaymentModal from "../../../components/PaymentModal";
 import { ReservaDocumentsTab } from "../../../components/ReservaDocumentsTab";
 import ServiceFormModal from "../../../components/ServiceFormModal";
 import { ServiceInlineCard } from "../inline-service/ServiceInlineCard";
@@ -33,6 +32,8 @@ import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaLockBanner } from "../components/ReservaLockBanner";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
+import { RegistrarCobroInline } from "../components/RegistrarCobroInline";
+import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList } from "../components/ServiceList";
 import { EditAuthorizationModal } from "../components/EditAuthorizationModal";
@@ -402,8 +403,9 @@ export default function ReservaDetailPage() {
   const [serviceToEdit, setServiceToEdit] = useState(null);
   const [showPassengerForm, setShowPassengerForm] = useState(false);
   const [editingPassenger, setEditingPassenger] = useState(null);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentToEdit, setPaymentToEdit] = useState(null);
+  // Ficha de cobro en línea (2026-06-09): reemplaza el modal de pago en la solapa Estado de Cuenta.
+  const [showCobroInline, setShowCobroInline] = useState(false);
+  const [cobroAEditar, setCobroAEditar] = useState(null);
   // ADR-020: targetStatus es "InManagement" (Budget→InManagement, con modal de pasajeros).
   const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null, targetStatus: "InManagement" });
   const [showRevertModal, setShowRevertModal] = useState(false);
@@ -742,6 +744,7 @@ export default function ReservaDetailPage() {
                 isCatalogFindOrCreateEnabled={isCatalogFindOrCreateEnabled}
                 isServiceDeadlineAlertsEnabled={isServiceDeadlineAlertsEnabled}
                 windowDays={windowDays}
+                esMultimoneda={reserva?.esMultimoneda || false}
                 onServiceConfirmed={(servicioActualizado, recordKind) => {
                   // El DTO devuelto por confirm-cost no trae recordKind (lo agrega el front al normalizar).
                   // ServiceList lo pasa como segundo argumento para saber en qué colección hacer el upsert.
@@ -836,32 +839,59 @@ export default function ReservaDetailPage() {
 
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">
-              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
-                <button
-                  onClick={() => {
-                    setPaymentToEdit(null);
-                    setShowPaymentModal(true);
-                  }}
-                  className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-700"
-                >
-                  <CreditCard className="w-4 h-4" /> Registrar Cobranza
-                </button>
-                <div className="text-xs italic font-medium text-slate-500">
-                  * Los pagos recibidos afectan directamente al saldo de la reserva.
+
+              {/* Botón "Registrar cobro": abre la ficha inline debajo.
+                  Wording "cobro" (guia 2026-06-10). Se oculta mientras la ficha está abierta
+                  para no permitir dos fichas simultáneas. */}
+              {!showCobroInline && (
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+                  <button
+                    onClick={() => {
+                      setCobroAEditar(null);
+                      setShowCobroInline(true);
+                    }}
+                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-700"
+                    data-testid="btn-registrar-cobro"
+                  >
+                    <Plus className="w-4 h-4" /> Registrar cobro
+                  </button>
+                  <div className="text-xs italic font-medium text-slate-500">
+                    Los cobros recibidos afectan directamente al saldo de la reserva.
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Ficha inline de cobro: se despliega aquí, debajo del botón / sobre el historial */}
+              {showCobroInline && (
+                <RegistrarCobroInline
+                  reservaId={publicId}
+                  reserva={reserva}
+                  paymentToEdit={cobroAEditar}
+                  onGuardado={() => {
+                    setShowCobroInline(false);
+                    setCobroAEditar(null);
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                  }}
+                  onCancelar={() => {
+                    setShowCobroInline(false);
+                    setCobroAEditar(null);
+                  }}
+                />
+              )}
 
               <div className="grid grid-cols-1 gap-6">
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/10">
                     <History className="w-4 h-4 text-emerald-500" />
-                    <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">Historial de Cobranzas y Comprobantes</h4>
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">Historial de cobros y comprobantes</h4>
                   </div>
                   <DataGrid density="compact" minWidth="900px">
                     <DataGridHeader>
                       <DataGridHeaderRow>
                         <DataGridHeaderCell>Fecha</DataGridHeaderCell>
                         <DataGridHeaderCell>Metodo</DataGridHeaderCell>
+                        {/* Columna Moneda: siempre presente para multimoneda (indica en qué moneda entró cada cobro) */}
+                        <DataGridHeaderCell>Moneda</DataGridHeaderCell>
                         <DataGridHeaderCell>Notas</DataGridHeaderCell>
                         <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
@@ -870,78 +900,136 @@ export default function ReservaDetailPage() {
                     </DataGridHeader>
                     <DataGridBody>
                       {reserva.payments?.length > 0 ? (
-                        reserva.payments.map((payment) => (
-                          <DataGridRow key={getPublicId(payment)}>
-                            <DataGridCell>{new Date(payment.paidAt).toLocaleDateString()}</DataGridCell>
-                            <DataGridCell>
-                              <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-black uppercase dark:bg-slate-800">
-                                {payment.method}
-                              </span>
-                            </DataGridCell>
-                            <DataGridCell>{payment.notes || "-"}</DataGridCell>
-                            <DataGridCell>
-                              <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} />
-                            </DataGridCell>
-                            <DataGridCell align="right" className="font-black text-emerald-600">
-                              {payment.amount?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
-                            </DataGridCell>
-                            <DataGridCell align="right">
-                              <div className="flex justify-end gap-1">
-                                <button
-                                  onClick={() => {
-                                    setPaymentToEdit(payment);
-                                    setShowPaymentModal(true);
-                                  }}
-                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                  title="Editar pago"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    askConfirmation({
-                                      title: "Eliminar pago?",
-                                      message: `Seguro que deseas eliminar el pago de ${payment.amount?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}?`,
-                                      type: "danger",
-                                      onConfirm: () => handleDeletePayment(payment),
-                                    })
-                                  }
-                                  className="p-1 text-rose-600 hover:bg-rose-50 rounded transition-colors"
-                                  title="Eliminar pago"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </DataGridCell>
-                          </DataGridRow>
-                        ))
+                        reserva.payments.map((payment) => {
+                          const monedaCobro = payment.currency || "ARS";
+                          const esCruzado = payment.imputedCurrency && payment.imputedCurrency !== monedaCobro;
+                          return (
+                            <DataGridRow key={getPublicId(payment)}>
+                              <DataGridCell>{new Date(payment.paidAt).toLocaleDateString()}</DataGridCell>
+                              <DataGridCell>
+                                <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-black uppercase dark:bg-slate-800">
+                                  {payment.method}
+                                </span>
+                              </DataGridCell>
+                              <DataGridCell>
+                                <CurrencyBadge currency={monedaCobro} size="sm" />
+                              </DataGridCell>
+                              <DataGridCell>
+                                <div>
+                                  {payment.notes || "-"}
+                                  {/* Para cobros cruzados: detalle inline del saldo imputado en la otra moneda */}
+                                  {esCruzado && payment.imputedAmount != null && (
+                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+                                      imputado a {payment.imputedCurrency === "USD" ? "US$" : "$"}{Number(payment.imputedAmount).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                                    </div>
+                                  )}
+                                </div>
+                              </DataGridCell>
+                              <DataGridCell>
+                                <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} />
+                              </DataGridCell>
+                              <DataGridCell align="right" className="font-black text-emerald-600">
+                                {/* Importe formateado con la moneda real del cobro */}
+                                {payment.amount?.toLocaleString("es-AR", { style: "currency", currency: monedaCobro })}
+                              </DataGridCell>
+                              <DataGridCell align="right">
+                                <div className="flex justify-end gap-1">
+                                  <button
+                                    onClick={() => {
+                                      setCobroAEditar(payment);
+                                      setShowCobroInline(true);
+                                    }}
+                                    className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                    title="Editar cobro"
+                                    aria-label="Editar cobro"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      askConfirmation({
+                                        title: "Eliminar cobro?",
+                                        message: `¿Seguro que deseas eliminar el cobro de ${payment.amount?.toLocaleString("es-AR", { style: "currency", currency: monedaCobro })}?`,
+                                        type: "danger",
+                                        onConfirm: () => handleDeletePayment(payment),
+                                      })
+                                    }
+                                    className="p-1 text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                                    title="Eliminar cobro"
+                                    aria-label="Eliminar cobro"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </DataGridCell>
+                            </DataGridRow>
+                          );
+                        })
                       ) : (
-                        <DataGridEmptyState colSpan={6} title="No hay pagos registrados." />
+                        <DataGridEmptyState colSpan={7} title="No hay cobros registrados." />
                       )}
                     </DataGridBody>
                   </DataGrid>
+
+                  {/* Subtotal por moneda al pie del historial — solo cuando hay más de una moneda */}
+                  {(() => {
+                    const pagos = reserva.payments || [];
+                    if (pagos.length === 0) return null;
+                    const totales = pagos.reduce((acc, p) => {
+                      const moneda = p.currency || "ARS";
+                      acc[moneda] = (acc[moneda] || 0) + (p.amount || 0);
+                      return acc;
+                    }, {});
+                    const monedas = Object.keys(totales);
+                    if (monedas.length <= 1) return null; // Una sola moneda: no mostrar subtotal extra
+                    return (
+                      <div className="flex items-center justify-end gap-4 px-6 py-3 border-t border-slate-100 dark:border-slate-800 text-sm font-bold text-slate-700 dark:text-slate-300">
+                        <span className="text-xs uppercase tracking-wider text-slate-400">Total cobrado</span>
+                        <span className="flex items-center gap-3">
+                          {monedas.map((moneda, idx) => (
+                            <span key={moneda} className="inline-flex items-center gap-1">
+                              <CurrencyBadge currency={moneda} size="sm" />
+                              {totales[moneda].toLocaleString("es-AR", { style: "currency", currency: moneda })}
+                              {idx < monedas.length - 1 && <span className="text-slate-400 mx-1">·</span>}
+                            </span>
+                          ))}
+                        </span>
+                      </div>
+                    );
+                  })()}
+
                   {reserva.payments?.length > 0 ? (
                     <MobileRecordList className="p-4 md:hidden">
-                      {reserva.payments.map((payment) => (
-                        <MobileRecordCard
-                          key={getPublicId(payment)}
-                          title={payment.method}
-                          subtitle={new Date(payment.paidAt).toLocaleDateString()}
-                          meta={
-                            <>
-                              <div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>
-                              <div>
-                                <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} />
-                              </div>
-                            </>
-                          }
-                          footer={<span className="text-sm font-bold text-emerald-600">{payment.amount?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}</span>}
-                        />
-                      ))}
+                      {reserva.payments.map((payment) => {
+                        const monedaCobro = payment.currency || "ARS";
+                        const esCruzado = payment.imputedCurrency && payment.imputedCurrency !== monedaCobro;
+                        return (
+                          <MobileRecordCard
+                            key={getPublicId(payment)}
+                            title={payment.method}
+                            subtitle={new Date(payment.paidAt).toLocaleDateString()}
+                            meta={
+                              <>
+                                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                                  <CurrencyBadge currency={monedaCobro} />
+                                  {esCruzado && payment.imputedAmount != null && (
+                                    <span className="text-[10px]">→ imputado a {payment.imputedCurrency === "USD" ? "US$" : "$"}{Number(payment.imputedAmount).toLocaleString("es-AR", { minimumFractionDigits: 2 })}</span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>
+                                <div>
+                                  <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} />
+                                </div>
+                              </>
+                            }
+                            footer={<span className="text-sm font-bold text-emerald-600">{payment.amount?.toLocaleString("es-AR", { style: "currency", currency: monedaCobro })}</span>}
+                          />
+                        );
+                      })}
                     </MobileRecordList>
                   ) : (
                     <ListEmptyState
-                      title="No hay pagos registrados."
+                      title="No hay cobros registrados."
                       className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
                     />
                   )}
@@ -1038,18 +1126,6 @@ export default function ReservaDetailPage() {
         serviceToEdit={serviceToEdit}
         onSuccess={(options) => fetchReserva(options)}
         suppliers={suppliers}
-      />
-
-      <PaymentModal
-        isOpen={showPaymentModal}
-        onClose={() => {
-          setShowPaymentModal(false);
-          setPaymentToEdit(null);
-        }}
-        reservaId={publicId}
-        maxAmount={reserva?.balance}
-        paymentToEdit={paymentToEdit}
-        onSuccess={() => fetchReserva({ showLoading: false, preserveOnError: true })}
       />
 
       <PassengerFormModal

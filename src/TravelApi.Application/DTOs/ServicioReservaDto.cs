@@ -27,4 +27,12 @@ public class ServicioReservaDto
     
     public string SourceKind { get; set; } = "Generic";
     public string WorkflowStatus { get; set; } = "Solicitado";
+
+    /// <summary>
+    /// ADR-021 Capa 7: moneda del servicio (costo y venta van en la misma moneda). El front la lee como
+    /// <c>svc.currency</c> para el badge de moneda y para totalizar la lista de servicios POR moneda.
+    /// Default "ARS"; el mapeo normaliza null/legacy a ARS (<c>Monedas.Normalizar</c>). NO es dato de
+    /// costo, no se enmascara con see_cost (es solo el rotulo de moneda).
+    /// </summary>
+    public string Currency { get; set; } = "ARS";
 }

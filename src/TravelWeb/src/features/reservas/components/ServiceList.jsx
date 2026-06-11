@@ -32,6 +32,8 @@ import {
 } from "../lib/reservationServiceModel";
 import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
+import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
+import { formatCurrency } from "../../../lib/utils";
 
 /**
  * Determina si un servicio esta "resuelto" para el ciclo ADR-020.
@@ -415,6 +417,10 @@ export function ServiceList({
     windowDays = null,
     onServiceConfirmed,
     onServiceResolved,
+    // Multimoneda (2026-06-11): true cuando la reserva mezcla servicios en ARS y USD.
+    // Cuando es true se muestra el cartelito $/US$ en cada precio y la fila TOTAL al pie.
+    // Regla ③: con false (o sin el prop) la lista se ve igual que siempre.
+    esMultimoneda = false,
 }) {
     // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
     // Con flag ON se usa hasPermission("cobranzas.see_cost") — admin pasa igual (bypass en hasPermission).
@@ -643,6 +649,12 @@ export function ServiceList({
                                             {mostrarCosto && puedeConfirmarCosto && !isGeneric ? (
                                                 // Flag ON + see_cost + tipo específico: celda con pill y botón de confirmación
                                                 <td className="py-4 align-top text-right pr-4">
+                                                    {/* Cartelito de moneda solo cuando la reserva mezcla monedas */}
+                                                    {esMultimoneda && svc.currency && (
+                                                        <span className="inline-block mb-1">
+                                                            <CurrencyBadge currency={svc.currency} />
+                                                        </span>
+                                                    )}
                                                     <CostConfirmCell
                                                         service={svc}
                                                         reservaId={reservaId}
@@ -652,12 +664,24 @@ export function ServiceList({
                                             ) : mostrarCosto ? (
                                                 // Flag OFF o genérico: td IDÉNTICO al HEAD (align-middle, sin span extra)
                                                 <td className="py-4 align-middle text-right text-xs text-slate-500 font-mono pr-4">
-                                                    ${netCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    {/* Cartelito de moneda solo en modo multimoneda */}
+                                                    {esMultimoneda && svc.currency && (
+                                                        <span className="inline-flex items-center gap-1 justify-end">
+                                                            <CurrencyBadge currency={svc.currency} />
+                                                        </span>
+                                                    )}
+                                                    {formatCurrency(netCost, svc.currency || "ARS")}
                                                 </td>
                                             ) : null}
 
                                             <td className="py-4 align-middle text-right text-xs font-bold text-slate-900 dark:text-white font-mono pr-4">
-                                                ${(svc.salePrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                {/* Cartelito de moneda: solo en modo multimoneda. La moneda viene del servicio. */}
+                                                {esMultimoneda && svc.currency && (
+                                                    <span className="inline-flex items-center gap-1 justify-end mb-0.5">
+                                                        <CurrencyBadge currency={svc.currency} />
+                                                    </span>
+                                                )}
+                                                {formatCurrency(svc.salePrice || 0, svc.currency || "ARS")}
                                             </td>
 
                                             {/* Columna Avisos: solo con flag enableServiceDeadlineAlerts ON.
@@ -724,6 +748,52 @@ export function ServiceList({
                                         </tr>
                                     );
                                 })}
+
+                                {/* Fila TOTAL al pie: SOLO cuando la reserva tiene dos monedas (decisión A, 2026-06-11).
+                                    Muestra el total de Precio Venta por moneda, separados por punto medio.
+                                    Regla ③: con una sola moneda esta fila NO aparece (igual que hoy). */}
+                                {esMultimoneda && services.length > 0 && (() => {
+                                    // Acumular total de salePrice por moneda (no mezclar)
+                                    const totalesPorMoneda = services.reduce((acc, svc) => {
+                                        const moneda = svc.currency || "ARS";
+                                        acc[moneda] = (acc[moneda] || 0) + (svc.salePrice || 0);
+                                        return acc;
+                                    }, {});
+
+                                    const monedas = Object.keys(totalesPorMoneda);
+                                    if (monedas.length <= 1) return null; // Seguridad: no mostrar si todos son una moneda
+
+                                    // Calcular colspan correcto para la fila de total
+                                    const colspanDescripcion = mostrarCosto
+                                        ? (isServiceDeadlineAlertsEnabled ? 2 : 2)
+                                        : (isServiceDeadlineAlertsEnabled ? 3 : 3);
+
+                                    return (
+                                        <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/40">
+                                            <td colSpan={3} className="py-3 pl-2 text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                Total venta
+                                            </td>
+                                            {/* Celdas vacías para Estado y posible Costo (para alinear con columna Precio Venta) */}
+                                            {mostrarCosto && <td />}
+                                            <td className="py-3 text-right pr-4">
+                                                {/* Totales por moneda separados por · */}
+                                                <span className="flex flex-col items-end gap-0.5">
+                                                    {monedas.map((moneda, idx) => (
+                                                        <span key={moneda} className="inline-flex items-center gap-1.5 text-xs font-black text-slate-900 dark:text-white font-mono">
+                                                            <CurrencyBadge currency={moneda} />
+                                                            {formatCurrency(totalesPorMoneda[moneda], moneda)}
+                                                            {idx < monedas.length - 1 && (
+                                                                <span className="text-slate-400 mx-0.5">·</span>
+                                                            )}
+                                                        </span>
+                                                    ))}
+                                                </span>
+                                            </td>
+                                            {isServiceDeadlineAlertsEnabled && <td />}
+                                            <td />
+                                        </tr>
+                                    );
+                                })()}
                             </tbody>
                         </table>
                     </div>
@@ -789,8 +859,15 @@ export function ServiceList({
                                                 {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE && svc.validTo &&
                                                     ` al ${formatFechaSegura(svc.validTo)}`}
                                             </span>
-                                            <div className="flex gap-2 items-center mt-1">
-                                                <span className="font-bold text-slate-900 dark:text-white">Venta: ${(svc.salePrice || 0).toLocaleString()}</span>
+                                            <div className="flex gap-2 items-center mt-1 flex-wrap">
+                                                {/* Precio de venta: con cartelito de moneda en modo multimoneda */}
+                                                <span className="font-bold text-slate-900 dark:text-white inline-flex items-center gap-1">
+                                                    Venta:{" "}
+                                                    {esMultimoneda && svc.currency && (
+                                                        <CurrencyBadge currency={svc.currency} />
+                                                    )}
+                                                    {formatCurrency(svc.salePrice || 0, svc.currency || "ARS")}
+                                                </span>
                                                 {/* Costo en mobile: gateado igual que en desktop */}
                                                 {mostrarCosto && (
                                                     puedeConfirmarCosto && !isGeneric ? (
@@ -802,7 +879,13 @@ export function ServiceList({
                                                         />
                                                     ) : (
                                                         // Sin flag o sin permiso: número simple
-                                                        <span className="text-[9px] opacity-70">Costo: ${netCost.toLocaleString()}</span>
+                                                        <span className="text-[9px] opacity-70 inline-flex items-center gap-1">
+                                                            Costo:{" "}
+                                                            {esMultimoneda && svc.currency && (
+                                                                <CurrencyBadge currency={svc.currency} />
+                                                            )}
+                                                            {formatCurrency(netCost, svc.currency || "ARS")}
+                                                        </span>
                                                     )
                                                 )}
                                             </div>

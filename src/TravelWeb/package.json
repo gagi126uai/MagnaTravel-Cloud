@@ -10,7 +10,7 @@
     "test:movements": "node --test src/features/movements/lib/*.test.mjs",
     "test:polling": "node --test src/features/payments/hooks/*.test.mjs",
     "test:cancellations": "node --test src/features/cancellations/lib/*.test.mjs",
-    "test": "node --test src/features/reservas/lib/*.test.mjs src/features/movements/lib/*.test.mjs src/features/payments/hooks/*.test.mjs src/features/cancellations/lib/*.test.mjs src/features/reservas/components/*.test.mjs src/features/reservas/inline-service/*.test.mjs src/components/*.test.mjs",
+    "test": "node --test src/features/reservas/lib/*.test.mjs src/features/movements/lib/*.test.mjs src/features/payments/hooks/*.test.mjs src/features/cancellations/lib/*.test.mjs src/features/reservas/components/*.test.mjs src/features/reservas/inline-service/*.test.mjs src/components/*.test.mjs src/lib/*.test.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 3000"
   },
   "dependencies": {

@@ -1,14 +1,42 @@
 export const creditNoteTypes = [3, 8, 13, 53];
 
-export const currencyFormatter = new Intl.NumberFormat("es-AR", {
+/**
+ * Formateadores internos: uno por moneda para reusar el objeto Intl.NumberFormat
+ * (construirlo es costoso; reusar instancias es la práctica correcta).
+ */
+const arsFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
   minimumFractionDigits: 2,
 });
 
-export function formatCurrency(amount) {
-  return currencyFormatter.format(Number(amount || 0));
+/**
+ * Formatea un monto con el símbolo de la moneda indicada.
+ * Default: ARS — mantiene el comportamiento de todos los call sites que no pasan moneda.
+ *
+ * Regla de negocio (2026-06-09): pesos y dólares siempre separados, nunca sumados.
+ * "US$" (no "$") distingue visualmente el dólar del peso en pantalla.
+ *
+ * @param {number|string|null|undefined} amount
+ * @param {"ARS"|"USD"} currency - Default "ARS"
+ */
+export function formatCurrency(amount, currency = "ARS") {
+  const number = Number(amount || 0);
+
+  if (currency === "USD") {
+    return "US$" + new Intl.NumberFormat("es-AR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(number);
+  }
+
+  // ARS por default — todos los call sites legacy que no pasan moneda siguen igual
+  return arsFormatter.format(number);
 }
+
+// Exportamos por compatibilidad con imports legacy que desestructuraban el formatter
+/** @deprecated Usar formatCurrency(amount, "ARS") */
+export const currencyFormatter = arsFormatter;
 
 export function formatDate(date, options) {
   if (!date) {

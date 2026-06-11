@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { showError } from "../alerts";
 import { formatCurrency, formatDate } from "../lib/utils";
+import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { useNavigate } from "react-router-dom";
 import {
   TrendingUp,
@@ -218,7 +219,71 @@ export default function ReportsPage() {
   }
 
   const s = report.summary;
+
+  // cashFlow mono-moneda (mantiene compatibilidad con KpiCard de flujo neto cuando no hay porMoneda)
   const cashFlow = s.customerPayments - s.supplierPayments;
+
+  /**
+   * Contrato real del backend /reports/detailed (A-3, 2026-06-11):
+   * s.porMoneda = objeto con 6 listas, cada una [{currency, amount}]:
+   *   cobrosDelMes, pagosProveedores, ventasDelMes, costosDelMes, saldoPendiente, cuentasPorPagar.
+   *
+   * Para multimoneda: necesitamos saber qué monedas hay (de cobrosDelMes, que es la lista
+   * más completa). Si porMoneda existe y cobrosDelMes tiene 2+ filas → modo multimoneda.
+   */
+  const porMonedaObj = s.porMoneda && typeof s.porMoneda === "object" && !Array.isArray(s.porMoneda)
+    ? s.porMoneda
+    : null;
+
+  // Lista de monedas disponibles: extraída de cobrosDelMes (la más representativa)
+  const monedasDisponibles = porMonedaObj &&
+    Array.isArray(porMonedaObj.cobrosDelMes) &&
+    porMonedaObj.cobrosDelMes.length > 1
+    ? porMonedaObj.cobrosDelMes
+    : null;
+
+  /**
+   * Construye el "value" de un KpiCard a partir de una de las 6 listas de porMoneda.
+   *
+   * @param {string} monoValue - valor formateado para modo mono-moneda (string)
+   * @param {Array<{currency,amount}>} listaMoneda - una de las sub-listas de s.porMoneda
+   */
+  function buildKpiValue(monoValue, listaMoneda) {
+    if (!monedasDisponibles || !Array.isArray(listaMoneda) || listaMoneda.length <= 1) {
+      return monoValue;
+    }
+    return listaMoneda.map((item) => ({
+      currency: item.currency,
+      value: item.amount ?? 0,
+    }));
+  }
+
+  /**
+   * Construye el valor del Flujo Neto por moneda: cobros - pagos para cada moneda.
+   * Las dos listas (cobrosDelMes, pagosProveedores) se cruzan por currency.
+   */
+  function buildFlujonetoValue() {
+    if (!monedasDisponibles) return formatCurrency(cashFlow);
+
+    const cobros = Array.isArray(porMonedaObj.cobrosDelMes) ? porMonedaObj.cobrosDelMes : [];
+    const pagos = Array.isArray(porMonedaObj.pagosProveedores) ? porMonedaObj.pagosProveedores : [];
+
+    // Mapas por moneda para lookup O(1).
+    const cobrosPorMoneda = {};
+    cobros.forEach((c) => { cobrosPorMoneda[c.currency] = c.amount ?? 0; });
+    const pagosPorMoneda = {};
+    pagos.forEach((p) => { pagosPorMoneda[p.currency] = p.amount ?? 0; });
+
+    // Union de monedas presentes en cobros O pagos: una moneda con pagos pero sin
+    // cobros (o viceversa) NO debe perder su fila de flujo neto.
+    const monedas = [...new Set([...Object.keys(cobrosPorMoneda), ...Object.keys(pagosPorMoneda)])];
+
+    return monedas.map((currency) => ({
+      currency,
+      // Flujo neto = cobros − pagos en esa moneda. Regla ①: nunca mezclar monedas.
+      value: (cobrosPorMoneda[currency] ?? 0) - (pagosPorMoneda[currency] ?? 0),
+    }));
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -416,31 +481,45 @@ export default function ReportsPage() {
         </TabsContent>
 
         <TabsContent value="finance" className="space-y-6">
+          {/* Las 4 tarjetas de la solapa Finanzas: con soporte multimoneda.
+              Contrato A-3 (2026-06-11): s.porMoneda.cobrosDelMes/pagosProveedores/saldoPendiente
+              son las listas reales. Sin porMoneda: comportamiento idéntico al anterior. */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <KpiCard
               title="Cobros (Entradas)"
-              value={formatCurrency(s.customerPayments)}
+              value={buildKpiValue(
+                formatCurrency(s.customerPayments),
+                porMonedaObj?.cobrosDelMes
+              )}
               subtitle="En este período"
               icon={Wallet}
               color="emerald"
             />
             <KpiCard
               title="Pagos (Salidas)"
-              value={formatCurrency(s.supplierPayments)}
+              value={buildKpiValue(
+                formatCurrency(s.supplierPayments),
+                porMonedaObj?.pagosProveedores
+              )}
               subtitle="En este período"
               icon={CreditCard}
               color="rose"
             />
             <KpiCard
               title="Flujo Neto"
-              value={formatCurrency(cashFlow)}
+              value={buildFlujonetoValue()}
               subtitle="Resultado de caja"
               icon={cashFlow >= 0 ? ArrowUpRight : ArrowDownRight}
               color={cashFlow >= 0 ? "blue" : "orange"}
             />
             <KpiCard
               title="Deuda Clientes"
-              value={formatCurrency(receivables.reduce((acc, curr) => acc + curr.currentBalance, 0))}
+              value={buildKpiValue(
+                // Total simple cuando no hay multimoneda: suma todos los receivables
+                formatCurrency(receivables.reduce((acc, curr) => acc + (curr.currentBalance || 0), 0)),
+                // Multimoneda: usar saldoPendiente del backend (ya viene segmentado por moneda)
+                porMonedaObj?.saldoPendiente
+              )}
               subtitle="Total por cobrar"
               icon={AlertCircle}
               color="purple"
@@ -460,27 +539,49 @@ export default function ReportsPage() {
               <CardContent>
                 {receivables?.length > 0 ? (
                   <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
-                    {receivables.map((debtor) => (
-                      <div
-                        key={getPublicId(debtor)}
-                        onClick={() => navigate(`/customers/${getPublicId(debtor)}/account`)}
-                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-purple-200 dark:hover:border-purple-800 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 cursor-pointer transition-all"
-                      >
-                        <div className="flex flex-col">
-                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300 hover:text-purple-700 dark:hover:text-purple-400 transition-colors">{debtor.fullName}</span>
-                          <span className="text-[10px] text-slate-500">Ult. mov: {debtor.lastMovementDate ? formatDate(debtor.lastMovementDate) : '-'}</span>
+                    {receivables.map((debtor) => {
+                      const monedaDebtor = debtor.currency || "ARS";
+                      return (
+                        <div
+                          key={getPublicId(debtor)}
+                          onClick={() => navigate(`/customers/${getPublicId(debtor)}/account`)}
+                          className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-purple-200 dark:hover:border-purple-800 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 cursor-pointer transition-all"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm text-slate-700 dark:text-slate-300 hover:text-purple-700 dark:hover:text-purple-400 transition-colors">{debtor.fullName}</span>
+                            <span className="text-[10px] text-slate-500">Ult. mov: {debtor.lastMovementDate ? formatDate(debtor.lastMovementDate) : '-'}</span>
+                          </div>
+                          {/* Cartelito de moneda pegado al monto — la moneda es una dimensión de la fila */}
+                          <span className="font-mono font-bold text-purple-600 dark:text-purple-400 text-sm inline-flex items-center gap-1">
+                            <CurrencyBadge currency={monedaDebtor} />
+                            {formatCurrency(debtor.currentBalance, monedaDebtor)}
+                          </span>
                         </div>
-                        <span className="font-mono font-bold text-purple-600 dark:text-purple-400 text-sm">
-                          {formatCurrency(debtor.currentBalance)}
-                        </span>
-                      </div>
-                    ))}
-                    <div className="pt-3 mt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between px-2">
-                      <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total a Cobrar</span>
-                      <span className="font-bold text-purple-700 dark:text-purple-400">
-                        {formatCurrency(receivables.reduce((sum, r) => sum + r.currentBalance, 0))}
-                      </span>
-                    </div>
+                      );
+                    })}
+                    {/* Total a Cobrar al pie: por moneda si hay más de una, o simple si es mono-moneda */}
+                    {(() => {
+                      const totalesPorMoneda = receivables.reduce((acc, r) => {
+                        const m = r.currency || "ARS";
+                        acc[m] = (acc[m] || 0) + r.currentBalance;
+                        return acc;
+                      }, {});
+                      const monedas = Object.keys(totalesPorMoneda);
+                      return (
+                        <div className="pt-3 mt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center px-2">
+                          <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total a Cobrar</span>
+                          <span className="font-bold text-purple-700 dark:text-purple-400 flex items-center gap-2 flex-wrap justify-end">
+                            {monedas.map((m, idx) => (
+                              <span key={m} className="inline-flex items-center gap-1">
+                                <CurrencyBadge currency={m} />
+                                {formatCurrency(totalesPorMoneda[m], m)}
+                                {idx < monedas.length - 1 && <span className="text-slate-400 mx-1">·</span>}
+                              </span>
+                            ))}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <EmptyState message="¡Excelente! No hay clientes con deuda." />
@@ -500,29 +601,51 @@ export default function ReportsPage() {
               <CardContent>
                 {report.supplierDebts?.length > 0 ? (
                   <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
-                    {report.supplierDebts.map((sup) => (
-                      <div
-                        key={getPublicId(sup)}
-                        onClick={() => navigate(`/suppliers/${getPublicId(sup)}/account`)}
-                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-rose-200 dark:hover:border-rose-800 hover:bg-rose-50/50 dark:hover:bg-rose-900/10 cursor-pointer transition-all"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
-                            <Building2 className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                    {report.supplierDebts.map((sup) => {
+                      const monedaSupplier = sup.currency || "ARS";
+                      return (
+                        <div
+                          key={getPublicId(sup)}
+                          onClick={() => navigate(`/suppliers/${getPublicId(sup)}/account`)}
+                          className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-rose-200 dark:hover:border-rose-800 hover:bg-rose-50/50 dark:hover:bg-rose-900/10 cursor-pointer transition-all"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
+                              <Building2 className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                            </div>
+                            <span className="font-medium text-sm text-slate-700 dark:text-slate-300 hover:text-rose-700 dark:hover:text-rose-400 transition-colors">{sup.name}</span>
                           </div>
-                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300 hover:text-rose-700 dark:hover:text-rose-400 transition-colors">{sup.name}</span>
+                          {/* Cartelito de moneda pegado al monto — la moneda es una dimensión de la fila */}
+                          <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-sm inline-flex items-center gap-1">
+                            <CurrencyBadge currency={monedaSupplier} />
+                            {formatCurrency(sup.currentBalance, monedaSupplier)}
+                          </span>
                         </div>
-                        <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-sm">
-                          {formatCurrency(sup.currentBalance)}
-                        </span>
-                      </div>
-                    ))}
-                    <div className="pt-3 mt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between px-2">
-                      <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total a Pagar</span>
-                      <span className="font-bold text-rose-700 dark:text-rose-400">
-                        {formatCurrency(report.supplierDebts.reduce((sum, s) => sum + s.currentBalance, 0))}
-                      </span>
-                    </div>
+                      );
+                    })}
+                    {/* Total a Pagar al pie: por moneda si hay más de una */}
+                    {(() => {
+                      const totalesPorMoneda = report.supplierDebts.reduce((acc, sd) => {
+                        const m = sd.currency || "ARS";
+                        acc[m] = (acc[m] || 0) + sd.currentBalance;
+                        return acc;
+                      }, {});
+                      const monedas = Object.keys(totalesPorMoneda);
+                      return (
+                        <div className="pt-3 mt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center px-2">
+                          <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total a Pagar</span>
+                          <span className="font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2 flex-wrap justify-end">
+                            {monedas.map((m, idx) => (
+                              <span key={m} className="inline-flex items-center gap-1">
+                                <CurrencyBadge currency={m} />
+                                {formatCurrency(totalesPorMoneda[m], m)}
+                                {idx < monedas.length - 1 && <span className="text-slate-400 mx-1">·</span>}
+                              </span>
+                            ))}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <EmptyState message="Sin deuda con proveedores" />
@@ -536,6 +659,13 @@ export default function ReportsPage() {
   );
 }
 
+/**
+ * Tarjeta KPI del tablero de Reportes.
+ *
+ * Multimoneda: si `value` es un array de { currency, value } (en vez de un string formateado),
+ * se muestran dos líneas, una por moneda (pesos arriba con cartelito $, dólares abajo con US$).
+ * Regla ③: si `value` es un string (mono-moneda), la tarjeta se ve igual que siempre.
+ */
 function KpiCard({ title, value, subtitle, icon: Icon, color }) {
   const colorMap = {
     indigo: { bg: 'bg-indigo-50 dark:bg-indigo-900/10', text: 'text-indigo-600 dark:text-indigo-400' },
@@ -547,6 +677,9 @@ function KpiCard({ title, value, subtitle, icon: Icon, color }) {
   };
   const c = colorMap[color] || colorMap.indigo;
 
+  // Decidir si el value es multi-moneda (array) o mono-moneda (string/número)
+  const esMultimoneda = Array.isArray(value);
+
   return (
     <Card className={`border-none shadow-sm ${c.bg} transition-all hover:scale-[1.02]`}>
       <CardContent className="p-5">
@@ -555,7 +688,22 @@ function KpiCard({ title, value, subtitle, icon: Icon, color }) {
           <Icon className={`h-4 w-4 ${c.text}`} />
         </div>
         <div className="mt-2">
-          <span className={`text-2xl font-bold ${c.text}`}>{value}</span>
+          {esMultimoneda ? (
+            // Modo multimoneda: dos líneas, una por moneda
+            <div className="space-y-1">
+              {value.map((pm) => (
+                <div key={pm.currency} className="flex items-center gap-1.5">
+                  <CurrencyBadge currency={pm.currency} size="sm" />
+                  <span className={`text-xl font-bold ${c.text}`}>
+                    {formatCurrency(pm.value, pm.currency)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            // Modo mono-moneda: igual que siempre
+            <span className={`text-2xl font-bold ${c.text}`}>{value}</span>
+          )}
         </div>
         {subtitle && (
           <p className={`text-xs ${c.text} mt-1 opacity-70`}>{subtitle}</p>
